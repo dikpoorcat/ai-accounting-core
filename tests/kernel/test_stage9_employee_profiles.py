@@ -150,6 +150,11 @@ def test_future_fixture_defines_employee_management_status_without_changing_owne
     assert data["items"][0]["in_period"] is True
     with book.engine.store.connection(read_only=True) as connection:
         assert connection.execute(
-            "SELECT json_extract(content,'$.employment_state') FROM entity_profile_revision "
+            "SELECT json_extract(content,'$.workforce_event') FROM entity_profile_revision "
             "WHERE entity_id=? ORDER BY revision DESC LIMIT 1", (book.owner,),
-        ).fetchone()[0] == "unknown"
+        ).fetchone()[0] is None
+    owner = next(
+        item for item in book.entities.find_entities(kind="person")["items"]
+        if item["entity_id"] == book.owner
+    )
+    assert owner["employment_state"] == "unknown"

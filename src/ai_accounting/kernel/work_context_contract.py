@@ -12,7 +12,8 @@ from typing import Annotated, Literal, NotRequired
 from pydantic import ConfigDict, Field, JsonValue, TypeAdapter
 from typing_extensions import TypedDict
 
-from .entities import DisplayDate, EntityKind
+from .employee_employment import WorkforceState
+from .entities import EntityKind
 from .response_contracts import WorkDraftAbsentResponse, WorkDraftPresentResponse
 from .response_types import Version2
 from .types import EvidenceDigest, YearMonth
@@ -146,10 +147,6 @@ class ContextEntityProfile(ContextObject):
     external_identifiers: NotRequired[dict[str, str]]
     active: NotRequired[bool]
     note: NotRequired[str | None]
-    employment_start: NotRequired[DisplayDate | None]
-    employment_end: NotRequired[DisplayDate | None]
-    employment_status: NotRequired[Literal["active", "inactive", "unknown"]]
-    employment_state: NotRequired[Literal["regular", "unpaid_leave", "departed", "unknown"]]
     category_label: NotRequired[str | None]
 
 
@@ -202,6 +199,8 @@ class ContextEntity(ContextObject):
     kind: EntityKind
     account_type: AccountType | None
     profile: ContextEntityProfile
+    employment_state: NotRequired[WorkforceState]
+    event_version: NotRequired[EvidenceDigest]
     fund_account: NotRequired[
         Annotated[
             ContextBankAccountDefinition

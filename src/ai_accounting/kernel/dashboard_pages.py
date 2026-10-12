@@ -21,7 +21,7 @@ SECTIONS = {
     "funds": frozenset(
         {"accounts", "movements", "statements", "investment_products", "investment_events"}
     ),
-    "employees": frozenset({"employees", "labor_sources"}),
+    "employees": frozenset({"employees", "labor_workers", "labor_sources"}),
     "assets": frozenset({"assets", "projects"}),
     "business-status": frozenset({"settlement_events"}),
 }
@@ -37,7 +37,8 @@ SORT_PROFILES = {
     ("funds", "accounts"): "account-name-pinyin/1",
     ("funds", "investment_products"): "product-name-pinyin/1",
     ("funds", "movements"): "business-date-object/2",
-    ("employees", "employees"): "employment-start-name/2",
+    ("employees", "employees"): "employment-start-name/3",
+    ("employees", "labor_workers"): "worker-name-pinyin/1",
     ("employees", "labor_sources"): "labor-period-name-pinyin/1",
     ("assets", "assets"): "asset-name-pinyin/1",
 }
@@ -60,6 +61,8 @@ def validate_page(endpoint, section, cursor, limit):
 
 
 def page_scope(snapshot, endpoint, section, filters, *, collection_version=None, sort_profile=None):
+    if endpoint == "employees" and section in {"labor_workers", "labor_sources"}:
+        filters = {key: value for key, value in filters.items() if key != "employee_filter"}
     return hashlib.sha256(
         canonical(
             {
@@ -79,7 +82,14 @@ def page_scope(snapshot, endpoint, section, filters, *, collection_version=None,
 
 
 def decode_cursor(
-    snapshot, endpoint, section, cursor, filters, *, collection_version=None, sort_profile=None,
+    snapshot,
+    endpoint,
+    section,
+    cursor,
+    filters,
+    *,
+    collection_version=None,
+    sort_profile=None,
 ):
     if cursor is None:
         return None
@@ -91,7 +101,11 @@ def decode_cursor(
         if value.get("sort") != profile:
             raise ValueError("sort")
         if value["scope"] != page_scope(
-            snapshot, endpoint, section, filters, collection_version=collection_version,
+            snapshot,
+            endpoint,
+            section,
+            filters,
+            collection_version=collection_version,
             sort_profile=profile,
         ):
             raise ValueError("scope")
@@ -128,8 +142,14 @@ def seal_page(snapshot, endpoint, section, page, filters, *, sort_profile=None):
 
 def seal_collections(snapshot, endpoint, data, filters, *, sort_profiles=None):
     for section, collection in data.get("collections", {}).items():
-        collection["page"] = seal_page(snapshot, endpoint, section, collection["page"], filters,
-                                       sort_profile=(sort_profiles or {}).get(section))
+        collection["page"] = seal_page(
+            snapshot,
+            endpoint,
+            section,
+            collection["page"],
+            filters,
+            sort_profile=(sort_profiles or {}).get(section),
+        )
     return data
 
 

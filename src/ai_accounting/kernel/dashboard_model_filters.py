@@ -11,11 +11,12 @@ from .contracts import KernelError
 from .dashboard_pages import decode_cursor, seal_page
 
 # Part of the producer content contract; changes require its version advance.
-FILTER_DIRECTORY_VERSION = 1
+FILTER_DIRECTORY_VERSION = 2
 _WIDTHS = {
     ("funds", "movements"): 3,
     ("funds", "statements"): 2,
-    ("employees", "employees"): 4,
+    ("employees", "employees"): 5,
+    ("employees", "labor_workers"): 2,
     ("employees", "labor_sources"): 2,
     ("assets", "assets"): 3,
     ("assets", "projects"): 2,
@@ -46,8 +47,9 @@ def decorate_keys(page, section, keys, items):
                 if item.get("in_period") is False
                 else "unknown",
                 item["selection_status"],
+                ",".join(sorted(item["period_states"])) or "-",
             )
-        elif (page, section) == ("employees", "labor_sources"):
+        elif page == "employees" and section in {"labor_workers", "labor_sources"}:
             entry = (key, item["person_id"])
         elif (page, section) == ("assets", "assets"):
             entry = (key, item["asset_type"], item["status"])
@@ -77,6 +79,12 @@ def _check_entry(page, section, entry):
             entry[1] not in {"unknown", "not_started", "ended", "in_period"}
             or entry[2] not in {"true", "false", "unknown"}
             or entry[3] not in {"established", "unestablished"}
+            or entry[4] != "-"
+            and (
+                not set(entry[4].split(","))
+                <= {"regular", "unpaid_leave", "departed", "labor", "labor_ended", "unknown"}
+                or entry[4] != ",".join(sorted(set(entry[4].split(","))))
+            )
         ):
             raise _invalid()
     elif (page, section) == ("assets", "assets"):
@@ -105,6 +113,7 @@ def directory_matches(page, section, entry, filters, *, employee_states=None):
         if employee_states is None or entry[0] not in employee_states:
             raise _invalid()
         selected = filters["employee_filter"]
+        monthly_states = set() if entry[4] == "-" else set(entry[4].split(","))
         matches = (
             selected == "all"
             or selected == "in_period"
@@ -114,15 +123,21 @@ def directory_matches(page, section, entry, filters, *, employee_states=None):
             or selected == "ended"
             and entry[1] == "ended"
             or selected == "employment_active"
-            and employee_states[entry[0]] == "regular"
+            and "regular" in monthly_states
             or selected.startswith("employment_")
             and selected != "employment_active"
-            and employee_states[entry[0]] == selected.removeprefix("employment_")
+            and (
+                selected.removeprefix("employment_") in monthly_states
+                or selected == "employment_departed"
+                and employee_states[entry[0]] == "departed"
+                or selected == "employment_unknown"
+                and entry[1] == "unknown"
+            )
         )
         return matches and (
             filters.get("employee_id") is None or entry[0] == filters["employee_id"]
         )
-    if (page, section) == ("employees", "labor_sources"):
+    if page == "employees" and section in {"labor_workers", "labor_sources"}:
         return filters.get("employee_id") is None or entry[1] == filters["employee_id"]
     if (page, section) == ("assets", "assets"):
         selected = filters["asset_filter"]

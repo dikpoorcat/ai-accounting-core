@@ -231,7 +231,7 @@ def test_personnel_date_contract_preserves_supported_precision(samples, sample, 
             assert failure.value.code == "response_contract_mismatch"
 
 
-def test_live_personnel_dates_keep_frozen_and_supplemental_precision(samples):
+def test_live_personnel_dates_keep_source_precision_after_management_correction(samples):
     monthly = _personnel_date_value(
         samples["employees_month_dates"]["response"], "employees_month_dates"
     )
@@ -243,9 +243,9 @@ def test_live_personnel_dates_keep_frozen_and_supplemental_precision(samples):
     assert mixed["employment_start_date"] == "2025-12"
     assert mixed["employment_end_date"] == "2026-04-20"
     conflict = _personnel_date_value(
-        samples["employees_date_conflict"]["response"], "employees_date_conflict"
+        samples["employees_corrected_roster"]["response"], "employees_corrected_roster"
     )
-    assert conflict["in_period"] is None
+    assert conflict["in_period"] is False
     for item in (monthly, mixed, conflict):
         assert "field_sources" not in item and "field_conflicts" not in item
 
@@ -254,8 +254,8 @@ def test_live_personnel_dates_keep_frozen_and_supplemental_precision(samples):
     "field", ["field_sources", "field_conflicts", "source_history", "tax_withholding_start_date"]
 )
 def test_employee_contract_rejects_technical_fields(samples, field):
-    response = copy.deepcopy(samples["employees_date_conflict"]["response"])
-    _personnel_date_value(response, "employees_date_conflict")[field] = []
+    response = copy.deepcopy(samples["employees_corrected_roster"]["response"])
+    _personnel_date_value(response, "employees_corrected_roster")[field] = []
     for validate in (validate_response, http_response):
         with pytest.raises(KernelError) as failure:
             validate("dashboard_employees", response)

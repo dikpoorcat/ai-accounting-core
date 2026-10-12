@@ -44,11 +44,11 @@ test("the explicit generated manifest covers every browser-visible response cont
     "browser_security_status", "dashboard_assets", "dashboard_brief", "dashboard_brief_group",
     "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_funds", "dashboard_period_preparation",
-    "dashboard_quarterly_report", "delete_work_draft", "list_work_drafts", "period_readiness",
+    "dashboard_quarterly_report", "delete_work_draft", "inventory_batch", "list_work_drafts", "period_readiness",
     "read_work_draft", "report_export_receipt", "report_export_status", "save_work_draft", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
-  const serviceOnly = new Set(["delete_work_draft", "list_work_drafts", "read_work_draft", "save_work_draft"]);
+  const serviceOnly = new Set(["delete_work_draft", "inventory_batch", "list_work_drafts", "read_work_draft", "save_work_draft"]);
   for (const key of Object.keys(schemas)) {
     if (!serviceOnly.has(key)) assert(source.includes(`["${key}"`), key);
   }
@@ -88,7 +88,7 @@ test("all non-context dashboards carry required read context and current schema 
   const versions = {
     workflow: 2, period_readiness: 1,
     dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 9,
-    dashboard_employees: 11, dashboard_assets: 10, dashboard_business_status: 10,
+    dashboard_employees: 12, dashboard_assets: 10, dashboard_business_status: 10,
     dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
   };
   for (const [name, sample] of Object.entries(samples)) {
@@ -156,7 +156,7 @@ test("personnel date validators preserve month and day precision and reject malf
 });
 
 test("owner employee responses reject provenance and conflict diagnostics", () => {
-  const original = samples.employees_date_conflict.response;
+  const original = samples.employees_corrected_roster.response;
   const validate = validators.validateDashboardEmployeesResponse;
   assert.equal(validate(original), true, JSON.stringify(validate.errors));
   for (const key of ["field_sources", "field_conflicts", "accounting_state", "source_history"]) {
@@ -166,18 +166,28 @@ test("owner employee responses reject provenance and conflict diagnostics", () =
   }
 });
 
-test("employee contracts distinguish the four employment states", () => {
+test("employee contracts distinguish all six workforce states and monthly relationship segments", () => {
   const validate = validators.validateDashboardEmployeesResponse;
   for (const [filter, state] of [
     ["employment_active", "regular"],
     ["employment_unpaid_leave", "unpaid_leave"],
     ["employment_departed", "departed"],
     ["employment_unknown", "unknown"],
+    ["all", "labor"],
+    ["all", "labor_ended"],
   ]) {
     const response = structuredClone(samples.employees_focused.response);
     response.data.employee_filter = filter;
     response.data.collections.employees.items[0].employment_state = state;
+    response.data.collections.employees.items[0].period_states = [state];
+    response.data.collections.employees.items[0].possible_period_states = [state];
+    response.data.collections.employees.items[0].relationship_segments = [{ state, start: "2026-01", end: "2026-02-01" }];
     assert(validate(response), JSON.stringify(validate.errors));
+  }
+  for (const key of ["period_states", "possible_period_states", "relationship_segments"]) {
+    const response = structuredClone(samples.employees_focused.response);
+    delete response.data.collections.employees.items[0][key];
+    assert.equal(validate(response), false, key);
   }
   for (const state of [undefined, null, "in_period", true]) {
     const response = structuredClone(samples.employees_focused.response);
@@ -203,5 +213,39 @@ test("employee contract rejects removed historical wage and payment collections"
       items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null },
     };
     assert.equal(validate(changed), false, key);
+  }
+});
+
+test("labor worker contracts validate a zero-fee roster independently of financial sources", () => {
+  const validate = validators.validateDashboardEmployeesResponse;
+  const response = structuredClone(samples.employees_focused.response);
+  response.data.collections.labor_workers = {
+    items: [{ person_id: "synthetic-labor", name: "合成劳务", employment_state: "labor",
+      period_states: ["labor"], possible_period_states: ["labor"],
+      relationship_segments: [{ state: "labor", start: "2026-01", end: null }],
+      in_period: true, has_labor_activity: false }],
+    page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null },
+  };
+  assert(validate(response), JSON.stringify(validate.errors));
+  for (const [key, value] of [["employment_state", "active"], ["period_states", ["employee"]], ["in_period", "yes"], ["has_labor_activity", 0]]) {
+    const changed = structuredClone(response);
+    changed.data.collections.labor_workers.items[0][key] = value;
+    assert.equal(validate(changed), false, key);
+  }
+  const changed = structuredClone(response);
+  changed.data.collections.labor_workers.items[0].relationship_segments[0].event_id = "internal-event";
+  assert.equal(validate(changed), false, "event identity is not a dashboard field");
+});
+
+test("actual worker registration produces an independent roster entry without remuneration", () => {
+  const response = samples.employees_labor_roster_zero_fee.response;
+  const validate = validators.validateDashboardEmployeesResponse;
+  assert(validate(response), JSON.stringify(validate.errors));
+  assert(response.data.collections.labor_workers.items.length > 0);
+  assert(response.data.employees.labor_worker_count > 0);
+  for (const worker of response.data.collections.labor_workers.items) {
+    assert.equal(worker.has_labor_activity, false);
+    assert(worker.period_states.includes("labor"));
+    assert(worker.relationship_segments.some(segment => segment.state === "labor"));
   }
 });

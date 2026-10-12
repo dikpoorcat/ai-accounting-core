@@ -72,9 +72,9 @@ def test_forged_employee_role_rejected_by_page_and_close_snapshot_then_repaired(
 
 def test_profile_only_employee_candidate_is_authenticated_before_membership(book):
     engine, directory = book
-    person = directory.register_entity(
-        "person", {"display_name": "Profile Person", "employment_status": "active"},
-        source="synthetic employment", request_id="profile-person",
+    person = directory.register_worker(
+        {"display_name": "Profile Person", "action": "hire", "effective_date": "2026-01-01"},
+        source="synthetic confirmed hire on 2026-01-01", request_id="profile-person",
     )["entity_id"]
     with engine.store.connection(read_only=True) as connection:
         assert employee_entities(connection, "2026-01", registry=engine.store.registry) == [person]

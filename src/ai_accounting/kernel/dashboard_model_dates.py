@@ -1,20 +1,19 @@
-"""Certified current personnel confirmations, independent of month membership.
+"""Certified monthly personnel states derived from effective event history.
 
-Money and period membership remain the producer's complete accounting output.
-Current personnel status never follows a date or legacy roster flag. These inputs
-belong to an authenticated model root, never an across-request proof cache.
+The selected business month and management version determine membership.
+Changing the observation day never substitutes today's state for a past month.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .types import ActualDate
+from .employee_employment import WorkforceState
+from .types import ActualDate, EvidenceDigest, YearMonth
 
-EmploymentState = Literal["regular", "unpaid_leave", "departed", "unknown"]
+EmploymentState = WorkforceState
 EmployeeIdentity = Annotated[str, Field(strict=True, min_length=1, max_length=200)]
 
 
@@ -22,28 +21,27 @@ class EmployeeDateBasis(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     employee_id: EmployeeIdentity
-    explicit_state: EmploymentState
+    period_states: tuple[WorkforceState, ...]
+    possible_period_states: tuple[WorkforceState, ...]
+    period_end_state: WorkforceState
+    event_version: EvidenceDigest
 
 
-def current_employment_state(basis: EmployeeDateBasis | Mapping, as_of: str) -> EmploymentState:
-    """Read an explicit current confirmation; missing confirmation stays unknown."""
-    if isinstance(basis, EmployeeDateBasis):
-        return basis.explicit_state
-    else:
-        return basis.get("employment_state") or "unknown"
-
-
-def employee_date_basis(employee_id: str, profile: Mapping) -> EmployeeDateBasis:
+def employee_date_basis(employee_id, monthly, timeline):
     return EmployeeDateBasis(
         employee_id=employee_id,
-        explicit_state=profile.get("employment_state") or "unknown",
+        period_states=tuple(monthly["period_states"]),
+        possible_period_states=tuple(monthly["possible_period_states"]),
+        period_end_state=monthly["period_end_state"],
+        event_version=timeline["event_version"],
     )
 
 
 class ModelDateBasis(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    rule: Literal["explicit-current-employment-state/1"]
+    rule: Literal["effective-workforce-month/1"]
+    period: YearMonth
     valid_from: ActualDate
     employees: tuple[EmployeeDateBasis, ...]
 
@@ -55,26 +53,23 @@ class ModelDateBasis(BaseModel):
         return self
 
 
-def make_date_basis(employees: tuple[EmployeeDateBasis, ...], as_of: str) -> ModelDateBasis:
-    employees = tuple(sorted(employees, key=lambda basis: basis.employee_id))
+def make_date_basis(employees, as_of, period):
     return ModelDateBasis(
-        rule="explicit-current-employment-state/1", valid_from=as_of,
-        employees=employees,
+        rule="effective-workforce-month/1",
+        period=YearMonth(period),
+        valid_from=ActualDate(as_of),
+        employees=tuple(sorted(employees, key=lambda basis: basis.employee_id)),
     )
 
 
-def employee_states(basis: ModelDateBasis, as_of: str) -> dict[str, EmploymentState]:
-    """Read the complete certified roster without inferring date transitions."""
-    day = str(ActualDate(as_of))
-    return {item.employee_id: current_employment_state(item, day) for item in basis.employees}
+def employee_states(basis: ModelDateBasis, as_of: str):
+    ActualDate(as_of)
+    return {item.employee_id: item.period_end_state for item in basis.employees}
 
 
 def original_date_states_valid(basis: ModelDateBasis, as_of: str) -> bool:
-    """Explicit confirmations remain valid within the certified management version."""
-    day = str(ActualDate(as_of))
-    return basis.valid_from <= day
+    return basis.valid_from <= ActualDate(as_of)
 
 
 def date_verification_days(basis: ModelDateBasis):
-    """One representative proves the explicit, calendar-independent states."""
     return (str(basis.valid_from),)

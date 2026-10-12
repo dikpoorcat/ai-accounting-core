@@ -105,7 +105,7 @@ def seed_registration_entities(engine, kind, data):
 
 
 def save_entity_display_profile(engine, profile, *, expected_revision, request_id):
-    """Explicit entity setup for presentation tests; revisions remain real."""
+    """Explicit metadata or dated event setup; never infer workforce facts."""
     from ai_accounting.kernel.display import Display
     from ai_accounting.kernel.entities import Entities
 
@@ -118,6 +118,13 @@ def save_entity_display_profile(engine, profile, *, expected_revision, request_i
     entity_id = data.pop("entity_id")
     source = data.pop("source")
     evidence = data.pop("evidence_digest", None)
+    event = data.pop("workforce_event", None)
+    events = data.pop("workforce_events", None)
+    if event is not None and events is not None:
+        raise ValueError("provide one explicit event or an explicit event sequence")
+    selected_events = [event] if event is not None else events or []
+    if any(key.startswith("employment_") for key in data):
+        raise ValueError("synthetic workforce setup requires explicit workforce_event(s)")
     entity_kind = {"employee": "person", "counterparty": "organization"}.get(kind, kind)
     with engine.store.connection(read_only=True) as connection:
         current = connection.execute("SELECT kind FROM entity WHERE id=?", (entity_id,)).fetchone()
@@ -128,26 +135,32 @@ def save_entity_display_profile(engine, profile, *, expected_revision, request_i
     # The synthetic directory starts with one blank profile revision. Preserve
     # the caller's expected version relative to that explicit starting point.
     revision = expected_revision + 1
-    if entity_kind == "person" and any(key.startswith("employment_") for key in data):
-        # Explicit synthetic historical baseline, rather than a production
-        # metadata command. Retain immutable revisions and management invalidation.
-        from ai_accounting.kernel.entities import PersonProfile
-        from ai_accounting.kernel.types import evidence_digest_bytes
-
-        stored = PersonProfile.model_validate_json(canonical(data)).model_dump(mode="json")
-        proof = None if evidence is None else evidence_digest_bytes(evidence)
-
-        def operation(connection):
-            actual = connection.execute(
-                "SELECT max(revision) FROM entity_profile_revision WHERE entity_id=?", (entity_id,)
-            ).fetchone()[0]
-            assert actual == revision, "synthetic baseline revision changed"
-            return Entities._insert_profile(connection, entity_id, revision + 1, stored, source, proof)
-
-        saved = engine._write(
-            request_id, digest(["synthetic employment baseline", entity_id, stored, source, evidence, revision]),
-            None, ("management",), "update_entity_profile", operation,
-        )
+    if selected_events:
+        if entity_kind != "person":
+            raise ValueError("synthetic workforce events require a person")
+        directory = Entities(engine)
+        for index, fact in enumerate(selected_events):
+            if index == 0 and data:
+                if fact["action"] not in {"hire", "start_labor"}:
+                    raise ValueError(
+                        "metadata with an event requires explicit relationship registration"
+                    )
+                saved = directory.register_worker(
+                    dict(data, **fact), entity_id=entity_id,
+                    expected_revision=revision, source=source, evidence_digest=evidence,
+                    request_id=(
+                        request_id if len(selected_events) == 1 else request_id + f"-event-{index}"
+                    ),
+                )
+            else:
+                saved = directory.change_workforce_relationship(
+                    entity_id, fact, source=source, evidence_digest=evidence,
+                    expected_revision=revision,
+                    request_id=(
+                        request_id if len(selected_events) == 1 else request_id + f"-event-{index}"
+                    ),
+                )
+            revision = saved["revision"]
         return dict(saved, id=saved["profile_id"])
     saved = Entities(engine).update_entity_profile(
         entity_id,

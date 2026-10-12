@@ -65,9 +65,9 @@ def test_focused_employee_keeps_month_money_without_history_reads_or_preloading(
         with raw_read():
             response = dashboard.employees(period, employee_id="employee", employee_filter="all")
         validate_response("dashboard_employees", response)
-        assert response["schema_version"] == 11
+        assert response["schema_version"] == 12
         data = response["data"]
-        assert set(data["collections"]) == {"employees", "labor_sources"}
+        assert set(data["collections"]) == {"employees", "labor_workers", "labor_sources"}
         item = data["collections"]["employees"]["items"][0]
         assert item["net_salary_fen"] == 0
         assert (

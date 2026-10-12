@@ -158,7 +158,7 @@ def test_future_version_cursor_reads_exact_pages_and_rejects_wrong_scope(
     database.execute("BEGIN")
     loaded = model.load_model(database, scope)
     root = model._load_bytes(database, loaded.descriptor.root_digest)
-    assert root["content_version"] == 3
+    assert root["content_version"] == 4
     assert root["blocks"][0]["collection_version"] is None
     assert root["blocks"][1]["collection_version"] == "future-collection-版本"
     snap = SimpleNamespace(store=SimpleNamespace(company_id=scope.company_id,

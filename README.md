@@ -69,7 +69,7 @@ Vite 在服务状态变化或连接失败时重新发现后台，核验同一资
 
 `save_fact`、`amend_fact` 和批量登记自动检查强重复候选；AI 先查原件，仍不能判断才问负责人。复用既有业务或确认另建都留下绑定版本的核对依据。弱线索不打断登记，原有唯一性和防重复核销不能被核对绕过。
 
-对象名称与档案通过 `update_entity_profile` 部分更新，省略字段保留，只影响管理资料。员工入职通过 `register_employee` 原子登记或复用已有人员；停薪留职、复薪、离职、再入职及任职事项更正通过 `change_employee_employment` 登记。程序根据有明确来源的已发生任职事项生成状态，无工资人员也能进入在职清单；生效时间允许实际日期或月份，月份不补造实际日，顺序不明时需明确前一事项。`employee_employment_history` 提供带版本检查的分页历史；普通档案入口不直接写任职字段。指错对象使用 `preview_identity_correction`／`confirm_identity_correction`，一次提交完成受影响事实及账务更正；闭期明确指定开放入账月，原冻结内容保留。`find_facts` 使用 `entity_id`、角色、`identity_match=current|recorded` 和不透明 `cursor`，默认按月份及事实编号倒序，每页最多 500 条。
+对象名称与档案通过 `update_entity_profile` 部分更新，省略字段保留。员工和劳务通过 `register_worker` 原子登记或复用同一人员身份；入职、停薪、复薪、离职、劳务开始结束、互转及更正通过 `change_workforce_relationship` 保存有来源的生效事件。程序从唯一时间线推导六种用工状态和月度名册，没有工资或劳务费也能入册；月份不补造日期，入职前不自动归劳务。`workforce_relationship_history` 提供事件版本绑定的分页历史，可指定月份读取归属及结构化缺项。闭期名册显示最新确认历史，工资与凭证保持冻结。详见[用工关系与月度名册](docs/workforce-relationships.md)。指错对象使用 `preview_identity_correction`／`confirm_identity_correction`，一次提交完成受影响事实及账务更正；闭期明确指定开放入账月，原冻结内容保留。`find_facts` 使用 `entity_id`、角色、`identity_match=current|recorded` 和不透明 `cursor`，默认按月份及事实编号倒序，每页最多 500 条。
 
 备用金用 `managed_reserve_expense` 登记实际支出、`managed_reserve_refund` 登记实际退回公司，支持银行、现金和公司平台账户，沿用通用预览和发布流程。平台收付必须引用核验过的原行。备用金本身不建账户、不管余额或退款额度，退款不要求原支出编号；内部消费、退款权利和债务结清不能当成公司实际退款。
 

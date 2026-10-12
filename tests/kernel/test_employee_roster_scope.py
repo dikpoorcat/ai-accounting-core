@@ -19,6 +19,7 @@ from ai_accounting.kernel.backup import BackupError, verify_file
 from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.types import canonical, digest
 
 identity_engine = identity_engine_fixture
@@ -116,10 +117,16 @@ def test_default_roster_authenticates_witnesses_and_month_money_without_all_hist
 
 def test_old_zero_wage_and_retired_employee_remain_in_complete_roster(tmp_path, monkeypatch):
     company = prepared(tmp_path, zero=True)
-    save_entity_display_profile(company.engine, {
-        "kind": "employee", "entity_id": "employee", "employment_status": "inactive",
-        "employment_start": "2025-12", "employment_end": "2026-01", "source": "明确的合成离职资料",
-    }, expected_revision=0, request_id="retired")
+    directory = Entities(company.engine)
+    hired = directory.register_worker(
+        {"action": "hire", "effective_date": "2025-12"}, entity_id="employee",
+        expected_revision=1, source="合成确认2025年12月入职", request_id="retired-hire",
+    )
+    directory.change_workforce_relationship(
+        "employee", {"action": "depart", "effective_date": "2026-01-31"},
+        expected_revision=hired["revision"], source="合成确认2026年1月31日离职",
+        request_id="retired",
+    )
     february(company, employee="employee-2")
     actual = result(company.engine, "2026-02")
     employees = {
@@ -208,10 +215,15 @@ def test_same_names_and_registered_person_without_wages_preserve_full_roster(tmp
     company = prepared(tmp_path, zero=True)
     february(company, employee="employee-2")
     for employee in ("employee", "employee-2", "registered-no-wages"):
-        save_entity_display_profile(company.engine, {
+        saved = save_entity_display_profile(company.engine, {
             "kind": "employee", "entity_id": employee, "display_name": "同名员工",
-            "employment_status": "active", "source": "明确的合成对象档案",
+            "source": "明确的合成对象档案",
         }, expected_revision=0, request_id="same-name-" + employee)
+        Entities(company.engine).register_worker(
+            {"action": "hire", "effective_date": "2026-01-01"}, entity_id=employee,
+            expected_revision=saved["revision"], source="合成明确入职2026年1月1日",
+            request_id="same-name-hire-" + employee,
+        )
     actual = result(company.engine, "2026-02", limit=1)
     assert actual["data"]["employees"]["registered_count"] == 3
     assert actual["data"]["collections"]["employees"]["page"]["returned_count"] == 1

@@ -51,24 +51,26 @@ def test_five_native_pages_have_no_date_business_diff_without_date_sensitive_peo
     assert state(engine) == before
 
 
-def test_hidden_employee_day_and_month_boundaries_and_explicit_states(book, monkeypatch):
+def test_hidden_employee_day_and_month_events_use_selected_month_states(book, monkeypatch):
     engine, save, publish, _ = book
     for index in range(22):
         save_entity_display_profile(engine, {
             "kind": "employee", "entity_id": f"shown-{index:02}",
-            "employment_start": "2025-01", "employment_state": "regular",
-            "employment_status": "active", "source": "synthetic explicit state",
+            "display_name": f"a-person-{index:02}",
+            "workforce_event": {"action": "hire", "effective_date": "2026-01-01"},
+            "source": "synthetic explicit hire",
         }, expected_revision=0, request_id=f"shown-{index}")
-    for ident, end, explicit in (("hidden-day", "2026-10-11", None),
-                                  ("hidden-month", "2026-10", None),
-                                  ("hidden-active", "2026-10-11", None),
-                                  ("explicit", "2026-10-11", "unpaid_leave")):
-        data = {"kind": "employee", "entity_id": ident, "employment_start": "2025-12",
-                "employment_end": end,
-                "employment_status": "active" if ident == "hidden-active" else "inactive",
-                "source": "synthetic explicit date"}
-        if explicit:
-            data["employment_state"] = explicit
+    for ident, action, effective in (("hidden-day", "depart", "2026-08-15"),
+                                   ("hidden-month", "depart", "2026-08"),
+                                   ("hidden-active", "depart", "2026-10-01"),
+                                   ("explicit", "unpaid_leave", "2026-08-01")):
+        data = {"kind": "employee", "entity_id": ident,
+                "display_name": "z-person-" + ident,
+                "workforce_events": [
+                    {"action": "hire", "effective_date": "2026-01-01"},
+                    {"action": action, "effective_date": effective},
+                ],
+                "source": "synthetic explicit dated relationship"}
         save_entity_display_profile(engine, data, expected_revision=0, request_id=ident)
     opening(save, publish)
     before = state(engine)
@@ -79,9 +81,9 @@ def test_hidden_employee_day_and_month_boundaries_and_explicit_states(book, monk
             response = Dashboard(engine).employees("2026-09", employee_filter="all", limit=100)
         selected = {item["employee_id"]: item["employment_state"]
                     for item in response["data"]["collections"]["employees"]["items"]}
-        assert selected["hidden-day"] == "unknown"
-        assert selected["hidden-month"] == "unknown"
-        assert selected["hidden-active"] == "unknown"
+        assert selected["hidden-day"] == "departed"
+        assert selected["hidden-month"] == "departed"
+        assert selected["hidden-active"] == "regular"
         assert selected["explicit"] == "unpaid_leave"
     first = observed["2026-10-10"]
     last = observed["2026-10-11"]
@@ -91,8 +93,8 @@ def test_hidden_employee_day_and_month_boundaries_and_explicit_states(book, monk
     last_people = last["employees"]["data"]["collections"]["employees"]
     assert first_people["items"] == last_people["items"]
     assert all(item["employee_id"] != "hidden-active" for item in first_people["items"])
-    assert first_people["page"]["filtered_count"] == 22
-    assert last_people["page"]["filtered_count"] == 22
+    assert first_people["page"]["filtered_count"] == 23
+    assert last_people["page"]["filtered_count"] == 23
     assert observed["2026-10-11"] == observed["2026-11-01"]
     assert state(engine) == before
 

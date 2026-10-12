@@ -1,4 +1,4 @@
-"""Current confirmations do not change merely because the reading date changes."""
+"""Certified selected-month relationships do not change with the reading day."""
 
 import pytest
 from entity_fixture import save_entity_display_profile
@@ -12,7 +12,6 @@ from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_model_dates import (
     EmployeeDateBasis,
     ModelDateBasis,
-    current_employment_state,
     date_verification_days,
     employee_states,
     make_date_basis,
@@ -23,96 +22,59 @@ from ai_accounting.kernel.dashboard_read_model import load_model
 from ai_accounting.kernel.maintenance import Maintenance
 
 
-def basis(employee="person", **fields):
+def basis(employee="person", *, states=("unknown",), possible=None, end="unknown"):
     return EmployeeDateBasis(
         employee_id=employee,
-        explicit_state=fields.get("explicit_state") or "unknown",
+        period_states=states,
+        possible_period_states=states if possible is None else possible,
+        period_end_state=end,
+        event_version="1" * 64,
     )
 
 
 @pytest.mark.parametrize(
-    "source,day,expected",
+    "states,end",
     [
-        ({"employment_status": "active", "employment_end": "2026-02-15"}, "2026-02-14", "unknown"),
-        ({"employment_status": "active", "employment_end": "2026-02-15"}, "2026-02-15", "unknown"),
-        (
-            {"employment_status": "inactive", "employment_end": "2026-02-15"},
-            "2026-02-14",
-            "unknown",
-        ),
-        (
-            {"employment_status": "inactive", "employment_end": "2026-02-15"},
-            "2026-02-15",
-            "unknown",
-        ),
-        ({"employment_status": "active", "employment_end": "2026-02"}, "2026-02-28", "unknown"),
-        ({"employment_status": "active", "employment_end": "2026-02"}, "2026-03-01", "unknown"),
-        ({"employment_status": "inactive", "employment_end": "2026-02"}, "2026-03-01", "unknown"),
-        ({"explicit_state": "unknown", "employment_status": "active"}, "2026-02-01", "unknown"),
-        ({"explicit_state": "regular", "employment_end": "2026-02-01"}, "2026-03-01", "regular"),
-        ({"explicit_state": "unpaid_leave"}, "2026-03-01", "unpaid_leave"),
-        (
-            {
-                "employment_status": "active",
-                "employment_start": "2026-03",
-                "employment_end": "2026-02",
-            },
-            "2026-03-01",
-            "unknown",
-        ),
-        (
-            {
-                "employment_status": "active",
-                "employment_start": "2026-02-16",
-                "employment_end": "2026-02-15",
-            },
-            "2026-02-14",
-            "unknown",
-        ),
-        (
-            {
-                "employment_status": "active",
-                "employment_start": "2026-02-16",
-                "employment_end": "2026-02",
-            },
-            "2026-02-14",
-            "unknown",
-        ),
-        ({"employment_status": "active"}, "2026-03-01", "unknown"),
-        ({}, "2026-03-01", "unknown"),
+        (("regular",), "regular"),
+        (("unpaid_leave",), "unpaid_leave"),
+        (("regular", "departed"), "departed"),
+        (("labor", "regular"), "regular"),
+        (("labor", "labor_ended"), "labor_ended"),
+        (("unknown",), "unknown"),
     ],
 )
-def test_current_personnel_rule_requires_explicit_confirmation(source, day, expected):
-    saved = basis(**source)
-    profile = {**source, "employment_state": source.get("explicit_state")}
-    assert current_employment_state(saved, day) == expected
-    assert current_employment_state(profile, day) == expected
+def test_monthly_certificate_uses_confirmed_timeline_states_without_calendar_substitution(states, end):
+    saved = make_date_basis((basis(states=states, end=end),), "2026-02-01", "2026-01")
+    for day in ("2026-02-01", "2026-02-15", "2026-03-01"):
+        assert employee_states(saved, day) == {"person": end}
+    assert saved.employees[0].period_states == states
 
 
-def test_current_state_certificate_has_no_inferred_calendar_boundaries():
+def test_monthly_certificate_has_business_month_and_event_version_without_calendar_boundaries():
     saved = make_date_basis(
         (
-            basis("explicit", explicit_state="regular", employment_end="2026-02-01"),
-            basis("conflict", employment_start="2026-03", employment_end="2026-02"),
-            basis("day", employment_status="active", employment_end="2026-02-15"),
-            basis("month", employment_end="2026-02"),
-            basis("forever", employment_status="active", employment_end="9999-12"),
+            basis("regular", states=("regular",), end="regular"),
+            basis("transition", states=("labor", "regular"), end="regular"),
+            basis("unknown", states=(), possible=("regular", "departed")),
         ),
         "2026-02-01",
+        "2026-01",
     )
+    assert saved.rule == "effective-workforce-month/1"
+    assert saved.period == "2026-01"
+    assert all(item.event_version == "1" * 64 for item in saved.employees)
     assert "next_change" not in saved.model_dump()
     assert date_verification_days(saved) == ("2026-02-01",)
-    assert employee_states(saved, "2026-02-15")["day"] == "unknown"
-    assert employee_states(saved, "2026-03-01")["month"] == "unknown"
-    assert employee_states(saved, "2026-03-01")["explicit"] == "regular"
+    assert employee_states(saved, "2026-02-15")["unknown"] == "unknown"
+    assert employee_states(saved, "2026-03-01")["regular"] == "regular"
     assert original_date_states_valid(saved, "2026-02-01")
     assert original_date_states_valid(saved, "2026-02-14")
     assert original_date_states_valid(saved, "2026-02-15")
     assert not original_date_states_valid(saved, "2026-01-31")
 
 
-def test_current_state_certificate_rejects_old_calendar_inputs_and_duplicate_people():
-    saved = make_date_basis((basis(employment_end="2026-02"),), "2026-02-01")
+def test_monthly_certificate_rejects_old_current_state_inputs_and_duplicate_people():
+    saved = make_date_basis((basis(),), "2026-02-01", "2026-01")
     value = saved.model_dump(mode="python")
     for changed in (
         {"next_change": None},
@@ -123,6 +85,10 @@ def test_current_state_certificate_rejects_old_calendar_inputs_and_duplicate_peo
             ModelDateBasis.model_validate({**value, **changed})
     with pytest.raises(ValidationError):
         EmployeeDateBasis(employee_id="person", explicit_state="unknown", employment_end="2026-02")
+    with pytest.raises(ValidationError):
+        ModelDateBasis.model_validate({**value, "rule": "explicit-current-employment-state/1"})
+    with pytest.raises(ValidationError):
+        ModelDateBasis.model_validate({key: item for key, item in value.items() if key != "period"})
 
 
 def test_all_five_pages_cross_day_without_writes_or_native_fallback(book, monkeypatch):
@@ -202,10 +168,19 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
     monkeypatch.setattr(business_queries, "_today_china", lambda: "2026-10-10")
     opening(save, publish)
     for employee_id, fields in (
-        ("day-person", {"employment_status": "active", "employment_end": "2026-10-11"}),
-        ("month-person", {"employment_status": "inactive", "employment_end": "2026-10"}),
-        ("explicit-person", {"employment_state": "regular", "employment_end": "2026-10-11"}),
-        ("unknown-person", {"employment_state": "unknown", "employment_status": "active"}),
+        ("day-person", {"workforce_events": [
+            {"action": "hire", "effective_date": "2026-01-01"},
+            {"action": "depart", "effective_date": "2026-10-01"},
+        ]}),
+        ("month-person", {"workforce_events": [
+            {"action": "hire", "effective_date": "2026-01-01"},
+            {"action": "depart", "effective_date": "2026-09"},
+        ]}),
+        ("unpaid-person", {"workforce_events": [
+            {"action": "hire", "effective_date": "2026-01-01"},
+            {"action": "unpaid_leave", "effective_date": "2026-08-01"},
+        ]}),
+        ("unknown-person", {"note": "No confirmed workforce relationship"}),
     ):
         save_entity_display_profile(
             engine,
@@ -213,7 +188,6 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
                 "kind": "employee",
                 "entity_id": employee_id,
                 "display_name": employee_id,
-                "employment_start": "2026-01",
                 "source": "synthetic personnel confirmation",
                 **fields,
             },
@@ -258,14 +232,14 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
             item["employee_id"]: item["employment_state"]
             for item in all_people["collections"]["employees"]["items"]
         }
-        assert states["day-person"] == "unknown"
-        assert states["month-person"] == "unknown"
-        assert states["explicit-person"] == "regular"
-        assert states["unknown-person"] == "unknown"
+        assert states["day-person"] == "regular"
+        assert states["month-person"] == "departed"
+        assert states["unpaid-person"] == "unpaid_leave"
+        assert "unknown-person" not in states
     assert state(engine) == before
 
 
-def test_complete_verification_compares_original_day_and_real_calendar_boundaries(
+def test_complete_verification_retains_the_business_month_across_observation_days(
     book, monkeypatch
 ):
     engine, save, publish, _ = book
@@ -276,9 +250,10 @@ def test_complete_verification_compares_original_day_and_real_calendar_boundarie
         {
             "kind": "employee",
             "entity_id": "person",
-            "employment_start": "2026-01",
-            "employment_end": "2026-10-11",
-            "employment_status": "active",
+            "workforce_events": [
+                {"action": "hire", "effective_date": "2026-01-01"},
+                {"action": "depart", "effective_date": "2026-09-15"},
+            ],
             "source": "synthetic personnel confirmation",
         },
         expected_revision=0,

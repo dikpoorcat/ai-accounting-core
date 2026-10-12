@@ -10,11 +10,13 @@ export type EmployeeDashboardItem = DashboardEmployeesContract.EmployeeItem | Da
 export type EstablishedEmployeeItem = DashboardEmployeesContract.EmployeeItem;
 export type UnestablishedEmployeeItem = DashboardEmployeesContract.UnestablishedEmployee;
 export type PersonalLaborItem = DashboardEmployeesContract.LaborSource;
+export type LaborWorkerItem = DashboardEmployeesContract.LaborWorkerItem;
+export type WorkforceRelationshipSegment = DashboardEmployeesContract.WorkforceRelationshipSegment;
 export type WorkforceCost = DashboardEmployeesContract.OwnerWorkforceCost;
 export type EmployeeFilter = DashboardEmployeesContract.EmployeesData["employee_filter"];
 
 export interface EmployeesQuery extends DashboardPageQuery {
-  section?: "employees" | "labor_sources";
+  section?: "employees" | "labor_workers" | "labor_sources";
   employee_filter?: EmployeeFilter;
   employee_id?: string;
 }

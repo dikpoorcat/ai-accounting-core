@@ -25,7 +25,7 @@ test("first voucher display permits only its bounded snapshot-associated collect
 
 test("display changes retain approved continuation reads without permitting fresh unrelated collections", () => {
   for (const [key, section] of [["brief", "activity"], ["funds", "accounts"],
-    ["employees", "labor_sources"], ["assets", "projects"]]) {
+    ["employees", "labor_workers"], ["employees", "labor_sources"], ["assets", "projects"]]) {
     const current = { key, action: key }, url = query(section);
     url.pathname = `/api/dashboard/${key}`;
     assert.throws(() => verifyLocalRead(url, current, selected, snapshot));

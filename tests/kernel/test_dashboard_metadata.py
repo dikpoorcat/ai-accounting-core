@@ -101,11 +101,20 @@ def test_frozen_employee_candidates_use_the_frozen_management_scope(engine, monk
     monkeypatch.setattr(entities, "employee_entities", current_membership)
     with QueryReads.snapshot(engine) as reads:
         snapshot = SimpleNamespace(
-            reads=reads, connection=reads.connection, store=engine.store,
-            period="2026-01", month=YearMonth("2026-01").ordinal,
-            close=SimpleNamespace(section=lambda name: {
-                "employee_entities": ["frozen-employee"],
-            } if name == "management_snapshot" else None),
+            reads=reads,
+            connection=reads.connection,
+            store=engine.store,
+            period="2026-01",
+            month=YearMonth("2026-01").ordinal,
+            close=SimpleNamespace(
+                section=lambda name: (
+                    {
+                        "employee_entities": ["frozen-employee"],
+                    }
+                    if name == "management_snapshot"
+                    else None
+                )
+            ),
         )
         records = Records(snapshot, "profile", kind="employee", frozen=True)
         _query, parameters = records._query(records=True, identifiers={"frozen-employee"})
@@ -124,14 +133,18 @@ def profile(engine, kind, entity_id, revision=0, **fields):
     if exists is None:
         seed_entities(engine, ((entity_id, entity_kind, account_type),))
     evidence_digest = fields.pop("evidence_digest", None)
-    result = Entities(engine).update_entity_profile(
-        entity_id,
-        fields,
-        source=f"明确资料 {revision + 1}",
-        expected_revision=revision + 1,
-        request_id=f"entity-profile:{kind}:{entity_id}:{revision}",
-        evidence_digest=evidence_digest,
-    )
+    event = fields.pop("workforce_event", None)
+    directory = Entities(engine)
+    options = {
+        "source": f"明确资料 {revision + 1}",
+        "expected_revision": revision + 1,
+        "request_id": f"entity-profile:{kind}:{entity_id}:{revision}",
+        "evidence_digest": evidence_digest,
+    }
+    if event is not None:
+        result = directory.register_worker(dict(fields, **event), entity_id=entity_id, **options)
+    else:
+        result = directory.update_entity_profile(entity_id, fields, **options)
     return {"id": result["profile_id"], **result}
 
 
@@ -146,6 +159,7 @@ def detached_snapshot(engine, connection, period="2026-01"):
     snapshot.reads = QueryReads(engine, connection)
     snapshot.close = FrozenCloseView(snapshot.reads, close) if close else None
     snapshot.profile_cache, snapshot.source_metadata = {}, {}
+    snapshot.semantic_cache = {}
     snapshot.frozen_fact_ids = FrozenFacts(snapshot)
     snapshot.metadata = initialize_metadata(snapshot)
     return snapshot
@@ -190,7 +204,8 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
     )
     Display(engine).save_display_profile(
         {"kind": "business", "entity_id": "charge", "note": "", "source": "明确业务说明"},
-        expected_revision=0, request_id="business-note-before-close",
+        expected_revision=0,
+        request_id="business-note-before-close",
     )
     proof = engine.register_evidence(
         b"synthetic payee", "text/plain", "payee", request_id="payee-proof"
@@ -216,7 +231,8 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
     )
     Display(engine).save_display_profile(
         {"kind": "business", "entity_id": "charge", "note": "后来说明", "source": "后补业务说明"},
-        expected_revision=1, request_id="business-note-after-close",
+        expected_revision=1,
+        request_id="business-note-after-close",
     )
     export.save_payee(
         "party",
@@ -231,7 +247,7 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
         "employee",
         "later-person",
         display_name="后来录入姓名",
-        employment_status="active",
+        workforce_event={"action": "hire", "effective_date": "2026-01"},
     )
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
@@ -260,29 +276,46 @@ def test_frozen_metadata_and_missing_fields_keep_original_sources(engine):
 
 @pytest.mark.parametrize("registered_before_close", [True, False])
 def test_bank_account_number_keeps_exact_formal_frozen_or_supplement_source(
-    engine, registered_before_close,
+    engine,
+    registered_before_close,
 ):
     save(engine)
     publish(engine)
     proof = engine.register_evidence(
-        b"synthetic sourced bank identity", "text/plain", "bank-identity",
+        b"synthetic sourced bank identity",
+        "text/plain",
+        "bank-identity",
         request_id="bank-identity-proof",
     )["digest"]
     directory = Entities(engine)
-    data = {"bank_name": "合成银行", "bank_account_number": "111",
-            "account_holder_name": "合成公司"}
+    data = {
+        "bank_name": "合成银行",
+        "bank_account_number": "111",
+        "account_holder_name": "合成公司",
+    }
+
     def register_account(number):
         return directory.register_entity(
-            "fund_account", data | {"bank_account_number": number}, account_type="bank",
-            source="明确合成开户资料", evidence_digest=proof, request_id="bank-" + number,
+            "fund_account",
+            data | {"bank_account_number": number},
+            account_type="bank",
+            source="明确合成开户资料",
+            evidence_digest=proof,
+            request_id="bank-" + number,
         )
+
     old = register_account("111") if registered_before_close else None
     close(engine)
     if old:
         directory.correct_fund_account_identity(
-            old["entity_id"], account_type="bank", data=data | {"bank_account_number": "222"},
-            expected_identity_digest=old["fund_account"]["digest"], recording_error_confirmed=True,
-            source="后来有据纠正的账户号码", evidence_digest=proof, request_id="correct-number",
+            old["entity_id"],
+            account_type="bank",
+            data=data | {"bank_account_number": "222"},
+            expected_identity_digest=old["fund_account"]["digest"],
+            recording_error_confirmed=True,
+            source="后来有据纠正的账户号码",
+            evidence_digest=proof,
+            request_id="correct-number",
         )
         saved, expected, basis = old, "111", "frozen"
     else:
@@ -300,7 +333,8 @@ def test_bank_account_number_keeps_exact_formal_frozen_or_supplement_source(
 @pytest.mark.parametrize("kind", ["asset", "employee", "counterparty"])
 def test_formal_bank_account_number_does_not_replace_other_profile_numbers(kind):
     selected = entities.display_profile(
-        {"display_number": "管理编号"}, kind,
+        {"display_number": "管理编号"},
+        kind,
         fund_account={"identity": {"bank_account_number": "622200009876"}},
     )
     assert selected["display_number"] == "管理编号" and "account_number" not in selected
@@ -318,7 +352,9 @@ def test_current_bank_account_number_uses_only_formal_registered_identity(engine
         assert selected["display_name"] == "负责人管理名称"
         source = selected["field_sources"]["account_number"]
         assert (source["id"], source["field"], source["basis"]) == (
-            account["digest"], "identity.bank_account_number", "current",
+            account["digest"],
+            "identity.bank_account_number",
+            "current",
         )
 
 

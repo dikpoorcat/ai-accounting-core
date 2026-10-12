@@ -215,13 +215,13 @@ function recoveryResult(name, marker) {
   const value = result(name, marker);
   value.snapshot_version = "v1";
   value.read_context = { company_id: "company-a" };
-  for (const section of ["activity", "open_items", "movements", "statements", "investment_events", "accounts", "investment_products", "employees", "labor_sources", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
+  for (const section of ["activity", "open_items", "movements", "statements", "investment_events", "accounts", "investment_products", "employees", "labor_workers", "labor_sources", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
   return value;
 }
 const recoveryPaths = [
   ["Brief", "activity"], ["Brief", "open_items"],
   ["Funds", "book"], ["Funds", "bank"], ["Funds", "investment"], ["Funds", "accounts"], ["Funds", "investment_products"],
-  ["Employees", "employees"], ["Employees", "labor_sources"],
+  ["Employees", "employees"], ["Employees", "labor_workers"], ["Employees", "labor_sources"],
   ["Assets", "assets"], ["Assets", "projects"],
 ];
 function continueRecovery(view, section) {

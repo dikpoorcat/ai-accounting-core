@@ -1439,16 +1439,16 @@ test("employee combined overview amounts remain exact and preserve either unknow
     assert.equal(sumFen(first, second), null);
 });
 
-test("employee unpaid headline reads the full remuneration field in contract 11, preserving zero and unknown", () => {
+test("employee unpaid headline reads the full remuneration field in contract 12, preserving zero and unknown", () => {
   const data = { employees: { outstanding_net_fen: "12345" }, outstanding_remuneration_fen: "67890" };
-  assert.equal(employeeOutstandingFen(data, 11), "67890");
+  assert.equal(employeeOutstandingFen(data, 12), "67890");
   for (const value of ["0", null, "9007199254740993"]) {
     data.outstanding_remuneration_fen = value;
-    assert.equal(employeeOutstandingFen(data, 11), value);
+    assert.equal(employeeOutstandingFen(data, 12), value);
   }
   delete data.outstanding_remuneration_fen;
-  assert.throws(() => employeeOutstandingFen(data, 11), "Missing total must not fall back to wages");
-  for (const version of [9, 10, 12]) assert.throws(() => employeeOutstandingFen(data, version));
+  assert.throws(() => employeeOutstandingFen(data, 12), "Missing total must not fall back to wages");
+  for (const version of [9, 10, 11]) assert.throws(() => employeeOutstandingFen(data, version));
 });
 
 test("each of the six employee overview values must be visible and populated before the first warmup completes", () => {

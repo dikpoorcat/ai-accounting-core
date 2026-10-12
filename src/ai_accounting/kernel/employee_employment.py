@@ -1,7 +1,7 @@
-"""Typed personnel events and deterministic, source-preserving management state.
+"""One source-preserving workforce timeline for employees and labor.
 
-The immutable profile revision is also the event identity. Date bounds below are
-used only to compare precision; no synthetic calendar day is stored as a fact.
+Profile revisions are immutable event identities. Calendar bounds reason about
+precision only; a month is never persisted as an invented actual day.
 """
 
 from __future__ import annotations
@@ -12,61 +12,62 @@ import calendar
 import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
+from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema, model_validator
 
 from .content_history_context import source_canonical as canonical
+from .content_history_context import source_digest as digest
 from .contracts import KernelError, NeedsInformation
 from .types import ActualDate, YearMonth
 
-EmploymentDate = Annotated[
-    YearMonth | ActualDate,
-    WithJsonSchema(
-        {
-            "type": "string",
-            "anyOf": [
-                {"pattern": r"^[0-9]{4}-(0[1-9]|1[0-2])$"},
-                {"pattern": r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
-            ],
-            "x-accounting-fact": {
-                "role": "management",
-                "meaning": "employment_business_effective_date",
-                "allowed_precision": ["month", "day"],
-                "reusable_sources": ["owner_confirmation", "employment_document"],
-            },
-        }
-    ),
+WorkforceState = Literal[
+    "regular", "unpaid_leave", "departed", "labor", "labor_ended", "unknown"
 ]
-ProfileReference = Annotated[str, Field(min_length=1, max_length=200)]
+WorkforceDate = Annotated[
+    YearMonth | ActualDate,
+    WithJsonSchema({
+        "type": "string",
+        "anyOf": [
+            {"pattern": r"^[0-9]{4}-(0[1-9]|1[0-2])$"},
+            {"pattern": r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        ],
+        "x-accounting-fact": {
+            "role": "management", "meaning": "workforce_business_effective_date",
+            "allowed_precision": ["month", "day"],
+            "reusable_sources": ["owner_confirmation", "workforce_document"],
+        },
+    }),
+]
+EventReference = Annotated[str, Field(min_length=1, max_length=200)]
 
 
-class EmploymentEvent(BaseModel):
+class WorkforceEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    action: Literal["hire", "unpaid_leave", "resume", "depart"]
-    effective_date: EmploymentDate
-    after_profile_id: ProfileReference | None = None
-    replaces_profile_id: ProfileReference | None = None
+    action: Literal[
+        "hire", "start_labor", "unpaid_leave", "resume", "depart", "end_labor",
+        "to_employee", "to_labor",
+    ]
+    effective_date: WorkforceDate
+    initial_unpaid_leave: bool = False
+    after_event_id: EventReference | None = None
+    replaces_event_id: EventReference | None = None
+
+    @model_validator(mode="after")
+    def validate_initial_state(self):
+        if self.initial_unpaid_leave and self.action not in {"hire", "to_employee"}:
+            raise ValueError("initial_unpaid_leave requires hire or to_employee")
+        return self
 
 
-class EmploymentChange(EmploymentEvent):
-    """A complete replacement fact when replaces_profile_id is supplied."""
-
-
-class EmploymentInterval(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    start: EmploymentDate | None
-    end: EmploymentDate | None
+class WorkforceChange(WorkforceEvent):
+    """A complete replacement fact when replaces_event_id is supplied."""
 
 
 def issue(field, message, *references):
     selected = [reference for reference in references if isinstance(reference, str) and reference]
     return {
-        "field": field,
-        "message": message,
-        "semantics": "management",
-        "reusable_sources": selected or ["owner_confirmation", "employment_document"],
-        "allowed_precision": ["month", "day"]
-        if field in {"effective_date", "employment_start", "employment_end"}
-        else [],
+        "field": field, "message": message, "semantics": "management",
+        "reusable_sources": selected or ["owner_confirmation", "workforce_document"],
+        "allowed_precision": ["month", "day"] if field == "effective_date" else [],
     }
 
 
@@ -76,7 +77,7 @@ def require_occurred(value):
     today = _today_china()
     if value[:7] > today[:7] or len(value) == 10 and value > today:
         raise NeedsInformation(
-            [issue("effective_date", "仅登记已发生的任职事项，生效时间不能在未来")]
+            [issue("effective_date", "仅登记已发生的用工事项，生效时间不能在未来")]
         )
 
 
@@ -100,57 +101,41 @@ def records(connection, entity_id):
 
 
 def active_events(history):
-    """Validate correction references and retain aliases for existing order edges."""
+    """Validate person-scoped corrections and preserve order-reference aliases."""
     active, aliases, events = {}, {}, {}
-    baseline, baseline_seen = None, False
     for profile in history:
-        if profile.get("employment_intervals") is not None:
-            selected = profile.get("employment_baseline")
-            if baseline_seen and selected != baseline:
-                raise KernelError(
-                    "entity_profile_corrupt", "任职管理基线被改写", profile_id=profile["id"]
-                )
-            baseline = selected
-            baseline_seen = True
-        raw = profile.get("employment_event")
+        raw = profile.get("workforce_event")
         if raw is None:
             continue
         try:
-            event = EmploymentEvent.model_validate_json(canonical(raw)).model_dump(mode="json")
+            event = WorkforceEvent.model_validate_json(canonical(raw)).model_dump(mode="json")
         except ValueError as exc:
             raise KernelError(
-                "entity_profile_corrupt", "任职事件结构错误", profile_id=profile["id"]
+                "entity_profile_corrupt", "用工事件结构错误", profile_id=profile["id"]
             ) from exc
         ident = profile["id"]
-        replaced = event["replaces_profile_id"]
+        replaced, after = event["replaces_event_id"], event["after_event_id"]
         if replaced is not None:
             if replaced not in active:
                 raise NeedsInformation(
-                    [
-                        issue(
-                            "replaces_profile_id",
-                            "被更正记录须为本人员尚未被替代的任职事件",
-                            replaced,
-                        )
-                    ]
+                    [issue("replaces_event_id", "须引用本人员尚未被替代的用工事件", replaced)]
                 )
             active.pop(replaced)
             aliases[replaced] = ident
-        after = event["after_profile_id"]
-        if after is not None and after not in events and after != baseline:
+        if after is not None and after not in events:
             raise NeedsInformation(
-                [issue("after_profile_id", "先后关联须引用本人员此前的任职事件或原管理基线", after)]
+                [issue("after_event_id", "先后关联须引用本人员此前登记的用工事件", after)]
             )
         if replaced is not None and after == replaced:
             raise NeedsInformation(
-                [issue("after_profile_id", "替代事实不能同时声明发生在被替代事项之后", after)]
+                [issue("after_event_id", "替代事实不能同时发生在被替代事项之后", after)]
             )
         events[ident] = event
         active[ident] = event
-    return active, aliases, events, baseline
+    return active, aliases, events
 
 
-def ordered_events(active, aliases, baseline):
+def ordered_events(active, aliases):
     edges = {ident: set() for ident in active}
     ids = list(active)
     for pos, first in enumerate(ids):
@@ -162,13 +147,13 @@ def ordered_events(active, aliases, baseline):
             elif high2 < low1:
                 edges[second].add(first)
     for ident, event in active.items():
-        after = event["after_profile_id"]
+        after = event["after_event_id"]
         while after in aliases:
             after = aliases[after]
-        if after is not None and after != baseline:
+        if after is not None:
             if after == ident or after not in active:
                 raise NeedsInformation(
-                    [issue("after_profile_id", "任职先后关联形成自身引用或失效引用", ident, after)]
+                    [issue("after_event_id", "用工先后关联形成自身引用或失效引用", ident, after)]
                 )
             edges[after].add(ident)
     remaining, result = set(ids), []
@@ -176,24 +161,13 @@ def ordered_events(active, aliases, baseline):
         ready = remaining - {target for origin in remaining for target in edges[origin]}
         if not ready:
             raise NeedsInformation(
-                [
-                    issue(
-                        "after_profile_id",
-                        "业务日期与先后关联冲突，任职记录无法排序",
-                        *sorted(remaining),
-                    )
-                ]
+                [issue("after_event_id", "业务日期与先后关联冲突", *sorted(remaining))]
             )
         if len(ready) > 1:
-            raise NeedsInformation(
-                [
-                    issue(
-                        "after_profile_id",
-                        "月份或同日精度无法确定事项先后，请补充有来源的先后关联",
-                        *sorted(ready),
-                    )
-                ]
-            )
+            raise NeedsInformation([issue(
+                "after_event_id", "月份或同日精度无法确定事项先后，请补充有来源的先后关联",
+                *sorted(ready),
+            )])
         ident = ready.pop()
         result.append((ident, active[ident]))
         remaining.remove(ident)
@@ -201,189 +175,89 @@ def ordered_events(active, aliases, baseline):
 
 
 def projection(history):
-    active, aliases, events, baseline_id = active_events(history)
-    if not events:
-        return None
-    by_id = {profile["id"]: profile for profile in history}
-    first = next(profile for profile in history if profile.get("employment_event") is not None)
-    baseline = by_id.get(baseline_id, {})
-    if baseline_id is not None and (
-        not baseline
-        or baseline["revision"] >= first["revision"]
-        or baseline.get("employment_intervals") is not None
-    ):
-        raise KernelError(
-            "entity_profile_corrupt",
-            "任职基线必须是首次任职事件之前的原档案",
-            profile_id=baseline_id,
-        )
-    sequence = ordered_events(active, aliases, baseline_id)
-    state = baseline.get("employment_state", "unknown")
-    start, end = baseline.get("employment_start"), baseline.get("employment_end")
-    if state == "unknown" and (baseline.get("employment_status") == "inactive" or end is not None):
-        # An explicit old inactive interval remains a closed management basis;
-        # this only constrains the transition, it does not rewrite old state.
-        state = "departed"
-    intervals = []
-    if start is not None or end is not None or state in {"regular", "unpaid_leave"}:
-        intervals.append({"start": start, "end": end})
-    for position, (ident, event) in enumerate(sequence):
+    active, aliases, events = active_events(history)
+    state, segments = "unknown", []
+    allowed = {
+        # An explicit hire establishes employment and atomically ends earlier
+        # labor: the confirmed relationship rule permits only one at a time.
+        # This also allows an earlier labor fact to be backfilled before a hire.
+        "hire": {"unknown", "departed", "labor_ended", "labor"},
+        "start_labor": {"unknown", "departed", "labor_ended"},
+        "unpaid_leave": {"regular"}, "resume": {"unpaid_leave"},
+        "depart": {"regular", "unpaid_leave"}, "end_labor": {"labor"},
+        "to_employee": {"labor"}, "to_labor": {"regular", "unpaid_leave"},
+    }
+    targets = {
+        "hire": "regular", "start_labor": "labor", "unpaid_leave": "unpaid_leave",
+        "resume": "regular", "depart": "departed", "end_labor": "labor_ended",
+        "to_employee": "regular", "to_labor": "labor",
+    }
+    for ident, event in ordered_events(active, aliases):
         action, effective = event["action"], event["effective_date"]
-        if action == "hire":
-            # An old explicit special status is an authenticated baseline, not
-            # evidence that a backfilled hire has reversed that status.
-            establish = position == 0 and state in {"unknown", "regular"}
-            if establish and start is not None and effective != start:
-                raise NeedsInformation(
-                    [
-                        issue(
-                            "effective_date", "补录入职时间与原档案入职资料冲突", ident, baseline_id
-                        )
-                    ]
-                )
-            if not establish and state != "departed":
-                raise NeedsInformation(
-                    [issue("action", "该入职记录与已有在职或停薪状态冲突", ident, baseline_id)]
-                )
-            if state == "departed" and position == 0:
-                if end is None:
-                    raise NeedsInformation(
-                        [
-                            issue(
-                                "employment_end",
-                                "原离职基线缺少结束时间，请先用离职事项补录其日期或月份再登记再入职",
-                                baseline_id,
-                            )
-                        ]
-                    )
-                if bounds(end)[1] >= bounds(effective)[0]:
-                    if event["after_profile_id"] != baseline_id:
-                        raise NeedsInformation(
-                            [
-                                issue(
-                                    "after_profile_id",
-                                    "再入职须明确发生在原离职基线之后",
-                                    ident,
-                                    baseline_id,
-                                )
-                            ]
-                        )
-                    if end is not None and bounds(effective)[1] < bounds(end)[0]:
-                        raise NeedsInformation(
-                            [issue("effective_date", "再入职早于原离职时间", ident, baseline_id)]
-                        )
-            if establish:
-                intervals = []
-            start, end, state = effective, None, "regular"
-            intervals.append({"start": start, "end": None})
-        else:
-            allowed = {
-                "unpaid_leave": {"regular"},
-                "resume": {"unpaid_leave"},
-                "depart": {"regular", "unpaid_leave"},
-            }[action]
-            complete_departure = (
-                position == 0
-                and baseline_id is not None
-                and action == "depart"
-                and state == "departed"
-                and end is None
+        if state not in allowed[action]:
+            raise NeedsInformation(
+                [issue("action", "用工事项与生效时的关系不符，请补充或更正相关事实", ident)]
             )
-            if state not in allowed and not complete_departure:
-                raise NeedsInformation(
-                    [
-                        issue(
-                            "action",
-                            "任职事项与生效时的状态不符，须补充或更正相关任职事实",
-                            ident,
-                            baseline_id,
-                        )
-                    ]
-                )
-            if position == 0 and baseline_id is not None:
-                anchor = end or start
-                if anchor is not None and bounds(effective)[1] < bounds(anchor)[0]:
-                    raise NeedsInformation(
-                        [
-                            issue(
-                                "effective_date",
-                                "事项生效时间早于原管理基线的明确任职日期",
-                                ident,
-                                baseline_id,
-                            )
-                        ]
-                    )
-                if (
-                    anchor is not None
-                    and bounds(effective)[0] <= bounds(anchor)[1]
-                    and event["after_profile_id"] != baseline_id
-                ):
-                    raise NeedsInformation(
-                        [
-                            issue(
-                                "after_profile_id",
-                                "月份或同日精度无法确定事项与原任职基线的先后",
-                                ident,
-                                baseline_id,
-                            )
-                        ]
-                    )
-            state = {"unpaid_leave": "unpaid_leave", "resume": "regular", "depart": "departed"}[
-                action
-            ]
-            if action == "depart":
-                end = effective
-                if intervals:
-                    intervals[-1]["end"] = effective
-                else:
-                    intervals.append({"start": None, "end": effective})
+        if segments:
+            segments[-1]["end"] = effective
+            segments[-1]["end_event_id"] = ident
+        state = "unpaid_leave" if event["initial_unpaid_leave"] else targets[action]
+        segments.append({
+            "state": state, "start": effective, "end": None,
+            "event_id": ident, "end_event_id": None,
+        })
+    retained = [profile for profile in history if profile["id"] in events]
     return {
-        "employment_start": start,
-        "employment_end": end,
-        "employment_status": "inactive" if state == "departed" else "active",
-        "employment_state": state,
-        "employment_baseline": baseline_id,
-        "employment_intervals": intervals,
+        "employment_state": state, "segments": segments,
+        "event_version": digest(
+            [[item["id"], item.get("digest"), item["workforce_event"]] for item in retained]
+        ).hex(),
+        "event_references": retained,
     }
 
 
-PROJECTION_FIELDS = (
-    "employment_start",
-    "employment_end",
-    "employment_status",
-    "employment_state",
-    "employment_baseline",
-    "employment_intervals",
-)
+FORBIDDEN_PROFILE_FIELDS = {
+    "employment_event", "employment_start", "employment_end", "employment_status",
+    "employment_state", "employment_baseline", "employment_intervals",
+}
 
 
 def verify_history(history):
-    """Check every retained management version, including superseded events."""
-    prefix, derived = [], None
+    """Every retained revision must contain metadata and at most one event."""
+    from .entities import Entities, PersonProfile
+
+    prefix = []
+    derived = projection([])
     for profile in history:
+        if profile["revision"] != len(prefix) + 1 or (
+            prefix and profile["entity_id"] != prefix[0]["entity_id"]
+        ):
+            raise KernelError(
+                "entity_profile_corrupt", "人员档案版本缺失或混入其他人员", profile_id=profile["id"]
+            )
         prefix.append(profile)
+        if FORBIDDEN_PROFILE_FIELDS.intersection(profile):
+            raise KernelError(
+                "entity_profile_corrupt", "人员档案含旧任职基线或派生状态，须使用新用工事件模型",
+                profile_id=profile["id"],
+            )
         try:
-            if profile.get("employment_event") is not None:
-                if not isinstance(profile.get("source"), str) or not profile["source"].strip():
-                    raise KernelError(
-                        "entity_profile_corrupt", "任职事件缺少明确来源", profile_id=profile["id"]
-                    )
-                derived = projection(prefix)
-            if derived is not None and any(
-                profile.get(key) != derived[key] for key in PROJECTION_FIELDS
-            ):
-                raise KernelError(
-                    "entity_profile_corrupt",
-                    "任职读取模型与事件历史不一致",
-                    profile_id=profile["id"],
-                )
-            if derived is None and profile.get("employment_intervals") is not None:
-                raise KernelError(
-                    "entity_profile_corrupt", "任职读取模型缺少事件依据", profile_id=profile["id"]
-                )
+            PersonProfile.model_validate_json(canonical(Entities._content(profile)))
+        except ValueError as exc:
+            raise KernelError(
+                "entity_profile_corrupt", "人员档案或用工事件结构错误", profile_id=profile["id"]
+            ) from exc
+        if profile.get("workforce_event") is None:
+            continue
+        if not isinstance(profile.get("source"), str) or not profile["source"].strip():
+            raise KernelError(
+                "entity_profile_corrupt", "用工事件缺少明确来源", profile_id=profile["id"]
+            )
+        try:
+            derived = projection(prefix)
         except NeedsInformation as exc:
             raise KernelError(
-                "entity_profile_corrupt", "已保存任职事件存在冲突", profile_id=profile["id"]
+                "entity_profile_corrupt", "已保存用工事件存在冲突", profile_id=profile["id"]
             ) from exc
     return derived
 
@@ -396,32 +270,64 @@ def recorded_event_times(connection, events):
     missing = next((ident for kind, ident in references if (kind, ident) not in times), None)
     if missing is not None:
         raise KernelError(
-            "entity_profile_corrupt", "任职事件缺少唯一的登记审计时间", profile_id=missing
+            "entity_profile_corrupt", "用工事件缺少唯一的登记审计时间", profile_id=missing
         )
     return times
 
 
-def period_membership(intervals, period):
-    """Monthly roster includes any employment in the month, also unpaid leave."""
-    if any(
-        (item["start"] is None or item["start"][:7] <= period)
-        and (item["end"] is None or item["end"][:7] >= period)
-        for item in intervals
-    ):
-        # Unknown start is retained as unknown rather than inventing employment.
-        if any(
-            item["start"] is not None
-            and item["start"][:7] <= period
-            and (item["end"] is None or item["end"][:7] >= period)
-            for item in intervals
-        ):
-            return "in_period", True
-        return "unknown", None
-    if intervals and all(
-        item["start"] is not None and item["start"][:7] > period for item in intervals
-    ):
-        return "not_started", False
-    return "ended", False
+def monthly_projection(timeline, period):
+    """Confirmed occupancy and precision uncertainty for half-open segments."""
+    period = str(YearMonth(period))
+    if not timeline["segments"]:
+        return {
+            "period_states": ["unknown"], "possible_period_states": [],
+            "period_end_state": "unknown", "employee_member": None, "labor_member": None,
+            "fact_issues": [],
+        }
+    first, last = bounds(period)
+    states, possible, issues = [], [], []
+    end_state = "unknown"
+    for segment in timeline["segments"]:
+        low_start, high_start = bounds(segment["start"])
+        if high_start <= last:
+            end_state = segment["state"]
+        if segment["end"] is None:
+            low_end, high_end = "9999-12-31", "9999-12-31"
+        else:
+            low_end, high_end = bounds(segment["end"])
+        # Exclusive end: a first-day transition gives the predecessor no
+        # presence in that month.
+        if low_start > last or high_end <= first or low_start >= high_end:
+            continue
+        if high_start < low_end and high_start <= last and low_end > first:
+            if segment["state"] not in states:
+                states.append(segment["state"])
+        else:
+            if segment["state"] not in possible:
+                possible.append(segment["state"])
+            issues.append(issue(
+                "effective_date", "生效月份不足以确认该状态在所选月内是否实际持续",
+                segment["event_id"], segment["end_event_id"],
+            ))
+    possible = [state for state in possible if state not in states]
+
+    def membership(targets):
+        if targets.intersection(states):
+            return True
+        return None if targets.intersection(possible) else False
+
+    return {
+        "period_states": states, "possible_period_states": possible,
+        "period_end_state": end_state,
+        "employee_member": membership({"regular", "unpaid_leave"}),
+        "labor_member": membership({"labor"}), "fact_issues": issues,
+    }
+
+
+def monthly_membership(timeline, period, relationship="employee"):
+    if relationship not in {"employee", "labor"}:
+        raise ValueError("relationship must be employee or labor")
+    return monthly_projection(timeline, period)[relationship + "_member"]
 
 
 def decode_cursor(cursor, scope):
@@ -431,13 +337,12 @@ def decode_cursor(cursor, scope):
         value = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
         if (
             set(value) != {"version", "scope", "offset"}
-            or type(value["version"]) is not int
-            or value["version"] != 1
+            or type(value["version"]) is not int or value["version"] != 1
         ):
             raise ValueError("shape")
         if value["scope"] != scope:
             raise KernelError(
-                "employment_history_cursor_stale", "人员或档案版本已变化，请重新读取任职历史首页"
+                "workforce_history_cursor_stale", "人员或用工事件版本已变化，请重新读取历史首页"
             )
         if type(value["offset"]) is not int or value["offset"] < 0:
             raise ValueError("offset")
@@ -445,7 +350,7 @@ def decode_cursor(cursor, scope):
     except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
         if isinstance(exc, KernelError):
             raise
-        raise KernelError("employment_history_cursor_invalid", "任职历史分页游标无效") from exc
+        raise KernelError("workforce_history_cursor_invalid", "用工历史分页游标无效") from exc
 
 
 def encode_cursor(scope, offset):

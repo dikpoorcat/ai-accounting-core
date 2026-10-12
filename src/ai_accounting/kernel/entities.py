@@ -16,13 +16,13 @@ from .content_history_context import source_digest as digest
 from .content_history_context import source_json_loads
 from .contracts import KernelError, NeedsInformation
 from .employee_employment import (
-    EmploymentChange,
-    EmploymentDate,
-    EmploymentEvent,
-    EmploymentInterval,
+    WorkforceChange,
+    WorkforceDate,
+    WorkforceEvent,
     active_events,
     decode_cursor,
     encode_cursor,
+    monthly_projection,
     recorded_event_times,
     require_occurred,
     verify_history,
@@ -31,10 +31,10 @@ from .employee_employment import (
     issue as employment_issue,
 )
 from .employee_employment import (
-    projection as employment_projection,
+    projection as workforce_projection,
 )
 from .employee_employment import (
-    records as employment_records,
+    records as workforce_records,
 )
 from .fund_accounts import (
     IDENTITY_FIELDS,
@@ -53,7 +53,6 @@ from .types import EvidenceDigest, YearMonth, evidence_digest_bytes
 
 EntityKind = Literal["person", "organization", "fund_account", "asset", "project", "fund_product"]
 ENTITY_KINDS = ("person", "organization", "fund_account", "asset", "project", "fund_product")
-DisplayDate = EmploymentDate
 
 
 class EntityProfile(BaseModel):
@@ -78,37 +77,21 @@ class NumberedEntityProfile(EntityProfile):
         return self
 
 
-class EmployeeRegistration(NumberedEntityProfile):
-    effective_date: EmploymentDate
-    after_profile_id: str | None = Field(default=None, min_length=1, max_length=200)
+class WorkerRegistration(NumberedEntityProfile):
+    action: Literal["hire", "start_labor"]
+    effective_date: WorkforceDate
+    initial_unpaid_leave: bool = False
+    after_event_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_initial_state(self):
+        if self.initial_unpaid_leave and self.action != "hire":
+            raise ValueError("initial_unpaid_leave requires hire")
+        return self
 
 
 class PersonProfile(NumberedEntityProfile):
-    employment_start: DisplayDate | None = None
-    employment_end: DisplayDate | None = None
-    employment_status: Literal["active", "inactive", "unknown"] = "unknown"
-    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"] = Field(
-        default="unknown",
-        description="内核按有来源的任职事件维护的当前管理状态；原无事件档案保留明确基线，不改变工资核算。",
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "management",
-                "meaning": "explicit_current_employment_state",
-                "reusable_sources": ["owner_confirmation", "employment_document"],
-            }
-        },
-    )
-    employment_event: EmploymentEvent | None = None
-    employment_baseline: str | None = None
-    employment_intervals: list[EmploymentInterval] | None = None
-
-    @model_validator(mode="after")
-    def validate_explicit_details(self):
-        if self.employment_start and self.employment_end:
-            start, end = self.employment_start, self.employment_end
-            if start[:7] > end[:7] or (len(start) == len(end) == 10 and start > end):
-                raise ValueError("employment end precedes start")
-        return self
+    workforce_event: WorkforceEvent | None = None
 
 
 class OrganizationProfile(NumberedEntityProfile):
@@ -124,7 +107,7 @@ class AssetProfile(NumberedEntityProfile):
 
 
 def entity_profile_models():
-    """Stored management profiles, including kernel-owned personnel projections."""
+    """Stored metadata and the single event asserted by a workforce operation."""
     return {
         "person": PersonProfile,
         "organization": OrganizationProfile,
@@ -209,11 +192,6 @@ def display_profile(profile, kind, *, fund_account=None):
             "display_name",
             "display_number",
             "note",
-            "employment_start",
-            "employment_end",
-            "employment_status",
-            "employment_state",
-            "employment_intervals",
             "active",
             "category_label",
             "source",
@@ -290,23 +268,45 @@ def profiles_for_entities(connection, entity_ids):
     return result
 
 
+def workforce_timelines(connection, entity_ids=None):
+    """Authenticate all revisions once, then derive person-scoped timelines."""
+    requested = None if entity_ids is None else sorted(set(entity_ids))
+    if requested == []:
+        return {}
+    histories = {}
+    sql = (
+        "SELECT p.* FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
+        "WHERE e.kind='person'"
+    )
+    params = ()
+    if requested is not None:
+        sql += " AND e.id IN(SELECT value FROM json_each(?))"
+        params = (canonical(requested),)
+    sql += " ORDER BY e.id,p.revision"
+    for row in connection.execute(sql, params):
+        histories.setdefault(row["entity_id"], []).append(_profile_record(row))
+    result = {ident: verify_history(history) for ident, history in histories.items()}
+    recorded_event_times(
+        connection,
+        [event for timeline in result.values() for event in timeline["event_references"]],
+    )
+    return result
+
+
 def employee_entities(connection, period, *, registry, entity_ids=None):
-    """Explicit employment records or profiles, with scoped corrections applied."""
+    """Past employee relationships plus independently authenticated payroll facts."""
     cutoff = YearMonth(period).ordinal
     requested = None if entity_ids is None else tuple(sorted(set(entity_ids)))
     if requested == ():
         return []
-    # Every latest person profile can influence this negative membership test.
-    # Verify its exact JSON before applying the same predicates in Python;
-    # SQLite JSON1 picks the first duplicate key while Python picks the last.
+    timelines = workforce_timelines(connection, requested)
     candidates = list(
         connection.execute(
             "SELECT p.*,EXISTS(SELECT 1 FROM entity_reference_current r "
             "INDEXED BY entity_current_entity_role "
             "CROSS JOIN fact_current c ON c.fact_id=r.fact_id WHERE r.entity_id=e.id "
-            "AND r.role='employee' AND r.period<=?) AS employee_reference,"
-            "EXISTS(SELECT 1 FROM entity_resolution x WHERE x.source_entity_id=e.id) "
-            "AS resolved FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
+            "AND r.role='employee' AND r.period<=?) AS employee_reference "
+            "FROM entity e JOIN entity_profile_revision p ON p.entity_id=e.id "
             "WHERE e.kind='person' AND p.revision=(SELECT max(q.revision) "
             "FROM entity_profile_revision q WHERE q.entity_id=e.id)"
             + (" AND e.id IN(SELECT value FROM json_each(?))" if requested is not None else "")
@@ -316,14 +316,14 @@ def employee_entities(connection, period, *, registry, entity_ids=None):
     )
     selected = []
     for profile in candidates:
-        content = _profile_record(profile)
-        if profile["employee_reference"] or (
-            not profile["resolved"]
-            and (
-                content["employment_start"] is not None
-                or content["employment_status"] != "unknown"
-                or content.get("employment_state", "unknown") != "unknown"
-            )
+        _profile_record(profile)
+        timeline = timelines[profile["entity_id"]]
+        # Correcting one financial identity binding cannot end this person's
+        # separately confirmed workforce relationship; resolutions are not aliases.
+        if profile["employee_reference"] or any(
+            segment["state"] in {"regular", "unpaid_leave"}
+            and segment["start"][:7] <= period
+            for segment in timeline["segments"]
         ):
             selected.append(profile)
     if selected:
@@ -384,9 +384,9 @@ def verify_entities(connection):
         _profile_record(row)
     events = []
     for row in connection.execute("SELECT id FROM entity WHERE kind='person'"):
-        history = employment_records(connection, row["id"])
+        history = workforce_records(connection, row["id"])
         verify_history(history)
-        events.extend(item for item in history if item.get("employment_event") is not None)
+        events.extend(item for item in history if item.get("workforce_event") is not None)
     recorded_event_times(connection, events)
     for row in connection.execute("SELECT * FROM entity_resolution"):
         payload = {
@@ -426,10 +426,10 @@ class Entities:
                 mode="json", exclude_unset=True
             )
         except ValidationError as exc:
-            if model not in {EmployeeRegistration, EmploymentChange}:
+            if model not in {WorkerRegistration, WorkforceChange}:
                 raise
             missing = [
-                employment_issue(str(error["loc"][0]), "缺少必需任职管理事实")
+                employment_issue(str(error["loc"][0]), "缺少必需用工管理事实")
                 for error in exc.errors(include_input=False)
                 if error["type"] == "missing" and len(error["loc"]) == 1
             ]
@@ -598,12 +598,12 @@ class Entities:
         def operation(connection):
             require_entity(connection, entity_id)
             current = self._current(connection, entity_id, expected_revision)
-            if entity["kind"] == "person" and current.get("employment_intervals") is not None:
-                verify_history(employment_records(connection, entity_id))
+            if entity["kind"] == "person":
+                verify_history(workforce_records(connection, entity_id))
             merged = self._content(current)
             merged.update(explicit)
-            # A normal metadata revision does not assert an employment event.
-            merged.pop("employment_event", None)
+            # A metadata revision makes no assertion about the relationship.
+            merged.pop("workforce_event", None)
             profile, _ = self._profile(entity["kind"], merged, source, evidence_digest)
             return self._insert_profile(
                 connection, entity_id, current["revision"] + 1, profile, source, evidence
@@ -627,9 +627,9 @@ class Entities:
             operation,
         )
 
-    def register_employee(
+    def register_worker(
         self,
-        data: EmployeeRegistration,
+        data: WorkerRegistration,
         *,
         source: str,
         request_id: str,
@@ -637,7 +637,7 @@ class Entities:
         expected_revision: int | None = None,
         evidence_digest: EvidenceDigest | None = None,
     ):
-        explicit = self._explicit(EmployeeRegistration, data)
+        explicit = self._explicit(WorkerRegistration, data)
         if entity_id is None and expected_revision is not None:
             raise ValueError("expected_revision requires an existing person")
         if entity_id is not None and expected_revision is None:
@@ -655,21 +655,22 @@ class Entities:
                 identifier = entity_id
                 require_entity(connection, identifier, kinds=("person",))
                 current = self._current(connection, identifier, expected_revision)
-                history = employment_records(connection, identifier)
+                history = workforce_records(connection, identifier)
                 verify_history(history)
                 profile, revision = self._content(current), current["revision"] + 1
             metadata = {
                 key: value
                 for key, value in explicit.items()
-                if key not in {"effective_date", "after_profile_id"}
+                if key not in {"action", "effective_date", "after_event_id", "initial_unpaid_leave"}
             }
             profile.update(metadata)
-            event = EmploymentEvent(
-                action="hire",
+            event = WorkforceEvent(
+                action=explicit["action"],
                 effective_date=explicit["effective_date"],
-                after_profile_id=explicit.get("after_profile_id"),
+                initial_unpaid_leave=explicit.get("initial_unpaid_leave", False),
+                after_event_id=explicit.get("after_event_id"),
             ).model_dump(mode="json")
-            return self._employment_append(
+            return self._workforce_append(
                 connection, identifier, revision, profile, history, event, source, evidence_digest
             )
 
@@ -677,7 +678,7 @@ class Entities:
             request_id,
             digest(
                 [
-                    "register_employee",
+                    "register_worker",
                     entity_id,
                     expected_revision,
                     explicit,
@@ -691,26 +692,26 @@ class Entities:
             operation,
         )
 
-    def change_employee_employment(
+    def change_workforce_relationship(
         self,
         entity_id: str,
-        data: EmploymentChange,
+        data: WorkforceChange,
         *,
         source: str,
         expected_revision: int,
         request_id: str,
         evidence_digest: EvidenceDigest | None = None,
     ):
-        explicit = self._explicit(EmploymentChange, data)
-        event = EmploymentEvent.model_validate_json(canonical(explicit)).model_dump(mode="json")
+        explicit = self._explicit(WorkforceChange, data)
+        event = WorkforceEvent.model_validate_json(canonical(explicit)).model_dump(mode="json")
 
         def operation(connection):
             require_entity(connection, entity_id, kinds=("person",))
             current = self._current(connection, entity_id, expected_revision)
             require_occurred(event["effective_date"])
-            history = employment_records(connection, entity_id)
+            history = workforce_records(connection, entity_id)
             verify_history(history)
-            return self._employment_append(
+            return self._workforce_append(
                 connection,
                 entity_id,
                 current["revision"] + 1,
@@ -725,7 +726,7 @@ class Entities:
             request_id,
             digest(
                 [
-                    "change_employee_employment",
+                    "change_workforce_relationship",
                     entity_id,
                     expected_revision,
                     explicit,
@@ -739,13 +740,11 @@ class Entities:
             operation,
         )
 
-    def _employment_append(
+    def _workforce_append(
         self, connection, entity_id, revision, profile, history, event, source, evidence_digest
     ):
         profile = dict(profile)
-        if not any(item.get("employment_event") is not None for item in history):
-            profile["employment_baseline"] = history[-1]["id"] if history else None
-        profile["employment_event"] = event
+        profile["workforce_event"] = event
         # The inserted profile ID is the event identity. Allocate once, derive
         # before inserting, then save the checked content under that exact ID.
         profile_id = uuid.uuid4().hex
@@ -754,30 +753,34 @@ class Entities:
             id=profile_id,
             entity_id=entity_id,
             revision=revision,
-            employment_intervals=profile.get("employment_intervals") or [],
         )
-        profile.update(employment_projection([*history, candidate]))
+        workforce_projection([*history, candidate])
         profile, evidence = self._profile("person", profile, source, evidence_digest)
         saved = self._insert_profile(
             connection, entity_id, revision, profile, source, evidence, profile_id=profile_id
         )
+        from .dashboard_model_runtime import record_period
+
+        record_period(connection, event["effective_date"][:7])
         return saved
 
-    def employee_employment_history(
+    def workforce_relationship_history(
         self,
         entity_id: str,
         *,
         cursor: str | None = None,
         limit: int = 20,
         expected_revision: int | None = None,
+        period: YearMonth | None = None,
     ):
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("limit must be 1..500")
+        period = str(YearMonth(period)) if period is not None else None
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             require_entity(connection, entity_id, kinds=("person",))
-            history = employment_records(connection, entity_id)
-            verify_history(history)
+            history = workforce_records(connection, entity_id)
+            timeline = verify_history(history)
             if not history:
                 raise KernelError("entity_profile_corrupt", "对象缺少初始档案", entity_id=entity_id)
             revision = history[-1]["revision"]
@@ -785,18 +788,21 @@ class Entities:
                 type(expected_revision) is not int or expected_revision != revision
             ):
                 raise KernelError("entity_profile_version_conflict", "对象档案已变化，请重新读取")
-            scope = [self.store.company_id, self.store.database_id, entity_id, revision]
+            event_version = timeline["event_version"]
+            scope = [
+                self.store.company_id, self.store.database_id, entity_id, event_version, period,
+            ]
             offset = 0 if cursor is None else decode_cursor(cursor, scope)
-            active, _, _, _ = active_events(history)
+            active, _, _ = active_events(history)
             events = [
-                item for item in reversed(history) if item.get("employment_event") is not None
+                item for item in reversed(history) if item.get("workforce_event") is not None
             ]
             selected = events[offset : offset + limit]
-            times = recorded_event_times(connection, selected)
+            times = recorded_event_times(connection, events)
             items = [
                 dict(
-                    item["employment_event"],
-                    profile_id=item["id"],
+                    item["workforce_event"],
+                    event_id=item["id"],
                     revision=item["revision"],
                     source=item["source"],
                     evidence_digest=item["evidence_digest"],
@@ -809,6 +815,9 @@ class Entities:
             return {
                 "entity_id": entity_id,
                 "revision": revision,
+                "event_version": event_version,
+                "period": period,
+                "monthly": monthly_projection(timeline, period) if period is not None else None,
                 "items": items,
                 "page": {
                     "total_count": len(events),
@@ -954,6 +963,11 @@ class Entities:
                     )
                     usage = {row["entity_id"]: row["last_period"] for row in latest_rows}
             relationships = list(connection.execute("SELECT * FROM entity_resolution"))
+            timelines = workforce_timelines(
+                connection,
+                [ident for ident, (profile, _, _) in candidates.items()
+                 if profile["entity_kind"] == "person"],
+            )
             items = []
             for entity_id, (profile, exact, account) in candidates.items():
                 recent = usage.get(entity_id)
@@ -981,6 +995,10 @@ class Entities:
                         if recent is not None
                         else None,
                         "corrections": linked,
+                        **({
+                            "employment_state": timelines[entity_id]["employment_state"],
+                            "event_version": timelines[entity_id]["event_version"],
+                        } if entity_id in timelines else {}),
                         **({"fund_account": account} if account is not None else {}),
                     }
                 )

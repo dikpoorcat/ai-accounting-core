@@ -15,7 +15,7 @@ from pydantic import Field
 
 from .contracts import KernelError
 from .discovery import Discovery
-from .entities import profiles_for_entities
+from .entities import profiles_for_entities, workforce_timelines
 from .entity_references import references_from_data, verify_hits
 from .fund_accounts import fund_account_definitions
 from .materials import PageLimit
@@ -414,6 +414,13 @@ class WorkContext:
                 for ident in fund_ids
             ):
                 raise KernelError("content_integrity_failed", "已引用资金账户缺少正式身份来源")
+            workforce = workforce_timelines(
+                connection,
+                [
+                    ident for ident, profile in object_profiles.items()
+                    if profile["entity_kind"] == "person"
+                ],
+            )
             entities = [
                 {
                     "entity_id": ident,
@@ -421,11 +428,16 @@ class WorkContext:
                     "account_type": profile["account_type"],
                     "profile": {
                         key: value for key, value in profile.items()
-                        if key not in {
-                            "employment_event", "employment_baseline", "employment_intervals"
-                        }
+                        if key != "workforce_event"
                     },
                     **({"fund_account": funds[ident]} if ident in funds else {}),
+                    **(
+                        {
+                            "employment_state": workforce[ident]["employment_state"],
+                            "event_version": workforce[ident]["event_version"],
+                        }
+                        if ident in workforce else {}
+                    ),
                 }
                 for ident, profile in object_profiles.items()
             ]

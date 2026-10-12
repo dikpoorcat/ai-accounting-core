@@ -282,22 +282,22 @@ def test_asset_filters_cover_full_lifecycle(selected, expected):
     ("selected", "expected"),
     [
         ("all", {"regular", "leave", "departed", "unknown", "future"}),
-        ("in_period", {"regular", "leave", "unknown"}),
-        ("unknown", {"future"}),
+        ("in_period", {"regular", "leave"}),
+        ("unknown", {"unknown"}),
         ("ended", {"departed"}),
-        ("employment_active", {"regular", "future"}),
+        ("employment_active", {"regular"}),
         ("employment_unpaid_leave", {"leave"}),
         ("employment_departed", {"departed"}),
         ("employment_unknown", {"unknown"}),
     ],
 )
-def test_current_personnel_and_frozen_month_filters_are_independent(selected, expected):
+def test_monthly_state_filters_never_use_later_hire_or_current_state(selected, expected):
     entries = [
-        ("regular", "in_period", "true", "established"),
-        ("leave", "in_period", "true", "established"),
-        ("departed", "ended", "false", "established"),
-        ("unknown", "in_period", "true", "established"),
-        ("future", "unknown", "unknown", "established"),
+        ("regular", "in_period", "true", "established", "regular"),
+        ("leave", "in_period", "true", "established", "unpaid_leave"),
+        ("departed", "ended", "false", "established", "departed"),
+        ("unknown", "unknown", "unknown", "established", "unknown"),
+        ("future", "not_started", "false", "established", "-"),
     ]
     states = {
         "regular": "regular",

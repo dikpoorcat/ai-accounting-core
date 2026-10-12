@@ -315,13 +315,20 @@ def native_samples(root):
     for subject in ("january", "february"):
         with personnel.engine.store.connection(read_only=True) as connection:
             current = personnel.engine.store.current_fact(connection, subject)
-        revised = current.fact.model_copy(update={
-            "profile_revision": current.fact.profile_revision.model_copy(update={"revision": 2})
-        })
+        revised = current.fact.model_copy(
+            update={
+                "profile_revision": current.fact.profile_revision.model_copy(update={"revision": 2})
+            }
+        )
         personnel.save(revised, subject, revision=current.revision)
     personnel.confirm_payroll("january", "february")
     personnel.publish("january", "february")
-    display_profile(personnel.engine, "employee", "employee", employment_start="2025-12")
+    hire_profile = display_profile(
+        personnel.engine,
+        "employee",
+        "employee",
+        workforce_event={"action": "hire", "effective_date": "2025-12"},
+    )
     display_profile(personnel.engine, "business", "january", display_name="合成工资业务")
     personnel_dashboard = Dashboard(personnel.engine)
     payroll_brief = personnel_dashboard.brief("2026-01", section="open_items")
@@ -356,13 +363,12 @@ def native_samples(root):
         ),
     )
     personnel.close("2026-01")
-    display_profile(
+    departure_profile = display_profile(
         personnel.engine,
         "employee",
         "employee",
         1,
-        employment_start="2025-11",
-        employment_end="2026-04-20",
+        workforce_event={"action": "depart", "effective_date": "2026-04-20"},
     )
     add(
         "employees_mixed_dates",
@@ -379,11 +385,25 @@ def native_samples(root):
         "employee",
         "employee",
         2,
-        employment_start="2025-10",
-        employment_end="2025-11-01",
+        workforce_event={
+            "action": "hire",
+            "effective_date": "2025-10",
+            "replaces_event_id": hire_profile["profile_id"],
+        },
+    )
+    display_profile(
+        personnel.engine,
+        "employee",
+        "employee",
+        3,
+        workforce_event={
+            "action": "depart",
+            "effective_date": "2025-11-01",
+            "replaces_event_id": departure_profile["profile_id"],
+        },
     )
     add(
-        "employees_date_conflict",
+        "employees_corrected_roster",
         "dashboard_employees",
         personnel_dashboard.employees("2026-01", employee_filter="all"),
     )
@@ -403,6 +423,20 @@ def native_samples(root):
     )
     labor.publish("labor")
     display_profile(labor.engine, "employee", "person", display_name="合成劳务人员")
+    Entities(labor.engine).register_worker(
+        {
+            "display_name": "合成零费用劳务人员",
+            "action": "start_labor",
+            "effective_date": "2026-01",
+        },
+        source="明确的合成劳务关系",
+        request_id="zero-fee-labor-worker",
+    )
+    add(
+        "employees_labor_roster_zero_fee",
+        "dashboard_employees",
+        Dashboard(labor.engine).employees("2026-01", section="labor_workers"),
+    )
     add(
         "employees_labor_sources",
         "dashboard_employees",

@@ -12,6 +12,8 @@ import {
   type EmployeesQuery,
   type EmployeeFilter,
   type PersonalLaborItem,
+  type LaborWorkerItem,
+  type WorkforceRelationshipSegment,
 } from "../api/employees";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
@@ -27,16 +29,16 @@ const employeeFilterGroups: {
   label: string;
   options: { value: EmployeeFilter; label: string; description: string }[];
 }[] = [
-  { label: "", options: [{ value: "all", label: "全部员工", description: "查看所有已登记人员" }] },
+  { label: "", options: [{ value: "all", label: "全部员工", description: "查看截至所选月份的员工及本月薪酬记录" }] },
   { label: "用工状态", options: [
-    { value: "employment_active", label: "在职", description: "当前在职，停薪留职单独列示" },
-    { value: "employment_unpaid_leave", label: "停薪留职", description: "当前停薪留职，仍保留劳动关系" },
-    { value: "employment_departed", label: "已离职", description: "当前已明确离职" },
-    { value: "employment_unknown", label: "未确认", description: "当前用工状态尚未明确" },
+    { value: "employment_active", label: "在职", description: "所选月份曾正常任职，整月停薪单独列示" },
+    { value: "employment_unpaid_leave", label: "停薪留职", description: "所选月份有已确认的停薪期间" },
+    { value: "employment_departed", label: "已离职", description: "所选月份月末已明确离职" },
+    { value: "employment_unknown", label: "未确认", description: "所选月份用工关系或转换期间尚未明确" },
   ] },
   { label: "在册状态", options: [
-    { value: "in_period", label: "已确认在册", description: "所选月份在册，按员工档案判断" },
-    { value: "ended", label: "已确认不在册", description: "离职月份早于所选月份" },
+    { value: "in_period", label: "已确认在册", description: "所选月份有已确认的员工任职期间" },
+    { value: "ended", label: "已确认不在册", description: "所选月份没有员工任职期间" },
     { value: "unknown", label: "在册状态未确认", description: "人员资料缺失或有冲突，需核对" },
   ] },
 ];
@@ -78,12 +80,13 @@ const grossSalaryAndBonus = computed(() => {
 const data = computed(() => response.value?.data ?? null);
 const workforce = computed(() => response.value?.data?.workforce_cost ?? null);
 const personalLaborItems = computed(() => data.value?.collections.labor_sources?.items ?? []);
+const laborWorkers = computed(() => data.value?.collections.labor_workers?.items ?? []);
 const sectionLinks = computed(() => {
   if (!employees.value || !response.value?.selected_period) return [];
   return [
     { id: "employees-overview", label: "概览" },
     { id: "employee-list-title", label: "员工明细" },
-    ...(personalLaborItems.value.length ? [{ id: "labor-title", label: "个人劳务" }] : []),
+    { id: "labor-title", label: "个人劳务" },
   ];
 });
 const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "employees-overview");
@@ -129,8 +132,25 @@ const filterLabel = computed(
     })[filter.value],
 );
 
-function currentEmploymentLabel(item: EstablishedEmployeeItem) {
-  return { regular: "在职", unpaid_leave: "停薪留职", departed: "已离职", unknown: "用工状态未确认" }[item.employment_state];
+function employmentStateLabel(state: EstablishedEmployeeItem["employment_state"]) {
+  return {
+    regular: "在职", unpaid_leave: "停薪留职", departed: "已离职",
+    labor: "劳务", labor_ended: "劳务结束", unknown: "用工状态未确认",
+  }[state];
+}
+
+function monthlyEmploymentLabel(item: EstablishedEmployeeItem | LaborWorkerItem) {
+  const states = item.period_states.map(employmentStateLabel);
+  return `${states.length ? `本月${states.join('、')} · ` : ''}月末${employmentStateLabel(item.employment_state)}`;
+}
+
+function hasUncertainPeriod(item: EstablishedEmployeeItem | LaborWorkerItem) {
+  return item.possible_period_states.some(state => !item.period_states.includes(state));
+}
+
+function relationshipSegmentLabel(segment: WorkforceRelationshipSegment) {
+  const end = segment.end ? `，${precisionLabel(segment.end)}前` : "";
+  return `${employmentStateLabel(segment.state)}：${precisionLabel(segment.start)}起${end}`;
 }
 
 const employeeDotDescriptions: Record<string, string> = {
@@ -424,18 +444,20 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               <details v-else :id="focusedEmployeeId === item.employee_id ? 'employee-card-target' : undefined" :open="focusedEmployeeId === item.employee_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
                 <summary class="employee-card-summary dashboard-record-card-summary">
                   <div v-if="displayMode === 'list'" class="employee-list-summary">
-                    <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="employeeDotDescription(item)" :title="employeeDotDescription(item)"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}</p></div></div>
+                    <div class="employee-list-identity"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="employeeDotDescription(item)" :title="employeeDotDescription(item)"></span><div class="employee-name"><h3>{{ item.name }}</h3><p class="muted">{{ monthlyEmploymentLabel(item) }} · {{ item.period_state_label }}</p></div></div>
                     <strong v-for="column in employeeListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': ['gross', 'bonus', 'employer-social', 'employer-housing'].includes(column.key) }" :data-label="column.label" :aria-labelledby="`employee-column-${column.key}`">{{ formatFen(column.amount(item)) }}</strong>
                     <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                   </div>
                   <template v-else>
                     <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status" :class="item.wage_tax_scope" role="img" :aria-label="employeeDotDescription(item)" :title="employeeDotDescription(item)"></span><span>{{ item.name }}</span></h3><strong class="cost-amount">{{ formatFen(item.company_cost_fen) }}<small>本月公司成本</small></strong></div>
-                    <p class="muted">{{ currentEmploymentLabel(item) }} · {{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
+                    <p class="muted">{{ monthlyEmploymentLabel(item) }} · {{ item.period_state_label }}<span v-if="item.employment_start_date"> · 入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date"> · 离职 {{ precisionLabel(item.employment_end_date) }}</span></p>
                     <div class="amount-grid"><div><span>本月应付净薪</span><strong class="payable-amount">{{ formatFen(item.net_salary_fen) }}</strong></div><div><span>本月实际支付</span><strong :class="cashFlowClass(item.direct_net_payments_fen, 'outflow')">{{ formatFen(item.direct_net_payments_fen) }}</strong></div><div><span>月末未付</span><strong class="payable-amount">{{ formatFen(item.outstanding_net_fen) }}</strong></div></div>
                     <p class="muted">{{ item.has_payroll_activity ? item.payroll_periods.join('、') + ' 工资' : '本月暂无工资记录' }} · 展开查看本月薪酬</p>
                   </template>
                 </summary>
                 <div class="employee-detail" :class="{ 'dashboard-business-expansion': displayMode === 'list' }">
+                  <p v-if="hasUncertainPeriod(item)" class="muted">本月部分用工期间尚未确认，由 AI 会计核对中。</p>
+                  <p v-for="(segment, index) in item.relationship_segments" :key="index" class="muted">{{ relationshipSegmentLabel(segment) }}</p>
                   <h3>{{ displayMode === 'list' ? '薪酬补充' : '薪酬明细' }}</h3>
                   <p v-if="displayMode === 'list'" class="employee-detail-meta muted"><span v-if="item.employment_start_date">入职 {{ precisionLabel(item.employment_start_date) }}</span><span v-if="item.employment_end_date">离职 {{ precisionLabel(item.employment_end_date) }}</span><span>{{ item.has_payroll_activity ? '工资所属月份 ' + item.payroll_periods.join('、') : '本月暂无工资记录' }}</span></p>
                   <dl class="amount-grid">
@@ -454,11 +476,29 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           </div>
           <DashboardPagination automatic :active="!loading && activeSection === 'employee-list-title'" :scope="paginationScope()" @pause="pausePages('employees', $event)" :page="!filteredEmployees.length && (pageLoading[pageKey('employees')] || pageErrors[pageKey('employees')]) ? undefined : data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
         </section>
-        <section v-if="personalLaborItems.length" class="panel">
+        <section class="panel">
           <div class="section-heading">
-            <div><h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }} · 已加载 {{ personalLaborItems.length }} 笔</p></div>
+            <div><h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月已确认劳务 {{ employees.labor_worker_count }} 人 · 本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }}</p></div>
           </div>
-          <div class="employee-results" :class="{ 'list-results': displayMode === 'list' }" :tabindex="displayMode === 'list' ? 0 : undefined" aria-label="个人劳务明细记录">
+          <h3 class="labor-subheading">劳务人员</h3>
+          <p class="muted">按本月用工关系列示，暂无报酬记录的人员也在册。已加载 {{ laborWorkers.length }} 人</p>
+          <p v-if="!laborWorkers.length && !pageErrors[pageKey('labor_workers')]" class="muted">本月没有劳务人员。</p>
+          <div v-if="laborWorkers.length" class="employee-results" :class="{ 'list-results': displayMode === 'list' }" aria-label="劳务人员名册">
+            <div class="employee-grid" :class="{ 'employee-list': displayMode === 'list' }">
+              <article v-for="worker in laborWorkers" :key="worker.person_id" class="employee-card workforce-worker dashboard-record-card" data-section-focus tabindex="-1">
+                <h3 class="employee-card-name"><span class="employee-status labor" role="img" aria-label="个人劳务"></span><span>{{ worker.name }}</span></h3>
+                <p class="muted">{{ monthlyEmploymentLabel(worker) }}</p>
+                <p v-for="(segment, index) in worker.relationship_segments" :key="index" class="muted">{{ relationshipSegmentLabel(segment) }}</p>
+                <p v-if="worker.in_period === null || hasUncertainPeriod(worker)" class="muted">本月部分用工期间尚未确认，由 AI 会计核对中。</p>
+                <p class="muted">{{ worker.has_labor_activity ? '本月有劳务报酬记录' : '本月暂无劳务报酬记录' }}</p>
+              </article>
+            </div>
+          </div>
+          <DashboardPagination automatic :active="!loading && activeSection === 'labor-title'" :scope="paginationScope()" @pause="pausePages('labor_workers', $event)" :page="data?.collections.labor_workers?.page" :loaded="laborWorkers.length" :loading="pageLoading[pageKey('labor_workers')]" :error="pageErrors[pageKey('labor_workers')]" @more="loadMore('labor_workers')" @retry="loadMore('labor_workers')" />
+          <h3 class="labor-subheading">劳务报酬记录</h3>
+          <p class="muted">已加载 {{ personalLaborItems.length }} 笔</p>
+          <p v-if="!personalLaborItems.length && !pageErrors[pageKey('labor_sources')]" class="muted">本月暂无劳务报酬记录。</p>
+          <div v-if="personalLaborItems.length" class="employee-results" :class="{ 'list-results': displayMode === 'list' }" :tabindex="displayMode === 'list' ? 0 : undefined" aria-label="个人劳务明细记录">
           <div class="employee-grid" :class="{ 'employee-list labor-list': displayMode === 'list' }">
             <div v-if="displayMode === 'list'" class="employee-list-header">
               <span>劳务对象</span><span v-for="column in laborListColumns" :id="`labor-column-${column.key}`" :key="column.key">{{ column.label }}</span><span aria-hidden="true"></span>
@@ -466,15 +506,17 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
             <details v-for="labor in personalLaborItems" :key="labor.source_id" class="employee-card dashboard-record-card" data-section-focus tabindex="-1">
               <summary class="employee-card-summary dashboard-record-card-summary">
                 <div v-if="displayMode === 'list'" class="employee-list-summary">
-                  <div class="employee-list-identity"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><div class="employee-name"><h3>{{ labor.name }}</h3><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p></div></div>
+                  <div class="employee-list-identity"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><div class="employee-name"><h3>{{ labor.name }}</h3><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}<span v-if="!labor.relationship_confirmed"> · 用工关系未确认</span></p></div></div>
                   <strong v-for="column in laborListColumns" :key="column.key" :class="{ 'employee-list-net': column.key === 'net', 'payable-amount': column.key === 'net', 'cost-amount': column.key === 'gross' }" :data-label="column.label" :aria-labelledby="`labor-column-${column.key}`">{{ formatFen(column.amount(labor)) }}</strong>
                   <svg class="employee-list-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
                 </div>
                 <template v-else>
                   <div class="section-heading"><h3 class="employee-card-name"><span class="employee-status labor" role="img" :aria-label="laborDotDescription" :title="laborDotDescription"></span><span>{{ labor.name }}</span></h3><strong class="cost-amount">{{ formatFen(labor.gross_fen) }}</strong></div><p class="muted">{{ labor.period }} · {{ labor.capitalized ? '计入资产或项目' : '计入本月费用' }}</p><div class="amount-grid"><div><span>已扣个税</span><strong>{{ formatFen(labor.booked_tax_fen) }}</strong></div><div><span>应付净额</span><strong class="payable-amount">{{ formatFen(labor.net_fen) }}</strong></div></div><p class="muted">展开查看付款</p>
+                  <p v-if="!labor.relationship_confirmed" class="muted">本月用工关系尚未确认，报酬记录保留。</p>
                 </template>
               </summary>
               <div class="employee-detail" :class="{ 'dashboard-business-expansion': displayMode === 'list' }">
+                <p v-if="displayMode === 'list' && !labor.relationship_confirmed" class="muted">本月用工关系尚未确认，报酬记录保留。</p>
                 <p v-if="labor.checking" class="muted">AI 会计核对中</p>
                 <section v-for="obligation in labor.obligations" :key="obligation.key" class="labor-payment-detail">
                   <h3>{{ obligationLabel(obligation.name) }}<span v-if="!laborAmountAlreadyShown(labor, obligation)"> · {{ formatFen(obligation.amount_fen) }}</span></h3>
@@ -586,6 +628,10 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .employee-list .employee-detail .amount-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px 16px; }
 .employee-list .employee-detail dd { font-size: 13px; font-weight: 500; line-height: 1.5; }
 .labor-payment-detail + .labor-payment-detail { margin-top: 18px; }
+.labor-subheading { margin: 24px 0 8px; font-size: 15px; }
+article.workforce-worker { cursor: default; }
+.workforce-worker h3 { margin: 0; font-size: 16px; }
+.workforce-worker p { margin-bottom: 0; }
 .employee-detail :deep(.business-status-details) { margin-top: 18px; }
 dd { margin: 0; }
 .control { min-height: 44px; padding: 0 12px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }

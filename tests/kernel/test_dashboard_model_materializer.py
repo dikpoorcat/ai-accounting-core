@@ -178,7 +178,7 @@ def test_employee_history_stays_certified_aggregate_outside_displayed_month(comp
         {
             "kind": "employee",
             "entity_id": "employee",
-            "employment_state": "regular",
+            "workforce_event": {"action": "hire", "effective_date": "2026-01-01"},
             "source": "Synthetic employment confirmation",
         },
         expected_revision=0,

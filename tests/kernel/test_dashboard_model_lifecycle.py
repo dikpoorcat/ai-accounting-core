@@ -116,9 +116,11 @@ def test_clock_rollback_adapts_employees_and_rejects_the_previous_day_cursor(boo
     opening(save, publish)
     for employee in ("person-a", "person-b"):
         save_entity_display_profile(engine, {
-            "kind": "employee", "entity_id": employee, "employment_start": "2026-01",
-            "employment_end": "2026-10-11", "employment_status": "active",
-            "employment_state": "regular",
+            "kind": "employee", "entity_id": employee,
+            "workforce_events": [
+                {"action": "hire", "effective_date": "2026-01-01"},
+                {"action": "depart", "effective_date": "2026-10-01"},
+            ],
             "source": "synthetic personnel confirmation",
         }, expected_revision=0, request_id="profile-" + employee)
     dashboard = Dashboard(engine)

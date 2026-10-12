@@ -124,8 +124,11 @@ def _verify_employee_dates(engine, connection, model, *, current_day):
     basis = model.root.date_basis
     if basis is None:
         return
-    refs = [reference for reference in model.root.blocks
-            if reference.key.startswith("employees/all/employees/")]
+    refs = [
+        reference
+        for reference in model.root.blocks
+        if reference.key.startswith("employees/all/employees/")
+    ]
     saved_items = {}
     entries = []
     for reference in refs:
@@ -140,8 +143,13 @@ def _verify_employee_dates(engine, connection, model, *, current_day):
         with authority_snapshot(engine, connection, model.root.scope.period, as_of=day) as snap:
             native_items, after = [], None
             while True:
-                data = _employees(snap, sections={"employees"}, employee_filter="all",
-                                  cursors={"employees": after} if after else None, limit=500)
+                data = _employees(
+                    snap,
+                    sections={"employees"},
+                    employee_filter="all",
+                    cursors={"employees": after} if after else None,
+                    limit=500,
+                )
                 collection = data["collections"]["employees"]
                 native_items.extend(collection["items"])
                 if not collection["page"]["has_more"]:
@@ -151,34 +159,62 @@ def _verify_employee_dates(engine, connection, model, *, current_day):
                     raise _invalid()
                 after = following
             states = employee_states(basis, day)
-            adapted = [{**saved_items[entry[0]], "employment_state": states[entry[0]]}
-                       for entry in entries]
+            adapted = [
+                {**saved_items[entry[0]], "employment_state": states[entry[0]]} for entry in entries
+            ]
             if adapted != native_items:
                 raise _invalid()
             for employee_filter in (
-                "all", "in_period", "unknown", "ended", "employment_active",
-                "employment_unpaid_leave", "employment_departed", "employment_unknown",
+                "all",
+                "in_period",
+                "unknown",
+                "ended",
+                "employment_active",
+                "employment_unpaid_leave",
+                "employment_departed",
+                "employment_unknown",
             ):
                 filters = {"employee_filter": employee_filter, "employee_id": None}
-                selected = [entry[0] for entry in entries if directory_matches(
-                    "employees", "employees", entry, filters, employee_states=states,
-                )]
+                selected = [
+                    entry[0]
+                    for entry in entries
+                    if directory_matches(
+                        "employees",
+                        "employees",
+                        entry,
+                        filters,
+                        employee_states=states,
+                    )
+                ]
                 # Raw row fields independently carry period membership and the
                 # evaluated current state; no model predicate supplies them.
-                expected = [item["employee_id"] for item in native_items if (
-                    employee_filter == "all"
-                    or employee_filter == "in_period" and item.get("in_period") is True
-                    or employee_filter == "unknown" and (
-                        item.get("period_state") == "unknown"
-                        or item["selection_status"] == "unestablished"
+                expected = [
+                    item["employee_id"]
+                    for item in native_items
+                    if (
+                        employee_filter == "all"
+                        or employee_filter == "in_period"
+                        and item.get("in_period") is True
+                        or employee_filter == "unknown"
+                        and (
+                            item.get("period_state") == "unknown"
+                            or item["selection_status"] == "unestablished"
+                        )
+                        or employee_filter == "ended"
+                        and item.get("period_state") == "ended"
+                        or employee_filter == "employment_active"
+                        and "regular" in item["period_states"]
+                        or employee_filter.startswith("employment_")
+                        and employee_filter != "employment_active"
+                        and (
+                            employee_filter.removeprefix("employment_") in item["period_states"]
+                            or employee_filter == "employment_departed"
+                            and item["employment_state"] == "departed"
+                            or employee_filter == "employment_unknown"
+                            and item.get("period_state") == "unknown"
+                        )
                     )
-                    or employee_filter == "ended" and item.get("period_state") == "ended"
-                    or employee_filter == "employment_active"
-                    and item["employment_state"] == "regular"
-                    or employee_filter.startswith("employment_")
-                    and employee_filter != "employment_active"
-                    and item["employment_state"] == employee_filter.removeprefix("employment_")
-                )]
+                ]
                 if selected != expected:
                     raise _invalid()
 

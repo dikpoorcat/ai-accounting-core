@@ -58,9 +58,14 @@ from .text_sort import pinyin_key
 from .types import ActualDate, YearMonth, canonical, digest
 
 EmployeeFilter = Literal[
-    "all", "in_period", "unknown", "ended",
-    "employment_active", "employment_unpaid_leave",
-    "employment_departed", "employment_unknown",
+    "all",
+    "in_period",
+    "unknown",
+    "ended",
+    "employment_active",
+    "employment_unpaid_leave",
+    "employment_departed",
+    "employment_unknown",
 ]
 
 KIND_NAMES = {
@@ -291,6 +296,37 @@ def _period_view(period, closed=False, closed_at=None):
         "end_date": f"{period}-{calendar.monthrange(year, month)[1]:02}",
         "closed_at": closed_at,
     }
+
+
+def _workforce_event_months(connection):
+    from .entities import workforce_timelines
+
+    return {
+        YearMonth(event["workforce_event"]["effective_date"][:7]).ordinal
+        for timeline in workforce_timelines(connection).values()
+        for event in timeline["event_references"]
+    }
+
+
+def _employee_date_bounds(timeline, period):
+    spells = []
+    employee_states = {"regular", "unpaid_leave"}
+    for segment in timeline["segments"]:
+        if segment["state"] in employee_states:
+            if not spells or spells[-1]["end"] is not None:
+                spells.append(
+                    {
+                        "start": segment["start"],
+                        "end": None,
+                        "start_event_id": segment["event_id"],
+                        "end_event_id": None,
+                    }
+                )
+        elif spells and spells[-1]["end"] is None:
+            spells[-1]["end"] = segment["start"]
+            spells[-1]["end_event_id"] = segment["event_id"]
+    selected = [spell for spell in spells if spell["start"][:7] <= period]
+    return selected[-1] if selected else None
 
 
 def _recognition(data, period):
@@ -589,11 +625,41 @@ class _Snapshot:
                 )
                 result["field_sources"][field] = self.source(
                     "fund_account_identity" if definition_source else "display_profile",
-                    definition_source or selected, basis,
+                    definition_source or selected,
+                    basis,
                     field=definition_source["field"] if definition_source else field,
                 )
         start, end = result.get("employment_start"), result.get("employment_end")
         result["field_conflicts"] = []
+        if kind == "employee":
+            from .employee_employment import monthly_projection
+            from .entities import workforce_timelines
+
+            timelines = self.semantic_cache.get("workforce_timelines")
+            if timelines is None:
+                timelines = self.semantic_cache.setdefault("profile_workforce_timelines", {})
+                if ident not in timelines:
+                    timelines.update(workforce_timelines(self.connection, (ident,)))
+            timeline = timelines.get(ident)
+            if timeline is not None:
+                monthly = monthly_projection(timeline, self.period)
+                result["employment_state"] = monthly["period_end_state"]
+                spell = _employee_date_bounds(timeline, self.period)
+                result["employment_start"] = spell["start"] if spell else None
+                result["employment_end"] = spell["end"] if spell else None
+                events = {event["id"]: event for event in timeline["event_references"]}
+                for field, reference in (
+                    ("employment_start", spell["start_event_id"] if spell else None),
+                    ("employment_end", spell["end_event_id"] if spell else None),
+                ):
+                    if reference is not None:
+                        result["field_sources"][field] = self.source(
+                            "display_profile",
+                            events[reference],
+                            "current_supplement" if self.close else "current",
+                            field="workforce_event",
+                        )
+                start, end = result["employment_start"], result["employment_end"]
         if (
             start
             and end
@@ -1673,6 +1739,7 @@ class Dashboard:
             )
             if row[0] > 0
         }
+        values.update(_workforce_event_months(connection))
         closed = {row[0] for row in connection.execute("SELECT period FROM period_close")}
         return [
             _period_view(str(YearMonth.from_ordinal(value)), value in closed)
@@ -1701,7 +1768,7 @@ class Dashboard:
                     "SELECT period FROM material_revision WHERE period=?) LIMIT 1",
                     (month, month, month, month),
                 ).fetchone()
-                if exists is None:
+                if exists is None and month not in _workforce_event_months(connection):
                     raise KernelError("dashboard_period_not_found", "没有找到所选会计月份")
             snapshot = _Snapshot(self.engine, connection, period, reads) if period else None
             try:
@@ -2196,12 +2263,19 @@ class Dashboard:
         filters = {"employee_filter": employee_filter, "employee_id": employee_id}
         with self._snapshot(period) as snap:
             if snap is None:
-                return {**self._response(None, None), "schema_version": 11}
+                return {**self._response(None, None), "schema_version": 12}
             self._check_page_version(snap, cursor, expected_version)
             from .dashboard_model_reads import read_page
 
-            materialized = read_page(self, snap, "employees", section=section,
-                                     cursor=cursor, limit=limit, filters=filters)
+            materialized = read_page(
+                self,
+                snap,
+                "employees",
+                section=section,
+                cursor=cursor,
+                limit=limit,
+                filters=filters,
+            )
             if materialized is not None:
                 return materialized
             after = decode_cursor(snap, "employees", section, cursor, filters)
@@ -2215,8 +2289,10 @@ class Dashboard:
             )
             if section:
                 data["collections"] = {section: data["collections"][section]}
-            return {**self._response(snap, seal_collections(snap, "employees", data, filters)),
-                    "schema_version": 11}
+            return {
+                **self._response(snap, seal_collections(snap, "employees", data, filters)),
+                "schema_version": 12,
+            }
 
     def assets(
         self,
@@ -3847,13 +3923,14 @@ def _employees(
 ):
     cursors = cursors or {}
     requested = (
-        set(sections) if sections is not None else {"employees", "labor_sources"}
+        set(sections) if sections is not None else {"employees", "labor_workers", "labor_sources"}
     )
     money_keys = tuple(key for key in _WORKFORCE_MONEY_KEYS if key != "tax_reported_salary_fen")
     wage_kinds = PAYROLL_KINDS | {"opening_payroll_payable"}
     wage_heads = (
         payroll_list_head_metadata(snap, wage_kinds, line_count_period=snap.period)
-        if not _full_wage_scope else None
+        if not _full_wage_scope
+        else None
     )
     scoped_wage_heads = wage_heads is not None
     if wage_heads is None:
@@ -3922,7 +3999,45 @@ def _employees(
         rows,
         lambda calc: confirmed_employees.get(calc["fact_id"], calc["fact"]["data"]["employee_id"]),
     )
-    known = set(aggregates) | set(snap.profiles.get("employee", {}))
+    from .employee_employment import monthly_projection
+    from .entities import workforce_timelines
+
+    timelines = snap.semantic_cache.get("workforce_timelines")
+    if timelines is None:
+        timelines = workforce_timelines(snap.connection)
+        snap.semantic_cache["workforce_timelines"] = timelines
+    monthly_cache = snap.semantic_cache.setdefault("workforce_monthly", {})
+
+    def personnel_month(ident, period=None):
+        period = period or snap.period
+        key = (ident, period)
+        if key not in monthly_cache:
+            timeline = timelines.get(ident)
+            if timeline is None:
+                raise KernelError("content_integrity_failed", "用工人员缺少身份档案")
+            monthly_cache[key] = monthly_projection(timeline, period)
+        return monthly_cache[key]
+
+    employee_kinds = {"regular", "unpaid_leave"}
+    known = set(aggregates) | set(snap.current_profiles.get("employee", {}))
+
+    def displayed_segments(ident):
+        return [
+            {key: segment[key] for key in ("state", "start", "end")}
+            for segment in timelines[ident]["segments"]
+            if segment["start"][:7] <= snap.period
+            and (segment["end"] is None or segment["end"][:7] >= snap.period)
+            and not (
+                segment["end"] is not None
+                and len(segment["end"]) == 10
+                and segment["end"] == snap.period + "-01"
+            )
+        ]
+
+    def employee_dates(ident):
+        spell = _employee_date_bounds(timelines[ident], snap.period)
+        return (spell["start"], spell["end"]) if spell else (None, None)
+
     # The current accounting selector has no unresolved state candidate lane;
     # its unestablished_state_selections is empty. Do not scan every old wage
     # adoption a second time to project that empty collection.
@@ -3952,33 +4067,32 @@ def _employees(
     known.update(unestablished_employees)
     if hasattr(snap, "metadata"):
         snap.metadata.prime_profiles("employee", known)
-    from .dashboard_model_dates import current_employment_state, employee_date_basis
+    from .dashboard_model_dates import employee_date_basis
 
     employee_states, current_employment_states, date_basis = {}, {}, []
     for ident in sorted(known):
-        # Current personnel status is independent of the selected month's frozen
-        # profile and employment interval. The metadata uses this read transaction.
-        current = snap.current_profiles.get("employee", {}).get(ident, {})
-        current_employment_states[ident] = current_employment_state(current, snap.as_of)
-        date_basis.append(employee_date_basis(ident, current))
-        info = snap.profile("employee", ident)
-        start, end = info.get("employment_start"), info.get("employment_end")
-        interval_profile = snap.profiles.get("employee", {}).get(ident, {}) if snap.close else current
-        intervals = interval_profile.get("employment_intervals")
-        if info["field_conflicts"]:
-            state, in_period = "unknown", None
-        elif intervals is not None:
-            from .employee_employment import period_membership
-
-            state, in_period = period_membership(intervals, snap.period)
-        elif start and start[:7] > snap.period:
-            state, in_period = "not_started", False
-        elif end and end[:7] < snap.period:
-            state, in_period = "ended", False
-        elif start and end or info.get("employment_status") == "active":
-            state, in_period = "in_period", True
+        monthly = personnel_month(ident)
+        current_employment_states[ident] = monthly["period_end_state"]
+        date_basis.append(employee_date_basis(ident, monthly, timelines[ident]))
+        in_period = monthly["employee_member"]
+        if in_period is None:
+            state = "unknown"
+        elif in_period:
+            state = "in_period"
+        elif any(
+            segment["state"] in employee_kinds and segment["start"][:7] <= snap.period
+            for segment in timelines[ident]["segments"]
+        ):
+            state = "ended"
         else:
-            state, in_period = "unknown", None
+            state = "not_started"
+        for event in timelines[ident]["event_references"]:
+            snap.source(
+                "display_profile",
+                event,
+                "current_supplement" if snap.close else "current",
+                field="workforce_event",
+            )
         employee_states[ident] = (state, in_period)
     snap.semantic_cache["model_employee_date_basis"] = tuple(date_basis)
     filtered_ids = [
@@ -3993,10 +4107,17 @@ def _employees(
             or employee_filter == "ended"
             and employee_states[ident][0] == "ended"
             or employee_filter == "employment_active"
-            and current_employment_states[ident] == "regular"
+            and "regular" in personnel_month(ident)["period_states"]
             or employee_filter.startswith("employment_")
             and employee_filter != "employment_active"
-            and current_employment_states[ident] == employee_filter.removeprefix("employment_")
+            and (
+                employee_filter.removeprefix("employment_")
+                in personnel_month(ident)["period_states"]
+                or employee_filter == "employment_departed"
+                and current_employment_states[ident] == "departed"
+                or employee_filter == "employment_unknown"
+                and employee_states[ident][0] == "unknown"
+            )
         )
         and (employee_id is None or ident == employee_id)
     ]
@@ -4006,7 +4127,7 @@ def _employees(
         _prime_party_metadata(snap, filtered_ids)
 
         def employee_sort_key(ident):
-            start = snap.profile("employee", ident).get("employment_start")
+            start, _ = employee_dates(ident)
             return date_object_key(
                 {
                     "date": start if start and len(start) == 10 else None,
@@ -4029,17 +4150,18 @@ def _employees(
     direct_payments, outstanding = defaultdict(int), defaultdict(int)
     settlement_checking = False
     summarized_wages = {
-        head["subject_id"]: head
-        for head in wage_heads
-        if wage_identity(head["fact_id"]) in known
+        head["subject_id"]: head for head in wage_heads if wage_identity(head["fact_id"]) in known
     }
     frozen_net = None
     if summarized_wages or scoped_wage_heads:
         from .settlement_freeze import frozen_employee_net_summary
 
         frozen_net = frozen_employee_net_summary(
-            snap.connection, snap.period, employee_ids=known,
-            wage_heads=None if scoped_wage_heads else wage_heads, reads=snap.reads
+            snap.connection,
+            snap.period,
+            employee_ids=known,
+            wage_heads=None if scoped_wage_heads else wage_heads,
+            reads=snap.reads,
         )
         if frozen_net is not None and not snap.close:
             from .dashboard_reads import payroll_cohort_identities_match
@@ -4051,16 +4173,21 @@ def _employees(
             for ident, amounts in frozen_net["employees"].items():
                 outstanding[ident] = amounts["remaining_fen"]
                 direct_payments[ident] = amounts["period_paid_fen"]
-                net_payments[ident] = _nullable_sum((
-                    amounts["period_paid_fen"], amounts["period_other_settled_fen"]
-                ))
+                net_payments[ident] = _nullable_sum(
+                    (amounts["period_paid_fen"], amounts["period_other_settled_fen"])
+                )
     if scoped_wage_heads and frozen_net is None:
         # Attribution conflicts and unsupported frozen scopes retain the full
         # existing reducer. No partial roster can narrow month-end wage money.
         return _employees(
-            snap, sections=sections, cursors=cursors, limit=limit,
-            employee_filter=employee_filter, employee_id=employee_id,
-            summary_only=summary_only, _full_wage_scope=True,
+            snap,
+            sections=sections,
+            cursors=cursors,
+            limit=limit,
+            employee_filter=employee_filter,
+            employee_id=employee_id,
+            summary_only=summary_only,
+            _full_wage_scope=True,
         )
     if summarized_wages and frozen_net is None:
         # The month-end unpaid amount includes unchanged prior-month sources.
@@ -4122,7 +4249,6 @@ def _employees(
             net_payments[ident] = _nullable_sum(net_parts[ident])
     items, all_items = [], []
     for ident in sorted(known):
-        info = snap.profile("employee", ident)
         amounts = aggregates.get(
             ident,
             {
@@ -4133,7 +4259,7 @@ def _employees(
                 "scopes": set(),
             },
         )
-        start, end = info.get("employment_start"), info.get("employment_end")
+        start, end = employee_dates(ident)
         state, in_period = employee_states[ident]
         scopes = amounts["scopes"]
         scope = next(iter(scopes)) if len(scopes) == 1 else "mixed" if scopes else "none"
@@ -4166,6 +4292,9 @@ def _employees(
                 "name": person["name"],
                 "period_state": state,
                 "employment_state": current_employment_states[ident],
+                "period_states": personnel_month(ident)["period_states"],
+                "possible_period_states": personnel_month(ident)["possible_period_states"],
+                "relationship_segments": displayed_segments(ident),
                 "period_state_label": {
                     "unknown": "未确认人员在册状态",
                     "not_started": "本月早于已提供的开始日期",
@@ -4210,6 +4339,9 @@ def _employees(
                 "name": snap.party(ident),
                 "selection_status": "unestablished",
                 "employment_state": current_employment_states[ident],
+                "period_states": personnel_month(ident)["period_states"],
+                "possible_period_states": personnel_month(ident)["possible_period_states"],
+                "relationship_segments": displayed_segments(ident),
                 **dict.fromkeys(
                     (
                         *money_keys,
@@ -4232,9 +4364,49 @@ def _employees(
     labor_heads = adopted_head_metadata(
         snap, LABOR_KINDS | {"labor_project_cost"}, posting_period=snap.period
     )
+    labor_worker_ids = sorted(
+        (
+            ident
+            for ident in timelines
+            if personnel_month(ident)["labor_member"] is True
+            or "labor" in personnel_month(ident)["possible_period_states"]
+        ),
+        key=lambda ident: (pinyin_key(snap.party(ident)), ident),
+    )
+    filtered_labor_workers = [
+        ident for ident in labor_worker_ids if employee_id is None or ident == employee_id
+    ]
+    selected_labor_workers, labor_worker_page = page_keys(
+        filtered_labor_workers,
+        cursors.get("labor_workers"),
+        limit,
+        total_count=len(labor_worker_ids),
+    )
     order_labor = "labor_sources" in requested and not summary_only
     labor_identities = (
-        verified_scalar_facts(snap, labor_heads) if employee_id is not None or order_labor else {}
+        verified_scalar_facts(snap, labor_heads)
+        if employee_id is not None or order_labor or "labor_workers" in requested
+        else {}
+    )
+    labor_activity_ids = {value["person_id"] for value in labor_identities.values()}
+    labor_workers = (
+        [
+            {
+                "person_id": ident,
+                "name": snap.party(ident),
+                "employment_state": personnel_month(ident)["period_end_state"],
+                "period_states": personnel_month(ident)["period_states"],
+                "possible_period_states": personnel_month(ident)["possible_period_states"],
+                "relationship_segments": [
+                    segment for segment in displayed_segments(ident) if segment["state"] == "labor"
+                ],
+                "in_period": personnel_month(ident)["labor_member"],
+                "has_labor_activity": ident in labor_activity_ids,
+            }
+            for ident in selected_labor_workers
+        ]
+        if "labor_workers" in requested and not summary_only
+        else []
     )
     if order_labor:
         from .dashboard_sort import _prime_party_metadata
@@ -4245,7 +4417,8 @@ def _employees(
         key=lambda row: (
             row["period"],
             pinyin_key(snap.party(labor_identities[row["fact_id"]]["person_id"]))
-            if order_labor else (),
+            if order_labor
+            else (),
             row["subject_id"],
         ),
     )
@@ -4281,6 +4454,10 @@ def _employees(
                 "source_id": calc["subject_id"],
                 "period": data["period"],
                 "person_id": data["person_id"],
+                "relationship_confirmed": personnel_month(data["person_id"], data["period"])[
+                    "labor_member"
+                ]
+                is True,
                 "name": snap.party(data["person_id"]),
                 "capitalized": calc["kind"] == "labor_project_cost",
                 "project_id": data.get("project_id"),
@@ -4302,8 +4479,8 @@ def _employees(
     )
     from .settlement_projection import settlement_labor_outstanding_net
 
-    outstanding_wages = None if unestablished_employees else _nullable_sum(
-        outstanding[ident] for ident in known
+    outstanding_wages = (
+        None if unestablished_employees else _nullable_sum(outstanding[ident] for ident in known)
     )
     outstanding_labor = settlement_labor_outstanding_net(
         snap.connection, snap.period, reads=snap.reads
@@ -4317,6 +4494,7 @@ def _employees(
             },
             "unestablished_count": len(unestablished_employees),
             "registered_count": len(all_items),
+            "labor_worker_count": len(labor_worker_ids),
             "in_period_count": sum(item["in_period"] is True for item in all_items),
             "unknown_period_count": unknown,
             "payroll_count": sum(item["has_payroll_activity"] for item in all_items),
@@ -4331,12 +4509,15 @@ def _employees(
             ),
             "ledger_cost_fen": ledger,
             "checking": bool(unestablished_employees) or adjustment != 0 or settlement_checking,
-            "direct_net_payments_fen": None if unestablished_employees else _nullable_sum(
-                direct_payments[ident] for ident in known
-            ),
-            "other_net_settlements_fen": None if unestablished_employees else _nullable_sum(
+            "direct_net_payments_fen": None
+            if unestablished_employees
+            else _nullable_sum(direct_payments[ident] for ident in known),
+            "other_net_settlements_fen": None
+            if unestablished_employees
+            else _nullable_sum(
                 net_payments[ident] - direct_payments[ident]
-                if net_payments[ident] is not None and direct_payments[ident] is not None else None
+                if net_payments[ident] is not None and direct_payments[ident] is not None
+                else None
                 for ident in known
             ),
             "outstanding_net_fen": outstanding_wages,
@@ -4345,6 +4526,7 @@ def _employees(
         "employee_filter": employee_filter,
         "collections": {
             "employees": {"items": items, "page": employee_page},
+            "labor_workers": {"items": labor_workers, "page": labor_worker_page},
             "labor_sources": {"items": labor_items, "page": labor_page},
         },
         "workforce_cost": {

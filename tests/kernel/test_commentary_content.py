@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from test_display import database_state, register_employee, save_commentary
+from test_display import database_state, register_worker, save_commentary
 from test_exports import setup as setup  # noqa: F401
 from test_opening_continuation import book as book  # noqa: F401
 from test_payroll import payroll
@@ -174,7 +174,7 @@ def test_frozen_original_and_supplements_have_separate_validity(book, monkeypatc
     )
     frozen = periods.closed_report("2026-01")
     supplement = save_commentary(display, text="后来核对的说明", request_id="supplement")
-    register_employee(engine, data={"effective_date": "2026-01"}, proof=proof)
+    register_worker(engine, data={"action": "hire", "effective_date": "2026-01"}, proof=proof)
     current = display.preview_period_commentary("2026-01")
     assert current["current"]["id"] == original["id"]
     assert current["frozen"]["content_validity"]["status"] == "frozen"

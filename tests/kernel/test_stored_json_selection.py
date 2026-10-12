@@ -93,10 +93,9 @@ def test_saved_outcome_cannot_hide_sql_funds_source_with_either_digest(
 
 def test_employee_profile_negative_membership_checks_saved_json_before_filter(bank_book):
     engine, *_ = bank_book
-    person = Entities(engine).register_entity(
-        "person",
-        {"display_name": "合成员工", "employment_status": "active"},
-        source="synthetic profile",
+    person = Entities(engine).register_worker(
+        {"display_name": "合成员工", "action": "hire", "effective_date": "2026-09-01"},
+        source="synthetic confirmed hire on 2026-09-01",
         request_id="person",
     )["entity_id"]
     with engine.store.connection(read_only=True) as connection:
@@ -105,7 +104,7 @@ def test_employee_profile_negative_membership_checks_saved_json_before_filter(ba
         row = connection.execute(
             "SELECT id,content FROM entity_profile_revision WHERE entity_id=?", (person,)
         ).fetchone()
-        changed = '{"employment_status":"unknown",' + row["content"][1:]
+        changed = '{"workforce_event":null,' + row["content"][1:]
         assert json.loads(changed) == json.loads(row["content"])
         _replace_immutable(
             connection,

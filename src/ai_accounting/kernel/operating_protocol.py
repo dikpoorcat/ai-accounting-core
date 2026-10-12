@@ -230,16 +230,22 @@ OPERATING_PROTOCOL = {
                     "基金产品与单笔业务编号分开；同名不自动合并。payee收款账户属于付款指令，"
                     "不能当作公司资金账户。"
                 ),
-                "employee_employment": (
-                    "人员对象不等同于员工。明确入职时用register_employee登记人员管理资料和实际"
-                    "生效日期，已有人员复用entity_id及当前expected_revision。停薪留职、复职、"
-                    "离职和再次入职用change_employee_employment提交明确action、effective_date、"
-                    "当前expected_revision和来源；允许月或实际日精度，不从工资所属月、备注或"
-                    "当前状态推断生效日期。旧档案已离职但缺离职时间时，先以depart补录有来源的"
-                    "原离职日期或月份，再登记再入职。employee_employment_history按有界游标读取原事件、"
-                    "替代关系及来源；同日或月、日精度重叠的事件须用after_profile_id明确先后，录错更正须用"
-                    "replaces_profile_id指向准确原事件。管理任职状态不决定工资核算，不改写已冻结"
-                    "历史。update_entity_profile只更新本次实际提供的管理字段，不能写入任职日期、"
+                "workforce_relationship": (
+                    "人员对象不等同于员工或劳务。明确关系开始时用register_worker提交action="
+                    "hire或start_labor、人员管理资料和effective_date，已有人员复用entity_id及当前"
+                    "expected_revision。入职即停薪须明确initial_unpaid_leave=true；无工资或劳务费"
+                    "不影响人员名册。其他关系变化用change_workforce_relationship提交明确action、"
+                    "effective_date、当前expected_revision和来源；支持hire、start_labor、unpaid_leave、"
+                    "resume、depart、end_labor及原子互转to_employee/to_labor，同一时点仅一种关系。"
+                    "日期允许月或实际日精度，实际日从该日生效，不从工资所属月、备注、费用或当前"
+                    "状态推断用工生效日期；未来预登记不受理。workforce_relationship_history按有界"
+                    "游标读取原事件、替代关系及来源，可提供period查证当月monthly状态和fact_issues；"
+                    "游标绑定人员、用工事件版本及所选period，普通改名不使历史游标失效。月、日精度无法"
+                    "确定顺序时须用after_event_id关联准确前一事件；更正用replaces_event_id引用原事件。"
+                    "看板按所选月份关系生成人员名册，月内曾正常任职才进入在职筛选；工资及劳务"
+                    "业务独立归集，关系缺失明确标为未确认。闭期名册显示最新确认的历史关系，"
+                    "原关账管理版本仍可查证；管理关系变化不重算工资，不修改冻结金额、凭证及采用"
+                    "依据。update_entity_profile只更新本次实际提供的管理字段，不能写入用工日期、"
                     "状态或内部事件字段；核对历史时复用既有事件和原件。"
                 ),
                 "fact_discovery": (
@@ -522,9 +528,9 @@ TOPIC_SELECTORS = {
         "commands": [
             "find_entities",
             "register_entity",
-            "register_employee",
-            "change_employee_employment",
-            "employee_employment_history",
+            "register_worker",
+            "change_workforce_relationship",
+            "workforce_relationship_history",
             "correct_fund_account_identity",
             "update_entity_profile",
             "find_facts",

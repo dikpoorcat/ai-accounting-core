@@ -33,7 +33,7 @@ from .response_contracts import (
 from .stored_json import loads_finite_unique, loads_unique
 from .types import ActualDate, EvidenceDigest, YearMonth, canonical, digest
 
-CONTENT_VERSION = 3
+CONTENT_VERSION = 4
 DASHBOARD_READ_MODEL_DDL = """
 CREATE TABLE dashboard_read_model_commit(
  id BLOB PRIMARY KEY CHECK(length(id)=32),
@@ -138,6 +138,7 @@ class ModelRoot(_StrictModel):
         "ai-accounting-kernel/2/dashboard-read-model/1",
         "ai-accounting-kernel/2/dashboard-read-model/2",
         "ai-accounting-kernel/2/dashboard-read-model/3",
+        "ai-accounting-kernel/2/dashboard-read-model/4",
     ]
     content_version: Positive
     scope: ModelScope
@@ -152,6 +153,8 @@ class ModelRoot(_StrictModel):
             raise ValueError("historical read model cannot acquire calendar inputs")
         if self.date_basis is not None and self.date_basis.valid_from != self.scope.as_of:
             raise ValueError("calendar inputs belong to another production day")
+        if self.date_basis is not None and self.date_basis.period != self.scope.period:
+            raise ValueError("workforce inputs belong to another business month")
         if len({block.key for block in self.blocks}) != len(self.blocks):
             raise ValueError("duplicate block key")
         collections = {}
@@ -205,7 +208,7 @@ class ModelRoot(_StrictModel):
             if roster is None:
                 raise ValueError("calendar inputs need the complete employee directory")
             keys = [key[0] for _, block in roster for key in block.keys]
-            if any(len(key) != 4 for _, block in roster for key in block.keys):
+            if any(len(key) != 5 for _, block in roster for key in block.keys):
                 raise ValueError("calendar employee directory requires exact period predicates")
             expected = {item.employee_id for item in self.date_basis.employees}
             if set(keys) != expected or len(keys) != len(expected):

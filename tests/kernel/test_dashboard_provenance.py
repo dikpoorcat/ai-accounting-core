@@ -56,8 +56,10 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
         "employee",
         1,
         display_name="新姓名",
-        employment_start="2025-12",
-        employment_end="2026-04",
+        workforce_events=[
+            {"action": "hire", "effective_date": "2025-12"},
+            {"action": "depart", "effective_date": "2026-04"},
+        ],
         evidence_digest=company.owner_confirmation,
     )
     note = profile(
@@ -87,7 +89,6 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     sources = {
         "name": person["field_sources"]["name"],
         "employment_end_date": selected["field_sources"]["employment_end"],
-        "record_status": selected["field_sources"]["employment_status"],
         "tax_withholding_start_date": tax_start,
     }
     assert sources["name"]["id"] == old["id"]
@@ -98,8 +99,6 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert sources["employment_end_date"]["evidence_digest"] == company.owner_confirmation
     assert sources["employment_end_date"]["basis"] == "current_supplement"
     assert sources["employment_end_date"]["recorded_at"]
-    assert selected["employment_status"] == "unknown"
-    assert sources["record_status"]["id"] == old["id"]
     assert sources["tax_withholding_start_date"]["source_type"] == "fact"
     assert sources["tax_withholding_start_date"]["basis"] == "frozen"
     assert response["read_semantics"]["knowledge"] == "current_knowledge"
@@ -141,47 +140,70 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
         ("2026-03", "2026-02", True),
     ],
 )
-def test_mixed_employment_dates_only_conflict_when_precision_proves_inversion(
+def test_typed_employment_dates_reject_inversion_and_preserve_precision(
     engine, start, end, conflict
 ):
+    from ai_accounting.kernel.contracts import NeedsInformation
+    from ai_accounting.kernel.entities import Entities
+
     save(engine)
     publish(engine)
-    old = profile(engine, "employee", "person", employment_start=start)
-    close(engine)
-    latest = profile(
-        engine, "employee", "person", 1, employment_start="2026-01", employment_end=end
+    registered = profile(
+        engine, "employee", "person", workforce_event={"action": "hire", "effective_date": start}
     )
-    with Dashboard(engine)._snapshot("2026-01") as snapshot:
-        selected = snapshot.profile("employee", "person")
-        assert bool(selected["field_conflicts"]) == conflict
-        assert selected["employment_start"] == start and selected["employment_end"] == end
-        assert selected["field_sources"]["employment_start"]["id"] == old["id"]
-        assert selected["field_sources"]["employment_end"]["id"] == latest["id"]
+    close(engine)
+    frozen = frozen_rows(engine)
+
+    def operation():
+        return profile(
+            engine,
+            "employee",
+            "person",
+            1,
+            workforce_event={
+                "action": "depart",
+                "effective_date": end,
+                "after_event_id": registered["profile_id"],
+            },
+        )
+
+    if conflict:
+        with pytest.raises(NeedsInformation) as failure:
+            operation()
+        assert failure.value.issues
+    else:
+        ended = operation()
+        history = Entities(engine).workforce_relationship_history("person", period="2026-03")
+        events = {item["action"]: item for item in history["items"]}
+        assert events["hire"]["effective_date"] == start
+        assert events["depart"]["effective_date"] == end
+        assert events["depart"]["event_id"] == ended["profile_id"]
+    assert frozen_rows(engine) == frozen
 
 
-def test_date_conflict_cannot_claim_a_historical_employee_is_in_period(company):
+def test_invalid_early_departure_is_atomic_and_cannot_replace_confirmed_history(company):
+    from ai_accounting.kernel.contracts import NeedsInformation
+
     company.publish("january", "february")
-    profile(company.engine, "employee", "employee", employment_start="2026-01-20")
-    company.close("2026-01")
     profile(
         company.engine,
         "employee",
         "employee",
-        1,
-        employment_start="2025-12",
-        employment_end="2026-01-05",
+        workforce_event={"action": "hire", "effective_date": "2026-01-20"},
     )
-    response = Dashboard(company.engine).employees("2026-01", employee_filter="all")
-    validate_response("dashboard_employees", response)
-    wire = http_response("dashboard_employees", response)
-    employee = response["data"]["collections"]["employees"]["items"][0]
-    assert employee["period_state"] == "unknown" and employee["in_period"] is None
-    with Dashboard(company.engine)._snapshot("2026-01") as snapshot:
-        assert (
-            snapshot.profile("employee", "employee")["field_conflicts"][0]["code"]
-            == "employment_interval_conflict"
+    company.close("2026-01")
+    before = Dashboard(company.engine).employees("2026-01", employee_filter="all")
+    frozen = frozen_rows(company.engine)
+    with pytest.raises(NeedsInformation):
+        profile(
+            company.engine,
+            "employee",
+            "employee",
+            1,
+            workforce_event={"action": "depart", "effective_date": "2026-01-05"},
         )
-    assert wire["data"]["collections"]["employees"]["items"][0]["in_period"] is None
+    assert Dashboard(company.engine).employees("2026-01", employee_filter="all") == before
+    assert frozen_rows(company.engine) == frozen
 
 
 def test_false_and_empty_management_fields_keep_their_actual_selected_sources(engine):

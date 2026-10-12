@@ -9,7 +9,7 @@ from ai_accounting.kernel import entities, stored_json
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.entities import Entities, employee_entities
 from ai_accounting.kernel.query_reads import QueryReads, _owns_current_selector_snapshot
-from ai_accounting.kernel.types import digest
+from ai_accounting.kernel.types import canonical, digest
 
 bank_book = banking.book
 
@@ -102,21 +102,27 @@ def test_failed_sql_outcome_batch_does_not_cache_successful_prefix(bank_book, mo
     assert checked == [good, bad, good]
 
 
-def test_employee_membership_decodes_latest_profile_not_unrelated_revisions(bank_book, monkeypatch):
+def test_employee_membership_authenticates_person_history_not_organization_revisions(
+    bank_book, monkeypatch
+):
     engine, *_ = bank_book
-    person = Entities(engine).register_entity(
-        "person",
-        {"display_name": "合成员工", "employment_status": "active"},
-        source="synthetic profile",
+    person = Entities(engine).register_worker(
+        {"display_name": "合成员工", "action": "hire", "effective_date": "2026-09-01"},
+        source="synthetic confirmed hire on 2026-09-01",
         request_id="person",
     )["entity_id"]
-    # Build valid older revisions through the real storage shape. Only the
-    # newest record is relevant to the public membership predicate.
+    organization = Entities(engine).register_entity(
+        "organization", {"display_name": "合成无关企业"}, source="synthetic organization",
+        request_id="organization",
+    )["entity_id"]
+    # Later metadata does not repeat the event. The original event remains
+    # necessary evidence, while another entity kind cannot affect membership.
     with engine.store.connection() as connection:
         profile = connection.execute(
             "SELECT * FROM entity_profile_revision WHERE entity_id=?", (person,)
         ).fetchone()
         content = json.loads(profile["content"])
+        content["workforce_event"] = None
         for revision in range(2, 102):
             connection.execute(
                 "INSERT INTO entity_profile_revision VALUES(?,?,?,?,?,?,?)",
@@ -124,7 +130,7 @@ def test_employee_membership_decodes_latest_profile_not_unrelated_revisions(bank
                     f"synthetic-{revision}",
                     person,
                     revision,
-                    profile["content"],
+                    canonical(content),
                     profile["source"],
                     profile["evidence_digest"],
                     digest([person, revision, content, profile["source"], None]),
@@ -134,10 +140,12 @@ def test_employee_membership_decodes_latest_profile_not_unrelated_revisions(bank
     original = entities._profile_record
 
     def counted(row):
-        decoded.append(row["revision"])
+        decoded.append((row["entity_id"], row["revision"]))
         return original(row)
 
     monkeypatch.setattr(entities, "_profile_record", counted)
     with engine.store.connection(read_only=True) as connection:
-        assert person in employee_entities(connection, "2026-09", registry=engine.store.registry)
-    assert decoded == [101]
+        assert person in employee_entities(
+            connection, "2026-09", registry=engine.store.registry, entity_ids=[person, organization]
+        )
+    assert set(decoded) == {(person, revision) for revision in range(1, 102)}

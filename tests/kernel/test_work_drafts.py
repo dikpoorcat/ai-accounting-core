@@ -555,9 +555,7 @@ def test_pending_original_json_number_type_cannot_be_rewritten(store, changed_va
     }
     first = save(store, {"pending_requests": [pending]})
     before = saved_path(store).read_bytes()
-    changed = pending | {
-        "payload": pending["payload"] | {"data": {"principal_fen": changed_value}}
-    }
+    changed = pending | {"payload": pending["payload"] | {"data": {"principal_fen": changed_value}}}
     assert_error(
         "work_draft_request_conflict",
         save,

@@ -272,6 +272,8 @@ def _row_keys(snap, page, section, items):
         return [item["fund_id" if section == "investment_products" else "id"] for item in items]
     if section == "employees":
         return [item["employee_id"] for item in items]
+    if section == "labor_workers":
+        return [item["person_id"] for item in items]
     if section == "assets":
         return [item["asset_id"] for item in items]
     # The public labor/project row exposes a business ID; its original seek key
@@ -405,7 +407,7 @@ def _page_sources(snap, page, section, items):
 
 
 def _native_frame(dashboard, snap, page, data, *, section=None, filters=None):
-    versions = {"brief": 19, "funds": 9, "employees": 11, "assets": 10}
+    versions = {"brief": 19, "funds": 9, "employees": 12, "assets": 10}
     filters = (
         dict(filters)
         if filters is not None
@@ -758,5 +760,6 @@ def build_model(dashboard, period, *, block_size=100):
             date_basis=make_date_basis(
                 snap.semantic_cache["model_employee_date_basis"],
                 snap.as_of,
+                snap.period,
             ),
         )

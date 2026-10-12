@@ -12,18 +12,16 @@ import json
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.employee_employment import WorkforceEvent, records
 from ai_accounting.kernel.entities import Entities, _profile_record, require_entity
+from ai_accounting.kernel.read_indexes import sync_audit
 from ai_accounting.kernel.types import EvidenceDigest, canonical, digest
 
 SCENARIO_SOURCE = (
     "Stage 9 synthetic workforce scenario v1: all 50 fictional employees are "
     "regularly employed from 2016-01-01; this is a test definition, not an owner confirmation."
 )
-EMPLOYMENT = {
-    "employment_status": "active",
-    "employment_state": "regular",
-    "employment_start": "2016-01-01",
-}
+EMPLOYMENT = {"action": "hire", "effective_date": "2016-01-01"}
 
 
 class SyntheticIdentity(BaseModel):
@@ -60,7 +58,13 @@ def current_employee_revisions(engine, employee_ids):
 
 
 def supplement_synthetic_employee_profiles(engine, members, *, identity, request_id):
-    """Use one original kernel write, with normal model production at its end."""
+    """One synthetic transaction retains every member's standard event receipt.
+
+    This private fixture appends the explicitly defined 2016-01-01 hire facts.
+    Exact four-field member receipts authenticate their source recording times;
+    the outer writer increments management and produces models once. No member
+    event or receipt survives an incomplete batch. This is not a public API.
+    """
     identity = SyntheticIdentity.model_validate(identity)
     selected = tuple(EmployeeRevision.model_validate(member) for member in members)
     if len(selected) != 50 or len({member.entity_id for member in selected}) != 50:
@@ -90,13 +94,27 @@ def supplement_synthetic_employee_profiles(engine, members, *, identity, request
                 f"合成员工{index + 1:03}"
             ):
                 raise ValueError("synthetic employee source profile identity changed")
-            data = json.loads(row["content"]) | EMPLOYMENT
-            data.pop("employment_event", None)
-            updated, evidence = Entities._profile("person", data, SCENARIO_SOURCE, None)
-            results.append(Entities._insert_profile(
+            event = WorkforceEvent(**EMPLOYMENT).model_dump(mode="json")
+            saved = Entities(engine)._workforce_append(
                 connection, member.entity_id, member.expected_revision + 1,
-                updated, SCENARIO_SOURCE, evidence,
-            ))
+                json.loads(row["content"]), records(connection, member.entity_id),
+                event, SCENARIO_SOURCE, None,
+            )
+            member_request = request_id + f"-member-{index + 1:03}"
+            audit = connection.execute(
+                "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
+                (member_request, "update_entity_profile", canonical(saved)),
+            )
+            sync_audit(connection, audit.lastrowid)
+            connection.execute(
+                "INSERT INTO request VALUES(?,?,?)",
+                (
+                    member_request,
+                    digest(["synthetic workforce member", EMPLOYMENT, SCENARIO_SOURCE, saved]),
+                    canonical(saved),
+                ),
+            )
+            results.append(saved)
         return {"status": "registered", "scenario_source": SCENARIO_SOURCE, "results": results}
 
     return engine._write(

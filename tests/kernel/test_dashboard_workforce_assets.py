@@ -190,13 +190,13 @@ def test_opening_payroll_keeps_source_period_components_and_later_payment(openin
     ("start", "end", "expected_state", "expected_member"),
     [
         ("2025-12", "2026-04", "in_period", True),
-        ("2025-12", "2026-02-01", "in_period", True),
+        ("2025-12", "2026-02-01", "ended", False),
         ("2025-12", "2026-01", "ended", False),
         ("2026-03", "2026-04", "not_started", False),
-        ("2025-12", None, "unknown", None),
+        ("2025-12", None, "in_period", True),
     ],
 )
-def test_explicit_employment_interval_precedes_current_inactive_status(
+def test_typed_effective_intervals_define_month_membership(
     company, start, end, expected_state, expected_member
 ):
     company.publish("january", "february")
@@ -205,9 +205,8 @@ def test_explicit_employment_interval_precedes_current_inactive_status(
         {
             "kind": "employee",
             "entity_id": "employee",
-            "employment_status": "inactive",
-            "employment_start": start,
-            "employment_end": end,
+            "workforce_events": [{"action": "hire", "effective_date": start}]
+            + ([{"action": "depart", "effective_date": end}] if end else []),
             "source": "明确的入离职资料",
         },
         expected_revision=0,
@@ -232,9 +231,10 @@ def test_later_exit_record_preserves_explicit_employment_in_closed_month(company
         {
             "kind": "employee",
             "entity_id": "employee",
-            "employment_status": "inactive",
-            "employment_start": "2025-12",
-            "employment_end": "2026-04",
+            "workforce_events": [
+                {"action": "hire", "effective_date": "2025-12"},
+                {"action": "depart", "effective_date": "2026-04"},
+            ],
             "source": "后来登记的明确离职资料",
         },
         expected_revision=0,
@@ -247,128 +247,23 @@ def test_later_exit_record_preserves_explicit_employment_in_closed_month(company
     assert company.engine.ledger("2026-01") == before
 
 
-@pytest.mark.parametrize("closed", [False, True])
-def test_current_employment_states_and_default_filter_preserve_month_scope(company, closed):
-    company.publish("january", "february")
-    definitions = [
-        ("employee", "unpaid_leave", "active"),
-        ("regular", "regular", "unknown"),
-        ("departed", "departed", "active"),
-        ("old-active", "unknown", "active"),
-        ("old-inactive", "unknown", "inactive"),
-        ("unknown", "unknown", "unknown"),
-    ]
-    for ident, state, old_status in definitions:
-        save_entity_display_profile(company.engine, {
-            "kind": "employee", "entity_id": ident, "employment_state": state,
-            "employment_status": old_status, "employment_start": "2025-01",
-            "employment_end": "2027-01",
-            "source": "明确的合成任职状态",
-        }, expected_revision=0, request_id="state-" + ident)
-    if closed:
-        company.close("2026-01")
-    before = company.engine.ledger("2026-01")
-    dashboard = Dashboard(company.engine)
-    all_response = dashboard.employees("2026-01", employee_filter="all")
-    all_data = all_response["data"]
-    items = {item["employee_id"]: item for item in all_data["collections"]["employees"]["items"]}
-    assert {ident: item["employment_state"] for ident, item in items.items()} == {
-        ident: state for ident, state, _old in definitions
-    }
-    assert all(item["in_period"] is True for item in items.values())
-    expected = {
-        "employment_active": {"regular"},
-        "employment_unpaid_leave": {"employee"},
-        "employment_departed": {"departed"},
-        "employment_unknown": {"old-active", "old-inactive", "unknown"},
-    }
-    for employee_filter, expected_ids in expected.items():
-        response = dashboard.employees("2026-01", employee_filter=employee_filter, limit=1)
-        validate_response("dashboard_employees", response)
-        assert response["data"]["employees"] == all_data["employees"]
-        assert response["data"]["workforce_cost"] == all_data["workforce_cost"]
-        assert (
-            response["data"]["collections"]["labor_sources"]
-            == all_data["collections"]["labor_sources"]
-        )
-        found = []
-        while True:
-            collection = response["data"]["collections"]["employees"]
-            assert collection["page"]["total_count"] == 6
-            assert collection["page"]["filtered_count"] == len(expected_ids)
-            found.extend(item["employee_id"] for item in collection["items"])
-            if not collection["page"]["has_more"]:
-                break
-            cursor = collection["page"]["next_cursor"]
-            with pytest.raises(KernelError) as failure:
-                dashboard.employees("2026-01", section="employees", cursor=cursor,
-                    employee_filter="all", expected_version=response["snapshot_version"])
-            assert failure.value.code == "dashboard_snapshot_changed"
-            response = dashboard.employees(
-                "2026-01",
-                section="employees",
-                cursor=cursor,
-                employee_filter=employee_filter,
-                expected_version=response["snapshot_version"],
-                limit=1,
-            )
-        assert set(found) == expected_ids
-    default = dashboard.employees("2026-01")
-    assert default["data"]["employee_filter"] == "employment_active"
-    assert {
-        item["employee_id"] for item in default["data"]["collections"]["employees"]["items"]
-    } == expected["employment_active"]
-    assert company.engine.ledger("2026-01") == before
-
-
-@pytest.mark.parametrize("frozen_state,current_state", [
-    ("regular", "departed"), ("regular", "unpaid_leave"),
-])
-def test_closed_month_current_state_uses_latest_profile_and_invalidates_cursor(
-    company, frozen_state, current_state,
-):
-    company.publish("january", "february")
-    for ident in ("employee", "second"):
-        save_entity_display_profile(company.engine, {
-            "kind": "employee", "entity_id": ident, "employment_state": frozen_state,
-            "employment_start": "2025-01", "employment_status": "active",
-            "source": "明确的合成任职资料",
-        }, expected_revision=0, request_id="frozen-" + ident)
-    company.close("2026-01")
-    before = company.engine.ledger("2026-01")
-    dashboard = Dashboard(company.engine)
-    first_filter = "employment_active" if frozen_state == "regular" else "employment_unknown"
-    first = dashboard.employees("2026-01", employee_filter=first_filter, limit=1)
-    cursor = first["data"]["collections"]["employees"]["page"]["next_cursor"]
-    from ai_accounting.kernel.entities import Entities
-
-    Entities(company.engine).change_employee_employment("employee", {
-        "action": "depart" if current_state == "departed" else "unpaid_leave",
-        "effective_date": "2026-02",
-    }, source="明确的合成任职状态确认", expected_revision=2, request_id="latest-state")
-    with pytest.raises(KernelError) as failure:
-        dashboard.employees("2026-01", section="employees", cursor=cursor,
-            expected_version=first["snapshot_version"], employee_filter=first_filter, limit=1)
-    assert failure.value.code == "dashboard_snapshot_changed"
-    item = dashboard.employees("2026-01", employee_filter="employment_" + current_state)[
-        "data"]["collections"]["employees"]["items"][0]
-    assert item["employment_state"] == current_state
-    assert item["in_period"] is True
-    assert company.engine.ledger("2026-01") == before
-
-
-def test_closed_employee_interval_and_payroll_remain_frozen_after_employment_correction(company):
+def test_closed_roster_is_corrected_while_payroll_and_accounting_remain_frozen(company):
     from ai_accounting.kernel.entities import Entities
 
     directory = Entities(company.engine)
-    hired = directory.register_employee(
-        {"display_name": "合成任职员工", "effective_date": "2025-01"},
-        entity_id="employee", expected_revision=1,
-        source="合成入职确认", request_id="interval-hire",
+    hired = directory.register_worker(
+        {"action": "hire", "display_name": "合成任职员工", "effective_date": "2025-01"},
+        entity_id="employee",
+        expected_revision=1,
+        source="合成入职确认",
+        request_id="interval-hire",
     )
-    departed = directory.change_employee_employment(
-        "employee", {"action": "depart", "effective_date": "2026-01-31"},
-        source="合成离职确认", expected_revision=hired["revision"], request_id="interval-depart",
+    departed = directory.change_workforce_relationship(
+        "employee",
+        {"action": "depart", "effective_date": "2026-01-31"},
+        source="合成离职确认",
+        expected_revision=hired["revision"],
+        request_id="interval-depart",
     )
     company.publish("january", "february")
     company.close("2026-01")
@@ -376,26 +271,35 @@ def test_closed_employee_interval_and_payroll_remain_frozen_after_employment_cor
     before_payroll = company.current("january")
     with company.engine.store.connection(read_only=True) as connection:
         before_close = [tuple(row) for row in connection.execute("SELECT * FROM period_close")]
-    rehired = directory.change_employee_employment(
-        "employee", {"action": "hire", "effective_date": "2026-03"},
-        source="合成再入职确认", expected_revision=departed["revision"], request_id="interval-rehire",
+    rehired = directory.change_workforce_relationship(
+        "employee",
+        {"action": "hire", "effective_date": "2026-03"},
+        source="合成再入职确认",
+        expected_revision=departed["revision"],
+        request_id="interval-rehire",
     )
-    directory.change_employee_employment(
-        "employee", {
-            "action": "depart", "effective_date": "2025-12-31",
-            "replaces_profile_id": departed["profile_id"],
-        }, source="合成离职时间更正", expected_revision=rehired["revision"],
+    directory.change_workforce_relationship(
+        "employee",
+        {
+            "action": "depart",
+            "effective_date": "2025-12-31",
+            "replaces_event_id": departed["profile_id"],
+        },
+        source="合成离职时间更正",
+        expected_revision=rehired["revision"],
         request_id="interval-correction",
     )
-    item = Dashboard(company.engine).employees("2026-01", employee_id="employee", employee_filter="all")[
-        "data"
-    ]["collections"]["employees"]["items"][0]
-    assert item["in_period"] is True
-    assert item["employment_state"] == "regular"
+    item = Dashboard(company.engine).employees(
+        "2026-01", employee_id="employee", employee_filter="all"
+    )["data"]["collections"]["employees"]["items"][0]
+    assert item["in_period"] is False
+    assert item["employment_state"] == "departed"
     assert company.engine.ledger("2026-01") == before
     assert company.current("january") == before_payroll
     with company.engine.store.connection(read_only=True) as connection:
-        assert [tuple(row) for row in connection.execute("SELECT * FROM period_close")] == before_close
+        assert [
+            tuple(row) for row in connection.execute("SELECT * FROM period_close")
+        ] == before_close
 
 
 def test_employee_filter_request_schema_declares_current_employment_values(company):
@@ -441,13 +345,18 @@ def test_typed_employee_registration_generates_state_and_metadata_update_preserv
 
     company.publish("january")
     models = command_models(company.engine.store.registry)
-    payload = validate_command(models, "register_employee", {
-        "company_id": company.engine.store.company_id,
-        "data": {"display_name": "合成在职对象", "effective_date": "2025-01"},
-        "source": "明确的合成入职资料", "request_id": "typed-employee-register",
-    })
+    payload = validate_command(
+        models,
+        "register_worker",
+        {
+            "company_id": company.engine.store.company_id,
+            "data": {"action": "hire", "display_name": "合成在职对象", "effective_date": "2025-01"},
+            "source": "明确的合成入职资料",
+            "request_id": "typed-employee-register",
+        },
+    )
     payload.pop("company_id")
-    saved = Entities(company.engine).register_employee(**payload)
+    saved = Entities(company.engine).register_worker(**payload)
     entity_id = saved["entity_id"]
     dashboard = Dashboard(company.engine)
 
@@ -457,116 +366,36 @@ def test_typed_employee_registration_generates_state_and_metadata_update_preserv
         )["data"]["collections"]["employees"]["items"]
 
     assert current()[0]["employment_state"] == "regular"
-    payload = validate_command(models, "update_entity_profile", {
-        "company_id": company.engine.store.company_id,
-        "entity_id": entity_id, "data": {"display_name": "合成更新姓名"},
-        "source": "明确的合成档案更新", "expected_revision": saved["revision"],
-        "request_id": "typed-employee-rename",
-    })
+    payload = validate_command(
+        models,
+        "update_entity_profile",
+        {
+            "company_id": company.engine.store.company_id,
+            "entity_id": entity_id,
+            "data": {"display_name": "合成更新姓名"},
+            "source": "明确的合成档案更新",
+            "expected_revision": saved["revision"],
+            "request_id": "typed-employee-rename",
+        },
+    )
     assert "employment_state" not in payload["data"]
     payload.pop("company_id")
     Entities(company.engine).update_entity_profile(**payload)
     assert current()[0]["employment_state"] == "regular"
     assert current()[0]["name"] == "合成更新姓名"
     with pytest.raises(KernelError):
-        validate_command(models, "update_entity_profile", {
-            "company_id": company.engine.store.company_id,
-            "entity_id": entity_id, "data": {"employment_state": "unknown"},
-            "source": "合成不允许的直接状态输入", "expected_revision": saved["revision"] + 1,
-            "request_id": "direct-state-update",
-        })
-
-
-@pytest.mark.parametrize("closed", [False, True])
-def test_missing_current_state_keeps_unknown_without_changing_historical_month(
-    company, monkeypatch, closed
-):
-    from ai_accounting.kernel.types import canonical, digest
-
-    monkeypatch.setattr("ai_accounting.kernel.business_queries._today_china", lambda: "2026-10-10")
-    company.publish("january", "february")
-    definitions = [
-        ("employee", "active", None, "unknown"),
-        ("old-ended", "inactive", "2026-09", "unknown"),
-        ("old-day-ended", "inactive", "2026-10-09", "unknown"),
-        ("old-month-end", "inactive", "2026-10", "unknown"),
-        ("old-future-end", "inactive", "2026-10-11", "unknown"),
-        ("old-no-date", "inactive", None, "unknown"),
-        ("old-unknown-ended", "unknown", "2026-09", "unknown"),
-        ("old-active-ended", "active", "2026-09", "unknown"),
-    ]
-    for ident, status, end, _expected in definitions:
-        save_entity_display_profile(company.engine, {
-            "kind": "employee", "entity_id": ident, "employment_status": status,
-            "employment_start": "2025-01", "employment_end": end,
-            "source": "已有明确合成任职资料",
-        }, expected_revision=0, request_id="legacy-" + ident)
-    # Append synthetic historical-format JSON from before this optional
-    # management field existed, retaining all immutable earlier revisions.
-    with company.engine.store.connection() as connection:
-        for ident, *_ in definitions:
-            row = connection.execute(
-                "SELECT * FROM entity_profile_revision WHERE entity_id=? AND revision=2", (ident,)
-            ).fetchone()
-            content = json.loads(row["content"])
-            content.pop("employment_state", None)
-            proof = row["evidence_digest"].hex() if row["evidence_digest"] else None
-            connection.execute(
-                "INSERT INTO entity_profile_revision"
-                "(id,entity_id,revision,content,source,evidence_digest,digest) "
-                "VALUES(?,?,3,?,?,?,?)",
-                (
-                    "historical-state-" + ident,
-                    ident,
-                    canonical(content),
-                    row["source"],
-                    row["evidence_digest"],
-                    digest([ident, 3, content, row["source"], proof]),
-                ),
-            )
-        connection.commit()
-    if closed:
-        company.close("2026-01")
-    before = company.engine.ledger("2026-01")
-    with company.engine.store.connection(read_only=True) as connection:
-        original = [
-            tuple(row)
-            for row in connection.execute("SELECT * FROM entity_profile_revision ORDER BY id")
-        ]
-    dashboard = Dashboard(company.engine)
-    items = dashboard.employees("2026-01", employee_filter="all")["data"]["collections"][
-        "employees"
-    ]["items"]
-    assert {item["employee_id"]: item["employment_state"] for item in items} == {
-        ident: expected for ident, _status, _end, expected in definitions
-    }
-    assert [
-        item["employee_id"]
-        for item in dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"]
-    ] == []
-    assert {item["employee_id"]: item["in_period"] for item in items} == {
-        ident: None if ident == "old-no-date" else True
-        for ident, _status, _end, _expected in definitions
-    }
-    with company.engine.store.connection(read_only=True) as connection:
-        assert original == [
-            tuple(row)
-            for row in connection.execute("SELECT * FROM entity_profile_revision ORDER BY id")
-        ]
-    assert company.engine.ledger("2026-01") == before
-    save_entity_display_profile(company.engine, {
-        "kind": "employee", "entity_id": "employee",
-        "employment_status": "active", "employment_state": "unknown", "employment_start": "2025-01",
-        "source": "明确未知分类的合成旧档案基线",
-    }, expected_revision=2, request_id="explicit-unknown")
-    assert dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"] == []
-    unknown_items = dashboard.employees("2026-01", employee_filter="employment_unknown")["data"][
-        "collections"
-    ]["employees"]["items"]
-    assert any(
-        item["employee_id"] == "employee" and item["employment_state"] == "unknown"
-        for item in unknown_items
-    )
+        validate_command(
+            models,
+            "update_entity_profile",
+            {
+                "company_id": company.engine.store.company_id,
+                "entity_id": entity_id,
+                "data": {"employment_state": "unknown"},
+                "source": "合成不允许的直接状态输入",
+                "expected_revision": saved["revision"] + 1,
+                "request_id": "direct-state-update",
+            },
+        )
 
 
 def test_employee_employment_and_name_order_is_global_across_pages_and_filters(tmp_path):
@@ -591,9 +420,12 @@ def test_employee_employment_and_name_order_is_global_across_pages_and_filters(t
                 "kind": "employee",
                 "entity_id": ident,
                 "display_name": name,
-                "employment_start": start,
-                "employment_end": end,
-                "employment_status": "inactive" if end else "active",
+                "workforce_events": (
+                    [{"action": "hire", "effective_date": start}]
+                    + ([{"action": "depart", "effective_date": end}] if end else [])
+                )
+                if start
+                else [],
                 "source": "合成员工入离职资料",
             },
             expected_revision=0,
@@ -620,16 +452,16 @@ def test_employee_employment_and_name_order_is_global_across_pages_and_filters(t
             )
 
     first, items = read_pages("all")
-    expected_ids = [ident for ident, _name, _start, _end in people]
+    expected_ids = [ident for ident, _name, start, _end in people if start]
     assert [item["employee_id"] for item in items] == expected_ids
     assert first["data"]["collections"]["employees"]["page"]["returned_count"] == 3
-    assert first["data"]["collections"]["employees"]["page"]["total_count"] == 10
+    assert first["data"]["collections"]["employees"]["page"]["total_count"] == 8
     assert [item["employment_start_date"] for item in items] == [
-        start for _ident, _name, start, _end in people
+        start for _ident, _name, start, _end in people if start
     ]
     filtered_first, filtered = read_pages("in_period")
     assert [item["employee_id"] for item in filtered] == expected_ids[1:]
-    assert filtered_first["data"]["collections"]["employees"]["page"]["filtered_count"] == 9
+    assert filtered_first["data"]["collections"]["employees"]["page"]["filtered_count"] == 7
     assert filtered_first["data"]["employees"] == first["data"]["employees"]
     focused = dashboard.employees(
         "2026-01",

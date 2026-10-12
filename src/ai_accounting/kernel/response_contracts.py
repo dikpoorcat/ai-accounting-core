@@ -37,7 +37,7 @@ from .response_types import (
     Version5,
     Version9,
     Version10,
-    Version11,
+    Version12,
     Version19,
     WireFen,
 )
@@ -465,8 +465,6 @@ class Collection(ResponseObject, Generic[T]):  # noqa: UP046 - Pydantic rebuild 
     page: CollectionPage
 
 
-
-
 class AccountStatement(ResponseObject):
     inflow_fen: WireFen | None
     outflow_fen: WireFen | None
@@ -544,8 +542,6 @@ class BankStatementRow(ResponseObject):
     party: str
     memo: str
     batch_payment: NotRequired[BatchPayment]
-
-
 
 
 class BankStatement(ResponseObject):
@@ -1247,9 +1243,9 @@ class BriefOpenItem(ResponseObject):
     current_outstanding_fen: WireFen | None
     subject_id: str | None
     contribution_group_key: str | None
-    contribution_component: Literal[
-        "employee_social", "employer_social", "employee_housing", "employer_housing"
-    ] | None
+    contribution_component: (
+        Literal["employee_social", "employer_social", "employee_housing", "employer_housing"] | None
+    )
     payroll_period: Month | None
 
 
@@ -1683,6 +1679,17 @@ class FieldConflict(ResponseObject):
     fields: list[Literal["employment_start", "employment_end"]]
 
 
+WorkforceState = Literal[
+    "regular", "unpaid_leave", "departed", "labor", "labor_ended", "unknown"
+]
+
+
+class WorkforceRelationshipSegment(ResponseObject):
+    state: WorkforceState
+    start: MonthOrDay
+    end: MonthOrDay | None
+
+
 class EmployeeItem(ResponseObject):
     employee_id: str
     selection_status: Literal["established"]
@@ -1690,7 +1697,10 @@ class EmployeeItem(ResponseObject):
     period_state: str
     period_state_label: str
     in_period: bool | None
-    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"]
+    employment_state: WorkforceState
+    period_states: list[WorkforceState]
+    possible_period_states: list[WorkforceState]
+    relationship_segments: list[WorkforceRelationshipSegment]
     employment_start_date: MonthOrDay | None
     employment_end_date: MonthOrDay | None
     has_payroll_activity: bool
@@ -1719,7 +1729,10 @@ class UnestablishedEmployee(ResponseObject):
     employee_id: str
     name: str
     selection_status: Literal["unestablished"]
-    employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"]
+    employment_state: WorkforceState
+    period_states: list[WorkforceState]
+    possible_period_states: list[WorkforceState]
+    relationship_segments: list[WorkforceRelationshipSegment]
     gross_salary_fen: None
     annual_bonus_fen: None
     employer_social_insurance_fen: None
@@ -1753,6 +1766,7 @@ class EmployeeSummary(ResponseObject):
     payroll_count: Count
     without_payroll_count: Count
     contributions_only_count: Count
+    labor_worker_count: Count
     ledger_cost_fen: WireFen
     checking: bool
     direct_net_payments_fen: WireFen | None
@@ -1790,10 +1804,23 @@ class LaborSource(PeopleAssetSettlement):
     booked_tax_fen: WireFen
     withholding_method: str
     withholding_label: str
+    relationship_confirmed: bool
+
+
+class LaborWorkerItem(ResponseObject):
+    person_id: str
+    name: str
+    employment_state: WorkforceState
+    period_states: list[WorkforceState]
+    possible_period_states: list[WorkforceState]
+    relationship_segments: list[WorkforceRelationshipSegment]
+    in_period: bool | None
+    has_labor_activity: bool
 
 
 class EmployeeCollections(ResponseObject):
     employees: NotRequired[Collection[EmployeeItem | UnestablishedEmployee]]
+    labor_workers: NotRequired[Collection[LaborWorkerItem]]
     labor_sources: NotRequired[Collection[LaborSource]]
 
 
@@ -1806,9 +1833,14 @@ class OwnerWorkforceCost(ResponseObject):
 class EmployeesData(ResponseObject):
     employee_id: str | None
     employee_filter: Literal[
-        "all", "in_period", "unknown", "ended",
-        "employment_active", "employment_unpaid_leave",
-        "employment_departed", "employment_unknown",
+        "all",
+        "in_period",
+        "unknown",
+        "ended",
+        "employment_active",
+        "employment_unpaid_leave",
+        "employment_departed",
+        "employment_unknown",
     ]
     employees: EmployeeSummary
     collections: EmployeeCollections
@@ -1817,7 +1849,7 @@ class EmployeesData(ResponseObject):
 
 
 class DashboardEmployeesResponse(ResponseObject):
-    schema_version: Version11
+    schema_version: Version12
     snapshot_version: str | None
     selected_period: DashboardPeriod | None
     read_semantics: ReadSemantics
@@ -2242,9 +2274,16 @@ class OwnerObligation(ResponseObject):
     name: str
     direction: Literal["receivable", "payable", "unknown"]
     category_key: Literal[
-        "customer_receivables", "supplier_advances", "refundable_deposit_receivables",
-        "other_receivables", "supplier_payables", "employee_payables", "payroll_payables",
-        "labor_payables", "other_payables", "unknown",
+        "customer_receivables",
+        "supplier_advances",
+        "refundable_deposit_receivables",
+        "other_receivables",
+        "supplier_payables",
+        "employee_payables",
+        "payroll_payables",
+        "labor_payables",
+        "other_payables",
+        "unknown",
     ]
     source_period: Month | None
     source_amount_fen: WireFen | None
@@ -2358,14 +2397,6 @@ class DashboardBusinessStatusResponse(ResponseObject):
     data: BusinessStatusData
 
 
-
-
-
-
-
-
-
-
 class ReportSummary(ResponseObject):
     assets_total_fen: WireFen | None
     liabilities_total_fen: WireFen | None
@@ -2396,10 +2427,6 @@ class ReportStatement(ResponseObject):
     rows: list[ReportStatementRow]
 
 
-
-
-
-
 class Organization(ResponseObject):
     name: str | None
     taxpayer_identification_number: str | None
@@ -2416,12 +2443,6 @@ class ReportExport(ResponseObject):
     file_name: str
     preview_digest: str | None
     epochs: ReportEpochs | None
-
-
-
-
-
-
 
 
 class DashboardQuarterlyReportResponse(ResponseObject):
@@ -2861,9 +2882,7 @@ _TAX_MAPPING_ISSUE_ADAPTER = TypeAdapter(TaxImportMappingIssue)
 def _workflow_issue_targets(value):
     from .workflow_issues import validate_issue_references
 
-    return validate_issue_references(
-        value, _READINESS_ISSUE_ADAPTER, _TAX_MAPPING_ISSUE_ADAPTER
-    )
+    return validate_issue_references(value, _READINESS_ISSUE_ADAPTER, _TAX_MAPPING_ISSUE_ADAPTER)
 
 
 DraftRevision = Annotated[str, Field(min_length=1)]
@@ -2895,7 +2914,8 @@ class WorkDraftScope(ResponseObject):
 
 class WorkDraftWarning(ResponseObject):
     code: Literal[
-        "draft_command_unavailable", "draft_fact_kind_unavailable",
+        "draft_command_unavailable",
+        "draft_fact_kind_unavailable",
         "draft_registration_route_changed",
     ]
     command: str

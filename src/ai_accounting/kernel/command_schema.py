@@ -88,9 +88,9 @@ def command_models(registry):
         "find_entities": Entities.find_entities,
         "register_entity": Entities.register_entity,
         "update_entity_profile": Entities.update_entity_profile,
-        "register_employee": Entities.register_employee,
-        "change_employee_employment": Entities.change_employee_employment,
-        "employee_employment_history": Entities.employee_employment_history,
+        "register_worker": Entities.register_worker,
+        "change_workforce_relationship": Entities.change_workforce_relationship,
+        "workforce_relationship_history": Entities.workforce_relationship_history,
         "correct_fund_account_identity": Entities.correct_fund_account_identity,
         "preview_identity_correction": IdentityCorrections.preview_identity_correction,
         "confirm_identity_correction": IdentityCorrections.confirm_identity_correction,
@@ -367,8 +367,8 @@ def _registration_missing_issue(error, command, payload, registry):
     }
 
 
-def _employment_missing_issue(error, command):
-    if command not in {"register_employee", "change_employee_employment"}:
+def _workforce_missing_issue(error, command):
+    if command not in {"register_worker", "change_workforce_relationship"}:
         return None
     location = error["loc"]
     if len(location) != 2 or location[0] != "data":
@@ -379,10 +379,10 @@ def _employment_missing_issue(error, command):
     )
     return {
         "field": "data." + str(location[1]),
-        "message": "缺少必需任职管理事实",
+        "message": "缺少必需用工管理事实",
         "semantics": "management",
         "reusable_sources": metadata.get(
-            "reusable_sources", ["owner_confirmation", "employment_document"]
+            "reusable_sources", ["owner_confirmation", "workforce_document"]
         ),
         "allowed_precision": metadata.get("allowed_precision", []),
     }
@@ -409,7 +409,7 @@ def validate_command(models, command, payload, *, registry=None):
             # yet a complete business input. Never fill omitted draft fields.
             result["draft"] = payload["draft"]
         if command in {
-            "update_entity_profile", "register_employee", "change_employee_employment"
+            "update_entity_profile", "register_worker", "change_workforce_relationship"
         }:
             # Entity identity selects the actual profile kind in Entities.
             # A shared-name union hit must not supply another kind's defaults.
@@ -423,7 +423,7 @@ def validate_command(models, command, payload, *, registry=None):
             if error["type"] == "missing"
             if (issue := (
                 _registration_missing_issue(error, command, payload, registry)
-                or _employment_missing_issue(error, command)
+                or _workforce_missing_issue(error, command)
             )) is not None
         ]
         if missing:

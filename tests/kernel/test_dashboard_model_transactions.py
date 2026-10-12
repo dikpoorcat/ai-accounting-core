@@ -185,7 +185,8 @@ def test_custom_overview_preserves_open_group_loaded_counts(book):
 def test_nonempty_employee_page_keeps_payroll_money_and_source_validation(company):
     company.publish("january", "february")
     save_entity_display_profile(company.engine, {
-        "kind": "employee", "entity_id": "employee", "employment_state": "regular",
+        "kind": "employee", "entity_id": "employee",
+        "workforce_event": {"action": "hire", "effective_date": "2026-01-01"},
         "source": "synthetic employment confirmation",
     }, expected_revision=0, request_id=company.request())
     Maintenance(company.engine).rebuild_dashboard_read_model(
@@ -274,7 +275,8 @@ def test_cumulative_employee_reads_only_displayed_month_bodies_and_full_verifier
 ):
     company.publish("january", "february")
     save_entity_display_profile(company.engine, {
-        "kind": "employee", "entity_id": "employee", "employment_state": "regular",
+        "kind": "employee", "entity_id": "employee",
+        "workforce_event": {"action": "hire", "effective_date": "2026-01-01"},
         "source": "synthetic employment confirmation",
     }, expected_revision=0, request_id=company.request())
     Maintenance(company.engine).rebuild_dashboard_read_model(

@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from entity_fixture import save_entity_display_profile, seed_registration_entities
+from entity_fixture import seed_registration_entities
 from monthly_close_fixture import close_months, ready
 from pydantic import TypeAdapter, ValidationError
 from test_opening_continuation import book as book  # noqa: F401
@@ -11,7 +11,7 @@ from test_opening_continuation import book as book  # noqa: F401
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.entities import Entities, PersonProfile
+from ai_accounting.kernel.entities import Entities, PersonProfile, WorkerRegistration
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
@@ -24,9 +24,9 @@ def profile(**changes):
     }
 
 
-def register_employee(engine, *, data=None, proof=None, request_id="profile"):
-    saved = Entities(engine).register_employee(
-        profile(**({"effective_date": "2026-01"} | (data or {}))),
+def register_worker(engine, *, data, proof=None, request_id="profile"):
+    saved = Entities(engine).register_worker(
+        profile(**data),
         source="负责人明确提供的展示资料",
         evidence_digest=proof,
         request_id=request_id,
@@ -67,12 +67,12 @@ def test_profiles_keep_explicit_precision_and_only_advance_management(book, star
     engine, _, _, _, proof = book
     display = Display(engine)
     before = database_state(engine)
-    data = {"effective_date": start}
-    saved, current = register_employee(engine, data=data, proof=proof)
-    assert current["employment_start"] == start and current["employment_status"] == "active"
-    assert current["employment_end"] is None and current["evidence_digest"] == proof
+    data = {"action": "hire", "effective_date": start}
+    saved, current = register_worker(engine, data=data, proof=proof)
+    assert current["workforce_event"]["effective_date"] == start
+    assert current["evidence_digest"] == proof
     assert (
-        Entities(engine).register_employee(
+        Entities(engine).register_worker(
             profile(**data),
             source="负责人明确提供的展示资料",
             evidence_digest=proof,
@@ -87,7 +87,7 @@ def test_profiles_keep_explicit_precision_and_only_advance_management(book, star
     displayed = display.display_profiles()["profiles"]["employee"][saved["entity_id"]]
     assert displayed["id"] == saved["profile_id"]
     assert displayed["display_name"] == "明确提供姓名"
-    assert displayed["employment_start"] == start
+    assert not {"employment_start", "employment_end", "employment_state"} & displayed.keys()
 
 
 @pytest.mark.parametrize(
@@ -105,8 +105,8 @@ def test_typed_profiles_reject_accounting_fields_and_invalid_dates_atomically(bo
     engine, *_ = book
     before = database_state(engine)
     with pytest.raises((ValidationError, ValueError)):
-        Entities(engine).register_employee(
-            profile(**({"effective_date": "2026-01"} | {
+        Entities(engine).register_worker(
+            profile(**({"action": "hire", "effective_date": "2026-01"} | {
                 key: value for key, value in changes.items() if key != "source"
             })),
             source=changes.get("source", "负责人明确提供的展示资料"),
@@ -118,11 +118,13 @@ def test_typed_profiles_reject_accounting_fields_and_invalid_dates_atomically(bo
 def test_profiles_reject_conflicts_missing_sources_and_faults_atomically(book):
     engine, *_ = book
     entities = Entities(engine)
-    saved, _ = register_employee(engine, request_id="save")
+    saved, _ = register_worker(
+        engine, data={"action": "hire", "effective_date": "2026-01"}, request_id="save",
+    )
     before = database_state(engine)
     with pytest.raises(KernelError) as conflict:
-        entities.register_employee(
-            profile(display_name="另一姓名", effective_date="2026-01"),
+        entities.register_worker(
+            profile(display_name="另一姓名", action="hire", effective_date="2026-01"),
             source="负责人明确提供的展示资料",
             request_id="save",
         )
@@ -187,7 +189,7 @@ def test_commentary_context_conflicts_and_repeat_are_atomic(book):
     engine, *_ = book
     display = Display(engine)
     preview = display.preview_period_commentary("2026-01")
-    register_employee(engine)
+    register_worker(engine, data={"action": "hire", "effective_date": "2026-01"})
     before = database_state(engine)
     with pytest.raises(KernelError) as stale:
         display.update_period_commentary(
@@ -234,7 +236,9 @@ def test_close_freezes_profiles_and_commentary_and_supplement_never_rewrites_it(
     engine, _, _, _, proof = book
     ready(engine, proof)
     display, periods = Display(engine), Periods(engine)
-    person, _ = register_employee(engine, request_id="person")
+    person, _ = register_worker(
+        engine, data={"action": "hire", "effective_date": "2026-01"}, request_id="person",
+    )
     commentary = save_commentary(display)
     close_months(periods, proof, last="2026-03" if following_months else "2026-01")
     frozen = periods.closed_report("2026-01")
@@ -270,7 +274,9 @@ def test_metadata_change_expires_close_preview_without_accounting_mutation(book)
     ready(engine, proof)
     periods = Periods(engine)
     preview = periods.preview_close("2026-01", owner_confirmation=proof)
-    register_employee(engine, request_id="person")
+    register_worker(
+        engine, data={"action": "hire", "effective_date": "2026-01"}, request_id="person",
+    )
     before = database_state(engine)
     with pytest.raises(KernelError) as stale:
         periods.close(
@@ -283,62 +289,48 @@ def test_metadata_change_expires_close_preview_without_accounting_mutation(book)
     assert stale.value.code == "preview_expired" and database_state(engine) == before
 
 
-def test_employment_dates_describe_management_precision_in_typed_schema():
-    schema = TypeAdapter(PersonProfile).json_schema()
-    start = schema["properties"]["employment_start"]
-    assert start["anyOf"][0]["x-accounting-fact"]["role"] == "management"
-    assert start["anyOf"][0]["x-accounting-fact"]["allowed_precision"] == ["month", "day"]
+def test_workforce_dates_describe_management_precision_in_typed_schema():
+    schema = TypeAdapter(WorkerRegistration).json_schema()
+    effective = schema["properties"]["effective_date"]
+    assert effective["x-accounting-fact"]["role"] == "management"
+    assert effective["x-accounting-fact"]["allowed_precision"] == ["month", "day"]
+    assert "employment_state" not in PersonProfile.model_json_schema()["properties"]
 
 
-@pytest.mark.parametrize("state", ["regular", "unpaid_leave", "departed"])
-def test_stored_employment_state_baseline_keeps_employee_without_accounting_change(book, state):
-    from ai_accounting.kernel.entities import employee_entities
-
+@pytest.mark.parametrize("state", ["regular", "unpaid_leave", "departed", "labor"])
+def test_metadata_entry_rejects_direct_workforce_state_atomically(book, state):
     engine, *_ = book
     before = database_state(engine)
-    registered = save_entity_display_profile(
-        engine,
-        {"kind": "employee", "entity_id": "synthetic-baseline-" + state,
-         "employment_state": state, "source": "负责人明确确认合成任职状态"},
-        expected_revision=0, request_id="state-only-" + state,
-    )
-    with engine.store.connection(read_only=True) as connection:
-        assert registered["entity_id"] in employee_entities(
-            connection, "2026-01", registry=engine.store.registry
+    with pytest.raises(ValidationError):
+        Entities(engine).register_entity(
+            "person", {"employment_state": state},
+            source="明确合成状态", request_id="direct-state-" + state,
         )
-    after = database_state(engine)
-    assert after["epochs"]["accounting"] == before["epochs"]["accounting"]
-    assert (
-        after["fact_revision"] == before["fact_revision"]
-        and after["voucher_version"] == before["voucher_version"]
-    )
-    profile = Entities(engine).find_entities(kind="person")["items"][0]["profile"]
-    assert profile["employment_state"] == state and profile["employment_status"] == "unknown"
-    with engine.store.connection(read_only=True) as connection:
-        assert (
-            Display.profiles(connection)["employee"][registered["entity_id"]]["employment_state"]
-            == state
-        )
+    assert database_state(engine) == before
 
 
-def test_new_person_profile_keeps_explicit_unknown_state_and_exact_digest():
-    from ai_accounting.kernel.entities import _profile_record, display_profile
+def test_new_person_profile_preserves_metadata_digest_without_inventing_relationship(book):
+    from ai_accounting.kernel.entities import _profile_record, employee_entities
     from ai_accounting.kernel.types import canonical, digest
 
+    engine, *_ = book
     content = PersonProfile().model_dump(mode="json")
     row = {"id": "synthetic-profile", "entity_id": "person", "revision": 1,
            "content": canonical(content), "source": "原始合成档案", "evidence_digest": None,
            "digest": digest(["person", 1, content, "原始合成档案", None])}
     selected = _profile_record(row)
-    assert selected["employment_state"] == "unknown"
+    assert not any(field.startswith("employment_") for field in selected)
+    assert selected["workforce_event"] is None
     assert selected["digest"] == row["digest"].hex()
-    assert display_profile(selected, "employee")["employment_state"] == "unknown"
-    schema = PersonProfile.model_json_schema()["properties"]["employment_state"]
-    assert schema["x-accounting-fact"]["role"] == "management"
-    assert schema["x-accounting-fact"]["reusable_sources"] == [
-        "owner_confirmation",
-        "employment_document",
-    ]
+    person = Entities(engine).register_entity(
+        "person", {"display_name": "仅知姓名"}, source="明确合成姓名", request_id="identity-only",
+    )
+    history = Entities(engine).workforce_relationship_history(person["entity_id"])
+    assert history["items"] == []
+    with engine.store.connection(read_only=True) as connection:
+        assert person["entity_id"] not in employee_entities(
+            connection, "2026-01", registry=engine.store.registry,
+        )
 
 
 @pytest.mark.parametrize(
@@ -422,7 +414,7 @@ def test_stale_commentary_is_history_and_does_not_block_close(book):
     ready(engine, proof, last="2026-01")
     display, periods = Display(engine), Periods(engine)
     saved = save_commentary(display)
-    register_employee(engine)
+    register_worker(engine, data={"action": "hire", "effective_date": "2026-01"})
     current = display.preview_period_commentary("2026-01")
     assert current["status"] == "stale" and current["current"] is None
     assert current["latest"]["id"] == saved["id"]

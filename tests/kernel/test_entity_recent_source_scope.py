@@ -20,12 +20,12 @@ def book(tmp_path):
 
 
 def person(directory, name, request, *, active=True):
-    registered = directory.register_employee(
-        {"display_name": name, "effective_date": "2025-01"},
+    registered = directory.register_worker(
+        {"display_name": name, "action": "hire", "effective_date": "2025-01"},
         source="synthetic identity", request_id=request,
     )
     if not active:
-        directory.change_employee_employment(
+        directory.change_workforce_relationship(
             registered["entity_id"], {"action": "depart", "effective_date": "2025-12"},
             source="synthetic departure", expected_revision=1, request_id=request + "-depart",
         )
@@ -114,7 +114,7 @@ def test_tied_latest_sources_and_has_more_are_all_authenticated(book):
             mutate_reference(engine, fact_id, "source_digest", original)
     items = directory.find_entities(query="Alpha", kind="person", limit=1)["items"]
     assert len(items) == 1 and items[0]["entity_id"] == first
-    assert items[0]["profile"]["employment_status"] == "inactive"
+    assert items[0]["employment_state"] == "departed"
 
 
 def test_unrelated_and_older_sources_are_outside_the_recent_proof(book):

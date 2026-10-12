@@ -584,14 +584,16 @@ test("nonempty focused employee renders current month money without historical w
   assert.doesNotMatch(html, /各月份工资与付款|查看工资与付款事项|正在读取工资与付款|继续查看工资来源/);
 }));
 
-test("employee cards and lists distinguish current employment from historical monthly roster status", async () => {
+test("employee cards and lists state selected-month and month-end relationships explicitly", async () => {
   for (const displayMode of ["cards", "list"]) {
     await withServer(async server => {
       const response = structuredClone(samples.employees_focused.response);
       const [template] = response.data.collections.employees.items;
       const states = [["regular", "在职"], ["unpaid_leave", "停薪留职"], ["departed", "已离职"], ["unknown", "用工状态未确认"]];
       const employees = states.map(([state], index) => ({ ...template, employee_id: `employment-${index}`, name: `合成状态员工${index}`,
-        employment_state: state, period_state: "in_period", period_state_label: "已确认在册", in_period: true }));
+        employment_state: state, period_states: ["regular"], possible_period_states: ["regular"],
+        relationship_segments: [{ state: "regular", start: "2026-01", end: "2026-02" }],
+        period_state: "in_period", period_state_label: "已确认在册", in_period: true }));
       response.data.employee_id = null;
       response.data.employee_filter = "all";
       response.data.collections.employees.items = employees;
@@ -601,8 +603,9 @@ test("employee cards and lists distinguish current employment from historical mo
       for (const [index, [, label]] of states.entries()) {
         const row = rows.find(value => value.includes(employees[index].name));
         assert(row, `${displayMode}: ${label}`);
-        assert(row.includes(label), `${displayMode}: current state is visible`);
-        assert(row.includes("已确认在册"), `${displayMode}: historical monthly membership remains visible`);
+        assert(row.includes(`月末${label}`), `${displayMode}: selected-month end state is visible`);
+        assert(row.includes("本月在职"), `${displayMode}: monthly state is independent of the end state`);
+        assert(row.includes("已确认在册"), `${displayMode}: monthly membership remains visible`);
       }
     }, { displayMode });
   }
@@ -627,6 +630,73 @@ test("personal labor sources render the projected person name", async () => with
   }
 }));
 
+test("employee and labor modules remain visible with no wages or labor fees", async () => {
+  for (const displayMode of ["cards", "list"]) {
+    await withServer(async server => {
+      const response = employeeOverviewResponse({ labor_worker_count: 2, in_period_count: 1, payroll_count: 0,
+        registered_count: 1, unknown_period_count: 0, without_payroll_count: 1 });
+      for (const key of Object.keys(response.data.employees)) if (key.endsWith("_fen")) response.data.employees[key] = "0";
+      response.data.workforce_cost = { total_fen: "0", personal_labor_fen: "0", capitalized_labor_fen: "0" };
+      response.data.outstanding_remuneration_fen = "0";
+      const page = count => ({ total_count: count, filtered_count: count, returned_count: count, has_more: false, next_cursor: null });
+      const [employeeTemplate] = samples.employees_focused.response.data.collections.employees.items;
+      const employee = { ...structuredClone(employeeTemplate), employee_id: "synthetic-labor-a", name: "合成劳务甲",
+        employment_state: "regular", period_states: ["labor", "regular"], possible_period_states: ["labor", "regular"],
+        relationship_segments: [{ state: "labor", start: "2026-01-01", end: "2026-01-15" }, { state: "regular", start: "2026-01-15", end: null }],
+        employment_start_date: "2026-01-15", employment_end_date: null, in_period: true,
+        period_state: "in_period", period_state_label: "已确认在册", has_payroll_activity: false, payroll_periods: [], wage_tax_scope: "none",
+        wage_tax_scope_label: "本月无工资核算", batch_count: 0, has_annual_bonus: false,
+        ...Object.fromEntries(Object.keys(employeeTemplate).filter(key => key.endsWith("_fen")).map(key => [key, "0"])),
+      };
+      response.data.collections.employees = { items: [employee], page: page(1) };
+      response.data.collections.labor_sources = { items: [], page: page(0) };
+      response.data.collections.labor_workers = { items: [
+        { person_id: "synthetic-labor-a", name: "合成劳务甲", employment_state: "regular",
+          period_states: ["labor", "regular"], possible_period_states: ["labor", "regular"], in_period: true,
+          relationship_segments: [{ state: "labor", start: "2026-01-01", end: "2026-01-15" }], has_labor_activity: false },
+        { person_id: "synthetic-labor-b", name: "合成劳务乙", employment_state: "labor",
+          period_states: ["labor"], possible_period_states: ["labor"], in_period: true,
+          relationship_segments: [{ state: "labor", start: "2026-01", end: null }], has_labor_activity: false },
+      ], page: page(2) };
+      const { html } = await renderEmployeeOverview(server, response);
+      for (const text of ["员工明细", "个人劳务", "劳务人员", "本月已确认劳务 2 人", "合成劳务甲", "合成劳务乙", "本月暂无工资记录", "本月暂无劳务报酬记录", "月末在职", "2026-01-15前", "2026-01（按月确认）起"]) {
+        assert(html.includes(text), `${displayMode}: ${text}`);
+      }
+      assert.doesNotMatch(html, /2026-01-01（按月确认）|synthetic-labor/);
+    }, { displayMode });
+  }
+});
+
+test("labor business with an unconfirmed relationship keeps its name and booked money", async () => withServer(async server => {
+  const response = structuredClone(samples.employees_labor_sources.response);
+  const labor = response.data.collections.labor_sources.items[0];
+  labor.relationship_confirmed = false;
+  response.data.collections.labor_workers = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+  response.data.employees.labor_worker_count = 0;
+  const { html } = await renderEmployeeOverview(server, response);
+  const { formatFen } = await server.ssrLoadModule("/src/utils/money.ts");
+  assert(html.includes(labor.name));
+  assert(html.includes(formatFen(labor.gross_fen)));
+  assert.match(html, /本月用工关系尚未确认，报酬记录保留/);
+  assert.match(html, /本月已确认劳务 0 人/);
+}));
+
+test("month-precision relationship changes retain their uncertainty without inventing a date", async () => withServer(async server => {
+  const response = structuredClone(samples.employees_focused.response);
+  const employee = response.data.collections.employees.items[0];
+  Object.assign(employee, {
+    employment_state: "departed", period_states: ["departed"], possible_period_states: ["regular", "departed"],
+    in_period: null, period_state: "unknown", period_state_label: "在册状态未确认",
+    employment_start_date: "2025-12-01", employment_end_date: "2026-01",
+    relationship_segments: [{ state: "regular", start: "2025-12-01", end: "2026-01" }, { state: "departed", start: "2026-01", end: null }],
+  });
+  const { html } = await renderEmployeeOverview(server, response);
+  assert.match(html, /月末已离职/);
+  assert.match(html, /本月部分用工期间尚未确认，由 AI 会计核对中/);
+  assert.match(html, /2026-01（按月确认）/);
+  assert.doesNotMatch(html, /2026-01-01|2026-01-31/);
+}));
+
 test("employee and personal labor list rows align each complete column with its rendered amount", async () => withServer(async server => {
   const response = structuredClone(samples.employees_focused.response);
   response.data.collections.labor_sources = structuredClone(samples.employees_labor_sources.response.data.collections.labor_sources);
@@ -639,6 +709,7 @@ test("employee and personal labor list rows align each complete column with its 
   });
   const unknown = {
     employee_id: "unestablished-employee", name: "待确认员工", selection_status: "unestablished", employment_state: "unknown",
+    period_states: ["unknown"], possible_period_states: ["unknown"], relationship_segments: [],
     ...Object.fromEntries(Object.keys(employee).filter(key => key.endsWith("_fen")).map(key => [key, null])),
   };
   response.data.collections.employees.items.push(unknown);
@@ -808,10 +879,16 @@ test("personal labor parent details pass displayed facts to avoid repeating exac
 test("employee list status dots follow salary business scope rather than the shared roster state", async () => withServer(async server => {
   const response = structuredClone(samples.employees_focused.response);
   const [template] = response.data.collections.employees.items;
-  const scopes = [["wage_income", "工资薪金"], ["contributions_only", "仅确认社保公积金"], ["mixed", "包含不同核算情形"], ["none", "本月无工资核算"]];
+  const scopes = [
+    ["wage_income", "工资薪金", "绿色：本月按工资薪金核算，实发为零也可能属于此类。"],
+    ["contributions_only", "仅确认社保公积金", "黄色：本月仅核算社保、公积金。"],
+    ["mixed", "包含不同核算情形", "蓝色：本月不同工资批次包含工资薪金与仅社保、公积金两种情况。"],
+    ["none", "本月无工资核算", "灰色：本月暂无工资核算记录。"],
+  ];
   const employees = scopes.map(([scope, label], index) => ({ ...template, employee_id: `employee-scope-${index}`, name: `在册员工${index + 1}`,
     period_state: "in_period", period_state_label: "已确认在册", in_period: true, wage_tax_scope: scope, wage_tax_scope_label: label }));
   const unknown = { employee_id: "unestablished-scope", name: "核对中员工", selection_status: "unestablished", employment_state: "unknown",
+    period_states: ["unknown"], possible_period_states: ["unknown"], relationship_segments: [],
     ...Object.fromEntries(Object.keys(template).filter(key => key.endsWith("_fen")).map(key => [key, null])) };
   response.data.collections.employees.items = [...employees, unknown];
   response.data.collections.employees.page = { total_count: 5, filtered_count: 5, returned_count: 5, has_more: false, next_cursor: null };
@@ -835,11 +912,12 @@ test("employee list status dots follow salary business scope rather than the sha
     assert.deepEqual(classes.filter(value => scopes.some(([scope]) => scope === value)), [employee.wage_tax_scope], `${employee.wage_tax_scope} keeps its own business state`);
     assert(!classes.includes("in_period"), "roster membership does not select the dot state");
     assert.match(marker, /role="img"/);
-    assert(marker.includes(`aria-label="${employee.wage_tax_scope_label}"`), "the accessible status describes salary business scope");
-    assert(marker.includes(`title="${employee.wage_tax_scope_label}"`), "hover text describes the same salary business scope");
+    const explanation = scopes.find(([scope]) => scope === employee.wage_tax_scope)[2];
+    assert(marker.includes(`aria-label="${explanation}"`), "the accessible status describes salary business scope");
+    assert(marker.includes(`title="${explanation}"`), "hover text describes the same salary business scope");
   }
   const laborRow = summaries.find(value => value.includes("合成劳务人员"));
-  assert.match(laborRow, /<span\b(?=[^>]*class="[^"]*\bemployee-status\b[^"]*\blabor\b[^"]*")(?=[^>]*role="img")(?=[^>]*aria-label="个人劳务")[^>]*>/);
+  assert.match(laborRow, /<span\b(?=[^>]*class="[^"]*\bemployee-status\b[^"]*\blabor\b[^"]*")(?=[^>]*role="img")(?=[^>]*aria-label="绿色：个人劳务报酬。")[^>]*>/);
   const unknownRow = [...html.matchAll(/<article\b[^>]*class="[^"]*employee-card[^"]*"[^>]*>([\s\S]*?)<\/article>/g)]
     .map(match => match[1]).find(row => row.includes(unknown.name));
   assert.match(unknownRow, /AI 会计核对中/);

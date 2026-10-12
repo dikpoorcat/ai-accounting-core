@@ -46,7 +46,7 @@ const modules = [
 const defaultCollections = {
   brief: ["activity", "open_items"],
   funds: ["accounts", "movements", "statements", "investment_products", "investment_events"],
-  employees: ["employees", "labor_sources"],
+  employees: ["employees", "labor_workers", "labor_sources"],
   assets: ["assets", "projects"],
 };
 // Only the default business result, not global jobs or on-demand details.
@@ -296,7 +296,7 @@ function retainedItemIdentity(pathname, section, item, payload) {
   else if (pathname === "/api/dashboard/brief" && ["activity", "open_items"].includes(section)) identity = item.group_key;
   else if (section === "vouchers") identity = item.voucher_version_id;
   else identity = { employees: item.employee_id, assets: item.asset_id, projects: item.source_id,
-    labor_sources: item.source_id, accounts: item.account_id && `${item.type}:${item.account_id}`,
+    labor_workers: item.person_id, labor_sources: item.source_id, accounts: item.account_id && `${item.type}:${item.account_id}`,
     movements: item.id, statements: item.id, investment_products: item.fund_id, investment_events: item.id,
     settlement_events: item.id }[section];
   assert(typeof identity === "string" && identity.length, `${pathname}:${section}: missing actual collection identity`);

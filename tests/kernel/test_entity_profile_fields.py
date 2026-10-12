@@ -62,7 +62,8 @@ def test_typed_management_updates_use_actual_entity_kind(book, kind, account_typ
     current = _latest_profile(engine, entity_id)
     assert current["display_name"] == "新的合成名称" and current["note"] == "明确管理备注"
     if kind == "person":
-        assert current["employment_state"] == "unknown"
+        assert "employment_state" not in current and current["workforce_event"] is None
+        assert book[1].find_entities(kind="person")["items"][0]["employment_state"] == "unknown"
     else:
         assert not any(field.startswith("employment_") for field in current)
     if kind == "fund_account":
@@ -110,21 +111,27 @@ def test_typed_updates_reject_other_kind_and_removed_fields_atomically(book, kin
 
 def test_typed_person_metadata_patch_preserves_lifecycle_and_omitted_fields(book):
     engine, entities, _ = book
-    registered = entities.register_employee(
-        {"display_name": "合成人员", "display_number": "001", "effective_date": "2025-01"},
+    registered = entities.register_worker(
+        {
+            "display_name": "合成人员", "display_number": "001",
+            "action": "hire", "effective_date": "2025-01",
+        },
         source="明确入职资料", request_id="employee-registration",
     )
     entity_id = registered["entity_id"]
-    entities.change_employee_employment(
+    entities.change_workforce_relationship(
         entity_id, {"action": "unpaid_leave", "effective_date": "2026-01"},
         source="明确停薪留职资料", expected_revision=1, request_id="unpaid-leave",
     )
     _typed_update(book, entity_id, {"note": "管理备注"}, revision=2)
     current = _latest_profile(engine, entity_id)
     assert current["display_name"] == "合成人员" and current["display_number"] == "001"
-    assert current["note"] == "管理备注" and current["employment_start"] == "2025-01"
-    assert current["employment_status"] == "active"
-    assert current["employment_state"] == "unpaid_leave"
+    assert current["note"] == "管理备注" and current["workforce_event"] is None
+    assert not any(field.startswith("employment_") for field in current)
+    found = entities.find_entities(kind="person")["items"][0]
+    assert found["employment_state"] == "unpaid_leave"
+    history = entities.workforce_relationship_history(entity_id)["items"]
+    assert [event["effective_date"] for event in history] == ["2026-01", "2025-01"]
 
 
 @pytest.mark.parametrize("kind", list(entity_profile_models()))
@@ -135,12 +142,12 @@ def test_removed_generic_entity_fields_are_rejected(kind, field):
 
 
 @pytest.mark.parametrize(
-    "kind", ["organization", "fund_account", "asset", "project", "fund_product"]
+    "kind", ["person", "organization", "fund_account", "asset", "project", "fund_product"]
 )
 @pytest.mark.parametrize(
     "field", ["employment_start", "employment_end", "employment_status", "employment_state"]
 )
-def test_employment_facts_belong_only_to_person_profiles(kind, field):
+def test_removed_employment_projection_fields_are_rejected_in_all_stored_profiles(kind, field):
     value = "2026-01" if field in ("employment_start", "employment_end") else "unknown"
     with pytest.raises(ValidationError):
         entity_profile_models()[kind].model_validate({field: value})

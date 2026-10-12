@@ -402,7 +402,6 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
             "kind": "employee",
             "entity_id": "employee",
             "display_name": "测试人员",
-            "employment_start": "2026-03",
             "source": "合成人员资料",
         },
         expected_revision=0,
@@ -966,10 +965,11 @@ def test_quarterly_closed_display_and_export_share_frozen_plan(report_book):
     for period in ("2026-01", "2026-02", "2026-03"):
         close_period(period)
     expected = Reports(book).report(2026, 1, source="closed")
+    export_plan = Reports(book).preview_export(2026, 1)
     data = Dashboard(book).quarterly_report(2026, 1)
     assert expected["status"] == "ready"
     assert data["export"]["available"]
-    assert data["export"]["preview_digest"] == expected["digest"]
+    assert data["export"]["preview_digest"] == export_plan["digest"]
     assert data["export"]["epochs"] == expected["epochs"]
     assert (
         data["summary"]["assets_total_fen"]

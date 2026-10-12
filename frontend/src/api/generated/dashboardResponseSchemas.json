@@ -9864,6 +9864,27 @@
         "title": "Collection",
         "type": "object"
       },
+      "Collection_LaborWorkerItem_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/LaborWorkerItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
       "Collection_Union_EmployeeItem__UnestablishedEmployee__": {
         "additionalProperties": false,
         "properties": {
@@ -9996,6 +10017,9 @@
           "employees": {
             "$ref": "#/$defs/Collection_Union_EmployeeItem__UnestablishedEmployee__"
           },
+          "labor_workers": {
+            "$ref": "#/$defs/Collection_LaborWorkerItem_"
+          },
           "labor_sources": {
             "$ref": "#/$defs/Collection_LaborSource_"
           }
@@ -10043,10 +10067,49 @@
               "regular",
               "unpaid_leave",
               "departed",
+              "labor",
+              "labor_ended",
               "unknown"
             ],
             "title": "Employment State",
             "type": "string"
+          },
+          "period_states": {
+            "items": {
+              "enum": [
+                "regular",
+                "unpaid_leave",
+                "departed",
+                "labor",
+                "labor_ended",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "title": "Period States",
+            "type": "array"
+          },
+          "possible_period_states": {
+            "items": {
+              "enum": [
+                "regular",
+                "unpaid_leave",
+                "departed",
+                "labor",
+                "labor_ended",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "title": "Possible Period States",
+            "type": "array"
+          },
+          "relationship_segments": {
+            "items": {
+              "$ref": "#/$defs/WorkforceRelationshipSegment"
+            },
+            "title": "Relationship Segments",
+            "type": "array"
           },
           "employment_start_date": {
             "anyOf": [
@@ -10230,6 +10293,9 @@
           "period_state_label",
           "in_period",
           "employment_state",
+          "period_states",
+          "possible_period_states",
+          "relationship_segments",
           "employment_start_date",
           "employment_end_date",
           "has_payroll_activity",
@@ -10411,6 +10477,11 @@
             "title": "Contributions Only Count",
             "type": "integer"
           },
+          "labor_worker_count": {
+            "minimum": 0,
+            "title": "Labor Worker Count",
+            "type": "integer"
+          },
           "ledger_cost_fen": {
             "pattern": "^(0|-?[1-9][0-9]*)$",
             "title": "Ledger Cost Fen",
@@ -10478,6 +10549,7 @@
           "payroll_count",
           "without_payroll_count",
           "contributions_only_count",
+          "labor_worker_count",
           "ledger_cost_fen",
           "checking",
           "direct_net_payments_fen",
@@ -10629,6 +10701,10 @@
           "withholding_label": {
             "title": "Withholding Label",
             "type": "string"
+          },
+          "relationship_confirmed": {
+            "title": "Relationship Confirmed",
+            "type": "boolean"
           }
         },
         "required": [
@@ -10646,9 +10722,99 @@
           "net_fen",
           "booked_tax_fen",
           "withholding_method",
-          "withholding_label"
+          "withholding_label",
+          "relationship_confirmed"
         ],
         "title": "LaborSource",
+        "type": "object"
+      },
+      "LaborWorkerItem": {
+        "additionalProperties": false,
+        "properties": {
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "employment_state": {
+            "enum": [
+              "regular",
+              "unpaid_leave",
+              "departed",
+              "labor",
+              "labor_ended",
+              "unknown"
+            ],
+            "title": "Employment State",
+            "type": "string"
+          },
+          "period_states": {
+            "items": {
+              "enum": [
+                "regular",
+                "unpaid_leave",
+                "departed",
+                "labor",
+                "labor_ended",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "title": "Period States",
+            "type": "array"
+          },
+          "possible_period_states": {
+            "items": {
+              "enum": [
+                "regular",
+                "unpaid_leave",
+                "departed",
+                "labor",
+                "labor_ended",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "title": "Possible Period States",
+            "type": "array"
+          },
+          "relationship_segments": {
+            "items": {
+              "$ref": "#/$defs/WorkforceRelationshipSegment"
+            },
+            "title": "Relationship Segments",
+            "type": "array"
+          },
+          "in_period": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Period"
+          },
+          "has_labor_activity": {
+            "title": "Has Labor Activity",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "person_id",
+          "name",
+          "employment_state",
+          "period_states",
+          "possible_period_states",
+          "relationship_segments",
+          "in_period",
+          "has_labor_activity"
+        ],
+        "title": "LaborWorkerItem",
         "type": "object"
       },
       "OwnerWorkforceCost": {
@@ -10868,10 +11034,49 @@
               "regular",
               "unpaid_leave",
               "departed",
+              "labor",
+              "labor_ended",
               "unknown"
             ],
             "title": "Employment State",
             "type": "string"
+          },
+          "period_states": {
+            "items": {
+              "enum": [
+                "regular",
+                "unpaid_leave",
+                "departed",
+                "labor",
+                "labor_ended",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "title": "Period States",
+            "type": "array"
+          },
+          "possible_period_states": {
+            "items": {
+              "enum": [
+                "regular",
+                "unpaid_leave",
+                "departed",
+                "labor",
+                "labor_ended",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "title": "Possible Period States",
+            "type": "array"
+          },
+          "relationship_segments": {
+            "items": {
+              "$ref": "#/$defs/WorkforceRelationshipSegment"
+            },
+            "title": "Relationship Segments",
+            "type": "array"
           },
           "gross_salary_fen": {
             "title": "Gross Salary Fen",
@@ -10935,6 +11140,9 @@
           "name",
           "selection_status",
           "employment_state",
+          "period_states",
+          "possible_period_states",
+          "relationship_segments",
           "gross_salary_fen",
           "annual_bonus_fen",
           "employer_social_insurance_fen",
@@ -10952,12 +11160,65 @@
         ],
         "title": "UnestablishedEmployee",
         "type": "object"
+      },
+      "WorkforceRelationshipSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "regular",
+              "unpaid_leave",
+              "departed",
+              "labor",
+              "labor_ended",
+              "unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              }
+            ],
+            "title": "Start"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          }
+        },
+        "required": [
+          "state",
+          "start",
+          "end"
+        ],
+        "title": "WorkforceRelationshipSegment",
+        "type": "object"
       }
     },
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 11,
+        "const": 12,
         "title": "Schema Version",
         "type": "integer"
       },

@@ -8,9 +8,9 @@ import { appendDashboardCollection, prepareDashboardCollections } from "./helper
 
 let sequence = 0;
 
-test("employee and labor lists preserve 20 then 500 then the ordered tail", async () => {
-  for (const section of ["employees", "labor_sources"]) {
-    const h = await harness(), field = section === "employees" ? "employee_id" : "source_id";
+test("employee, labor worker and remuneration lists preserve 20 then 500 then the ordered tail", async () => {
+  for (const section of ["employees", "labor_workers", "labor_sources"]) {
+    const h = await harness(), field = section === "employees" ? "employee_id" : section === "labor_workers" ? "person_id" : "source_id";
     const ids = Array.from({ length: 525 }, (_, index) => `item-${index}`);
     const pageResponse = (start, count) => {
       const value = response();
@@ -40,6 +40,7 @@ function response(filter = "employment_active", employee = "first") {
   return { snapshot_version: "version", selected_period: { key: "2026-09" }, data: {
     employee_filter: filter, employee_id: null, employees: { registered_count: 50 }, workforce_cost: { total_fen: "1234" },
     collections: { employees: { items: [{ employee_id: employee }], page: { ...page } },
+      labor_workers: { items: [{ person_id: "labor-worker" }], page: { ...page } },
       labor_sources: { items: [{ source_id: "labor" }], page: { ...page } } },
   } };
 }
@@ -72,7 +73,7 @@ async function harness(query = {}) {
   return { ...view, route, calls, close() { scope.stop(); delete globalThis[key]; } };
 }
 
-test("employee filters default to currently employed while preserving valid explicit selections", async () => {
+test("employee filters default to employed within the selected month while preserving valid explicit selections", async () => {
   const cases = [
     [{}, "employment_active"],
     [{ employee_filter: "invalid" }, "employment_active"],
@@ -203,10 +204,12 @@ test(`employee filter ${selectedFilter} retains overview and labor while replaci
   const h = await harness({ employee_filter: "all" });
   try {
     const summary = h.response.value.data.employees, labor = h.response.value.data.collections.labor_sources;
+    const workers = h.response.value.data.collections.labor_workers;
     h.filter.value = selectedFilter; await flush();
     assert.equal(h.loading.value, false);
     assert.equal(h.response.value.data.employees, summary);
     assert.equal(h.response.value.data.collections.labor_sources, labor);
+    assert.equal(h.response.value.data.collections.labor_workers, workers);
     assert.equal(h.calls.length, 1);
     assert.deepEqual(h.calls[0].query, { section: "employees", employee_filter: selectedFilter, expected_version: "version" });
     const filtered = response(selectedFilter, "matching"); filtered.data.collections.employees.page.filtered_count = 27;
@@ -215,6 +218,7 @@ test(`employee filter ${selectedFilter} retains overview and labor while replaci
     assert.equal(h.response.value.data.collections.employees.items[0].employee_id, "matching");
     assert.equal(h.response.value.data.employees, summary);
     assert.equal(h.response.value.data.collections.labor_sources, labor);
+    assert.equal(h.response.value.data.collections.labor_workers, workers);
   } finally { h.close(); }
 });
 }
@@ -260,7 +264,7 @@ test("an expired employee-list snapshot refreshes the full page before continuin
 test("employee and labor continuations retain reactive arrays and discard late pages on filter changes", async () => {
   const h = await harness();
   try {
-    for (const section of ["employees", "labor_sources"]) {
+    for (const section of ["employees", "labor_workers", "labor_sources"]) {
       const original = h.response.value.data.collections[section].items;
       const renderedCount = Vue.computed(() => h.response.value.data.collections[section].items.length);
       assert.equal(renderedCount.value, 1);
@@ -268,13 +272,14 @@ test("employee and labor continuations retain reactive arrays and discard late p
       assert.equal(h.calls.at(-1).query.limit, 500);
       const next = response(h.filter.value, "next-employee");
       next.data.collections.labor_sources.items = [{ source_id: "next-labor" }];
+      next.data.collections.labor_workers.items = [{ person_id: "next-labor-worker" }];
       next.data.collections[section].page.next_cursor = "following";
       h.calls.at(-1).resolve(next); await pending;
       assert.equal(h.response.value.data.collections[section].items, original);
       assert.equal(renderedCount.value, 2);
       assert.equal(h.response.value.data.collections[section].page.next_cursor, "following");
       const late = h.loadMore(section), request = h.calls.at(-1);
-      h.filter.value = section === "employees" ? "employment_unpaid_leave" : "employment_departed"; await flush();
+      h.filter.value = section === "employees" ? "employment_unpaid_leave" : section === "labor_workers" ? "employment_departed" : "employment_unknown"; await flush();
       assert.equal(request.signal.aborted, true);
       request.resolve(response(request.query.employee_filter, "late")); await late;
       assert.equal(original.length, 2);

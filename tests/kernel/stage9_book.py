@@ -33,7 +33,7 @@ def synthetic_employee_profile(name):
     """The fixture explicitly defines fictional employees as regularly employed."""
     return {
         "display_name": name,
-        "effective_date": "2016-01-01",
+        "action": "hire", "effective_date": "2016-01-01",
     }
 
 
@@ -253,7 +253,7 @@ class MixedBook:
             data = {**identity, **data}
             options["evidence_digest"] = self.proof
         if kind == "person" and "effective_date" in data:
-            return self.entities.register_employee(
+            return self.entities.register_worker(
                 data, source=source, request_id=self.request("entity"), **options,
             )["entity_id"]
         return self.entities.register_entity(
