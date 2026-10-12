@@ -655,6 +655,7 @@ class LocalService:
             "period_readiness": business_queries.period_readiness,
             "management": periods.management,
             "inventory": periods.inventory,
+            "inventory_batch": periods.inventory_batch,
             "preview_close": periods.preview_close,
             "close": periods.close,
             "closed_report": periods.closed_report,

@@ -76,6 +76,18 @@ class ResponseObject(TypedDict):
     __pydantic_config__ = ConfigDict(strict=True, extra="forbid")
 
 
+class SavedInventoryItem(ResponseObject):
+    period: Month
+    category: WorkArea
+    status: Literal["saved"]
+    inventory_id: Annotated[int, Field(gt=0)]
+
+
+class SavedInventoryBatch(ResponseObject):
+    status: Literal["saved"]
+    results: Annotated[list[SavedInventoryItem], Field(min_length=1, max_length=720)]
+
+
 class OwnerTask(ResponseObject):
     key: str
     title: str
@@ -2929,6 +2941,7 @@ class WorkDraftListResponse(ResponseObject):
 
 
 RESPONSE_ADAPTERS = {
+    "inventory_batch": TypeAdapter(SavedInventoryBatch),
     "workflow": TypeAdapter(Annotated[WorkflowResponse, AfterValidator(_workflow_issue_targets)]),
     "period_readiness": TypeAdapter(PeriodReadinessResponse),
     "dashboard_context": TypeAdapter(DashboardContextResponse),

@@ -758,6 +758,144 @@ def _current_candidate_facts(connection, root_period, through_period, changed_su
     return current
 
 
+def _changed_bank_split_subjects(connection, changes, registry):
+    """Locate exact payments whose whole-row separation proof may have changed.
+
+    Frozen directories contain necessary keys, not a retained split decision.
+    Inspect both sides of changed bank adoptions and source partitions so an
+    old/old pair is still reduced against its current proof after a close.
+    """
+    required = {
+        "payment",
+        "bank_statement",
+        "bank_reconciliation",
+        "material_period_allocation",
+        "material_resolution_v2",
+        "material_group_resolution",
+    }
+    if not required <= registry.models.keys():
+        return set()
+    relevant = [change for change in changes if change.source in {"fact", "calculation", "pending"}]
+    kinds = dict(
+        connection.execute(
+            "SELECT s.id,s.kind FROM json_each(?) ids JOIN subject s ON s.id=ids.value",
+            (canonical(sorted({change.target_id for change in relevant})),),
+        )
+    )
+    result = {
+        change.target_id
+        for change in relevant
+        if change.source == "pending" and kinds.get(change.target_id) == "payment"
+    }
+    bank_subjects = {
+        change.target_id
+        for change in relevant
+        if kinds.get(change.target_id) in {"bank_statement", "bank_reconciliation"}
+    }
+    if bank_subjects:
+        # A removed/replaced reconciliation's previous allocations matter just
+        # as much as its new ones. Current heads also cover pending-only events.
+        revisions = {
+            ref
+            for change in relevant
+            if kinds.get(change.target_id) == "bank_reconciliation" and change.source == "fact"
+            for ref in (change.before_ref, change.after_ref)
+            if ref is not None
+        }
+        calculations = {
+            ref
+            for change in relevant
+            if kinds.get(change.target_id) == "bank_reconciliation"
+            and change.source == "calculation"
+            for ref in (change.before_ref, change.after_ref)
+            if ref is not None
+        }
+        revisions.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT fact_id FROM calculation WHERE id IN(SELECT value FROM json_each(?)) "
+                "UNION SELECT f.fact_id FROM fact_current f "
+                "JOIN subject s ON s.id=f.subject_id WHERE s.kind='bank_reconciliation' "
+                "AND f.subject_id IN(SELECT value FROM json_each(?)) "
+                "UNION SELECT revision_id FROM fact_bank_reconciliation "
+                "WHERE statement_id IN(SELECT value FROM json_each(?))",
+                (
+                    canonical(sorted(calculations)),
+                    canonical(sorted(bank_subjects)),
+                    canonical(
+                        sorted(
+                            subject
+                            for subject in bank_subjects
+                            if kinds[subject] == "bank_statement"
+                        )
+                    ),
+                ),
+            )
+        )
+        result.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT m.source_id FROM json_each(?) ids "
+                "JOIN fact_bank_reconciliation_matches m ON m.revision_id=ids.value "
+                "WHERE m.source_kind='payment'",
+                (canonical(sorted(revisions)),),
+            )
+        )
+    partition_subjects = {
+        change.target_id
+        for change in relevant
+        if change.source == "fact" and kinds.get(change.target_id) == "material_period_allocation"
+    }
+    if partition_subjects:
+        revisions = {
+            ref
+            for change in relevant
+            if change.target_id in partition_subjects and change.source == "fact"
+            for ref in (change.before_ref, change.after_ref)
+            if ref is not None
+        }
+        # Include historical row links: withdrawal of a current association must
+        # not hide the payments whose formerly valid partition was frozen.
+        result.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT c.subject_id FROM json_each(?) ids "
+                "JOIN fact_material_period_allocation a ON a.revision_id=ids.value "
+                "JOIN fact_material_resolution_v2 r ON r.source_id=a.source_id "
+                "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+                "JOIN calculation c ON c.id=l.calculation_id WHERE c.kind='payment'",
+                (canonical(sorted(revisions)),),
+            )
+        )
+    group_subjects = {
+        change.target_id
+        for change in relevant
+        if change.source == "fact" and kinds.get(change.target_id) == "material_group_resolution"
+    }
+    if group_subjects:
+        revisions = {
+            ref
+            for change in relevant
+            if change.source == "fact" and change.target_id in group_subjects
+            for ref in (change.before_ref, change.after_ref)
+            if ref is not None
+        }
+        result.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT c.subject_id FROM json_each(?) ids "
+                "JOIN fact_material_group_resolution g ON g.revision_id=ids.value "
+                "JOIN fact_material_group_resolution_members m ON m.revision_id=g.revision_id "
+                "JOIN fact_material_resolution_v2 r ON r.source_id=g.source_id "
+                "AND r.location=m.location "
+                "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+                "JOIN calculation c ON c.id=l.calculation_id WHERE c.kind='payment'",
+                (canonical(sorted(revisions)),),
+            )
+        )
+    return result
+
+
 def narrowed_duplicate_candidates(
     engine, connection, through_period: int, *, inspection_cache=None, query_reads=None
 ):
@@ -796,7 +934,7 @@ def narrowed_duplicate_candidates(
         else changes_since(connection, root.journal_highwater)
     )
     cache = {}
-    changed_subjects = set()
+    changed_subjects = _changed_bank_split_subjects(connection, changes, engine.store.registry)
     fact_changes = [change for change in changes if change.source == "fact"]
     # A frozen location can depend only on a material source or a material
     # resolution subject. A subject first registered after this close cannot

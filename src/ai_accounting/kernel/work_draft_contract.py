@@ -243,7 +243,9 @@ def _fact_entries(command: str, payload: dict):
         if not isinstance(facts, list):
             raise ValueError("provided facts must be an array")
         return facts
-    if command in {"save_fact", "amend_fact", "prepare_fact_registration"} or "kind" in payload:
+    if command in {"save_fact", "amend_fact", "prepare_fact_registration"} or (
+        "kind" in payload and command != "register_entity"
+    ):
         return [payload]
     return []
 

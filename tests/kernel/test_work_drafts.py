@@ -234,6 +234,32 @@ def test_unknown_kind_generic_dedicated_route_and_cross_company_rejected(store):
     assert store.read("2026-10", "financing")["draft"] == draft
 
 
+@pytest.mark.parametrize("section", ["candidates", "pending_requests"])
+@pytest.mark.parametrize(
+    "kind", ["person", "organization", "fund_account", "asset", "project", "fund_product"]
+)
+def test_entity_registration_retains_original_request_without_fact_kind_warning(
+    store, section, kind
+):
+    request = {
+        "command": "register_entity",
+        "payload": {
+            "company_id": "company",
+            "request_id": "register-original-entity",
+            "kind": kind,
+            "data": {"display_name": "合成对象"},
+            "source": "合成原件",
+        },
+    }
+    request["id" if section == "candidates" else "request_id"] = "register-original-entity"
+    draft = {section: [request]}
+    saved = save(store, draft)
+    reopened = make_store(store).read("2026-10", "financing")
+    assert reopened["revision"] == saved["revision"]
+    assert reopened["draft"] == draft
+    assert reopened["warnings"] == []
+
+
 @pytest.mark.parametrize("change", ["kind", "command", "route"])
 def test_changed_build_keeps_readable_candidates_with_warnings(store, change):
     result = save(store, candidate())

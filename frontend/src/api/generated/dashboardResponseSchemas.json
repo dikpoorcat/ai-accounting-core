@@ -1,4 +1,71 @@
 {
+  "inventory_batch": {
+    "$defs": {
+      "SavedInventoryItem": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "status": {
+            "const": "saved",
+            "title": "Status",
+            "type": "string"
+          },
+          "inventory_id": {
+            "exclusiveMinimum": 0,
+            "title": "Inventory Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period",
+          "category",
+          "status",
+          "inventory_id"
+        ],
+        "title": "SavedInventoryItem",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "status": {
+        "const": "saved",
+        "title": "Status",
+        "type": "string"
+      },
+      "results": {
+        "items": {
+          "$ref": "#/$defs/SavedInventoryItem"
+        },
+        "maxItems": 720,
+        "minItems": 1,
+        "title": "Results",
+        "type": "array"
+      }
+    },
+    "required": [
+      "status",
+      "results"
+    ],
+    "title": "SavedInventoryBatch",
+    "type": "object"
+  },
   "workflow": {
     "$defs": {
       "ActualCompletionRecord": {

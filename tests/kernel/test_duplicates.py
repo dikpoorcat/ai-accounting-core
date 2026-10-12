@@ -350,6 +350,21 @@ def reviewed_split_payments(company):
         expected_revision=0,
         request_id="resolve-original",
     )
+    # An explicit review is still necessary while a real statement evidence revision
+    # awaits adoption. The later no-impact publication must restore this whole
+    # dependency chain without rewriting the immutable review record.
+    with engine.store.connection(read_only=True) as connection:
+        statement_data = engine.store.current_fact(connection, "statement").fact.model_dump(
+            mode="json"
+        )
+    revised_statement = engine.save_fact(
+        "bank_statement",
+        "statement",
+        statement_data,
+        evidence=(source_proof, proof),
+        expected_revision=1,
+        request_id="statement-awaiting-no-impact-review",
+    )
     location = SourceLocation(
         source_id="bank-source",
         source_fact_id=source["fact_id"],
@@ -378,16 +393,14 @@ def reviewed_split_payments(company):
         review=owner_review(prepared, proof).model_dump(mode="json"),
         request_id="review-distinct-payment",
     )
-    p = engine.preview(reviewed["pending"])
+    p = engine.preview(list(dict.fromkeys([*revised_statement["pending"], *reviewed["pending"]])))
     assert all(r["mode"] == "review_no_impact" for r in p["results"])
     assert next(r for r in p["results"] if r["kind"] == "bank_reconciliation")["values"]["balanced"]
     published = engine.confirm(
         p["subjects"], preview_digest=p["digest"], epochs=p["epochs"], request_id="review-publish"
     )
     result = next(r for r in published["results"] if r["subject_id"] == "payment-a")
-    resolution["links"][0].update(
-        calculation_id=result["calculation_id"]
-    )
+    resolution["links"][0].update(calculation_id=result["calculation_id"])
     with engine.store.connection(read_only=True) as connection:
         original_record = dict(
             connection.execute(

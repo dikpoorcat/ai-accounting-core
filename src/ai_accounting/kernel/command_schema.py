@@ -107,6 +107,7 @@ def command_models(registry):
         "period_readiness": BusinessQueries.period_readiness,
         "management": Periods.management,
         "inventory": Periods.inventory,
+        "inventory_batch": Periods.inventory_batch,
         "preview_close": Periods.preview_close,
         "close": Periods.close,
         "preview_replay_close_range": ReplayClose.preview,

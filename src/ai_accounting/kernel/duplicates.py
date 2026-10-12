@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .contracts import Fact, KernelError, NeedsInformation
 from .stored_json import DuplicateStoredKey, loads_unique
-from .types import EvidenceDigest, YearMonth, canonical, digest, validate_evidence_digests
+from .types import EvidenceDigest, YearMonth, canonical, digest, sum_fen, validate_evidence_digests
 
 DUPLICATE_CONTRACT = "ai-accounting-kernel/2/business-duplicate"
 DUPLICATE_CONTRACT_VERSION = 2
@@ -1425,6 +1425,8 @@ def _candidate_signals(
     candidate_evidence: Sequence[str],
     candidate_locations: Sequence[Mapping[str, Any]],
     supporting: set[str],
+    *,
+    split_locations: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[str | None, list[dict]]:
     same_kind = proposed.kind == candidate.kind
     actual_money_pair = proposed.kind in ACTUAL_MONEY_KINDS and candidate.kind in ACTUAL_MONEY_KINDS
@@ -1443,6 +1445,7 @@ def _candidate_signals(
         for item in _location_keys(proposed_locations) & _location_keys(candidate_locations)
         if item[0] not in supporting
     )
+    unproven_locations = [item for item in common_locations if item not in split_locations]
     distinct_material_proof = any(
         proposed_by_evidence.get(item)
         and candidate_by_evidence.get(item)
@@ -1463,19 +1466,21 @@ def _candidate_signals(
         and set(left["movement_ids"]).isdisjoint(right["movement_ids"])
         for left, right in money_matches
     )
-    distinct_proof = distinct_material_proof or distinct_platform_proof
+    distinct_proof = distinct_material_proof or distinct_platform_proof or bool(split_locations)
     same_money_object = any(
         left["object_id"] is not None and left["object_id"] == right["object_id"]
         for left, right in money_matches
     )
     exact_money_source = bool(money_matches) and bool(
-        common_movements or (common_locations and not distinct_platform_proof)
+        common_movements or (unproven_locations and not distinct_platform_proof)
     )
     signals = []
     if exact_money_source:
         signal = {
             "code": (
-                "same_exact_material_location" if common_locations else "same_complete_actual_money"
+                "same_exact_material_location"
+                if unproven_locations
+                else "same_complete_actual_money"
             ),
             "matched_fields": [
                 "funds_category",
@@ -1486,20 +1491,20 @@ def _candidate_signals(
                 *(("movement_ids",) if common_movements else ()),
             ],
         }
-        if common_locations:
+        if unproven_locations:
             signal["source_locations"] = [
                 {"evidence_digest": evidence, "location": location}
-                for evidence, location in common_locations
+                for evidence, location in unproven_locations
             ]
         signals.append(signal)
-    elif common_locations and same_core:
+    elif unproven_locations and same_core:
         signals.append(
             {
                 "code": "same_exact_material_location",
                 "matched_fields": ["duplicate_role", "business_objects", "amounts"],
                 "source_locations": [
                     {"evidence_digest": evidence, "location": location}
-                    for evidence, location in common_locations
+                    for evidence, location in unproven_locations
                 ],
             }
         )
@@ -1554,6 +1559,7 @@ def _candidate_signals(
                     "amount_fen",
                 ],
                 "distinct_locations_proven": distinct_proof,
+                **({"complete_bank_split_proven": True} if split_locations else {}),
             }
         )
     if shared_evidence:
@@ -1729,6 +1735,318 @@ class DuplicateCandidates:
     @staticmethod
     def eligible(kind: str) -> bool:
         return kind in ELIGIBLE_KINDS
+
+    def _bank_split_members(self, connection, resolution_id: str) -> frozenset[str]:
+        """Prove one whole original's current, separate complete bank payments.
+
+        A pool has no member-to-payment mapping. Only an exact recognized row,
+        its current whole allocations and the adopted bank match can establish
+        this proof; equal coordinates or a declared aggregate alone cannot.
+        """
+        from .engine import Engine
+        from .integrity import verify_sources
+        from .materials import (
+            _allocation_versions,
+            _period_partition,
+            inspect_bytes,
+            resolve_material_links,
+        )
+
+        empty = frozenset()
+        row = connection.execute(
+            "SELECT r.revision_id FROM fact_material_resolution_v2 r "
+            "JOIN fact_current h ON h.fact_id=r.revision_id "
+            "JOIN fact_current s ON s.subject_id=r.source_id AND s.fact_id=r.source_fact_id "
+            "WHERE r.revision_id=? AND r.treatment='recognize'",
+            (resolution_id,),
+        ).fetchone()
+        if row is None:
+            return empty
+        resolution = self.store.fact(connection, resolution_id)
+        fact = resolution.fact
+        source = self.store.fact(connection, fact.source_fact_id)
+        if source.fact.category != "bank" or source.fact.purpose != "business":
+            return empty
+        # Competing dispositions or a group cannot turn a row into split proof.
+        competing = connection.execute(
+            "SELECT r.revision_id FROM fact_material_resolution_v2 r "
+            "JOIN fact_current h ON h.fact_id=r.revision_id "
+            "WHERE r.source_id=? AND r.location=? UNION ALL "
+            "SELECT g.revision_id FROM fact_material_group_resolution g "
+            "JOIN fact_current h ON h.fact_id=g.revision_id "
+            "JOIN fact_material_group_resolution_members m ON m.revision_id=g.revision_id "
+            "WHERE g.source_id=? AND m.location=?",
+            (fact.source_id, fact.location, fact.source_id, fact.location),
+        ).fetchall()
+        if len(competing) != 1:
+            return empty
+        raw = connection.execute(
+            "SELECT content FROM evidence WHERE digest=unhex(?)",
+            (source.fact.evidence_digest,),
+        ).fetchone()
+        if raw is None or source.fact.evidence_digest not in source.evidence:
+            return empty
+        inspection = inspect_bytes(raw[0], source.fact.specification)
+        items = [item for item in inspection["items"] if item["location"] == fact.location]
+        if inspection["issues"] or len(items) != 1:
+            return empty
+        item = items[0]
+        if type(item["amount_fen"]) is not int or item["amount_fen"] != fact.amount_fen:
+            return empty
+        allocations = _allocation_versions(connection, self.store.registry, fact.source_id)
+        if len(allocations) != 1 or allocations[0].fact.source_fact_id != source.id:
+            return empty
+        allocation = allocations[0]
+        proofs = {
+            proof
+            for proof in allocation.evidence
+            if connection.execute(
+                "SELECT 1 FROM evidence WHERE digest=unhex(?)", (proof,)
+            ).fetchone()
+        }
+        _, periods, issues = _period_partition(
+            source.fact,
+            inspection,
+            allocation.fact.entries,
+            proofs,
+            complete=False,
+            build_entries=False,
+        )
+        if issues or periods.get(fact.location) != fact.recognition_period:
+            return empty
+
+        def adopted(subject_id, fact_id=None):
+            return connection.execute(
+                "SELECT c.* FROM calculation_current h JOIN calculation c ON c.id=h.calculation_id "
+                "JOIN fact_current f ON f.subject_id=h.subject_id AND f.fact_id=c.fact_id "
+                "JOIN fact_seal fs ON fs.fact_id=c.fact_id "
+                "JOIN calculation_seal cs ON cs.calculation_id=c.id "
+                "WHERE h.subject_id=? AND (? IS NULL OR c.fact_id=?) "
+                "AND NOT EXISTS(SELECT 1 FROM pending p WHERE p.subject_id=h.subject_id)",
+                (subject_id, fact_id, fact_id),
+            ).fetchone()
+
+        links = resolve_material_links(connection, fact.links, registry=self.store.registry)
+        if len(links) < 2 or len({link.subject_id for link in links}) != len(links):
+            return empty
+        participants, counterparties, obligations, settled_obligations = {}, set(), set(), set()
+        for link in links:
+            version, calculation = link.binding.fact_version, link.binding.calculation
+            payment = version.fact
+            if (
+                payment.kind != "payment"
+                or payment.payment_method != "individual"
+                or payment.counterparty_id is None
+                or payment.counterparty_id in counterparties
+                or link.amount_field != "fact.amount_fen"
+                or abs(link.amount_fen) != payment.amount_fen
+                or link.recognition_period != fact.recognition_period
+            ):
+                return empty
+            head = adopted(version.subject_id, version.id)
+            if head is None or head["id"] != calculation.id:
+                return empty
+            scopes = {allocation.scope for allocation in payment.allocations}
+            if not scopes or scopes & obligations:
+                return empty
+            settlements = self.store.calculation(head).values.get("settlements", ())
+            if (
+                not isinstance(settlements, (tuple, list))
+                or len(settlements) != len(payment.allocations)
+                or any(
+                    not isinstance(settlement, Mapping)
+                    or not isinstance(settlement.get("obligation"), str)
+                    or type(settlement.get("amount_fen")) is not int
+                    or settlement["amount_fen"] <= 0
+                    for settlement in settlements
+                )
+            ):
+                return empty
+            settled = {settlement["obligation"] for settlement in settlements}
+            if (
+                len(settled) != len(settlements)
+                or settled & settled_obligations
+                or sorted(settlement["amount_fen"] for settlement in settlements)
+                != sorted(allocation.amount_fen for allocation in payment.allocations)
+                or sum_fen(settlement["amount_fen"] for settlement in settlements)
+                != payment.amount_fen
+            ):
+                return empty
+            try:
+                payment.validate_material_amount(
+                    link.amount_field,
+                    link.amount_fen,
+                    source_amounts=(item["amount_fen"],),
+                    source_directions=(item.get("funds_direction"),),
+                )
+            except KernelError:
+                return empty
+            counterparties.add(payment.counterparty_id)
+            obligations.update(scopes)
+            settled_obligations.update(settled)
+            participants[version.subject_id] = (version, head)
+        if sum_fen(link.amount_fen for link in links) != item["amount_fen"]:
+            return empty
+        payments = [version.fact for version, _ in participants.values()]
+        first = payments[0]
+        if any(
+            (payment.bank_account_id, payment.actual_date, payment.direction)
+            != (first.bank_account_id, first.actual_date, first.direction)
+            for payment in payments
+        ):
+            return empty
+        original_direction = item.get("funds_direction")
+        if original_direction == "signed_net":
+            original_signed_fen = item["amount_fen"]
+        elif original_direction == first.direction:
+            original_signed_fen = item["amount_fen"] * (1 if first.direction == "inflow" else -1)
+        else:
+            return empty
+        reconciliation_rows = connection.execute(
+            "SELECT f.subject_id FROM fact_bank_reconciliation r "
+            "JOIN fact_current f ON f.fact_id=r.revision_id "
+            "WHERE r.bank_account_id=? AND r.period=?",
+            (first.bank_account_id, first.period.ordinal),
+        ).fetchall()
+        if len(reconciliation_rows) != 1:
+            return empty
+        head = adopted(reconciliation_rows[0]["subject_id"])
+        if head is None:
+            return empty
+        reconciliation = self.store.fact(connection, head["fact_id"])
+        bank = reconciliation.fact
+        matched = [match for match in bank.matches if match.source_id in participants]
+        references = {match.reference for match in matched}
+        if (
+            len(matched) != len(participants)
+            or len(references) != 1
+            or any(match.source_kind != "payment" for match in matched)
+        ):
+            return empty
+        reference = next(iter(references))
+        if {
+            (match.source_kind, match.source_id)
+            for match in bank.matches
+            if match.reference == reference
+        } != {("payment", subject) for subject in participants}:
+            return empty
+        statement_head = adopted(bank.statement_id)
+        if statement_head is None:
+            return empty
+        statement = self.store.fact(connection, statement_head["fact_id"])
+        entries = [entry for entry in statement.fact.entries if entry.reference == reference]
+        if (
+            statement.fact.kind != "bank_statement"
+            or source.fact.evidence_digest not in statement.evidence
+            or len(entries) != 1
+            or statement.fact.bank_account_id != first.bank_account_id
+            or statement.fact.period != first.period
+            or entries[0].actual_date != first.actual_date
+            or entries[0].signed_fen != original_signed_fen
+            or entries[0].signed_fen
+            != sum_fen(payment.amount_fen for payment in payments)
+            * (1 if first.direction == "inflow" else -1)
+        ):
+            return empty
+        # Match the reference to exact original context cells, not to a guessed
+        # date/amount or a substring in the human-readable excerpt.
+        import re
+
+        coordinates = re.fullmatch(r"(.*)!([A-Z]+)([1-9][0-9]*)", fact.location)
+        if coordinates is None:
+            return empty
+        sheet, _, number = coordinates.groups()
+        specification = source.fact.specification
+        context_columns = {
+            column.column
+            for column in specification.sheet_columns.get(sheet, specification.columns)
+            if column.role == "context"
+        }
+        reference_rows = set()
+        for cell in inspection["coverage"]:
+            position = re.fullmatch(r"(.*)!([A-Z]+)([1-9][0-9]*)", cell["location"])
+            if (
+                position is not None
+                and position[1] == sheet
+                and position[2] in context_columns
+                and cell.get("value") == reference
+            ):
+                reference_rows.add((position[1], position[3]))
+        if reference_rows != {(sheet, number)}:
+            return empty
+        dependencies = {
+            row[0]
+            for row in connection.execute(
+                "SELECT upstream_id FROM dependency_calculation WHERE calculation_id=?",
+                (head["id"],),
+            )
+        }
+        required = {statement_head["id"], *(row["id"] for _, row in participants.values())}
+        if not required <= dependencies:
+            return empty
+        verify_sources(
+            Engine(self.store),
+            connection,
+            calculation_ids=(head["id"],),
+            fact_ids=(resolution.id, source.id, allocation.id),
+        )
+        if self.store.calculation(head).values.get("balanced") is not True:
+            return empty
+        return frozenset(version.id for version, _ in participants.values())
+
+    def _bank_split_locations(
+        self,
+        connection,
+        subject_id,
+        revision,
+        fact,
+        locations,
+        candidate,
+        candidate_locations,
+        *,
+        cache=None,
+    ) -> frozenset[tuple[str, str]]:
+        if (
+            fact.kind != "payment"
+            or candidate.fact.kind != "payment"
+            or not {
+                "bank_statement",
+                "bank_reconciliation",
+                "material_group_resolution",
+                "material_period_allocation",
+            }
+            <= self.store.registry.models.keys()
+        ):
+            return frozenset()
+        own = connection.execute(
+            "SELECT f.id,f.revision,f.digest FROM fact_current h "
+            "JOIN fact_revision f ON f.id=h.fact_id WHERE h.subject_id=?",
+            (subject_id,),
+        ).fetchone()
+        if own is None or own["revision"] != revision or own["digest"] != digest(_fact_data(fact)):
+            return frozenset()
+        by_resolution = {}
+        for item in locations:
+            if item.get("resolution_fact_id"):
+                by_resolution[item["resolution_fact_id"]] = (
+                    item["evidence_digest"],
+                    item["location"],
+                )
+        result = set()
+        for item in candidate_locations:
+            ident = item.get("resolution_fact_id")
+            key = item["evidence_digest"], item["location"]
+            if ident not in by_resolution or by_resolution[ident] != key:
+                continue
+            if cache is None or ident not in cache:
+                members = self._bank_split_members(connection, ident)
+                if cache is not None:
+                    cache[ident] = members
+            else:
+                members = cache[ident]
+            if {own["id"], candidate.id} <= members:
+                result.add(key)
+        return frozenset(result)
 
     def _candidate_rows(
         self,
@@ -1999,6 +2317,7 @@ class DuplicateCandidates:
             "material_sources": effective_locations,
         }
         strong, weak = [], []
+        split_cache = {} if _batch_cache is None else _batch_cache.setdefault("bank_splits", {})
         for row in rows:
             version = versions[row["id"]]
             strength, signals = _candidate_signals(
@@ -2010,6 +2329,30 @@ class DuplicateCandidates:
                 material[version.id],
                 supporting,
             )
+            if strength == "strong" and any(
+                signal["code"] == "same_exact_material_location" for signal in signals
+            ):
+                split_locations = self._bank_split_locations(
+                    connection,
+                    subject_id,
+                    revision,
+                    fact,
+                    effective_locations,
+                    version,
+                    material[version.id],
+                    cache=split_cache,
+                )
+                if split_locations:
+                    strength, signals = _candidate_signals(
+                        fact,
+                        evidence,
+                        effective_locations,
+                        version.fact,
+                        version.evidence,
+                        material[version.id],
+                        supporting,
+                        split_locations=split_locations,
+                    )
             if strength is None:
                 continue
             if strong_only and strength != "strong":

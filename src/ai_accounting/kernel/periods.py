@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
 from .types import (
@@ -23,6 +26,18 @@ READINESS_WORK_AREAS = {
 }
 ASSET_FINANCING_READINESS_FIELDS = {"loan_drawdown", "loan_interest"}
 _CURRENT_CLOSE = object()
+
+
+class InventoryInput(BaseModel):
+    """One complete monthly material declaration, with its own source basis."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    period: YearMonth
+    category: Literal["transactions", "payroll", "bank", "tax", "assets", "financing"]
+    evidence: list[EvidenceDigest]
+    expected: Annotated[int, Field(ge=0)]
+    no_business: bool
+    confirmation_evidence: EvidenceDigest
 
 
 class Periods:
@@ -73,6 +88,63 @@ class Periods:
         confirmation_evidence: EvidenceDigest,
         request_id: str,
     ):
+        payload, operation = self._inventory_registration(
+            period,
+            category,
+            evidence=evidence,
+            expected=expected,
+            no_business=no_business,
+            confirmation_evidence=confirmation_evidence,
+        )
+        return self.engine._write(
+            request_id, digest(["inventory", payload]), None, ("material",), "inventory", operation
+        )
+
+    def inventory_batch(
+        self,
+        inventories: Annotated[list[InventoryInput], Field(min_length=1, max_length=720)],
+        *,
+        request_id: str,
+    ):
+        """Atomically register complete declarations without repeating production."""
+        if not 1 <= len(inventories) <= 720:
+            raise ValueError("inventory batch must contain 1 to 720 declarations")
+        declarations = [InventoryInput.model_validate(item) for item in inventories]
+        keys = [(str(item.period), item.category) for item in declarations]
+        if len(keys) != len(set(keys)):
+            raise KernelError("duplicate_inventory", "同一批次不能重复声明同月同类资料")
+        registrations = [
+            self._inventory_registration(**item.model_dump(mode="json")) for item in declarations
+        ]
+
+        def operation(connection):
+            return {
+                "status": "saved",
+                "results": [
+                    {"period": period, "category": category, **save(connection)}
+                    for (period, category), (_, save) in zip(keys, registrations, strict=True)
+                ],
+            }
+
+        return self.engine._write(
+            request_id,
+            digest(["inventory_batch", [payload for payload, _ in registrations]]),
+            None,
+            ("material",),
+            "inventory_batch",
+            operation,
+        )
+
+    @staticmethod
+    def _inventory_registration(
+        period,
+        category,
+        *,
+        evidence,
+        expected,
+        no_business,
+        confirmation_evidence,
+    ):
         month = YearMonth(period).ordinal
         if category not in MATERIAL_CATEGORIES or type(expected) is not int or expected < 0:
             raise ValueError("invalid material category or expected count")
@@ -120,9 +192,7 @@ class Periods:
             record_period(connection, month)
             return {"status": "saved", "inventory_id": row[0]}
 
-        return self.engine._write(
-            request_id, digest(["inventory", payload]), None, ("material",), "inventory", operation
-        )
+        return payload, operation
 
     @staticmethod
     def _has_business_activity(connection, month, kind, model):
