@@ -174,7 +174,7 @@ def test_frozen_original_and_supplements_have_separate_validity(book, monkeypatc
     )
     frozen = periods.closed_report("2026-01")
     supplement = save_commentary(display, text="后来核对的说明", request_id="supplement")
-    register_employee(engine, data={"employment_start": "2026-01"}, proof=proof)
+    register_employee(engine, data={"effective_date": "2026-01"}, proof=proof)
     current = display.preview_period_commentary("2026-01")
     assert current["current"]["id"] == original["id"]
     assert current["frozen"]["content_validity"]["status"] == "frozen"

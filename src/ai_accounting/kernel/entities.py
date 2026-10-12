@@ -7,14 +7,35 @@ scope remain independent; a name change never rewrites an accounting fact.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .content_history_context import source_canonical as canonical
 from .content_history_context import source_digest as digest
 from .content_history_context import source_json_loads
 from .contracts import KernelError, NeedsInformation
+from .employee_employment import (
+    EmploymentChange,
+    EmploymentDate,
+    EmploymentEvent,
+    EmploymentInterval,
+    active_events,
+    decode_cursor,
+    encode_cursor,
+    recorded_event_times,
+    require_occurred,
+    verify_history,
+)
+from .employee_employment import (
+    issue as employment_issue,
+)
+from .employee_employment import (
+    projection as employment_projection,
+)
+from .employee_employment import (
+    records as employment_records,
+)
 from .fund_accounts import (
     IDENTITY_FIELDS,
     account_identity,
@@ -28,28 +49,11 @@ from .fund_accounts import (
     verify_fund_accounts,
 )
 from .text_sort import pinyin_key
-from .types import ActualDate, EvidenceDigest, YearMonth, evidence_digest_bytes
+from .types import EvidenceDigest, YearMonth, evidence_digest_bytes
 
 EntityKind = Literal["person", "organization", "fund_account", "asset", "project", "fund_product"]
 ENTITY_KINDS = ("person", "organization", "fund_account", "asset", "project", "fund_product")
-DisplayDate = Annotated[
-    YearMonth | ActualDate,
-    WithJsonSchema(
-        {
-            "type": "string",
-            "anyOf": [
-                {"pattern": r"^[0-9]{4}-(0[1-9]|1[0-2])$"},
-                {"pattern": r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
-            ],
-            "x-accounting-fact": {
-                "role": "management",
-                "meaning": "explicitly_provided_employment_date",
-                "allowed_precision": ["month", "day"],
-                "reusable_sources": ["owner_confirmation", "employment_document"],
-            },
-        }
-    ),
-]
+DisplayDate = EmploymentDate
 
 
 class EntityProfile(BaseModel):
@@ -74,18 +78,30 @@ class NumberedEntityProfile(EntityProfile):
         return self
 
 
+class EmployeeRegistration(NumberedEntityProfile):
+    effective_date: EmploymentDate
+    after_profile_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class PersonProfile(NumberedEntityProfile):
     employment_start: DisplayDate | None = None
     employment_end: DisplayDate | None = None
     employment_status: Literal["active", "inactive", "unknown"] = "unknown"
     employment_state: Literal["regular", "unpaid_leave", "departed", "unknown"] = Field(
         default="unknown",
-        description="负责人确认或任职资料明确登记的当前管理状态；不改变工资核算或历史月份在册事实，不从工资、备注或在册状态推断。缺失保持未确认。",
-        json_schema_extra={"x-accounting-fact": {
-            "role": "management", "meaning": "explicit_current_employment_state",
-            "reusable_sources": ["owner_confirmation", "employment_document"],
-        }},
+        description="内核按有来源的任职事件维护的当前管理状态；原无事件档案保留明确基线，不改变工资核算。",
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "management",
+                "meaning": "explicit_current_employment_state",
+                "reusable_sources": ["owner_confirmation", "employment_document"],
+            }
+        },
     )
+    employment_event: EmploymentEvent | None = None
+    employment_baseline: str | None = None
+    employment_intervals: list[EmploymentInterval] | None = None
+
     @model_validator(mode="after")
     def validate_explicit_details(self):
         if self.employment_start and self.employment_end:
@@ -108,7 +124,7 @@ class AssetProfile(NumberedEntityProfile):
 
 
 def entity_profile_models():
-    """Exact new-format management inputs, selected by the actual entity kind."""
+    """Stored management profiles, including kernel-owned personnel projections."""
     return {
         "person": PersonProfile,
         "organization": OrganizationProfile,
@@ -117,6 +133,11 @@ def entity_profile_models():
         "project": NumberedEntityProfile,
         "fund_product": NumberedEntityProfile,
     }
+
+
+def entity_input_models():
+    """Metadata write vocabulary; personnel lifecycle belongs to typed commands."""
+    return dict(entity_profile_models(), person=NumberedEntityProfile)
 
 
 ENTITY_DDL = """
@@ -192,6 +213,7 @@ def display_profile(profile, kind, *, fund_account=None):
             "employment_end",
             "employment_status",
             "employment_state",
+            "employment_intervals",
             "active",
             "category_label",
             "source",
@@ -298,7 +320,8 @@ def employee_entities(connection, period, *, registry, entity_ids=None):
         if profile["employee_reference"] or (
             not profile["resolved"]
             and (
-                content["employment_start"] is not None or content["employment_status"] != "unknown"
+                content["employment_start"] is not None
+                or content["employment_status"] != "unknown"
                 or content.get("employment_state", "unknown") != "unknown"
             )
         ):
@@ -359,6 +382,12 @@ def verify_entities(connection):
     verify_fund_accounts(connection)
     for row in connection.execute("SELECT * FROM entity_profile_revision"):
         _profile_record(row)
+    events = []
+    for row in connection.execute("SELECT id FROM entity WHERE kind='person'"):
+        history = employment_records(connection, row["id"])
+        verify_history(history)
+        events.extend(item for item in history if item.get("employment_event") is not None)
+    recorded_event_times(connection, events)
     for row in connection.execute("SELECT * FROM entity_resolution"):
         payload = {
             key: row[key] for key in ("correction_id", "source_entity_id", "target_entity_id")
@@ -379,23 +408,80 @@ class Entities:
 
     @staticmethod
     def _profile(kind, data, source, evidence_digest):
+        if isinstance(data, BaseModel):
+            data = data.model_dump(mode="json")
         selected = entity_profile_models()[kind].model_validate_json(canonical(data))
         profile = selected.model_dump(mode="json")
         if not isinstance(source, str) or not source.strip() or len(source) > 2000:
-            raise ValueError("source must describe the explicit source of the profile")
+            raise NeedsInformation([employment_issue("source", "须明确提供本次管理资料的来源")])
         evidence = None if evidence_digest is None else evidence_digest_bytes(evidence_digest)
         return profile, evidence
 
     @staticmethod
-    def _insert_profile(connection, entity_id, revision, profile, source, evidence):
+    def _explicit(model, data):
+        if isinstance(data, BaseModel):
+            data = data.model_dump(mode="json", exclude_unset=True)
+        try:
+            return model.model_validate_json(canonical(data)).model_dump(
+                mode="json", exclude_unset=True
+            )
+        except ValidationError as exc:
+            if model not in {EmployeeRegistration, EmploymentChange}:
+                raise
+            missing = [
+                employment_issue(str(error["loc"][0]), "缺少必需任职管理事实")
+                for error in exc.errors(include_input=False)
+                if error["type"] == "missing" and len(error["loc"]) == 1
+            ]
+            if missing:
+                raise NeedsInformation(missing) from exc
+            raise
+
+    @staticmethod
+    def _current(connection, entity_id, expected_revision):
+        row = connection.execute(
+            "SELECT * FROM entity_profile_revision WHERE entity_id=? "
+            "ORDER BY revision DESC LIMIT 1",
+            (entity_id,),
+        ).fetchone()
+        if (
+            type(expected_revision) is not int
+            or row is None
+            or row["revision"] != expected_revision
+        ):
+            raise KernelError("entity_profile_version_conflict", "对象档案已变化，请重新读取")
+        return _profile_record(row)
+
+    @staticmethod
+    def _content(profile):
+        return {
+            key: value
+            for key, value in profile.items()
+            if key
+            not in {
+                "id",
+                "entity_id",
+                "revision",
+                "source",
+                "digest",
+                "evidence_digest",
+                "entity_kind",
+                "account_type",
+            }
+        }
+
+    @staticmethod
+    def _insert_profile(
+        connection, entity_id, revision, profile, source, evidence, *, profile_id=None
+    ):
         if (
             evidence is not None
             and not connection.execute(
                 "SELECT 1 FROM evidence WHERE digest=?", (evidence,)
             ).fetchone()
         ):
-            raise NeedsInformation("evidence_digest", "档案依据尚未登记")
-        identifier = uuid.uuid4().hex
+            raise NeedsInformation([employment_issue("evidence_digest", "档案依据尚未登记")])
+        identifier = profile_id or uuid.uuid4().hex
         connection.execute(
             "INSERT INTO entity_profile_revision VALUES(?,?,?,?,?,?,?)",
             (
@@ -440,6 +526,8 @@ class Entities:
             data = selected.model_dump(mode="json")
             for key in IDENTITY_FIELDS[account_type]:
                 data.pop(key)
+        else:
+            data = self._explicit(entity_input_models()[kind], data)
         profile, evidence = self._profile(kind, data, source, evidence_digest)
 
         def operation(connection):
@@ -504,17 +592,21 @@ class Entities:
     ):
         with self.store.connection(read_only=True) as connection:
             entity = require_entity(connection, entity_id)
-        profile, evidence = self._profile(entity["kind"], data, source, evidence_digest)
+        explicit = self._explicit(entity_input_models()[entity["kind"]], data)
+        _, evidence = self._profile(entity["kind"], explicit, source, evidence_digest)
 
         def operation(connection):
             require_entity(connection, entity_id)
-            current = connection.execute(
-                "SELECT max(revision) FROM entity_profile_revision WHERE entity_id=?", (entity_id,)
-            ).fetchone()[0]
-            if type(expected_revision) is not int or current != expected_revision:
-                raise KernelError("entity_profile_version_conflict", "对象档案已变化，请重新读取")
+            current = self._current(connection, entity_id, expected_revision)
+            if entity["kind"] == "person" and current.get("employment_intervals") is not None:
+                verify_history(employment_records(connection, entity_id))
+            merged = self._content(current)
+            merged.update(explicit)
+            # A normal metadata revision does not assert an employment event.
+            merged.pop("employment_event", None)
+            profile, _ = self._profile(entity["kind"], merged, source, evidence_digest)
             return self._insert_profile(
-                connection, entity_id, current + 1, profile, source, evidence
+                connection, entity_id, current["revision"] + 1, profile, source, evidence
             )
 
         return self.engine._write(
@@ -523,7 +615,7 @@ class Entities:
                 [
                     "update_entity_profile",
                     entity_id,
-                    profile,
+                    explicit,
                     source,
                     evidence_digest,
                     expected_revision,
@@ -534,6 +626,197 @@ class Entities:
             "update_entity_profile",
             operation,
         )
+
+    def register_employee(
+        self,
+        data: EmployeeRegistration,
+        *,
+        source: str,
+        request_id: str,
+        entity_id: str | None = None,
+        expected_revision: int | None = None,
+        evidence_digest: EvidenceDigest | None = None,
+    ):
+        explicit = self._explicit(EmployeeRegistration, data)
+        if entity_id is None and expected_revision is not None:
+            raise ValueError("expected_revision requires an existing person")
+        if entity_id is not None and expected_revision is None:
+            raise NeedsInformation(
+                [employment_issue("expected_revision", "复用人员身份须提供当前档案版本", entity_id)]
+            )
+
+        def operation(connection):
+            require_occurred(explicit["effective_date"])
+            if entity_id is None:
+                identifier = "entity_" + uuid.uuid4().hex
+                history, profile, revision = [], {}, 1
+                connection.execute("INSERT INTO entity VALUES(?, 'person', NULL)", (identifier,))
+            else:
+                identifier = entity_id
+                require_entity(connection, identifier, kinds=("person",))
+                current = self._current(connection, identifier, expected_revision)
+                history = employment_records(connection, identifier)
+                verify_history(history)
+                profile, revision = self._content(current), current["revision"] + 1
+            metadata = {
+                key: value
+                for key, value in explicit.items()
+                if key not in {"effective_date", "after_profile_id"}
+            }
+            profile.update(metadata)
+            event = EmploymentEvent(
+                action="hire",
+                effective_date=explicit["effective_date"],
+                after_profile_id=explicit.get("after_profile_id"),
+            ).model_dump(mode="json")
+            return self._employment_append(
+                connection, identifier, revision, profile, history, event, source, evidence_digest
+            )
+
+        return self.engine._write(
+            request_id,
+            digest(
+                [
+                    "register_employee",
+                    entity_id,
+                    expected_revision,
+                    explicit,
+                    source,
+                    evidence_digest,
+                ]
+            ),
+            None,
+            ("management",),
+            "register_entity" if entity_id is None else "update_entity_profile",
+            operation,
+        )
+
+    def change_employee_employment(
+        self,
+        entity_id: str,
+        data: EmploymentChange,
+        *,
+        source: str,
+        expected_revision: int,
+        request_id: str,
+        evidence_digest: EvidenceDigest | None = None,
+    ):
+        explicit = self._explicit(EmploymentChange, data)
+        event = EmploymentEvent.model_validate_json(canonical(explicit)).model_dump(mode="json")
+
+        def operation(connection):
+            require_entity(connection, entity_id, kinds=("person",))
+            current = self._current(connection, entity_id, expected_revision)
+            require_occurred(event["effective_date"])
+            history = employment_records(connection, entity_id)
+            verify_history(history)
+            return self._employment_append(
+                connection,
+                entity_id,
+                current["revision"] + 1,
+                self._content(current),
+                history,
+                event,
+                source,
+                evidence_digest,
+            )
+
+        return self.engine._write(
+            request_id,
+            digest(
+                [
+                    "change_employee_employment",
+                    entity_id,
+                    expected_revision,
+                    explicit,
+                    source,
+                    evidence_digest,
+                ]
+            ),
+            None,
+            ("management",),
+            "update_entity_profile",
+            operation,
+        )
+
+    def _employment_append(
+        self, connection, entity_id, revision, profile, history, event, source, evidence_digest
+    ):
+        profile = dict(profile)
+        if not any(item.get("employment_event") is not None for item in history):
+            profile["employment_baseline"] = history[-1]["id"] if history else None
+        profile["employment_event"] = event
+        # The inserted profile ID is the event identity. Allocate once, derive
+        # before inserting, then save the checked content under that exact ID.
+        profile_id = uuid.uuid4().hex
+        candidate = dict(
+            profile,
+            id=profile_id,
+            entity_id=entity_id,
+            revision=revision,
+            employment_intervals=profile.get("employment_intervals") or [],
+        )
+        profile.update(employment_projection([*history, candidate]))
+        profile, evidence = self._profile("person", profile, source, evidence_digest)
+        saved = self._insert_profile(
+            connection, entity_id, revision, profile, source, evidence, profile_id=profile_id
+        )
+        return saved
+
+    def employee_employment_history(
+        self,
+        entity_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+        expected_revision: int | None = None,
+    ):
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be 1..500")
+        with self.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            require_entity(connection, entity_id, kinds=("person",))
+            history = employment_records(connection, entity_id)
+            verify_history(history)
+            if not history:
+                raise KernelError("entity_profile_corrupt", "对象缺少初始档案", entity_id=entity_id)
+            revision = history[-1]["revision"]
+            if expected_revision is not None and (
+                type(expected_revision) is not int or expected_revision != revision
+            ):
+                raise KernelError("entity_profile_version_conflict", "对象档案已变化，请重新读取")
+            scope = [self.store.company_id, self.store.database_id, entity_id, revision]
+            offset = 0 if cursor is None else decode_cursor(cursor, scope)
+            active, _, _, _ = active_events(history)
+            events = [
+                item for item in reversed(history) if item.get("employment_event") is not None
+            ]
+            selected = events[offset : offset + limit]
+            times = recorded_event_times(connection, selected)
+            items = [
+                dict(
+                    item["employment_event"],
+                    profile_id=item["id"],
+                    revision=item["revision"],
+                    source=item["source"],
+                    evidence_digest=item["evidence_digest"],
+                    recorded_at=times.get(("display_profile", item["id"])),
+                    active=item["id"] in active,
+                )
+                for item in selected
+            ]
+            more = offset + len(items) < len(events)
+            return {
+                "entity_id": entity_id,
+                "revision": revision,
+                "items": items,
+                "page": {
+                    "total_count": len(events),
+                    "returned_count": len(items),
+                    "has_more": more,
+                    "next_cursor": encode_cursor(scope, offset + len(items)) if more else None,
+                },
+            }
 
     def correct_fund_account_identity(
         self,

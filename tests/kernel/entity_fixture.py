@@ -128,6 +128,27 @@ def save_entity_display_profile(engine, profile, *, expected_revision, request_i
     # The synthetic directory starts with one blank profile revision. Preserve
     # the caller's expected version relative to that explicit starting point.
     revision = expected_revision + 1
+    if entity_kind == "person" and any(key.startswith("employment_") for key in data):
+        # Explicit synthetic historical baseline, rather than a production
+        # metadata command. Retain immutable revisions and management invalidation.
+        from ai_accounting.kernel.entities import PersonProfile
+        from ai_accounting.kernel.types import evidence_digest_bytes
+
+        stored = PersonProfile.model_validate_json(canonical(data)).model_dump(mode="json")
+        proof = None if evidence is None else evidence_digest_bytes(evidence)
+
+        def operation(connection):
+            actual = connection.execute(
+                "SELECT max(revision) FROM entity_profile_revision WHERE entity_id=?", (entity_id,)
+            ).fetchone()[0]
+            assert actual == revision, "synthetic baseline revision changed"
+            return Entities._insert_profile(connection, entity_id, revision + 1, stored, source, proof)
+
+        saved = engine._write(
+            request_id, digest(["synthetic employment baseline", entity_id, stored, source, evidence, revision]),
+            None, ("management",), "update_entity_profile", operation,
+        )
+        return dict(saved, id=saved["profile_id"])
     saved = Entities(engine).update_entity_profile(
         entity_id,
         data,

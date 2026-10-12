@@ -91,6 +91,7 @@ def supplement_synthetic_employee_profiles(engine, members, *, identity, request
             ):
                 raise ValueError("synthetic employee source profile identity changed")
             data = json.loads(row["content"]) | EMPLOYMENT
+            data.pop("employment_event", None)
             updated, evidence = Entities._profile("person", data, SCENARIO_SOURCE, None)
             results.append(Entities._insert_profile(
                 connection, member.entity_id, member.expected_revision + 1,

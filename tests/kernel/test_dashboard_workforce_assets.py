@@ -322,7 +322,7 @@ def test_current_employment_states_and_default_filter_preserve_month_scope(compa
 
 
 @pytest.mark.parametrize("frozen_state,current_state", [
-    ("regular", "departed"), ("unknown", "unpaid_leave"),
+    ("regular", "departed"), ("regular", "unpaid_leave"),
 ])
 def test_closed_month_current_state_uses_latest_profile_and_invalidates_cursor(
     company, frozen_state, current_state,
@@ -342,9 +342,9 @@ def test_closed_month_current_state_uses_latest_profile_and_invalidates_cursor(
     cursor = first["data"]["collections"]["employees"]["page"]["next_cursor"]
     from ai_accounting.kernel.entities import Entities
 
-    Entities(company.engine).update_entity_profile("employee", {
-        "employment_state": current_state, "employment_status": "active",
-        "employment_start": "2025-01",
+    Entities(company.engine).change_employee_employment("employee", {
+        "action": "depart" if current_state == "departed" else "unpaid_leave",
+        "effective_date": "2026-02",
     }, source="明确的合成任职状态确认", expected_revision=2, request_id="latest-state")
     with pytest.raises(KernelError) as failure:
         dashboard.employees("2026-01", section="employees", cursor=cursor,
@@ -355,6 +355,47 @@ def test_closed_month_current_state_uses_latest_profile_and_invalidates_cursor(
     assert item["employment_state"] == current_state
     assert item["in_period"] is True
     assert company.engine.ledger("2026-01") == before
+
+
+def test_closed_employee_interval_and_payroll_remain_frozen_after_employment_correction(company):
+    from ai_accounting.kernel.entities import Entities
+
+    directory = Entities(company.engine)
+    hired = directory.register_employee(
+        {"display_name": "合成任职员工", "effective_date": "2025-01"},
+        entity_id="employee", expected_revision=1,
+        source="合成入职确认", request_id="interval-hire",
+    )
+    departed = directory.change_employee_employment(
+        "employee", {"action": "depart", "effective_date": "2026-01-31"},
+        source="合成离职确认", expected_revision=hired["revision"], request_id="interval-depart",
+    )
+    company.publish("january", "february")
+    company.close("2026-01")
+    before = company.engine.ledger("2026-01")
+    before_payroll = company.current("january")
+    with company.engine.store.connection(read_only=True) as connection:
+        before_close = [tuple(row) for row in connection.execute("SELECT * FROM period_close")]
+    rehired = directory.change_employee_employment(
+        "employee", {"action": "hire", "effective_date": "2026-03"},
+        source="合成再入职确认", expected_revision=departed["revision"], request_id="interval-rehire",
+    )
+    directory.change_employee_employment(
+        "employee", {
+            "action": "depart", "effective_date": "2025-12-31",
+            "replaces_profile_id": departed["profile_id"],
+        }, source="合成离职时间更正", expected_revision=rehired["revision"],
+        request_id="interval-correction",
+    )
+    item = Dashboard(company.engine).employees("2026-01", employee_id="employee", employee_filter="all")[
+        "data"
+    ]["collections"]["employees"]["items"][0]
+    assert item["in_period"] is True
+    assert item["employment_state"] == "regular"
+    assert company.engine.ledger("2026-01") == before
+    assert company.current("january") == before_payroll
+    with company.engine.store.connection(read_only=True) as connection:
+        assert [tuple(row) for row in connection.execute("SELECT * FROM period_close")] == before_close
 
 
 def test_employee_filter_request_schema_declares_current_employment_values(company):
@@ -394,86 +435,52 @@ def test_payroll_and_default_object_active_do_not_establish_current_employment(c
     assert dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"] == []
 
 
-def test_omitted_employment_state_survives_typed_registration_and_profile_update(company):
+def test_typed_employee_registration_generates_state_and_metadata_update_preserves_it(company):
     from ai_accounting.kernel.command_schema import command_models, validate_command
     from ai_accounting.kernel.entities import Entities
 
     company.publish("january")
     models = command_models(company.engine.store.registry)
-    payload = validate_command(models, "register_entity", {
-        "company_id": company.engine.store.company_id, "kind": "person",
-        "data": {"display_name": "合成在职对象", "employment_status": "active"},
-        "source": "明确的合成在职资料", "request_id": "omitted-state-register",
+    payload = validate_command(models, "register_employee", {
+        "company_id": company.engine.store.company_id,
+        "data": {"display_name": "合成在职对象", "effective_date": "2025-01"},
+        "source": "明确的合成入职资料", "request_id": "typed-employee-register",
     })
-    assert payload["data"]["employment_state"] == "unknown"
     payload.pop("company_id")
-    entity_id = Entities(company.engine).register_entity(**payload)["entity_id"]
+    saved = Entities(company.engine).register_employee(**payload)
+    entity_id = saved["entity_id"]
     dashboard = Dashboard(company.engine)
 
     def current():
         return dashboard.employees(
             "2026-01", employee_id=entity_id, employee_filter="all"
-        )["data"]["collections"][
-            "employees"
-        ]["items"]
+        )["data"]["collections"]["employees"]["items"]
 
-    assert current()[0]["employment_state"] == "unknown"
-    payload = validate_command(
-        models,
-        "update_entity_profile",
-        {
-            "company_id": company.engine.store.company_id,
-            "entity_id": entity_id,
-            "data": {"display_name": "合成更新姓名", "employment_status": "active"},
-            "source": "明确的合成档案更新",
-            "expected_revision": 1,
-            "request_id": "omitted-state-update",
-        },
-    )
+    assert current()[0]["employment_state"] == "regular"
+    payload = validate_command(models, "update_entity_profile", {
+        "company_id": company.engine.store.company_id,
+        "entity_id": entity_id, "data": {"display_name": "合成更新姓名"},
+        "source": "明确的合成档案更新", "expected_revision": saved["revision"],
+        "request_id": "typed-employee-rename",
+    })
     assert "employment_state" not in payload["data"]
     payload.pop("company_id")
     Entities(company.engine).update_entity_profile(**payload)
-    assert current()[0]["employment_state"] == "unknown"
-    with company.engine.store.connection(read_only=True) as connection:
-        assert all(
-            json.loads(row[0])["employment_state"] == "unknown"
-            for row in connection.execute(
-                "SELECT content FROM entity_profile_revision WHERE entity_id=?", (entity_id,)
-            )
-        )
-    payload = validate_command(
-        models,
-        "update_entity_profile",
-        {
+    assert current()[0]["employment_state"] == "regular"
+    assert current()[0]["name"] == "合成更新姓名"
+    with pytest.raises(KernelError):
+        validate_command(models, "update_entity_profile", {
             "company_id": company.engine.store.company_id,
-            "entity_id": entity_id,
-            "data": {
-                "display_name": "合成更新姓名",
-                "employment_status": "active",
-                "employment_state": "unknown",
-            },
-            "source": "明确的合成未确认状态",
-            "expected_revision": 2,
-            "request_id": "explicit-unknown-update",
-        },
-    )
-    assert payload["data"]["employment_state"] == "unknown"
-    payload.pop("company_id")
-    Entities(company.engine).update_entity_profile(**payload)
-    assert dashboard.employees("2026-01", employee_id=entity_id)["data"]["collections"][
-        "employees"
-    ]["items"] == []
-    item = dashboard.employees(
-        "2026-01", employee_id=entity_id, employee_filter="employment_unknown"
-    )["data"]["collections"]["employees"]["items"][0]
-    assert item["employment_state"] == "unknown"
+            "entity_id": entity_id, "data": {"employment_state": "unknown"},
+            "source": "合成不允许的直接状态输入", "expected_revision": saved["revision"] + 1,
+            "request_id": "direct-state-update",
+        })
 
 
 @pytest.mark.parametrize("closed", [False, True])
 def test_missing_current_state_keeps_unknown_without_changing_historical_month(
     company, monkeypatch, closed
 ):
-    from ai_accounting.kernel.entities import Entities
     from ai_accounting.kernel.types import canonical, digest
 
     monkeypatch.setattr("ai_accounting.kernel.business_queries._today_china", lambda: "2026-10-10")
@@ -547,9 +554,11 @@ def test_missing_current_state_keeps_unknown_without_changing_historical_month(
             for row in connection.execute("SELECT * FROM entity_profile_revision ORDER BY id")
         ]
     assert company.engine.ledger("2026-01") == before
-    Entities(company.engine).update_entity_profile("employee", {
+    save_entity_display_profile(company.engine, {
+        "kind": "employee", "entity_id": "employee",
         "employment_status": "active", "employment_state": "unknown", "employment_start": "2025-01",
-    }, source="明确未知分类的合成确认", expected_revision=3, request_id="explicit-unknown")
+        "source": "明确未知分类的合成旧档案基线",
+    }, expected_revision=2, request_id="explicit-unknown")
     assert dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"] == []
     unknown_items = dashboard.employees("2026-01", employee_filter="employment_unknown")["data"][
         "collections"

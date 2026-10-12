@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from entity_fixture import seed_registration_entities
+from entity_fixture import save_entity_display_profile, seed_registration_entities
 from monthly_close_fixture import close_months, ready
 from pydantic import TypeAdapter, ValidationError
 from test_opening_continuation import book as book  # noqa: F401
@@ -20,15 +20,13 @@ from ai_accounting.kernel.storage import Store
 def profile(**changes):
     return {
         "display_name": "明确提供姓名",
-        "employment_status": "active",
         **changes,
     }
 
 
 def register_employee(engine, *, data=None, proof=None, request_id="profile"):
-    saved = Entities(engine).register_entity(
-        "person",
-        profile(**(data or {})),
+    saved = Entities(engine).register_employee(
+        profile(**({"effective_date": "2026-01"} | (data or {}))),
         source="负责人明确提供的展示资料",
         evidence_digest=proof,
         request_id=request_id,
@@ -64,20 +62,17 @@ def database_state(engine):
         }
 
 
-@pytest.mark.parametrize("start", [None, "2026-01", "2026-01-12"])
+@pytest.mark.parametrize("start", ["2026-01", "2026-01-12"])
 def test_profiles_keep_explicit_precision_and_only_advance_management(book, start):
     engine, _, _, _, proof = book
     display = Display(engine)
     before = database_state(engine)
-    data = {}
-    if start is not None:
-        data["employment_start"] = start
+    data = {"effective_date": start}
     saved, current = register_employee(engine, data=data, proof=proof)
     assert current["employment_start"] == start and current["employment_status"] == "active"
     assert current["employment_end"] is None and current["evidence_digest"] == proof
     assert (
-        Entities(engine).register_entity(
-            "person",
+        Entities(engine).register_employee(
             profile(**data),
             source="负责人明确提供的展示资料",
             evidence_digest=proof,
@@ -100,9 +95,9 @@ def test_profiles_keep_explicit_precision_and_only_advance_management(book, star
     [
         {"salary_fen": 100},
         {"resident_employee": True},
-        {"employment_start": "2026-02-30"},
-        {"employment_start": "2026-02", "employment_end": "2026-01-31"},
-        {"kind": "asset", "employment_start": "2026-01"},
+        {"effective_date": "2026-02-30"},
+        {"effective_date": "2026-02", "employment_end": "2026-01-31"},
+        {"kind": "asset", "effective_date": "2026-01"},
         {"source": ""},
     ],
 )
@@ -110,9 +105,10 @@ def test_typed_profiles_reject_accounting_fields_and_invalid_dates_atomically(bo
     engine, *_ = book
     before = database_state(engine)
     with pytest.raises((ValidationError, ValueError)):
-        Entities(engine).register_entity(
-            "person",
-            profile(**{key: value for key, value in changes.items() if key != "source"}),
+        Entities(engine).register_employee(
+            profile(**({"effective_date": "2026-01"} | {
+                key: value for key, value in changes.items() if key != "source"
+            })),
             source=changes.get("source", "负责人明确提供的展示资料"),
             request_id="bad",
         )
@@ -125,9 +121,8 @@ def test_profiles_reject_conflicts_missing_sources_and_faults_atomically(book):
     saved, _ = register_employee(engine, request_id="save")
     before = database_state(engine)
     with pytest.raises(KernelError) as conflict:
-        entities.register_entity(
-            "person",
-            profile(display_name="另一姓名"),
+        entities.register_employee(
+            profile(display_name="另一姓名", effective_date="2026-01"),
             source="负责人明确提供的展示资料",
             request_id="save",
         )
@@ -296,14 +291,16 @@ def test_employment_dates_describe_management_precision_in_typed_schema():
 
 
 @pytest.mark.parametrize("state", ["regular", "unpaid_leave", "departed"])
-def test_explicit_employment_state_alone_registers_employee_without_accounting_change(book, state):
+def test_stored_employment_state_baseline_keeps_employee_without_accounting_change(book, state):
     from ai_accounting.kernel.entities import employee_entities
 
     engine, *_ = book
     before = database_state(engine)
-    registered = Entities(engine).register_entity(
-        "person", {"employment_state": state}, source="负责人明确确认合成任职状态",
-        request_id="state-only-" + state,
+    registered = save_entity_display_profile(
+        engine,
+        {"kind": "employee", "entity_id": "synthetic-baseline-" + state,
+         "employment_state": state, "source": "负责人明确确认合成任职状态"},
+        expected_revision=0, request_id="state-only-" + state,
     )
     with engine.store.connection(read_only=True) as connection:
         assert registered["entity_id"] in employee_entities(

@@ -419,7 +419,12 @@ class WorkContext:
                     "entity_id": ident,
                     "kind": profile["entity_kind"],
                     "account_type": profile["account_type"],
-                    "profile": profile,
+                    "profile": {
+                        key: value for key, value in profile.items()
+                        if key not in {
+                            "employment_event", "employment_baseline", "employment_intervals"
+                        }
+                    },
                     **({"fund_account": funds[ident]} if ident in funds else {}),
                 }
                 for ident, profile in object_profiles.items()

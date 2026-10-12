@@ -323,9 +323,8 @@ def test_frozen_employee_membership_does_not_acquire_later_roles(engine):
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 
     directory = Entities(engine)
-    employee = directory.register_entity(
-        "person",
-        {"display_name": "原姓名", "employment_status": "active"},
+    employee = directory.register_employee(
+        {"display_name": "原姓名", "effective_date": "2026-01"},
         source="synthetic employment",
         request_id="employee",
     )["entity_id"]
@@ -356,14 +355,14 @@ def test_frozen_employee_membership_does_not_acquire_later_roles(engine):
     )
     directory.update_entity_profile(
         employee,
-        {"display_name": "现姓名", "employment_status": "active"},
+        {"display_name": "现姓名"},
         source="synthetic rename",
         expected_revision=1,
         request_id="rename",
     )
-    directory.update_entity_profile(
-        contractor,
-        {"display_name": "交易方", "employment_status": "active"},
+    directory.register_employee(
+        {"effective_date": "2026-02"},
+        entity_id=contractor,
         source="synthetic new employment",
         expected_revision=1,
         request_id="new-employment",

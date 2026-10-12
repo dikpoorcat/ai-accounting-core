@@ -220,6 +220,18 @@ OPERATING_PROTOCOL = {
                     "基金产品与单笔业务编号分开；同名不自动合并。payee收款账户属于付款指令，"
                     "不能当作公司资金账户。"
                 ),
+                "employee_employment": (
+                    "人员对象不等同于员工。明确入职时用register_employee登记人员管理资料和实际"
+                    "生效日期，已有人员复用entity_id及当前expected_revision。停薪留职、复职、"
+                    "离职和再次入职用change_employee_employment提交明确action、effective_date、"
+                    "当前expected_revision和来源；允许月或实际日精度，不从工资所属月、备注或"
+                    "当前状态推断生效日期。旧档案已离职但缺离职时间时，先以depart补录有来源的"
+                    "原离职日期或月份，再登记再入职。employee_employment_history按有界游标读取原事件、"
+                    "替代关系及来源；同日或月、日精度重叠的事件须用after_profile_id明确先后，录错更正须用"
+                    "replaces_profile_id指向准确原事件。管理任职状态不决定工资核算，不改写已冻结"
+                    "历史。update_entity_profile只更新本次实际提供的管理字段，不能写入任职日期、"
+                    "状态或内部事件字段；核对历史时复用既有事件和原件。"
+                ),
                 "fact_discovery": (
                     "find_facts使用entity_id和可选role、identity_match=current|recorded及不透明"
                     "cursor；返回原事实与匹配归属，不从聊天记忆判断状态；"
@@ -269,7 +281,7 @@ OPERATING_PROTOCOL = {
                     "管理版本或真实资料。"
                 ),
                 "display": (
-                    "对象名称、人员入离职资料通过update_entity_profile按对象类别及明确来源追加管理"
+                    "对象名称、编号及备注通过update_entity_profile按对象类别及明确来源追加管理"
                     "版本；save_display_profile保存单笔业务自定义标题、用途和唯一备注；"
                     "management只维护收付归集月份及类别，不另存备注或交易方副本。"
                     "登记业务时同步保存原件已明确的人员/往来方/账户/资产名称及业务用途说明，"
@@ -498,6 +510,9 @@ TOPIC_SELECTORS = {
         "commands": [
             "find_entities",
             "register_entity",
+            "register_employee",
+            "change_employee_employment",
+            "employee_employment_history",
             "correct_fund_account_identity",
             "update_entity_profile",
             "find_facts",

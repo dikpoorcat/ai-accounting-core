@@ -20,11 +20,16 @@ def book(tmp_path):
 
 
 def person(directory, name, request, *, active=True):
-    return directory.register_entity(
-        "person", {"display_name": name,
-                   "employment_status": "active" if active else "inactive"},
+    registered = directory.register_employee(
+        {"display_name": name, "effective_date": "2025-01"},
         source="synthetic identity", request_id=request,
-    )["entity_id"]
+    )
+    if not active:
+        directory.change_employee_employment(
+            registered["entity_id"], {"action": "depart", "effective_date": "2025-12"},
+            source="synthetic departure", expected_revision=1, request_id=request + "-depart",
+        )
+    return registered["entity_id"]
 
 
 def expense(engine, entity_id, subject, period):

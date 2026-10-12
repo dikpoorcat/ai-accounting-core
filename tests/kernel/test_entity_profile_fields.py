@@ -84,11 +84,10 @@ def test_typed_updates_reject_other_kind_and_removed_fields_atomically(book, kin
         {"rights_description": "removed generic fact"},
         {"useful_life_basis": "removed generic fact"},
     ]
-    if kind != "person":
-        invalid.extend([
-            {"employment_start": "2026-01"}, {"employment_end": "2026-02"},
-            {"employment_status": "active"}, {"employment_state": "regular"},
-        ])
+    invalid.extend([
+        {"employment_start": "2026-01"}, {"employment_end": "2026-02"},
+        {"employment_status": "active"}, {"employment_state": "regular"},
+    ])
     if kind != "asset":
         invalid.append({"category_label": "asset-only category"})
     if kind != "fund_account":
@@ -109,23 +108,23 @@ def test_typed_updates_reject_other_kind_and_removed_fields_atomically(book, kin
         assert snapshot(engine) == before
 
 
-def test_typed_person_fields_are_explicit_and_keep_independent_meanings(book):
-    engine, _, _ = book
-    entity_id = _registered_entity(book, "person", None)["entity_id"]
-    data = {
-        "display_name": "合成人员", "employment_start": "2025-01",
-        "employment_end": "2027-01", "employment_status": "active",
-        "employment_state": "unpaid_leave",
-    }
-    _typed_update(book, entity_id, data)
-    current = _latest_profile(engine, entity_id)
-    assert {field: current[field] for field in data} == data
-    _typed_update(
-        book, entity_id, {"employment_status": "active"}, revision=2, request_id="omitted-state",
+def test_typed_person_metadata_patch_preserves_lifecycle_and_omitted_fields(book):
+    engine, entities, _ = book
+    registered = entities.register_employee(
+        {"display_name": "合成人员", "display_number": "001", "effective_date": "2025-01"},
+        source="明确入职资料", request_id="employee-registration",
     )
+    entity_id = registered["entity_id"]
+    entities.change_employee_employment(
+        entity_id, {"action": "unpaid_leave", "effective_date": "2026-01"},
+        source="明确停薪留职资料", expected_revision=1, request_id="unpaid-leave",
+    )
+    _typed_update(book, entity_id, {"note": "管理备注"}, revision=2)
     current = _latest_profile(engine, entity_id)
+    assert current["display_name"] == "合成人员" and current["display_number"] == "001"
+    assert current["note"] == "管理备注" and current["employment_start"] == "2025-01"
     assert current["employment_status"] == "active"
-    assert current["employment_state"] == "unknown"
+    assert current["employment_state"] == "unpaid_leave"
 
 
 @pytest.mark.parametrize("kind", list(entity_profile_models()))

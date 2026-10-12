@@ -3963,8 +3963,14 @@ def _employees(
         date_basis.append(employee_date_basis(ident, current))
         info = snap.profile("employee", ident)
         start, end = info.get("employment_start"), info.get("employment_end")
+        interval_profile = snap.profiles.get("employee", {}).get(ident, {}) if snap.close else current
+        intervals = interval_profile.get("employment_intervals")
         if info["field_conflicts"]:
             state, in_period = "unknown", None
+        elif intervals is not None:
+            from .employee_employment import period_membership
+
+            state, in_period = period_membership(intervals, snap.period)
         elif start and start[:7] > snap.period:
             state, in_period = "not_started", False
         elif end and end[:7] < snap.period:
@@ -4128,21 +4134,7 @@ def _employees(
             },
         )
         start, end = info.get("employment_start"), info.get("employment_end")
-        # Explicit employment bounds describe the selected month even after the
-        # current personnel record was deactivated. A current inactive flag on
-        # its own does not establish when an earlier employment period ended.
-        if info["field_conflicts"]:
-            state, in_period = "unknown", None
-        elif start and start[:7] > snap.period:
-            state, in_period = "not_started", False
-        elif end and end[:7] < snap.period:
-            state, in_period = "ended", False
-        elif start and end:
-            state, in_period = "in_period", True
-        elif info.get("employment_status") == "active":
-            state, in_period = "in_period", True
-        else:
-            state, in_period = "unknown", None
+        state, in_period = employee_states[ident]
         scopes = amounts["scopes"]
         scope = next(iter(scopes)) if len(scopes) == 1 else "mixed" if scopes else "none"
         all_items.append(

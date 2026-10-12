@@ -17,7 +17,7 @@ from .discovery import Discovery
 from .display import Display
 from .duplicates import DuplicateReview, Duplicates, SourceLocation
 from .engine import Engine
-from .entities import Entities, entity_profile_models
+from .entities import Entities, entity_input_models
 from .exports import Exports
 from .fund_accounts import fund_profile_models, require_fund_source, validate_fund_profile
 from .identity_corrections import IdentityCorrections
@@ -88,6 +88,9 @@ def command_models(registry):
         "find_entities": Entities.find_entities,
         "register_entity": Entities.register_entity,
         "update_entity_profile": Entities.update_entity_profile,
+        "register_employee": Entities.register_employee,
+        "change_employee_employment": Entities.change_employee_employment,
+        "employee_employment_history": Entities.employee_employment_history,
         "correct_fund_account_identity": Entities.correct_fund_account_identity,
         "preview_identity_correction": IdentityCorrections.preview_identity_correction,
         "confirm_identity_correction": IdentityCorrections.confirm_identity_correction,
@@ -213,7 +216,7 @@ def command_models(registry):
         elif name == "resolve_material_group":
             fields["data"] = (MaterialGroupResolution, ...)
         elif name in {"register_entity", "update_entity_profile"}:
-            fields["data"] = (reduce(or_, entity_profile_models().values()), ...)
+            fields["data"] = (reduce(or_, entity_input_models().values()), ...)
         if name == "correct_fund_account_identity":
             variants = []
             for account_type, profile in fund_profile_models().items():
@@ -232,7 +235,7 @@ def command_models(registry):
             result[name] = TypeAdapter(reduce(or_, variants))
         elif name == "register_entity":
             variants = []
-            for kind, profile in entity_profile_models().items():
+            for kind, profile in entity_input_models().items():
                 if kind == "fund_account":
                     continue
                 ordinary = dict(fields)
@@ -363,6 +366,27 @@ def _registration_missing_issue(error, command, payload, registry):
     }
 
 
+def _employment_missing_issue(error, command):
+    if command not in {"register_employee", "change_employee_employment"}:
+        return None
+    location = error["loc"]
+    if len(location) != 2 or location[0] != "data":
+        return None
+    model = get_type_hints(getattr(Entities, command), include_extras=True)["data"]
+    metadata = model.model_json_schema()["properties"].get(location[1], {}).get(
+        "x-accounting-fact", {}
+    )
+    return {
+        "field": "data." + str(location[1]),
+        "message": "缺少必需任职管理事实",
+        "semantics": "management",
+        "reusable_sources": metadata.get(
+            "reusable_sources", ["owner_confirmation", "employment_document"]
+        ),
+        "allowed_precision": metadata.get("allowed_precision", []),
+    }
+
+
 def validate_command(models, command, payload, *, registry=None):
     if command not in models:
         raise KernelError("unknown_command", "不支持该业务命令")
@@ -383,7 +407,9 @@ def validate_command(models, command, payload, *, registry=None):
             # The model checks the document structure, but a candidate is not
             # yet a complete business input. Never fill omitted draft fields.
             result["draft"] = payload["draft"]
-        if command == "update_entity_profile":
+        if command in {
+            "update_entity_profile", "register_employee", "change_employee_employment"
+        }:
             # Entity identity selects the actual profile kind in Entities.
             # A shared-name union hit must not supply another kind's defaults.
             result["data"] = value.data.model_dump(mode="json", exclude_unset=True)
@@ -394,7 +420,10 @@ def validate_command(models, command, payload, *, registry=None):
             issue
             for error in errors
             if error["type"] == "missing"
-            if (issue := _registration_missing_issue(error, command, payload, registry)) is not None
+            if (issue := (
+                _registration_missing_issue(error, command, payload, registry)
+                or _employment_missing_issue(error, command)
+            )) is not None
         ]
         if missing:
             facts = payload.get("facts") if command == "save_facts" else [payload]
