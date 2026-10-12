@@ -341,6 +341,7 @@ def test_fact_and_response_selection_also_select_operating_rules(contracts):
 
 
 @pytest.mark.parametrize(("kind", "topic"), [
+    ("bank_statement", "management"),
     ("asset", "assets"),
     ("reimbursed_asset", "assets"),
     ("reimbursed_asset_batch", "assets"),
@@ -351,6 +352,14 @@ def test_related_registration_facts_do_not_lose_specialized_rules(contracts, kin
     result = discover(contracts, view="selected", fact_kinds=[kind], commands=["save_fact"])
     assert set(result["agent_operating_rules"]) == {topic}
     assert set(result["command_schemas"]) == {"save_fact"}
+
+
+@pytest.mark.parametrize("commands", [[], ["amend_fact"], ["save_facts"]])
+def test_bank_description_rules_follow_fact_selection(contracts, commands):
+    result = discover(contracts, view="selected", fact_kinds=["bank_statement"], commands=commands)
+    assert result["selection"]["protocol_topics"] == ["management"]
+    assert result["agent_operating_rules"]["management"]["rules"]["bank_description"]
+    assert set(result["command_schemas"]) == set(commands)
 
 
 def test_shared_service_returns_common_and_selected_rules_from_one_source(tmp_path):

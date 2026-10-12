@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 13,
+    "version": 14,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -281,7 +281,7 @@ OPERATING_PROTOCOL = {
         },
         "management": {
             "title": "公司说明与管理展示",
-            "read_when": ("读取或更新公司长期说明、对象档案、业务用途及经营说明时"),
+            "read_when": ("读取或更新公司长期说明、对象档案、业务用途、银行摘要及经营说明时"),
             "rules": {
                 "owner_rules": (
                     "每家公司只维护一份私有data/<统一社会信用代码>/业务说明.md，"
@@ -305,7 +305,7 @@ OPERATING_PROTOCOL = {
                     "不可变证据引用写入evidence_digest；purpose和note只补充尚未由业务字段表达的"
                     "信息，不重述日期、金额、对象和清偿结果，不写来源行号、核验过程或重算依据。"
                     "工资计提及社保、公积金付款由正式事实生成标准业务名称和摘要，"
-                    "不另写核算过程或金额拆分叙述作为展示用途。银行原摘要保持原文。"
+                    "不另写核算过程或金额拆分叙述作为展示用途。"
                     "社保和公积金应付拆解使用正式款项名称、所属月、金额及状态，"
                     "不把整笔工资说明复制为个人或单位分项用途。资料后补保留实际来源，"
                     "不因展示资料缺项阻断核算。不从工资生效月推断入职日。"
@@ -316,6 +316,16 @@ OPERATING_PROTOCOL = {
                     "内容相同不能绕过过期提交。历史展示field_sources分别说明冻结与当前后补来源"
                     "，recorded_at仅是系统确认时间，不能替代实际发生日或冒充负责人最早知悉日。"
                     "不更改冻结凭证，不要求负责人补写AI应完成的经营说明。"
+                ),
+                "bank_description": (
+                    "bank_statement.entries.description从银行原件同一行的用途、附言、摘要或备注"
+                    "中选择能说明交易的简洁原文，保留选中内容的原文措辞，不把多列整段拼接。"
+                    "按实际内容选择；用途列只是银行或对象名称时，优先选同一行可读的交易说明。"
+                    "没有合适内容时，可选银行明确的交易类型或业务类型；跳过空值、无和纯编号，"
+                    "仍没有可读内容则留空。流水号、客户申请号、IBPS/BEPS路由码、税务身份编号"
+                    "及重复户名不拼入description；完整内容保存在原件和evidence中，reference"
+                    "保留准确行引用。不得从对方名称、金额或已匹配业务编造银行用途，"
+                    "银行摘要不代替核算事实。"
                 ),
             },
         },
@@ -551,6 +561,7 @@ TOPIC_SELECTORS = {
             "preview_period_commentary",
             "update_period_commentary",
         ],
+        "facts": ["bank_statement"],
         "responses": ["company_context", "period_commentary"],
     },
     "payroll": {
