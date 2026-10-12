@@ -17,8 +17,8 @@ from .content_history_context import source_checked as checked
 from .content_history_context import source_digest as digest
 from .contracts import KernelError, read_identity_payload
 from .projections import require_projections
-from .schema import sequence_model, table_name
-from .storage import _snapshot_fact_hashes, _snapshot_fact_raws
+from .schema import sequence_model
+from .storage import Store, _snapshot_fact_hashes, _snapshot_fact_raws
 
 
 def _invalid(component, ident, reason):
@@ -246,10 +246,14 @@ def _check_facts(engine, connection, identifiers):
 
 def verify_fact_child_order(engine, connection, kinds):
     """Check the stored sequence positions for these exact fact versions."""
+    headers = []
     for kind, fact_ids in kinds.items():
         if kind not in engine.store.registry.models:
             _invalid("fact", "*", "unknown_fact_kind")
-        model = engine.store.registry.models[kind]
+        headers.extend({"id": ident, "kind": kind} for ident in sorted(fact_ids))
+    groups = Store._fact_body_groups(engine.store, connection, headers)
+    for _kind, model, table, revisions in groups:
+        fact_ids = {row["id"] for row in revisions}
         for name, field in model.model_fields.items():
             historical_fields = getattr(model, "_v1_fields", None)
             is_sequence = (
@@ -268,7 +272,7 @@ def verify_fact_child_order(engine, connection, kinds):
                 # order without transferring every child row to Python.
                 for child in connection.execute(
                     f"SELECT c.revision_id FROM json_each(?) ids CROSS JOIN "
-                    f"{table_name(kind)}_{name} c ON c.revision_id=ids.value "
+                    f"{table}_{name} c ON c.revision_id=ids.value "
                     "GROUP BY c.revision_id HAVING "
                     "sum(CASE WHEN typeof(c.item_no)='integer' AND c.item_no>=0 "
                     "THEN 0 ELSE 1 END)>0 OR min(c.item_no)!=0 "
@@ -280,7 +284,7 @@ def verify_fact_child_order(engine, connection, kinds):
             # Released v1 preserves its original row interpretation.
             next_numbers = defaultdict(int)
             for child in connection.execute(
-                f"SELECT c.revision_id,c.item_no FROM {table_name(kind)}_{name} c "
+                f"SELECT c.revision_id,c.item_no FROM {table}_{name} c "
                 "JOIN json_each(?) ids ON ids.value=c.revision_id ORDER BY c.revision_id,c.item_no",
                 (canonical(sorted(fact_ids)),),
             ):

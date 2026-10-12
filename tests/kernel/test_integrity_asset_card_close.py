@@ -11,7 +11,7 @@ from ai_accounting.kernel.contracts import KernelError
 
 @pytest.fixture
 def closed_company(tmp_path):
-    company = Company(tmp_path / "closed-assets.sqlite")
+    company = Company(tmp_path / "closed-assets.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.close("2026-02")
     return company

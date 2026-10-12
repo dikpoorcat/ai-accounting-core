@@ -549,7 +549,7 @@ class TaxImportMappingIssue(ResponseObject):
 
 class TaxImportMappingFollowup(ResponseObject):
     status: Literal[
-        "ready", "needs_information", "unsupported", "pending_publication", "not_applicable"
+        "ready", "needs_information", "unsupported", "pending_confirmation", "not_applicable"
     ]
     blocking_scope: Literal["tax_import_file"]
     mapping_fact_ids: list[str]
@@ -1290,7 +1290,6 @@ class WorkforcePeriod(ResponseObject):
     employee_social_insurance_fen: NotRequired[WireFen]
     employee_housing_fund_fen: NotRequired[WireFen]
     gross_remuneration_fen: NotRequired[WireFen]
-    theoretical_withholding_tax_fen: NotRequired[WireFen | None]
 
 
 class EmployeeCost(ResponseObject):
@@ -1320,7 +1319,6 @@ class PersonalLaborCost(ResponseObject):
     gross_remuneration_fen: WireFen | None
     booked_withholding_tax_fen: WireFen | None
     unwithheld_tax_fen: WireFen | None
-    theoretical_withholding_tax_fen: WireFen | None
     withholding_status: str
     withholding_note: str
     settlement_modes: list[str]
@@ -2997,7 +2995,7 @@ class WorkSettlementFollowup(ResponseObject):
 
 class WorkTaxImportMapping(ResponseObject):
     status: Literal[
-        "ready", "needs_information", "unsupported", "pending_publication", "not_applicable"
+        "ready", "needs_information", "unsupported", "pending_confirmation", "not_applicable"
     ]
     blocking_scope: Literal["tax_import_file"]
     mapping_fact_ids: list[str]

@@ -55,7 +55,9 @@ def test_counts_leave_consumption_accounting_unread_with_120_frozen_months(
     # This fixture exercises native frozen-leaf reads. Keep every typed write,
     # publication and real close, without constructing unrelated UI models.
     with patch.object(dashboard_model_runtime, "supports_native_production", return_value=False):
-        company = Company(tmp_path / "activation-accounting-growth.sqlite")
+        company = Company(
+            tmp_path / "activation-accounting-growth.sqlite", opening_period="2026-02"
+        )
         prepare_batch_assets(company)
         company.close("2026-02")
     engine = company.engine

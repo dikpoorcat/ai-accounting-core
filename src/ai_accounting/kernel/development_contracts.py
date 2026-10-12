@@ -5,6 +5,46 @@ from pathlib import Path
 
 from .migration_contracts import HEADERS, _digest, _object_map
 
+# The exact last installed draft before confirmed remuneration tax facts.  It
+# remains a readable package source; older undeclared drafts are not upgraded.
+REMUNERATION_SOURCE_FINGERPRINT = "3ead9f3bcf5ec7507d31f9ef4b36f5aeb24b91251bab184db3a59b77a39ef3a8"
+REMUNERATION_TARGET_FINGERPRINT = "e7fc519628e260724cbd9307cdffef1a05904e76860c985a7b06624633114d58"
+
+
+def remuneration_source_registry(registry):
+    """Decode the source using its original bodies, independent of active input."""
+    from .contracts import Registry
+    from .payroll_history import (
+        HistoricalAnnualBonus,
+        HistoricalLaborRemuneration,
+        HistoricalPayroll,
+        HistoricalPayrollBounded,
+        HistoricalPayrollProfile,
+        HistoricalTaxImportDetails,
+    )
+
+    original = {
+        model.kind: model for model in (
+            HistoricalPayroll, HistoricalPayrollBounded, HistoricalPayrollProfile,
+            HistoricalAnnualBonus, HistoricalLaborRemuneration, HistoricalTaxImportDetails,
+        )
+    }
+    result = Registry()
+    for kind, model in registry.models.items():
+        if kind == "remuneration_tax_basis":
+            continue
+        result.register(
+            original.get(kind, model),
+            registry.evaluators.get(kind) if kind not in original else None,
+        )
+    result.historical_only = registry.historical_only | original.keys()
+    # Integrity-only source reads do not install old payroll calculators.
+    result.accounting_projectors = dict(registry.accounting_projectors)
+    result.accounting_consumers = dict(registry.accounting_consumers)
+    result.readiness = dict(registry.readiness)
+    result.snapshot_readiness = dict(registry.snapshot_readiness)
+    return result
+
 
 def validate_draft_contract(value, *, family, application_id, kind="company"):
     if (

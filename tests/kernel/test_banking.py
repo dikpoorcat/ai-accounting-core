@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
@@ -19,7 +20,7 @@ from ai_accounting.kernel.types import YearMonth
 
 
 @pytest.fixture
-def book(tmp_path):
+def book(tmp_path, *, opening_period="2026-09"):
     engine = Engine(
         Store.create(
             tmp_path / "company.sqlite",
@@ -33,6 +34,8 @@ def book(tmp_path):
         b"Synthetic bank test evidence", "text/plain", "fixture", request_id="evidence"
     )["digest"]
     supporting_text(engine, proof)
+    if opening_period is not None:
+        adopt_empty_opening(engine, period=opening_period)
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
@@ -56,6 +59,32 @@ def book(tmp_path):
         )
 
     return engine, save, publish, proof
+
+
+@pytest.fixture
+def january_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period="2026-01")
+
+
+@pytest.fixture
+def august_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period="2026-08")
+
+
+@pytest.fixture
+def november_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period="2026-11")
+
+
+@pytest.fixture
+def first_month_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period="0001-01")
+
+
+@pytest.fixture
+def unopened_book(tmp_path):
+    """For tests explicitly constructing or rejecting an opening package themselves."""
+    return book.__wrapped__(tmp_path, opening_period=None)
 
 
 def opening(save, publish, bank="bank-a", month="2026-09", amount=0, basis="new_account"):
@@ -344,8 +373,8 @@ def test_empty_database_never_supplies_a_bank_opening_by_default(book):
     assert failure.value.issues[0]["field"] == "bank_opening"
 
 
-def test_opening_must_agree_with_explicit_prior_published_sources(book):
-    _, save, publish, _ = book
+def test_opening_must_agree_with_explicit_prior_published_sources(august_book):
+    _, save, publish, _ = august_book
     funding(save, publish, day="2026-08-10")
     opening(save, publish, amount=1000, basis="existing_ledger")
     statement(save, publish, [], initial=900)
@@ -393,15 +422,22 @@ def test_adjacent_read_matches_full_history_outcome_and_gap_error(book, monkeypa
         reconciliation_id = f"reconciliation-{month}"
         statement(save, publish, [], subject=statement_id, month=month)
         reconciliation(
-            save, publish, [], subject=reconciliation_id,
-            statement_id=statement_id, month=month,
+            save,
+            publish,
+            [],
+            subject=reconciliation_id,
+            statement_id=statement_id,
+            month=month,
         )
     statement(save, publish, [], subject="statement-november", month="2026-11")
     save(
-        "bank_reconciliation", "reconciliation-november",
+        "bank_reconciliation",
+        "reconciliation-november",
         {
-            "period": "2026-11", "statement_id": "statement-november",
-            "bank_account_id": "bank-a", "matches": [],
+            "period": "2026-11",
+            "statement_id": "statement-november",
+            "bank_account_id": "bank-a",
+            "matches": [],
         },
     )
 
@@ -417,10 +453,13 @@ def test_adjacent_read_matches_full_history_outcome_and_gap_error(book, monkeypa
 
     statement(save, publish, [], subject="statement-december", month="2026-12")
     save(
-        "bank_reconciliation", "reconciliation-december",
+        "bank_reconciliation",
+        "reconciliation-december",
         {
-            "period": "2026-12", "statement_id": "statement-december",
-            "bank_account_id": "bank-a", "matches": [],
+            "period": "2026-12",
+            "statement_id": "statement-december",
+            "bank_account_id": "bank-a",
+            "matches": [],
         },
     )
     with monkeypatch.context() as previous_rule:
@@ -430,13 +469,15 @@ def test_adjacent_read_matches_full_history_outcome_and_gap_error(book, monkeypa
     with pytest.raises(NeedsInformation) as adjacent_gap:
         engine.preview(["reconciliation-december"])
     assert historical_gap.value.code == adjacent_gap.value.code == "needs_information"
-    assert historical_gap.value.issues[0]["field"] == adjacent_gap.value.issues[0]["field"] == (
-        "previous_reconciliation"
+    assert (
+        historical_gap.value.issues[0]["field"]
+        == adjacent_gap.value.issues[0]["field"]
+        == ("previous_reconciliation")
     )
 
 
-def test_reconciliation_reads_only_adjacent_month_across_year_and_account(book):
-    engine, save, publish, _ = book
+def test_reconciliation_reads_only_adjacent_month_across_year_and_account(november_book):
+    engine, save, publish, _ = november_book
     opening(save, publish, bank="bank-a", month="2026-11")
     opening(save, publish, bank="bank-b", month="2026-12")
     for bank, months in (
@@ -446,16 +487,21 @@ def test_reconciliation_reads_only_adjacent_month_across_year_and_account(book):
         for month in months:
             statement_id = f"statement-{bank}-{month}"
             reconciliation_id = f"reconciliation-{bank}-{month}"
-            statement(
-                save, publish, [], subject=statement_id, bank=bank, month=month
-            )
+            statement(save, publish, [], subject=statement_id, bank=bank, month=month)
             reconciliation(
-                save, publish, [], subject=reconciliation_id,
-                statement_id=statement_id, bank=bank, month=month,
+                save,
+                publish,
+                [],
+                subject=reconciliation_id,
+                statement_id=statement_id,
+                bank=bank,
+                month=month,
             )
     previous = _previous_reconciliation_read("bank-a", YearMonth("2027-01"))
     assert previous == Read(
-        "calculation", "bank_reconciliation", "bank:bank-a:2026-12",
+        "calculation",
+        "bank_reconciliation",
+        "bank:bank-a:2026-12",
         YearMonth("2027-01"),
     )
     with engine.store.connection(read_only=True) as connection:
@@ -468,11 +514,14 @@ def test_reconciliation_reads_only_adjacent_month_across_year_and_account(book):
             "WHERE subject_id='reconciliation-bank-a-2026-12'"
         ).fetchone()[0]
         assert engine.store.select(connection, previous)[0].id == predecessor
-        scopes = list(connection.execute(
-            "SELECT source,kind,scope_key,before_period FROM dependency_scope "
-            "WHERE calculation_id=? AND source='calculation' "
-            "AND kind='bank_reconciliation'", (current,)
-        ))
+        scopes = list(
+            connection.execute(
+                "SELECT source,kind,scope_key,before_period FROM dependency_scope "
+                "WHERE calculation_id=? AND source='calculation' "
+                "AND kind='bank_reconciliation'",
+                (current,),
+            )
+        )
         assert [tuple(row)[1:] for row in scopes] == [
             ("bank_reconciliation", "bank:bank-a:2026-12", YearMonth("2027-01").ordinal)
         ]
@@ -483,10 +532,13 @@ def test_reconciliation_reads_only_adjacent_month_across_year_and_account(book):
         connection.execute("BEGIN")
         verify_integrity(engine, connection)
     revised = save(
-        "bank_reconciliation", "reconciliation-bank-a-2026-12",
+        "bank_reconciliation",
+        "reconciliation-bank-a-2026-12",
         {
-            "period": "2026-12", "statement_id": "statement-bank-a-2026-12",
-            "bank_account_id": "bank-a", "matches": [],
+            "period": "2026-12",
+            "statement_id": "statement-bank-a-2026-12",
+            "bank_account_id": "bank-a",
+            "matches": [],
         },
         revision=1,
     )
@@ -498,12 +550,12 @@ def test_reconciliation_reads_only_adjacent_month_across_year_and_account(book):
         verify_integrity(engine, connection)
 
 
-def test_first_possible_month_has_no_invalid_predecessor_scope(book):
+def test_first_possible_month_has_no_invalid_predecessor_scope(first_month_book):
     assert _previous_reconciliation_read("bank-a", YearMonth("0001-01")) is None
     assert _previous_reconciliation_read("bank-a", YearMonth("0001-02")) == Read(
         "calculation", "bank_reconciliation", "bank:bank-a:0001-01", YearMonth("0001-02")
     )
-    engine, save, publish, _ = book
+    engine, save, publish, _ = first_month_book
     opening(save, publish, month="0001-01")
     statement(save, publish, [], month="0001-01")
     reconciliation(save, publish, [], month="0001-01")
@@ -517,13 +569,15 @@ def test_unpublished_adjacent_month_is_not_accepted_as_history(book):
     opening(save, publish)
     statement(save, publish, [], month="2026-09")
     reconciliation(save, publish, [], month="2026-09", posted=False)
-    statement(
-        save, publish, [], subject="statement-october", month="2026-10"
-    )
+    statement(save, publish, [], subject="statement-october", month="2026-10")
     with pytest.raises(NeedsInformation) as failure:
         reconciliation(
-            save, publish, [], subject="reconciliation-october",
-            statement_id="statement-october", month="2026-10",
+            save,
+            publish,
+            [],
+            subject="reconciliation-october",
+            statement_id="statement-october",
+            month="2026-10",
         )
     assert failure.value.issues[0]["field"] == "previous_reconciliation"
 
@@ -536,24 +590,36 @@ def test_historical_reconciliation_change_invalidates_each_later_month(book):
         reconciliation_id = f"reconciliation-{month}"
         statement(save, publish, [], subject=statement_id, month=month)
         reconciliation(
-            save, publish, [], subject=reconciliation_id,
-            statement_id=statement_id, month=month,
+            save,
+            publish,
+            [],
+            subject=reconciliation_id,
+            statement_id=statement_id,
+            month=month,
         )
     changed = save(
-        "bank_statement", "statement-2026-09",
+        "bank_statement",
+        "statement-2026-09",
         {
-            "period": "2026-09", "bank_account_id": "bank-a",
-            "opening_fen": 0, "closing_fen": 0, "entries": [],
+            "period": "2026-09",
+            "bank_account_id": "bank-a",
+            "opening_fen": 0,
+            "closing_fen": 0,
+            "entries": [],
         },
         revision=1,
     )
     assert {
-        "statement-2026-09", "reconciliation-2026-09",
-        "reconciliation-2026-10", "reconciliation-2026-11",
+        "statement-2026-09",
+        "reconciliation-2026-09",
+        "reconciliation-2026-10",
+        "reconciliation-2026-11",
     } <= set(changed["pending"])
     for subject in (
-        "statement-2026-09", "reconciliation-2026-09",
-        "reconciliation-2026-10", "reconciliation-2026-11",
+        "statement-2026-09",
+        "reconciliation-2026-09",
+        "reconciliation-2026-10",
+        "reconciliation-2026-11",
     ):
         publish(subject)
     with engine.store.connection(read_only=True) as connection:
@@ -748,7 +814,6 @@ def test_interest_and_principal_in_one_real_payment_publish_without_dependency_c
         "interest",
         {
             "period": "2026-09",
-
             "drawdown_id": "drawdown",
             "period_start": "2026-09-01",
             "period_end_exclusive": "2026-09-16",
@@ -891,8 +956,10 @@ def close_month(periods, proof, month):
 
 
 @pytest.mark.parametrize("target,due", [("2026-02", "2026-02"), ("2026-04", "2026-03")])
-def test_asset_readiness_detects_missing_months_even_without_new_asset_facts(book, target, due):
-    engine, save, publish, proof = book
+def test_asset_readiness_detects_missing_months_even_without_new_asset_facts(
+    january_book, target, due
+):
+    engine, save, publish, proof = january_book
     save(
         "asset",
         "asset",
@@ -934,8 +1001,8 @@ def test_asset_readiness_detects_missing_months_even_without_new_asset_facts(boo
     assert issue["period"] == due
 
 
-def test_fully_depreciated_asset_does_not_permanently_block_later_months(book):
-    engine, save, publish, proof = book
+def test_fully_depreciated_asset_does_not_permanently_block_later_months(january_book):
+    engine, save, publish, proof = january_book
     save(
         "asset",
         "asset",
@@ -1044,7 +1111,6 @@ def test_loan_readiness_requires_zero_interest_but_releases_fully_settled_princi
         "september-interest",
         {
             "period": "2026-09",
-
             "drawdown_id": "drawdown",
             "period_start": "2026-09-01",
             "period_end_exclusive": "2026-10-01",

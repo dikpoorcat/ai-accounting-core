@@ -15,7 +15,6 @@ NO_CHANGE_KIND = "payroll_no_change_v2"
 PAYROLL_KINDS = ("payroll", "payroll_bounded")
 PROFILE_KIND = "payroll_profile"
 CONTRIBUTION_POLICY_KIND = "payroll_contribution_policy"
-INCOME_TAX_POLICY_KIND = "payroll_income_tax_policy"
 
 
 class FactRevisionReference(BaseModel):
@@ -228,8 +227,6 @@ def payroll_policy_source(context: Context, fact: Any, field: str, kind: str) ->
 
 def carried_payroll(prior: FactVersion, period: YearMonth):
     data = prior.fact.model_dump(mode="json") | {"period": str(period)}
-    if prior.fact.kind == "payroll_bounded":
-        data["tax_income_date"] = None
     return type(prior.fact).model_validate(data)
 
 
@@ -246,18 +243,12 @@ def _active_profiles(context: Context, period: YearMonth) -> tuple[FactVersion, 
     return profiles
 
 
-def _tax_started(fact: Any, profile: Any) -> bool:
-    first = max(YearMonth(f"{fact.period[:4]}-01"), YearMonth(profile.withholding_start_date[:7]))
-    return fact.period >= first
-
-
 def resolve_payroll_confirmation(
     version: FactVersion,
     context: Context,
     *,
     profile_version: FactVersion | None = None,
     contribution_policy_version: FactVersion | None = None,
-    income_tax_policy_version: FactVersion | None = None,
 ) -> dict:
     """Resolve one evidenced plan or one evidenced full-roster no-change confirmation."""
 
@@ -284,16 +275,6 @@ def resolve_payroll_confirmation(
         contribution_policy_version = contribution_policy_version or payroll_policy_source(
             context, fact, "contribution_policy_revision", CONTRIBUTION_POLICY_KIND
         )
-        tax_started = _tax_started(fact, profile_version.fact)
-        if tax_started:
-            income_tax_policy_version = income_tax_policy_version or payroll_policy_source(
-                context, fact, "income_tax_policy_revision", INCOME_TAX_POLICY_KIND
-            )
-        elif fact.income_tax_policy_revision is not None:
-            raise NeedsInformation(
-                "income_tax_policy_revision",
-                "扣缴尚未开始，不能把未采用的个税规则写成确认依据",
-            )
         notice_refs = tuple(sorted((item.subject_id, item.revision) for item in notices))
         confirmed_refs = tuple(
             sorted((item.subject_id, item.revision) for item in plan.fact.change_notice_revisions)
@@ -311,9 +292,6 @@ def resolve_payroll_confirmation(
             "notice_fact_ids": [item.id for item in sorted(notices, key=lambda item: item.id)],
             "profile_fact_id": profile_version.id,
             "contribution_policy_fact_id": contribution_policy_version.id,
-            "income_tax_policy_fact_id": (
-                income_tax_policy_version.id if income_tax_policy_version is not None else None
-            ),
         }
 
     if notices:
@@ -399,23 +377,12 @@ def resolve_payroll_confirmation(
     contribution_policy_version = contribution_policy_version or payroll_policy_source(
         context, fact, "contribution_policy_revision", CONTRIBUTION_POLICY_KIND
     )
-    tax_started = _tax_started(fact, profile_version.fact)
-    if tax_started:
-        income_tax_policy_version = income_tax_policy_version or payroll_policy_source(
-            context, fact, "income_tax_policy_revision", INCOME_TAX_POLICY_KIND
-        )
-    elif fact.income_tax_policy_revision is not None:
-        raise NeedsInformation(
-            "payroll_no_change.income_tax_policy_revision",
-            "扣缴尚未开始，不能把未采用的个税规则写成确认依据",
-        )
     adopted = set(calculation.values.get("source_versions", ())) | set(
         calculation.values.get("rule_versions", ())
     )
     for source, field in (
         (profile_version, "profile_revision"),
         (contribution_policy_version, "contribution_policy_revision"),
-        *(((income_tax_policy_version, "income_tax_policy_revision"),) if tax_started else ()),
     ):
         if source.id not in adopted:
             raise NeedsInformation(
@@ -430,7 +397,4 @@ def resolve_payroll_confirmation(
         "prior_payroll_fact_id": prior.id,
         "profile_fact_id": profile_version.id,
         "contribution_policy_fact_id": contribution_policy_version.id,
-        "income_tax_policy_fact_id": (
-            income_tax_policy_version.id if income_tax_policy_version is not None else None
-        ),
     }

@@ -292,9 +292,18 @@ def sealed_child_sql(table: str, column: str, seal: str, seal_column: str) -> st
 
 def ownership_sql(registry: Registry) -> str:
     """Protect generic identity/type links; business rules remain in Python."""
+    def body_check(kind):
+        bodies = registry.fact_bodies(kind)
+        if len(bodies) == 1:
+            return f"EXISTS(SELECT 1 FROM {bodies[0][1]} t WHERE t.revision_id=f.id)"
+        counts = "+".join(
+            f"(SELECT count(*) FROM {table} t WHERE t.revision_id=f.id)"
+            for _, table in bodies
+        )
+        return f"({counts})=1"
+
     root_checks = " ".join(
-        f"WHEN '{kind}' THEN EXISTS(SELECT 1 FROM {table_name(kind)} t WHERE t.revision_id=f.id)"
-        for kind in registry.models
+        f"WHEN '{kind}' THEN {body_check(kind)}" for kind in registry.models
     )
     shape = f"CASE s.kind {root_checks} ELSE 0 END" if root_checks else "0"
     return f"""
@@ -367,12 +376,15 @@ def fact_columns(model):
 
 def fact_ddl(registry: Registry) -> str:
     statements = []
-    for kind, model in registry.models.items():
+    for kind, model, table in (
+        (registered_kind, model, table)
+        for registered_kind in registry.models
+        for model, table in registry.fact_bodies(registered_kind)
+    ):
         columns = [
             "revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id)",
             *fact_columns(model),
         ]
-        table = table_name(kind)
         statements.append(f"CREATE TABLE {table}({','.join(columns)}) STRICT;")
         if kind == "report_classification" and "voucher_version_id" in model.model_fields:
             statements.append(
@@ -411,15 +423,19 @@ def fact_ddl(registry: Registry) -> str:
 def schema_sql(registry: Registry) -> str:
     # The registered type set is fixed for a service build. Cache generated SQL,
     # never the inspected file: every connection still verifies its actual DDL.
-    return _schema_for_models(tuple(registry.models.items()))
+    return _schema_for_models(
+        tuple(registry.models.items()),
+        tuple((kind, registry.fact_bodies(kind)) for kind in registry.models),
+    )
 
 
 @lru_cache(maxsize=32)
-def _schema_for_models(models) -> str:
+def _schema_for_models(models, bodies) -> str:
     from .asset_batch_schema import ASSET_BATCH_DDL
 
     registry = Registry()
     registry.models = dict(models)
+    registry.body_models = dict(bodies)
     script = DDL + "\n" + "\n".join(immutable_sql(t) for t in IMMUTABLE) + fact_ddl(registry)
     script += ownership_sql(registry)
     script += "\n".join(
@@ -436,11 +452,10 @@ def _schema_for_models(models) -> str:
             "dependency_calculation",
         )
     )
-    from .change_journal import journal_ddl
     from .backup_tasks import BACKUP_TASK_DDL
-    from .dashboard_async_schema import PROJECTION_DDL
-    from .replay_schema import REPLAY_DDL
+    from .change_journal import journal_ddl
     from .close_storage import CLOSE_STORAGE_DDL
+    from .dashboard_async_schema import PROJECTION_DDL
     from .dashboard_read_model import DASHBOARD_READ_MODEL_DDL
     from .discovery_indexes import DISCOVERY_INDEX_DDL
     from .display import DISPLAY_DDL
@@ -456,6 +471,7 @@ def _schema_for_models(models) -> str:
     from .materials import MATERIAL_READ_INDEX_DDL
     from .period_balance_freeze import BALANCE_FREEZE_DDL
     from .read_indexes import READ_INDEX_DDL
+    from .replay_schema import REPLAY_DDL
     from .report_classification_directory import REPORT_CLASSIFICATION_DIRECTORY_DDL
     from .report_flow import REPORT_FLOW_DDL
     from .report_open_contribution import REPORT_OPEN_CONTRIBUTION_DDL

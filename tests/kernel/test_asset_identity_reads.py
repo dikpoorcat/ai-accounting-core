@@ -36,7 +36,7 @@ def test_asset_identity_keeps_exact_core_head_after_replacement_and_review(
 ):
     from ai_accounting.kernel import engine as engine_module
 
-    company = Company(tmp_path / "asset-replacement.sqlite")
+    company = Company(tmp_path / "asset-replacement.sqlite", opening_period="2026-02")
     company.save(ReimbursedAsset.model_validate_json(json.dumps(asset())), "computer")
     company.publish("computer")
     if mode != "open_replace":
@@ -83,7 +83,7 @@ def test_asset_identity_keeps_member_withdrawal_selection(tmp_path):
 
 @pytest.mark.parametrize("closed", [False, True])
 def test_asset_identity_matches_core_without_result_transfer(tmp_path, closed):
-    company = Company(tmp_path / "asset-identity.sqlite")
+    company = Company(tmp_path / "asset-identity.sqlite", opening_period="2026-02")
     company.save(ReimbursedAsset.model_validate_json(json.dumps(asset())), "computer")
     company.publish("computer")
     if closed:
@@ -112,7 +112,7 @@ def test_asset_identity_matches_core_without_result_transfer(tmp_path, closed):
 
 
 def test_unused_asset_body_is_outside_identity_but_amount_detail_and_backup_reject(tmp_path):
-    company = Company(tmp_path / "asset-body.sqlite")
+    company = Company(tmp_path / "asset-body.sqlite", opening_period="2026-02")
     company.save(ReimbursedAsset.model_validate_json(json.dumps(asset())), "computer")
     company.publish("computer")
     company.close("2026-02")

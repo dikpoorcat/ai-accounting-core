@@ -11,8 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .contracts import Context, Fact, FactVersion, KernelError, NeedsInformation, Read
 from .domains.payroll import (
     PAYROLL_KINDS,
+    Payroll,
     PayrollContributionPolicy,
-    PayrollIncomeTaxPolicy,
     PayrollProfile,
     employee_month,
 )
@@ -187,6 +187,16 @@ class PayrollPreparation:
                 )
                 continue
             prior = matching[0]
+            if not isinstance(prior.fact, Payroll):
+                issues.append(
+                    {
+                        "field": "remuneration_revision",
+                        "employee_id": employee,
+                        "message": "历史工资须明确修订为当前来源确认格式，不能自动沿用旧计税正文",
+                        "reusable_sources": [prior.subject_id],
+                    }
+                )
+                continue
             calc = prior_calcs.get(prior.subject_id)
             versions.append(prior.id)
             if calc is None or calc.fact_id != prior.id or prior.subject_id in pending:
@@ -207,11 +217,6 @@ class PayrollPreparation:
                 ("profile_revision", PayrollProfile.kind),
                 ("contribution_policy_revision", PayrollContributionPolicy.kind),
             ]
-            tax_started = month >= max(
-                YearMonth(f"{month[:4]}-01"), YearMonth(profile.fact.withholding_start_date[:7])
-            )
-            if tax_started:
-                sources.append(("income_tax_policy_revision", PayrollIncomeTaxPolicy.kind))
             problem = False
             for field, kind in sources:
                 reference = getattr(prior.fact, field)
@@ -310,6 +315,16 @@ class PayrollPreparation:
                     continue
                 if planned:
                     source, version = planned[0], saved[0]
+                    if not isinstance(version.fact, Payroll):
+                        issues.append(
+                            {
+                                "field": "remuneration_revision",
+                                "employee_id": employee,
+                                "message": "历史工资须明确修订为当前来源确认格式",
+                                "reusable_sources": [version.subject_id],
+                            }
+                        )
+                        continue
                     source_kind, target = "monthly_plan", version.fact
                 elif len(confirmations) == 1:
                     source = confirmations[0]

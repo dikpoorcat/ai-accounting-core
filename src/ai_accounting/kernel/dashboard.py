@@ -72,6 +72,7 @@ KIND_NAMES = {
     "external_completion": "外部办理完成依据",
     "external_basis_review": "外部办理与账务核对",
     "payroll_disbursement_basis": "工资代发金额依据",
+    "remuneration_tax_basis": "报酬扣税依据",
     "service_sale": "服务收入",
     "expense": "费用",
     "expense_recovery": "费用退回确认",
@@ -506,8 +507,6 @@ class _Snapshot:
         return self.calculations.selected(kinds=set(kinds), posting_period=posting_period).values()
 
     def calculations_for_entity(self, kind, field, ident):
-        from .schema import table_name
-
         if (
             kind not in self.store.registry.models
             or field not in self.store.registry.models[kind].model_fields
@@ -515,8 +514,10 @@ class _Snapshot:
             return ()
         subjects = {
             row[0]
+            for model, table in self.store.registry.fact_bodies(kind)
+            if field in model.model_fields
             for row in self.connection.execute(
-                f"SELECT DISTINCT f.subject_id FROM {table_name(kind)} d JOIN fact_revision f "
+                f"SELECT DISTINCT f.subject_id FROM {table} d JOIN fact_revision f "
                 f"ON f.id=d.revision_id WHERE d.{field}=?",
                 (ident,),
             )
@@ -3697,7 +3698,6 @@ _WORKFORCE_MONEY_KEYS = (
     "employee_housing_fund_fen",
     "individual_income_tax_fen",
     "net_salary_fen",
-    "tax_reported_salary_fen",
 )
 
 
@@ -3793,7 +3793,6 @@ def _workforce_payroll_aggregates(rows, identity, *, include_details=True):
         )
         item["individual_income_tax_fen"] += sign * values.get("tax_fen", 0)
         item["net_salary_fen"] += sign * values.get("net_fen", 0)
-        item["tax_reported_salary_fen"] += sign * data.get("tax_reported_salary_fen", 0)
         contributions = {ob["name"]: ob["amount_fen"] for ob in values.get("obligations", ())}
         for side in ("employee", "employer"):
             for kind, label in (("social", "social_insurance"), ("housing", "housing_fund")):

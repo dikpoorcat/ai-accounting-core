@@ -17,7 +17,6 @@ from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.reports import BALANCE_NAMES, CASH_FLOW_NAMES, PROFIT_NAMES, Reports
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
-from ai_accounting.payroll import CumulativeIncomeTaxPolicy
 
 
 @pytest.fixture
@@ -330,7 +329,6 @@ def test_asset_depreciation_and_split_loan_interest_continue_without_fake_drawdo
             {
                 "period": "2026-01",
                 "drawdown_id": "loan",
-
                 "period_start": first,
                 "period_end_exclusive": end,
             },
@@ -554,8 +552,7 @@ def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(b
     damage(
         engine,
         "fact_report_carry_forward",
-        "UPDATE fact_report_carry_forward SET opening_package_id='damaged' "
-        "WHERE revision_id=?",
+        "UPDATE fact_report_carry_forward SET opening_package_id='damaged' WHERE revision_id=?",
         (fact_id,),
     )
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
@@ -570,7 +567,13 @@ def test_midyear_report_supplement_after_close_is_an_explicit_frozen_reference(b
     assert after["close_state"] == "closed" and after["readiness_state"] == "blocked"
     assert not after["export"]["available"] and "carry_forward" not in after
     business_fields = (
-        "close_state", "readiness_state", "status", "draft", "summary", "statements", "export",
+        "close_state",
+        "readiness_state",
+        "status",
+        "draft",
+        "summary",
+        "statements",
+        "export",
     )
     assert {key: after[key] for key in business_fields} == {
         key: before[key] for key in business_fields
@@ -619,124 +622,50 @@ def test_opening_bank_reconciles_first_real_statement(book):
         assert connection.execute("SELECT count(*) FROM voucher_current").fetchone()[0] == 0
 
 
-def test_midyear_payroll_uses_confirmed_cumulative_state_without_recreating_six_months(book):
+def test_midyear_payroll_uses_individual_confirmed_tax_without_recreating_six_months(book):
+    from test_payroll import contribution_policy, payroll, profile, tax_basis
+
     engine, save, publish, package, evidence = book
-    policy = CumulativeIncomeTaxPolicy.china_resident_wage_withholding()
-    save(
-        "payroll_income_tax_policy",
-        "tax-policy",
-        {
-            "period": "2026-07",
-            "version": policy.version,
-            "effective_from": policy.effective_from.isoformat(),
-            "effective_to": None,
-            "primary_source_url": policy.primary_source_url,
-            "legal_basis_source_url": policy.legal_basis_source_url,
-            "monthly_standard_deduction_fen": policy.monthly_standard_deduction_fen,
-            "brackets": [
-                {
-                    "upper_bound_fen": item.upper_bound_fen,
-                    "rate": str(item.rate),
-                    "quick_deduction_fen": item.quick_deduction_fen,
-                }
-                for item in policy.brackets
-            ],
-        },
-    )
+    package([], period="2026-07")
     save(
         "payroll_contribution_policy",
         "contribution-policy",
-        {
-            "period": "2026-07",
-            "version": "explicit-test-policy",
-            "jurisdiction": "test",
-            "effective_from": "2026-01-01",
-            "effective_to": "2026-12-31",
-            "primary_source_url": "https://www.mof.gov.cn/",
-            "rules": [
-                {
-                    "code": "pension",
-                    "base_kind": "social_insurance",
-                    "employee_rate": "0.08",
-                    "employer_rate": "0.16",
-                    "minimum_base_fen": 0,
-                    "maximum_base_fen": 10000000,
-                    "rounding": "half_up",
-                    "enabled": True,
-                }
-            ],
-        },
+        contribution_policy().model_dump(mode="json"),
     )
     save(
         "payroll_profile",
         "employee-profile",
-        {
-            "period": "2026-07",
-            "employee_id": "employee",
-            "effective_from": "2026-01",
-            "effective_to": None,
-            "withholding_start_date": "2026-01-01",
-            "social_insurance_base_fen": None,
-            "housing_fund_base_fen": None,
-            "social_insurance_participating": False,
-            "housing_fund_participating": False,
-            "contribution_shortfall": "reject",
-        },
-    )
-    package(
-        [
-            (
-                "opening_payroll_state",
-                "cumulative",
-                {
-                    "employee_id": "employee",
-                    "through_period": "2026-06",
-                    "separate_method_already_used": False,
-                    "cumulative_income_fen": 6000000,
-                    "cumulative_tax_exempt_income_fen": 0,
-                    "cumulative_standard_deduction_fen": 3000000,
-                    "cumulative_employee_contributions_fen": 0,
-                    "cumulative_special_additional_deduction_fen": 0,
-                    "cumulative_other_legal_deduction_fen": 0,
-                    "cumulative_tax_relief_fen": 0,
-                    "cumulative_withheld_tax_fen": 90000,
-                },
-            )
-        ],
-        period="2026-07",
+        profile(
+            period="2026-07",
+            social_insurance_participating=False,
+            social_insurance_base_fen=None,
+        ).model_dump(mode="json"),
     )
     save(
         "payroll",
         "july-payroll",
-        {
-            "period": "2026-07",
-            "employee_id": "employee",
-            "profile_revision": {"subject_id": "employee-profile", "revision": 1},
-            "contribution_policy_revision": {"subject_id": "contribution-policy", "revision": 1},
-            "income_tax_policy_revision": {"subject_id": "tax-policy", "revision": 1},
-            "accounting_gross_salary_fen": 1000000,
-            "tax_reported_salary_fen": 1000000,
-            "tax_exempt_income_fen": 0,
-            "special_additional_deduction_fen": 0,
-            "other_legal_deduction_fen": 0,
-            "tax_relief_fen": 0,
-            "expense_class": "management",
-            "contribution_basis": "policy_until_actual",
-        },
+        payroll(
+            period="2026-07",
+            profile_id="employee-profile",
+            contribution_policy_id="contribution-policy",
+        ).model_dump(mode="json"),
     )
     confirm_wage_inputs(
-        engine,
-        "july-payroll",
-        evidence=(evidence,),
-        request_id="confirm-july-payroll",
+        engine, "july-payroll", evidence=(evidence,), request_id="confirm-july-payroll"
     )
+    with engine.store.connection(read_only=True) as connection:
+        wage = engine.store.current_fact(connection, "july-payroll")
+    confirmed = tax_basis(wage, 15_000)
+    save(confirmed.fact.kind, confirmed.subject_id, confirmed.fact.model_dump(mode="json"))
     publish("july-payroll")
     with engine.store.connection(read_only=True) as connection:
         row = connection.execute(
             "SELECT outcome FROM calculation WHERE subject_id='july-payroll'"
         ).fetchone()
         values = json.loads(row[0])["values"]
-        assert values["tax_fen"] == 15000
-        assert values["tax_state"]["cumulative_income_fen"] == 7000000
+        assert values["tax_fen"] == 15_000
+        assert values["net_fen"] == 985_000
+        assert "tax_state" not in values
         assert connection.execute("SELECT count(*) FROM voucher_current").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM fact_payroll").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM fact_payroll_confirmed").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM fact_payroll").fetchone()[0] == 0

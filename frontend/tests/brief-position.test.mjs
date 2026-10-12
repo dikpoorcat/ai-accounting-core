@@ -63,16 +63,19 @@ test("brief API requires main summaries and permits summary-free continuation pa
     const company = value.read_context.company_id, period = value.selected_period.key;
     globalThis.window = { location: { origin: "http://offline.invalid", search: `?company_id=${company}` } };
     globalThis.fetch = async () => new Response(JSON.stringify(value));
-    await fetchDeferredBrief(company, period);
+    await fetchDeferredBrief(company, period, undefined, value.snapshot_version);
     for (const scope of ["overview", "activity", "open_items", "vouchers"]) {
       const empty = { ...structuredClone(value), scope, selected_period: null, snapshot_version: null, data: null };
-      globalThis.fetch = async () => new Response(JSON.stringify(empty));
+      globalThis.fetch = async () => new Response(JSON.stringify(scope === "overview" ? {
+        schema_version: 6, company_id: company, period: null, model_version: null,
+        state: "ready", response: empty,
+      } : empty));
       await fetchDeferredBrief(company, null, undefined, null, scope === "overview" ? {} : { section: scope });
     }
     for (const field of ["financial_position", "workforce_cost", "long_term_assets"]) {
       const missing = structuredClone(value); delete missing.data[field];
       globalThis.fetch = async () => new Response(JSON.stringify(missing));
-      await assert.rejects(fetchDeferredBrief(company, period), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
+      await assert.rejects(fetchDeferredBrief(company, period, undefined, value.snapshot_version), error => error.code === "DASHBOARD_SCHEMA_MISMATCH");
     }
     const page = structuredClone(samples.brief_activity.response);
     globalThis.fetch = async () => new Response(JSON.stringify(page));

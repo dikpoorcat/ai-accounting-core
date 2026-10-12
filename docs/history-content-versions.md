@@ -84,5 +84,5 @@
 ## 保持的边界
 
 材料逐行／联合处置、导出预览及冻结任务、实际申报、代发采用确认和工资准备依据继续精确绑定。
-`TaxImportDetails.payroll_result_digest` 仍是完整结果摘要，不能替换为内容或核算签名。
+当前 `TaxImportDetails.payroll_revision` 引用已确认的精确工资事实；导出管理明细不依赖工资正式发布或结果摘要。旧明细的 `payroll_result_digest` 只按原历史合同核验，不能替换为内容或核算签名。
 [核算无影响复核](accounting-equivalence.md)仍须正式发布；说明有效不代表付款、申报或复核完成。

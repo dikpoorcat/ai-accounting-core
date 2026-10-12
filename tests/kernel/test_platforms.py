@@ -5,6 +5,7 @@ from collections import defaultdict
 
 import pytest
 from entity_fixture import seed_entities, seed_registration_entities
+from opening_fixture import adopt_empty_opening
 from pydantic import ValidationError
 from test_banking import entry, match, opening, reconciliation, statement
 from test_business_domains import surtax_policy, vat_policy
@@ -19,7 +20,7 @@ from ai_accounting.kernel.types import YearMonth
 
 
 @pytest.fixture
-def book(tmp_path):
+def book(tmp_path, *, opening_period="2026-09"):
     bundle = production_bundle()
     engine = Engine(
         Store.create(
@@ -30,6 +31,7 @@ def book(tmp_path):
             "db",
         )
     )
+    adopt_empty_opening(engine, period=opening_period)
     evidence = engine.register_evidence(
         b"Synthetic platform receipts and explicit obligations",
         "text/plain",
@@ -151,6 +153,11 @@ def lines(engine, kind, subject):
                 (result.id,),
             )
         ]
+
+
+@pytest.fixture
+def august_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period="2026-08")
 
 
 def funding_data(*, kind="capital", amount=1000):
@@ -404,6 +411,8 @@ def test_non_cash_settlement_and_platform_payment_do_not_duplicate_capacity(book
 )
 def test_public_wire_rejects_invalid_amount_date_atomically(book, kind, data, change):
     engine, _, _, evidence = book
+    with engine.store.connection(read_only=True) as connection:
+        before = connection.execute("SELECT COUNT(*) FROM fact_revision").fetchone()[0]
     source = {
         "kind": "expense",
         "subject_id": "must-not-save",
@@ -433,11 +442,11 @@ def test_public_wire_rejects_invalid_amount_date_atomically(book, kind, data, ch
     with pytest.raises((ValidationError, ValueError, KernelError)):
         engine.save_facts([source, invalid], request_id="invalid")
     with engine.store.connection(read_only=True) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM fact_revision").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM fact_revision").fetchone()[0] == before
 
 
-def test_receipt_tax_point_once_across_media_and_recording_correction_preserves_money(book):
-    engine, save, publish, evidence = book
+def test_receipt_tax_point_once_across_media_and_recording_correction_preserves_money(august_book):
+    engine, save, publish, evidence = august_book
     save("vat_policy", "vat", {"period": "2026-01", "policy": vat_policy().model_dump(mode="json")})
     save(
         "service_sale",
@@ -640,7 +649,6 @@ def test_platform_principal_repayment_changes_interest_and_period_readiness(book
             subject,
             {
                 "period": "2026-09",
-
                 "drawdown_id": "drawdown",
                 "period_start": start,
                 "period_end_exclusive": end,

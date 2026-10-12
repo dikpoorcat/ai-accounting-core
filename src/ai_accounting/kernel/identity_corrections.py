@@ -7,7 +7,7 @@ not mutate a frozen opening package, a saved calculation, or a close manifest.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +30,7 @@ from .contracts import (
 )
 from .dependencies import fact_matches, scope_keys
 from .engine import Engine
+from .payroll_confirmation import FactRevisionReference
 from .stored_json import load_outcome, verify_outcome_bytes
 from .types import EvidenceDigest, validate_evidence_digests
 
@@ -65,6 +66,70 @@ class IdentityChange(BaseModel):
     action: Literal["reassign", "supersede"]
     data: dict | None = None
     replacement_subject_id: str | None = None
+    remuneration_source_revision: FactRevisionReference | None = Field(
+        default=None,
+        description="仅显式税依据伴随修订：引用同次报酬重指后的业务编号与修订，编译为精确来源事实ID",
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "accounting",
+                "meaning": "explicit_identity_companion_remuneration_revision",
+                "allowed_precision": ["exact_fact_revision"],
+                "reusable_sources": ["identity_correction_proposal"],
+                "constraint": "仅绑定同次明确重指的来源后续版本；税依据正文只存已生成精确事实ID",
+            }
+        },
+    )
+
+
+def _tax_basis_companion(change, source, fact, changes, originals):
+    """Validate an explicit typed source binding without predicting a future fact hash."""
+    reference = change.remuneration_source_revision
+    if reference is None:
+        if source.fact.kind == "remuneration_tax_basis" and (
+            source.fact.source_fact_id != fact.source_fact_id
+        ):
+            raise KernelError(
+                "identity_tax_basis_binding", "税依据精确来源变更需要同次有类型的来源修订声明"
+            )
+        return False
+    if (
+        source.fact.kind != "remuneration_tax_basis"
+        or change.action != "reassign"
+        or (change.data is None or change.replacement_subject_id is not None)
+    ):
+        raise KernelError(
+            "identity_tax_basis_binding", "报酬来源修订声明仅适用于完整确认的税依据伴随重指"
+        )
+    for field in ("source_kind", "source_id", "period", "tax_period", "tax_amount_fen"):
+        if getattr(source.fact, field) != getattr(fact, field):
+            raise KernelError(
+                "identity_tax_basis_binding",
+                "身份伴随税依据不能改写金额、税期或报酬业务身份",
+                field=field,
+            )
+    if fact.source_fact_id != source.fact.source_fact_id:
+        raise KernelError(
+            "identity_tax_basis_binding", "精确来源ID由同次修订声明编译，不接受预造的新事实ID"
+        )
+    target_change = next(
+        (item for item in changes if item.subject_id == reference.subject_id), None
+    )
+    target = originals.get(reference.subject_id)
+    if (
+        target_change is None
+        or target is None
+        or target_change.action != "reassign"
+        or (
+            target_change.data is None
+            or target_change.expected_revision + 1 != reference.revision
+            or target.fact.kind not in {"payroll", "payroll_bounded", "annual_bonus", "labor"}
+            or target.fact.kind != fact.source_kind
+            or target.subject_id != fact.source_id
+            or target.fact.period != fact.period
+        )
+    ):
+        raise KernelError("identity_tax_basis_binding", "税依据必须引用同次报酬重指的精确后续修订")
+    return True
 
 
 class EntityAssignment(BaseModel):
@@ -671,6 +736,15 @@ class IdentityCorrections:
                     (change.subject_id,),
                 ).fetchone()
                 previous[change.subject_id] = row[0] if row else None
+                if change.remuneration_source_revision is not None and (
+                    source.fact.kind != "remuneration_tax_basis"
+                    or change.action != "reassign"
+                    or change.data is None
+                    or change.replacement_subject_id is not None
+                ):
+                    raise KernelError(
+                        "identity_tax_basis_binding", "报酬修订绑定只能用于显式税依据伴随重指"
+                    )
             correction_id = (
                 "ic_"
                 + digest(
@@ -858,12 +932,14 @@ class IdentityCorrections:
                     payroll_companion = identity_confirmation_companion(
                         self.store, connection, source.fact, fact, typed
                     )
+                    tax_companion = _tax_basis_companion(change, source, fact, typed, old)
                     if (
                         not changed_identity
                         and change.subject_id not in replacement_targets
                         and change.subject_id not in reinstated
                         and not redirected
                         and not payroll_companion
+                        and not tax_companion
                     ):
                         raise KernelError(
                             "identity_correction_no_change", "该项没有明确的对象身份变更"
@@ -978,6 +1054,27 @@ class IdentityCorrections:
                         source.fact.period.ordinal,
                     )
                 roots.add(change.subject_id)
+            for change in typed:
+                reference = change.remuneration_source_revision
+                if reference is None:
+                    continue
+                version = versions[change.subject_id]
+                target = versions.get(reference.subject_id)
+                if (
+                    target is None
+                    or target.revision != reference.revision
+                    or (
+                        target.fact.kind != version.fact.source_kind
+                        or target.subject_id != version.fact.source_id
+                        or target.fact.period != version.fact.period
+                    )
+                ):
+                    raise KernelError(
+                        "identity_tax_basis_binding", "税依据引用的同次报酬新修订未实际生成"
+                    )
+                versions[change.subject_id] = replace(
+                    version, fact=version.fact.model_copy(update={"source_fact_id": target.id})
+                )
             if basis_members:
                 sid = "opening-correction:" + correction_id
                 owner_fact = OpeningBasisCorrection(
@@ -1482,6 +1579,45 @@ def verify_identity_corrections(engine, connection):
                 ):
                     fail(item["id"], "纠错保存事实与批准事实不一致")
                 if item["action"] == "reassign":
+                    compiled_data = dict(proposal["data"])
+                    binding = proposal.get("remuneration_source_revision")
+                    if binding is not None:
+                        try:
+                            reference = FactRevisionReference.model_validate(binding)
+                            original_versions = {
+                                sid: engine.store.fact(connection, entry["before_fact_id"])
+                                for sid, entry in expected.items()
+                            }
+                            declared = [
+                                IdentityChange.model_validate(entry) for entry in changes.values()
+                            ]
+                            parsed = type(source.fact).model_validate_json(
+                                canonical(proposal["data"])
+                            )
+                            _tax_basis_companion(
+                                IdentityChange.model_validate(proposal),
+                                source,
+                                parsed,
+                                declared,
+                                original_versions,
+                            )
+                            target_item = expected[reference.subject_id]
+                            target_after = engine.store.fact(
+                                connection, target_item["after_fact_id"]
+                            )
+                            if (
+                                target_item["action"] != "reassign"
+                                or target_after.revision != reference.revision
+                                or (
+                                    target_after.fact.kind != parsed.source_kind
+                                    or target_after.subject_id != parsed.source_id
+                                    or target_after.fact.period != parsed.period
+                                )
+                            ):
+                                fail(item["id"], "税依据伴随修订与采用的报酬新版本不一致")
+                            compiled_data["source_fact_id"] = target_after.id
+                        except (KeyError, TypeError, ValueError, KernelError):
+                            fail(item["id"], "税依据伴随来源声明无效或缺失同次报酬修订")
                     entity_changes = compare_entities(
                         source.fact,
                         after.fact,
@@ -1494,7 +1630,7 @@ def verify_identity_corrections(engine, connection):
                         or canonical(after.fact.model_dump(mode="json"))
                         != canonical(
                             type(source.fact)
-                            .model_validate_json(canonical(proposal["data"]))
+                            .model_validate_json(canonical(compiled_data))
                             .model_dump(mode="json")
                         )
                     ):

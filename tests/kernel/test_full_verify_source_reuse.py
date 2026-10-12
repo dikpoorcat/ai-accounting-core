@@ -57,20 +57,19 @@ def _closed_expense(book):
 
 
 @pytest.mark.parametrize("months", [1, 2, 4])
-def test_full_verify_decodes_each_source_once_across_cumulative_payroll(
+def test_full_verify_decodes_each_source_once_across_monthly_payroll(
     tmp_path, monkeypatch, months,
 ):
     company = Company(tmp_path / "wages.sqlite")
     for fact, subject in (
         (test_payroll.profile(effective_to="2026-12"), "profile"),
         (test_payroll.contribution_policy(), "contributions"),
-        (test_payroll.income_tax_policy(), "income-tax"),
-        (test_payroll.opening(), "opening"),
     ):
         company.save(fact, subject)
     for number in range(1, months + 1):
         period, subject = f"2026-{number:02}", f"wage-{number}"
         company.save(test_payroll.payroll(period=period), subject)
+        company.tax_basis(subject, 25_200)
         company.confirm_payroll(subject)
         company.publish(subject)
         company.close(period)
@@ -121,7 +120,7 @@ def test_full_verify_decodes_each_source_once_across_cumulative_payroll(
         facts.clear()
         result = _verify(company.engine)
         assert result["status"] == "verified"
-        assert len(decoded) == result["counts"]["calculations"] == months
+        assert len(decoded) == result["counts"]["calculations"] == months + 1
         assert set(decoded.values()) == {1}
         assert len(facts) == result["counts"]["facts"]
         assert set(facts.values()) == {1}
@@ -279,6 +278,12 @@ def test_source_reuse_keeps_native_typed_fact_presentation_validation(book, monk
                     raise ValueError("synthetic changed presentation validation")
 
             monkeypatch.setitem(engine.store.registry.models, "expense", ChangedPresentation)
+            # The exact body descriptor owns typed presentation, independently
+            # of the public input model lookup.
+            table = engine.store.registry.current_table("expense")
+            monkeypatch.setitem(
+                engine.store.registry.body_models, "expense", ((ChangedPresentation, table),)
+            )
             # Raw authority has succeeded. Both typed consumers still apply
             # their original model validation rather than accepting raw data.
             for selected in (QueryReads(engine, connection), reads):

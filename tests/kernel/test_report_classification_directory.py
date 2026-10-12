@@ -43,9 +43,7 @@ def test_position_missing_typed_work_scales_with_classification_heads_not_other_
         "CREATE TABLE fact_report_classification("
         "revision_id TEXT PRIMARY KEY,voucher_version_id TEXT)"
     )
-    connection.execute(
-        "CREATE TABLE fact_report_classification_counterparties(revision_id TEXT)"
-    )
+    connection.execute("CREATE TABLE fact_report_classification_counterparties(revision_id TEXT)")
     connection.execute("CREATE TABLE fact_current(fact_id TEXT)")
     connection.execute("CREATE TABLE period_close(period INTEGER PRIMARY KEY)")
     connection.execute(
@@ -88,8 +86,10 @@ def test_position_missing_typed_work_scales_with_classification_heads_not_other_
         )
         connection.executemany(
             "INSERT INTO close_reference VALUES('fact',?,?,?)",
-            ((f"classification-{month}-{n}",
-              "readiness.financial_reports.facts[*]", month) for n in range(20)),
+            (
+                (f"classification-{month}-{n}", "readiness.financial_reports.facts[*]", month)
+                for n in range(20)
+            ),
         )
         connection.executemany(
             "INSERT INTO fact_revision VALUES(?,?,?)",
@@ -120,19 +120,28 @@ def test_hex_digest_fast_check_keeps_exact_ascii_lowercase_acceptance():
         pass
 
     values = [
-        None, b"a" * 64, DigestText("a" * 64), "a" * 63, "a" * 65,
-        "A" * 64, "０" * 64, "a" * 63 + "\n", "a" * 63 + "\x00",
-        "a" * 63 + "\ud800", "0123456789abcdef" * 4,
+        None,
+        b"a" * 64,
+        DigestText("a" * 64),
+        "a" * 63,
+        "a" * 65,
+        "A" * 64,
+        "０" * 64,
+        "a" * 63 + "\n",
+        "a" * 63 + "\x00",
+        "a" * 63 + "\ud800",
+        "0123456789abcdef" * 4,
     ]
     generator = random.Random(17)
     alphabet = "0123456789abcdefABCDEFgＧ\n\x00\ud800"
     values.extend(
-        "".join(generator.choices(alphabet, k=generator.randrange(60, 69)))
-        for _ in range(5000)
+        "".join(generator.choices(alphabet, k=generator.randrange(60, 69))) for _ in range(5000)
     )
     for value in values:
-        expected = type(value) is str and len(value) == 64 and all(
-            char in "0123456789abcdef" for char in value
+        expected = (
+            type(value) is str
+            and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value)
         )
         assert current._hex_digest(value) is expected
         assert released_v1._hex_digest(value) is expected
@@ -180,8 +189,7 @@ def test_bound_filter_excludes_negative_keys_but_preserves_exact_hits(book, monk
         ).fetchone()
         actual_key = row[0]
         frozen = connection.execute(
-            "SELECT content FROM report_classification_directory "
-            "ORDER BY period DESC LIMIT 1"
+            "SELECT content FROM report_classification_directory ORDER BY period DESC LIMIT 1"
         ).fetchone()
         root = json.loads(frozen[0])
         assert root["format"] == 2
@@ -270,11 +278,17 @@ def test_full_report_loads_fallback_references_only_when_directory_cannot_answer
     subjects = []
     for number in range(additional_businesses):
         subject = f"additional-cost-{number}"
-        save("expense", subject, {
-            "period": "2026-02", "counterparty_id": "supplier",
-            "amount_fen": 101 + number, "expense_class": "administration",
-            "creditor_kind": "supplier",
-        })
+        save(
+            "expense",
+            subject,
+            {
+                "period": "2026-02",
+                "counterparty_id": "supplier",
+                "amount_fen": 101 + number,
+                "expense_class": "administration",
+                "creditor_kind": "supplier",
+            },
+        )
         subjects.append(subject)
     if subjects:
         publish(*subjects)
@@ -319,13 +333,17 @@ def test_full_report_loads_fallback_references_only_when_directory_cannot_answer
     assert rooted["status"] == "ready", rooted["fact_issues"]
     with engine.store.connection(read_only=True) as connection:
         expected_sources = {
-            row[0] for row in connection.execute(
+            row[0]
+            for row in connection.execute(
                 "SELECT a.fact_id FROM fact_current a JOIN subject s ON s.id=a.subject_id "
                 "WHERE s.kind IN ('report_profile','report_classification',"
                 "'report_income_tax_confirmation')"
             )
         }
-    assert len(expected_sources) == additional_businesses + 3
+        opening = engine.store.current_fact(connection, "synthetic-opening")
+        assert str(opening.fact.period) == "2026-01"
+        expected_sources.add(opening.id)
+    assert len(expected_sources) == additional_businesses + 4
     assert set(rooted["report_fact_ids"]) == expected_sources
     assert rooted_work["fallback_vm_steps"] == 0
     assert fallback_work["fallback_vm_steps"] > 0
@@ -372,9 +390,9 @@ def test_missing_frozen_node_rejects_page_and_full_check_then_repairs(book):
     assert caught.value.code == "content_integrity_failed"
     with pytest.raises(KernelError):
         Maintenance(engine).verify_integrity()
-    assert Maintenance(engine).rebuild_projections(
-        request_id="repair-classification-directory"
-    )["changed"]
+    assert Maintenance(engine).rebuild_projections(request_id="repair-classification-directory")[
+        "changed"
+    ]
     assert Maintenance(engine).verify_integrity()["status"] == "verified"
     assert report.report(2026, 1)["statements"]
 
@@ -404,8 +422,7 @@ def test_new_open_classification_conflicts_with_exact_frozen_voucher(book):
     )
     problems = report.report(2026, 2)["fact_issues"]
     assert any(
-        item["field"] == "report_classification"
-        and item["voucher_version_id"] == voucher
+        item["field"] == "report_classification" and item["voucher_version_id"] == voucher
         for item in problems
     )
 
@@ -523,9 +540,7 @@ def test_batched_lookup_loads_one_sql_statement_per_tree_level():
     root = None
     keys = [f"voucher-{number:04d}" for number in range(1000)]
     for number, key in enumerate(keys):
-        root = _insert(
-            writer, root, key, [f"fact-{number}", "00" * 32, 1, number % 10 != 0], 0, 1
-        )
+        root = _insert(writer, root, key, [f"fact-{number}", "00" * 32, 1, number % 10 != 0], 0, 1)
     connection.executemany(
         "INSERT INTO report_classification_node VALUES(?,?)",
         _reachable_new_nodes(writer, root, 1).items(),
@@ -609,19 +624,27 @@ def test_released_v1_directory_reader_is_separate_and_checks_the_bound_root(book
         with historical_content(1):
             reader = report_classification_directory_reader()
             assert reader.__name__.endswith("report_classification_directory_v1")
-            assert reader.require_classification_directory(
-                engine, connection, _expected_flows=expected
-            )["roots"] == 3
+            assert (
+                reader.require_classification_directory(
+                    engine, connection, _expected_flows=expected
+                )["roots"]
+                == 3
+            )
             scope = reader.classification_directory_scope(
                 connection, end, {classification["voucher_version_id"], "missing-voucher"}
             )
             assert scope["membership"][classification["voucher_version_id"]] == (
-                (classification["revision_id"], classification["digest"].hex(),
-                 classification["period"], True),
+                (
+                    classification["revision_id"],
+                    classification["digest"].hex(),
+                    classification["period"],
+                    True,
+                ),
             )
             assert scope["membership"]["missing-voucher"] == ()
     damage(
-        engine, "report_classification_directory",
+        engine,
+        "report_classification_directory",
         "UPDATE report_classification_directory SET root_digest=zeroblob(32) WHERE period=?",
         (end,),
     )

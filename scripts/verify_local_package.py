@@ -261,8 +261,9 @@ def expected_contract_names(bundle):
 
 def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup, validation):
     """Exercise the reserve contract through packaged public commands, using synthetic facts."""
+    from ai_accounting.kernel.domains.opening import CATEGORIES
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES
-    from ai_accounting.payroll import CumulativeIncomeTaxPolicy
+    from ai_accounting.kernel.tax_import import OTHER_COLUMNS, SPECIAL_COLUMNS
 
     company = call(
         "create_company", {"taxpayer_id": "91310000123456789C", "name": "运行包备用金合成企业"}
@@ -273,19 +274,55 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
     def execute(command, payload, **options):
         return call(command, {"company_id": cid, **payload}, **options)
 
+    def owner_read(command, payload):
+        deadline = time.monotonic() + 30
+        while True:
+            result = execute(command, payload)
+            if "state" not in result:
+                return result
+            if result["state"] == "ready":
+                return result["response"]
+            assert result["state"] == "preparing" and time.monotonic() < deadline, result
+            time.sleep(0.1)
+
     def request():
         nonlocal sequence
         sequence += 1
         return f"reserve-package-{sequence}"
 
+    fund_profiles = {
+        "bank": {
+            "bank_name": "合成验证银行",
+            "bank_account_number": "001234567890",
+            "account_holder_name": "运行包备用金合成企业",
+        },
+        "cash": {"display_name": "合成现金账户"},
+        "platform": {
+            "provider_name": "合成平台",
+            "account_identifier": "reserve-platform",
+            "account_holder_name": "运行包备用金合成企业",
+        },
+    }
+    fund_proof = execute(
+        "evidence",
+        {
+            "content_base64": base64.b64encode(
+                json.dumps(fund_profiles, ensure_ascii=False).encode()
+            ).decode(),
+            "media_type": "text/plain",
+            "name": "独立包合成资金账户资料",
+            "request_id": request(),
+        },
+    )["digest"]
     accounts = {
         channel: execute(
             "register_entity",
             {
                 "kind": "fund_account",
                 "account_type": channel,
-                "data": {"display_name": f"合成{channel}账户"},
+                "data": fund_profiles[channel],
                 "source": "独立包合成资料",
+                "evidence_digest": fund_proof,
                 "request_id": request(),
             },
         )["entity_id"]
@@ -300,15 +337,22 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
             "request_id": request(),
         },
     )["entity_id"]
-    tax = CumulativeIncomeTaxPolicy.china_resident_wage_withholding()
     facts = {
+        "reserve-general-opening": (
+            "opening_package",
+            {
+                "package_id": "reserve-general-opening",
+                "counts": dict.fromkeys(CATEGORIES.values(), 0),
+                "members": [],
+                "completeness_confirmed": True,
+            },
+        ),
         "reserve-profile": (
             "payroll_profile",
             {
                 "employee_id": employee,
                 "effective_from": month,
                 "effective_to": month,
-                "withholding_start_date": "2026-01-01",
                 "social_insurance_base_fen": 1000000,
                 "housing_fund_base_fen": None,
                 "social_insurance_participating": True,
@@ -338,57 +382,38 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
                 ],
             },
         ),
-        "reserve-income-tax": (
-            "payroll_income_tax_policy",
-            {
-                "version": tax.version,
-                "effective_from": tax.effective_from.isoformat(),
-                "effective_to": None,
-                "primary_source_url": tax.primary_source_url,
-                "legal_basis_source_url": tax.legal_basis_source_url,
-                "monthly_standard_deduction_fen": tax.monthly_standard_deduction_fen,
-                "brackets": [
-                    {
-                        "upper_bound_fen": x.upper_bound_fen,
-                        "rate": str(x.rate),
-                        "quick_deduction_fen": x.quick_deduction_fen,
-                    }
-                    for x in tax.brackets
-                ],
-            },
-        ),
-        "reserve-payroll-opening": (
-            "payroll_opening_state",
-            {
-                "employee_id": employee,
-                "through_period": None,
-                **dict.fromkeys(
-                    (
-                        "cumulative_income_fen",
-                        "cumulative_tax_exempt_income_fen",
-                        "cumulative_standard_deduction_fen",
-                        "cumulative_employee_contributions_fen",
-                        "cumulative_special_additional_deduction_fen",
-                        "cumulative_other_legal_deduction_fen",
-                        "cumulative_tax_relief_fen",
-                        "cumulative_withheld_tax_fen",
-                    ),
-                    0,
-                ),
-            },
-        ),
         "reserve-wage": (
             "payroll",
             {
                 "employee_id": employee,
                 "accounting_gross_salary_fen": 500000,
-                "tax_reported_salary_fen": 500000,
-                "tax_exempt_income_fen": 0,
-                "special_additional_deduction_fen": 0,
-                "other_legal_deduction_fen": 0,
-                "tax_relief_fen": 0,
                 "expense_class": "management",
                 "contribution_basis": "policy_until_actual",
+            },
+        ),
+        "reserve-wage-tax": (
+            "remuneration_tax_basis",
+            {
+                "source_kind": "payroll",
+                "source_id": "reserve-wage",
+                "tax_period": month,
+                "tax_amount_fen": 0,
+                "basis_type": "final_statement",
+                "confirmed": True,
+            },
+        ),
+        "reserve-wage-import-details": (
+            "tax_import_details_v2",
+            {
+                "employee_id": employee,
+                "include_in_filing": True,
+                "tax_reported_salary_fen": 500000,
+                "tax_exempt_income_fen": 0,
+                "cumulative_special_fen": dict.fromkeys(SPECIAL_COLUMNS, 0),
+                "current_other_fen": dict.fromkeys(OTHER_COLUMNS, 0),
+                "cumulative_personal_pension_fen": 0,
+                "tax_relief_fen": 0,
+                "treaty_relief_fen": 0,
             },
         ),
         "reserve-bank-opening": (
@@ -538,11 +563,19 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
             for field, source in (
                 ("profile_revision", "reserve-profile"),
                 ("contribution_policy_revision", "reserve-contributions"),
-                ("income_tax_policy_revision", "reserve-income-tax"),
             ):
                 saved = saved_versions[source]
                 data[field] = {"subject_id": saved["subject_id"], "revision": saved["revision"]}
+        if kind == "remuneration_tax_basis":
+            data["source_fact_id"] = saved_versions[data["source_id"]]["fact_id"]
+        if kind == "tax_import_details_v2":
+            saved = saved_versions["reserve-wage"]
+            data["payroll_revision"] = {
+                "subject_id": saved["subject_id"],
+                "revision": saved["revision"],
+            }
         save(subject, kind, data)
+    publish(["reserve-general-opening"])
     call_rejected(
         "preview", {"company_id": cid, "subjects": ["reserve-wage"]}, code="needs_information"
     )
@@ -627,7 +660,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
     # expense is 80000, less net actual refunds 1800; neither overwrites payroll.
     assert nets["560201"] == 660000
     assert nets["5602"] == 78200
-    funds = execute("dashboard_funds", {"period": month})
+    funds = owner_read("dashboard_funds", {"period": month})
     assert_owner_read("dashboard_funds", funds, company_id=cid, period=month)
     assert int(funds["data"]["bank_fen"]) == -499400
     mapping_check = execute("period_readiness", {"period": month})["current_followups"][
@@ -723,7 +756,7 @@ def verify_reserve_business(call, call_rejected, approve_close, wait_for_backup,
     assert execute("closed_report", {"period": month}) == frozen
 
     # A newly received closed-period document remains an open-period follow-up.
-    wage_details = execute(
+    wage_details = owner_read(
         "dashboard_business_status",
         {"period": month, "subject_id": "reserve-wage", "as_of": "2026-02-28"},
     )

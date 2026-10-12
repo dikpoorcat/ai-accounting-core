@@ -5,6 +5,7 @@ import itertools
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
@@ -21,6 +22,7 @@ def book(tmp_path):
             tmp_path / "company.sqlite", production_bundle(), "company", "911100000000000001", "db"
         )
     )
+    adopt_empty_opening(engine)
     proof = engine.register_evidence(
         b"Synthetic source and recording-error evidence", "text/plain", "proof", request_id="proof"
     )["digest"]
@@ -176,7 +178,12 @@ def test_closed_zero_result_is_protected_by_publication_period_without_any_vouch
     save("income_tax_assessment", "zero", fact | {"period": "2026-02"}, revision=1, amend=True)
     with engine.store.connection(read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0] == 0
-        assert connection.execute("SELECT count(*) FROM calculation_publication").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM calculation_publication WHERE subject_id='zero'"
+            ).fetchone()[0]
+            == 1
+        )
     with pytest.raises(KernelError) as failure:
         engine.preview_delete("zero", recording_error_evidence=proof)
     assert failure.value.code == "closed_period"
@@ -240,7 +247,7 @@ def test_open_business_without_dependents_deletes_idempotently_and_retains_histo
         assert (
             connection.execute(
                 "SELECT count(*) FROM fact_current c JOIN subject s ON s.id=c.subject_id "
-                "WHERE s.kind IN (SELECT value FROM json_each(?))",
+                "WHERE s.kind IN (SELECT value FROM json_each(?)) AND s.kind<>'opening_package'",
                 (
                     canonical(
                         [
@@ -253,7 +260,11 @@ def test_open_business_without_dependents_deletes_idempotently_and_retains_histo
             ).fetchone()[0]
             == 0
         )
-        assert connection.execute("SELECT count(*) FROM calculation_current").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM calculation_current WHERE subject_id='expense'"
+            ).fetchone()[0] == 0
+        )
         assert connection.execute("SELECT count(*) FROM voucher_current").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0] == 1
         assert (

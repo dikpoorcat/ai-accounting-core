@@ -95,7 +95,7 @@ def test_joint_owner_kind_change_is_rejected_in_both_private_lanes(owner_book, k
 
 @pytest.mark.parametrize("warm", [False, True])
 def test_empty_consumption_directory_does_not_prove_owner_kind(tmp_path, warm):
-    company = Company(tmp_path / "empty-owner-kind.sqlite")
+    company = Company(tmp_path / "empty-owner-kind.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     with company.engine.store.connection(read_only=True) as connection:
         proof = company.engine.store.current_fact(connection, "computer").evidence[0]
@@ -123,7 +123,7 @@ def assert_private_lanes_succeed(engine, period):
 
 
 def test_typed_kind_proof_keeps_no_impact_old_voucher_new_basis(tmp_path):
-    company = Company(tmp_path / "review-kind-owner.sqlite")
+    company = Company(tmp_path / "review-kind-owner.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     proof = company.engine.register_evidence(
         b"Confirmed unchanged activation facts", "text/plain", "unchanged activation",

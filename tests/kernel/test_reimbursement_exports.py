@@ -22,7 +22,7 @@ def parse(model, data):
 
 @pytest.fixture
 def reimbursement_company(tmp_path):
-    company = Company(tmp_path / "reimbursements.sqlite")
+    company = Company(tmp_path / "reimbursements.sqlite", opening_period="2026-02")
     for fact, subject in (
         (parse(ReimbursedAsset, asset(asset_id="direct")), "direct"),
         (parse(ReimbursedAssetBatch, accepted_batch()), "batch"),

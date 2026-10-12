@@ -63,8 +63,12 @@ def test_employee_line_scope_preserves_open_and_closed_responses(company, monkey
     for period in ("2026-01", "2026-02"):
         monkeypatch.setattr(dashboard_module, "payroll_list_head_metadata", scoped)
         response = dashboard.employees(
-            period, employee_id="employee", section="employees", preparation="deferred"
-        , employee_filter="all")
+            period,
+            employee_id="employee",
+            section="employees",
+            preparation="deferred",
+            employee_filter="all",
+        )
         assert observed[-1][1] == period
         assert all(
             head["line_count"] is None
@@ -87,8 +91,12 @@ def test_employee_line_scope_preserves_open_and_closed_responses(company, monkey
             lambda snap, kinds, *, line_count_period=None: adopted_head_metadata(snap, kinds),
         )
         complete = dashboard.employees(
-            period, employee_id="employee", section="employees", preparation="deferred"
-        , employee_filter="all")
+            period,
+            employee_id="employee",
+            section="employees",
+            preparation="deferred",
+            employee_filter="all",
+        )
         assert response == complete
 
 
@@ -332,8 +340,9 @@ def test_removed_employment_filters_are_rejected(company, employee_filter):
 def test_payroll_and_default_object_active_do_not_establish_current_employment(company):
     company.publish("january")
     dashboard = Dashboard(company.engine)
-    item = dashboard.employees("2026-01", employee_filter="employment_unknown")[
-        "data"]["collections"]["employees"]["items"][0]
+    item = dashboard.employees("2026-01", employee_filter="employment_unknown")["data"][
+        "collections"
+    ]["employees"]["items"][0]
     assert item["employment_state"] == "unknown"
     assert item["has_payroll_activity"] is True
     assert dashboard.employees("2026-01")["data"]["collections"]["employees"]["items"] == []
@@ -361,9 +370,9 @@ def test_typed_employee_registration_generates_state_and_metadata_update_preserv
     dashboard = Dashboard(company.engine)
 
     def current():
-        return dashboard.employees(
-            "2026-01", employee_id=entity_id, employee_filter="all"
-        )["data"]["collections"]["employees"]["items"]
+        return dashboard.employees("2026-01", employee_id=entity_id, employee_filter="all")["data"][
+            "collections"
+        ]["employees"]["items"]
 
     assert current()[0]["employment_state"] == "regular"
     payload = validate_command(
@@ -504,7 +513,8 @@ def test_closed_payroll_identity_source_cannot_hide_from_employee_detail(company
         ).fetchone()[0]
         connection.execute("DROP TRIGGER immutable_fact_payroll_confirmed_UPDATE")
         connection.execute(
-            "UPDATE fact_payroll_confirmed SET employee_id='employee-2' WHERE revision_id=?", (fact_id,)
+            "UPDATE fact_payroll_confirmed SET employee_id='employee-2' WHERE revision_id=?",
+            (fact_id,),
         )
         connection.execute(trigger)
     with pytest.raises(KernelError) as failure:
@@ -613,7 +623,8 @@ def test_personal_advance_is_clearing_without_company_cash(company):
     assert (
         next(item for item in january["settlements"]["obligations"] if item["name"] == "net")[
             "remaining_fen"
-        ] == 0
+        ]
+        == 0
     )
 
 
@@ -622,6 +633,7 @@ def test_bonus_is_separate_but_included_in_workforce_breakdown(tmp_path, monkeyp
     for source in bonus_sources():
         company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
+    company.tax_basis("bonus", 90_000)
     company.publish("bonus")
     dashboard = Dashboard(company.engine)
     data = dashboard.employees("2026-01", employee_filter="all")["data"]
@@ -654,6 +666,7 @@ def test_brief_workforce_cost_rejects_changed_calculation_body(tmp_path):
     for source in bonus_sources():
         company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
+    company.tax_basis("bonus", 90_000)
     company.publish("bonus")
     with company.engine.store.connection() as connection:
         triggers = list(
@@ -875,9 +888,12 @@ def test_batch_asset_uses_batch_settlement_and_month_precision(asset_book):
         assert item["settlement_scope"] == "本验收批次结算"
         assert "settlements" not in item
         assert item["payment_summary"] == {
-            "obligation_count": 2, "checking": False,
-            "amount_fen": 150000, "paid_fen": 90000,
-            "other_settled_fen": 0, "remaining_fen": 60000,
+            "obligation_count": 2,
+            "checking": False,
+            "amount_fen": 150000,
+            "paid_fen": 90000,
+            "other_settled_fen": 0,
+            "remaining_fen": 60000,
         }
         assert "purchase_price_fen" not in item and "payment_date" not in item
 
@@ -886,8 +902,10 @@ def test_unreleased_project_cost_is_reconciled_without_an_asset_card(tmp_path, m
     company = Company(tmp_path / "project.sqlite")
     company.save(LaborProjectCost.model_validate(cost()), "project-labor")
     company.publish("project-labor")
+
     def unexpected_settlement(*args, **kwargs):
         raise AssertionError("项目列表不应预装载已移除的付款详情")
+
     monkeypatch.setattr(BusinessQueries, "settlement_summary", unexpected_settlement)
     with raw_read():
         assets = Dashboard(company.engine).assets("2026-11")["data"]

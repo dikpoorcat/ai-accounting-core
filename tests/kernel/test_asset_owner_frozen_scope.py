@@ -18,7 +18,7 @@ from ai_accounting.kernel.query_reads import QueryReads
 
 @pytest.fixture
 def owner_book(tmp_path):
-    company = Company(tmp_path / "owner-read-scopes.sqlite")
+    company = Company(tmp_path / "owner-read-scopes.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     with company.engine.store.connection(read_only=True) as connection:
         evidence = company.engine.store.current_fact(connection, "computer").evidence[0]
@@ -222,7 +222,7 @@ def test_owner_scopes_keep_continuous_closed_corrections(owner_book):
 
 
 def test_no_impact_review_keeps_old_voucher_and_new_adopted_basis(tmp_path):
-    company = Company(tmp_path / "review-owner-scope.sqlite")
+    company = Company(tmp_path / "review-owner-scope.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     with company.engine.store.connection(read_only=True) as connection:
         original = connection.execute(
@@ -248,7 +248,7 @@ def test_no_impact_review_keeps_old_voucher_and_new_adopted_basis(tmp_path):
 
 
 def test_zero_line_owner_retains_frozen_adoption_without_voucher(tmp_path):
-    company = Company(tmp_path / "zero-owner-scope.sqlite")
+    company = Company(tmp_path / "zero-owner-scope.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     with company.engine.store.connection(read_only=True) as connection:
         evidence = company.engine.store.current_fact(connection, "computer").evidence[0]

@@ -2,7 +2,9 @@
 
 import json
 import sys
+from collections import Counter
 from dataclasses import replace
+from difflib import unified_diff
 from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar
@@ -292,6 +294,17 @@ def _source_state(store, source_registry):
         return _retained_history_digest(connection), manifests, tuple(connection.iterdump())
 
 
+def _assert_restored_source_state(restored, original):
+    """Every original source remains exact; restore appends one derived reset."""
+    assert restored[:2] == original[:2]
+    before, after = Counter(original[2]), Counter(restored[2])
+    assert not (before - after), "\n".join(unified_diff(original[2], restored[2]))
+    added = list((after - before).elements())
+    assert len(added) == 1
+    assert added[0].startswith('INSERT INTO "dashboard_projection_reset" VALUES(')
+    assert ",'restore'," in added[0]
+
+
 def _portable_source_copy(store, source_registry, directory, destination):
     before = _source_state(store, source_registry)
     created = create_portable(store.path, directory, _bundle=store.bundle)
@@ -311,7 +324,7 @@ def _portable_source_copy(store, source_registry, directory, destination):
     )
     assert restored["verification"]["status"] == "verified"
     copy = Store(destination, store.bundle, store.company_id, store.database_id)
-    assert _source_state(copy, source_registry) == before
+    _assert_restored_source_state(_source_state(copy, source_registry), before)
     assert _source_state(store, source_registry) == before
     assert archive.read_bytes() == archive_bytes
     return archive, archive_bytes, before
@@ -376,7 +389,7 @@ def _forward_lifecycle(
     copy = Store(
         destination, engine.store.bundle, engine.store.company_id, engine.store.database_id
     )
-    assert _source_state(copy, source_registry) == before
+    _assert_restored_source_state(_source_state(copy, source_registry), before)
     assert set(verified_versions) == {1, 2}
     assert decoded == set(watched_models)
     assert company["id"] == target_store.company_id
@@ -528,6 +541,7 @@ def test_synthetic_forward_keeps_corrected_sources_with_changed_current_expense_
     company = catalog.create_company("91310000123456789A", "合成身份纠错前向合同")
     engine = Engine(catalog.bind(company["id"]))
     proof = evidence(engine)
+    opening_package(engine, proof, [])
     entities = Entities(engine)
     first = entities.register_entity("person", {}, source="synthetic", request_id="person-a")[
         "entity_id"
@@ -646,6 +660,13 @@ def test_synthetic_forward_keeps_opening_identity_under_changed_current_scopes_a
     )
 
     old_registry = service.default_registry()
+    # This isolated source installation explicitly predates retirement of the
+    # cumulative opening grammar. It stores confirmed historical totals only;
+    # the detail evaluator reads the adopted package without a PIT algorithm.
+    from ai_accounting.kernel.domains.opening import calculate_detail
+
+    old_registry.historical_only.remove("opening_payroll_state")
+    old_registry.evaluators["opening_payroll_state"] = calculate_detail
 
     class ChangedOpeningCash(OpeningCash):
         def scopes(self):

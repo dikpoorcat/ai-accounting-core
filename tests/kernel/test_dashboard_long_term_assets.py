@@ -119,7 +119,7 @@ def test_batch_activation_and_open_member_withdrawal_keep_only_current_members(a
 
 
 def test_batch_acceptance_and_cards_are_deduplicated_and_disposal_excludes_asset(tmp_path):
-    company = Company(tmp_path / "brief-disposal.sqlite")
+    company = Company(tmp_path / "brief-disposal.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.close("2026-02")
     dashboard = Dashboard(company.engine)
@@ -140,7 +140,7 @@ def test_batch_acceptance_and_cards_are_deduplicated_and_disposal_excludes_asset
 
 
 def test_closed_activation_correction_preserves_frozen_and_current_counts(tmp_path):
-    company = Company(tmp_path / "brief-correction.sqlite")
+    company = Company(tmp_path / "brief-correction.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.close("2026-02")
     dashboard = Dashboard(company.engine)
@@ -157,7 +157,7 @@ def test_closed_activation_correction_preserves_frozen_and_current_counts(tmp_pa
 
 
 def test_count_reads_do_not_expand_project_unrelated_or_consumption_bodies(tmp_path, monkeypatch):
-    company = Company(tmp_path / "brief-growth.sqlite")
+    company = Company(tmp_path / "brief-growth.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.save(Expense(
         period="2026-05", counterparty_id="supplier", amount_fen=1,
@@ -240,7 +240,7 @@ def test_count_reads_do_not_expand_project_unrelated_or_consumption_bodies(tmp_p
 
 @pytest.mark.parametrize("broken", ["acceptance_detail", "activation_member", "frozen_adoption"])
 def test_count_rejects_damaged_required_identity_instead_of_reporting_lower_count(tmp_path, broken):
-    company = Company(tmp_path / "brief-damage.sqlite")
+    company = Company(tmp_path / "brief-damage.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.close("2026-02")
     dashboard = Dashboard(company.engine)

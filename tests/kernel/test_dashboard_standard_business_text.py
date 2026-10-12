@@ -8,9 +8,10 @@ from test_dashboard_open_groups import opening_book as opening_book
 from test_dashboard_owner_presentation import display_profile
 from test_dashboard_provenance import frozen_rows
 from test_dashboard_voucher_adapter import activity_members
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_bounded import bounded
 from test_payroll_corrections import Company, payment
+from test_payroll_corrections import company as _payroll_book
 
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
@@ -20,6 +21,7 @@ from ai_accounting.kernel.response_contracts import validate_response
 CUSTOM_NAME = "合成资料自定义名称"
 PURPOSE = "合成工资核算复核说明"
 NOTE = "合成原件位置与采用依据"
+payroll_book = _payroll_book
 
 
 def add_source_text(engine, subject):
@@ -65,12 +67,11 @@ def test_payroll_owner_entries_use_standard_text_without_mutating_sources(tmp_pa
     for fact, subject in (
         (profile(effective_to="2026-02"), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll() if kind == "payroll" else bounded(), "wage"),
     ):
         company.save(fact, subject)
     company.confirm_payroll("wage")
+    company.tax_basis("wage", 12_600)
     company.publish("wage")
     add_source_text(company.engine, "wage")
     if closed:

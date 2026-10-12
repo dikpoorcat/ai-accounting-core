@@ -1,4 +1,4 @@
-"""Measure real Engine payroll batches and dense correction graphs in isolated companies.
+"""Measure real Engine payroll batches and scoped corrections in isolated companies.
 
 All source facts, payroll publications and corrections use typed Engine APIs.
 No synthetic voucher, dependency or calculation row is inserted with raw SQL.
@@ -23,24 +23,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ai_accounting.kernel.backup import verify_file
+from ai_accounting.kernel.domains.opening import CATEGORIES, OpeningPackage
 from ai_accounting.kernel.domains.payroll import (
     ContributionActualItem,
     ContributionRuleFact,
     Payroll,
     PayrollContributionActual,
     PayrollContributionPolicy,
-    PayrollIncomeTaxPolicy,
-    PayrollOpeningState,
     PayrollProfile,
-    TaxBracketFact,
 )
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.payroll_confirmation import FactRevisionReference
 from ai_accounting.kernel.payroll_preparation import PayrollPlan
+from ai_accounting.kernel.remuneration_tax_basis import RemunerationTaxBasis
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
-from ai_accounting.payroll import CumulativeIncomeTaxPolicy
 
 PERIODS = ("2026-01", "2026-02", "2026-03")
 
@@ -176,28 +174,11 @@ def source_facts(employee, identity, revisions):
             employee_id=identity,
             effective_from="2026-01",
             effective_to=None,
-            withholding_start_date="2026-01-01",
             social_insurance_base_fen=1_000_000,
             housing_fund_base_fen=None,
             social_insurance_participating=True,
             housing_fund_participating=False,
             contribution_shortfall="reject",
-        ),
-    )
-    yield (
-        f"opening-{employee:04}",
-        PayrollOpeningState(
-            period="2026-01",
-            employee_id=identity,
-            through_period=None,
-            cumulative_income_fen=0,
-            cumulative_tax_exempt_income_fen=0,
-            cumulative_standard_deduction_fen=0,
-            cumulative_employee_contributions_fen=0,
-            cumulative_special_additional_deduction_fen=0,
-            cumulative_other_legal_deduction_fen=0,
-            cumulative_tax_relief_fen=0,
-            cumulative_withheld_tax_fen=0,
         ),
     )
     for period in PERIODS:
@@ -213,15 +194,7 @@ def source_facts(employee, identity, revisions):
                 contribution_policy_revision=FactRevisionReference(
                     subject_id="contributions", revision=revisions["contributions"]
                 ),
-                income_tax_policy_revision=FactRevisionReference(
-                    subject_id="income-tax", revision=revisions["income-tax"]
-                ),
                 accounting_gross_salary_fen=1_000_000 + (employee % 5) * 50_000,
-                tax_reported_salary_fen=1_000_000 + (employee % 5) * 50_000,
-                tax_exempt_income_fen=0,
-                special_additional_deduction_fen=0,
-                other_legal_deduction_fen=0,
-                tax_relief_fen=0,
                 expense_class="management",
                 contribution_basis="policy_until_actual",
             ),
@@ -253,27 +226,6 @@ def policies():
                     rounding="half_up",
                     enabled=True,
                 ),
-            ),
-        ),
-    )
-    policy = CumulativeIncomeTaxPolicy.china_resident_wage_withholding()
-    yield (
-        "income-tax",
-        PayrollIncomeTaxPolicy(
-            period="2026-01",
-            version=policy.version,
-            effective_from=policy.effective_from.isoformat(),
-            effective_to=None,
-            primary_source_url=policy.primary_source_url,
-            legal_basis_source_url=policy.legal_basis_source_url,
-            monthly_standard_deduction_fen=policy.monthly_standard_deduction_fen,
-            brackets=tuple(
-                TaxBracketFact(
-                    upper_bound_fen=bracket.upper_bound_fen,
-                    rate=str(bracket.rate),
-                    quick_deduction_fen=bracket.quick_deduction_fen,
-                )
-                for bracket in policy.brackets
             ),
         ),
     )
@@ -343,7 +295,8 @@ def run_scale(size, workspace, progress):
     stage["schema_sha256"] = hashlib.sha256(schema.encode()).hexdigest()
     proof = engine.register_evidence(
         b"Synthetic payroll benchmark register: explicit employee profiles, "
-        b"known-zero openings, wages and assessment revisions.",
+        b"complete zero company opening, wages and final deductions of 12600 fen "
+        b"for each individual monthly wage, and contribution revisions.",
         "text/plain",
         "synthetic-benchmark-evidence",
         request_id="proof",
@@ -366,6 +319,23 @@ def run_scale(size, workspace, progress):
         return result
 
     def prepare_sources():
+        save(
+            "company-opening",
+            OpeningPackage(
+                period="2026-01",
+                package_id="company-opening",
+                counts=dict.fromkeys(CATEGORIES.values(), 0),
+                members=(),
+                completeness_confirmed=True,
+            ),
+        )
+        opening = engine.preview(["company-opening"])
+        engine.confirm(
+            ["company-opening"],
+            preview_digest=opening["digest"],
+            epochs=opening["epochs"],
+            request_id="adopt-company-opening",
+        )
         for sid, fact in policies():
             save(sid, fact)
         for employee in range(size):
@@ -380,6 +350,19 @@ def run_scale(size, workspace, progress):
             for sid, fact in source_facts(employee, identity, revisions):
                 saved = save(sid, fact)
                 if fact.kind == "payroll":
+                    save(
+                        f"tax-{sid}",
+                        RemunerationTaxBasis(
+                            period=fact.period,
+                            source_kind=fact.kind,
+                            source_id=sid,
+                            source_fact_id=saved["fact_id"],
+                            tax_period=fact.period,
+                            tax_amount_fen=12_600,
+                            basis_type="final_statement",
+                            confirmed=True,
+                        ),
+                    )
                     save(
                         f"confirmation-{sid}",
                         PayrollPlan(
@@ -425,7 +408,7 @@ def run_scale(size, workspace, progress):
 
     def correct(employees, name, increment):
         before, before_numbers = current_results(engine)
-        expected = {subject(employee, period) for employee in employees for period in PERIODS}
+        expected = {subject(employee, "2026-01") for employee in employees}
 
         def change_sources():
             for employee in employees:
@@ -587,7 +570,7 @@ def write_report(report, output):
         "进程内存、数据库大小及行数。",
         "RSS 每 25 毫秒采样，短峰值可能漏采；操作系统累计峰值另外记录。"
         "每个操作只做一次，结果是单次测量，不宣称 p95 或容量上限。",
-        "单员工后补必须只影响其三个月工资；两轮密集更正各影响半数员工及其三个月链，"
+        "单员工社保后补只影响其一月工资；两轮密集更正各影响半数员工的一月工资，"
         "验证其余员工计算 ID 不变、所有原凭证号保留、待更正项清空。",
         "该验收不包含真实付款、闭期冲正、代发 Excel、长期政策变更与多人并发；"
         "不能据此推断这些场景的性能。",

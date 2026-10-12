@@ -7,11 +7,10 @@ from test_integrity_content import damage
 from test_workflow import (
     completion_from_basis,
     contribution_policy,
-    income_tax_policy,
     obligation,
-    opening,
     payroll,
     profile,
+    publish_zero_opening,
     save_completion,
     setup_company,
 )
@@ -27,15 +26,15 @@ engine = engine_fixture
 @pytest.fixture
 def completed_company(tmp_path):
     company = setup_company(tmp_path)
+    publish_zero_opening(company)
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
     ):
         company.save(fact, subject)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     company.save(obligation(), "obligation")
     basis = Workflow(company.engine).obligation_basis("obligation")

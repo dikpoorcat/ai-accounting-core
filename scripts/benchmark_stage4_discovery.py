@@ -230,7 +230,6 @@ def main():
                         "employee_id": employee_id,
                         "effective_from": period,
                         "effective_to": period,
-                        "withholding_start_date": period + "-01",
                         "social_insurance_base_fen": None,
                         "housing_fund_base_fen": None,
                         "social_insurance_participating": False,
@@ -249,7 +248,7 @@ def main():
                         engine.save_fact(
                             "payroll_profile",
                             subject,
-                            data | {"withholding_start_date": period + "-02"},
+                            data | {"contribution_shortfall": "employer_borne"},
                             evidence=(proof,),
                             expected_revision=1,
                             request_id=subject + "-revision",

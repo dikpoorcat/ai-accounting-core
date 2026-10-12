@@ -1,10 +1,10 @@
 """Reference batches share source discovery while retaining full directory proof."""
 
 import sqlite3
-from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
+from scalar_store_fixture import scalar_store
 
 from ai_accounting.kernel import entity_references as references
 from ai_accounting.kernel.contracts import KernelError
@@ -17,13 +17,13 @@ def batch():
         employee_id: str
         note: str
 
-    registry = SimpleNamespace(
-        content_version=2,
-        models={"reference_batch": Fact},
-        reference_declarations={"reference_batch": [
+    registry = scalar_store({"reference_batch": Fact}).registry
+    registry.content_version = 2
+    registry.reference_declarations = {
+        "reference_batch": [
             {"path": "employee_id", "role": "employee", "reference_type": "entity"},
-        ]},
-    )
+        ]
+    }
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.executescript(
@@ -67,14 +67,21 @@ def test_successful_hits_return_complete_verified_rows_without_reselecting_roles
     connection, registry, expected = batch
     statements = []
     connection.set_trace_callback(statements.append)
-    assert references.verify_hits(
-        connection, [{"fact_id": row[0]} for row in expected], registry=registry
-    ) == expected
+    assert (
+        references.verify_hits(
+            connection, [{"fact_id": row[0]} for row in expected], registry=registry
+        )
+        == expected
+    )
     assert references.current_role_matches(
         connection, [row[0] for row in expected], "employee", registry=registry
     ) == {row[0]: row[2] for row in expected}
-    assert not any("SELECT f.id,s.kind" in sql or "SELECT id,subject_id" in sql
-                   or "SELECT r.fact_id,r.entity_id" in sql for sql in statements)
+    assert not any(
+        "SELECT f.id,s.kind" in sql
+        or "SELECT id,subject_id" in sql
+        or "SELECT r.fact_id,r.entity_id" in sql
+        for sql in statements
+    )
     assert sum("SELECT * FROM entity_reference_current" in sql for sql in statements) == 2
 
 
@@ -135,12 +142,18 @@ def test_released_current_reference_pass_retains_version_dispatch(batch, monkeyp
 
     connection, registry, expected = batch
     registry.content_version = 1
-    monkeypatch.setattr(Store, "fact_data_many", lambda self, connection, ids: {
-        ident: {"employee_id": f"employee-{ident[-1]}", "note": "saved source"} for ident in ids
-    })
-    monkeypatch.setattr(references, "_entity_reference_fields", lambda kind, data, registry: [
-        ("employee_id", data["employee_id"], "employee")
-    ])
+    monkeypatch.setattr(
+        Store,
+        "fact_data_many",
+        lambda self, connection, ids: {
+            ident: {"employee_id": f"employee-{ident[-1]}", "note": "saved source"} for ident in ids
+        },
+    )
+    monkeypatch.setattr(
+        references,
+        "_entity_reference_fields",
+        lambda kind, data, registry: [("employee_id", data["employee_id"], "employee")],
+    )
     calls = []
 
     def released(connection, rows, *, registry):

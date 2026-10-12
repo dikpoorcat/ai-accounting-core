@@ -89,6 +89,20 @@ def _evidence_digest(value: str) -> bytes:
     return bytes.fromhex(value)
 
 
+def _require_labor_net_tax(kind, values, remaining, subject_id):
+    if (
+        remaining > 0
+        and kind in {"labor_accrual", "labor_project_cost"}
+        and (values.get("tax_assessed") is not True or values.get("tax_review_required") is True)
+    ):
+        raise NeedsInformation(
+            "net_disbursement_tax",
+            "该劳务来源只确认毛额应付，尚未确认扣税与可代发净额，不能生成银行净额代发",
+            sources=(subject_id, "final_remuneration_statement", "actual_withholding_record"),
+            precision=("integer_fen",),
+        )
+
+
 def _safe_text(value: str, field: str, *, maximum: int) -> str:
     if (
         not isinstance(value, str)
@@ -272,11 +286,13 @@ class Exports:
                     remaining = balances.get(key, 0)
                     if remaining < 0 or remaining > item["amount_fen"]:
                         raise KernelError("invalid_payable_balance", "应付款余额与已确认来源不一致")
+                    values = outcomes[calculation["id"]]["values"]
+                    _require_labor_net_tax(calculation["kind"], values, remaining, subject)
                     amount, disbursement = export_disbursement(
                         self.store,
                         connection,
                         calculation,
-                        outcomes[calculation["id"]]["values"],
+                        values,
                         remaining,
                     )
                     if disbursement is not None:

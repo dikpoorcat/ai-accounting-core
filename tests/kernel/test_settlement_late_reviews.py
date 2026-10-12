@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 
 import pytest
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 
 from ai_accounting.kernel import engine as engine_module
@@ -20,12 +20,12 @@ def prepared(tmp_path, *, zero=False):
         (profile(effective_to="2026-02", social_insurance_participating=not zero,
                  social_insurance_base_fen=None if zero else 1_000_000), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"), (opening(), "opening"),
-        (payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0)
+        (payroll(accounting_gross_salary_fen=0)
          if zero else payroll(), "january"),
     ):
         company.save(fact, name)
     company.confirm_payroll("january")
+    company.tax_basis("january", 0 if zero else 12_600)
     company.publish("january")
     company.close("2026-01")
     return company
@@ -71,9 +71,10 @@ def test_multiple_late_reviews_and_next_close_preserve_original_freeze(
     assert company.engine.ledger("2026-01") == ledger
     with company.engine.store.connection(read_only=True) as connection:
         assert verify_integrity(company.engine, connection)["status"] == "verified"
-    company.save(payroll(period="2026-02", accounting_gross_salary_fen=0 if zero else 1_000_000,
-                         tax_reported_salary_fen=0 if zero else 1_000_000), "february")
+    company.save(payroll(period="2026-02", accounting_gross_salary_fen=0 if zero else 1_000_000),
+                 "february")
     company.confirm_payroll("february")
+    company.tax_basis("february", 0 if zero else 12_600)
     company.publish("february")
     company.close("2026-02")
     assert frozen(company)[0] == before[0]

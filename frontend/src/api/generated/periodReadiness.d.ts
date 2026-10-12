@@ -255,7 +255,7 @@ export namespace PeriodReadinessContract {
   export type VerifiedWhenSucceeded = boolean;
   export type CurrentFileAvailability = "not_checked";
   export type FileJobs = FileJob[];
-  export type Status17 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type Status17 = "ready" | "needs_information" | "unsupported" | "pending_confirmation" | "not_applicable";
   export type BlockingScope = "tax_import_file";
   export type MappingFactIds = string[];
   export type CalculationIds = string[];

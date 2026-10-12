@@ -154,7 +154,7 @@ def _validation_json(data):
 
 
 @cache
-def _scalar_fact_json_sql(model, kind):
+def _scalar_fact_json_sql(model, kind, table=None):
     """Build a C-side JSON read for facts whose stored fields need no JSON parsing.
 
     Composite fields retain the Python decoder, which rejects non-finite and
@@ -163,6 +163,7 @@ def _scalar_fact_json_sql(model, kind):
     """
     if hasattr(model, "_v1_fields"):
         return None
+    table = table or table_name(kind)
     sequences = []
     for name, info in model.model_fields.items():
         item = _stored_sequence(model, name, info)
@@ -206,7 +207,7 @@ def _scalar_fact_json_sql(model, kind):
     arrays = {}
     for name, item in sequences:
         child = object_sql("c", item)
-        child_table = f"{table_name(kind)}_{name}"
+        child_table = f"{table}_{name}"
         children = (
             f"SELECT json_group_array({child} ORDER BY c.item_no) "
             f"FROM {child_table} c WHERE c.revision_id=f.revision_id"
@@ -215,7 +216,7 @@ def _scalar_fact_json_sql(model, kind):
     document = object_sql("f", model, arrays)
     return (
         f"SELECT f.revision_id,{document} FROM json_each(?) ids "
-        f"CROSS JOIN {table_name(kind)} f ON f.revision_id=ids.value"
+        f"CROSS JOIN {table} f ON f.revision_id=ids.value"
     )
 
 
@@ -232,14 +233,16 @@ def _scalar_fact_hashes(store, connection, kinds):
     for kind, identifiers in kinds.items():
         if not identifiers:
             continue
-        model = store.registry.models.get(kind)
-        if model is None:
+        if kind not in store.registry.models:
             continue
-        sql = _scalar_fact_json_sql(model, kind)
-        if sql is None:
-            continue
-        for ident, raw in connection.execute(sql, (canonical(sorted(identifiers)),)):
-            result[ident] = hashlib.sha256(raw.encode("utf-8")).digest()
+        headers = [{"id": ident, "kind": kind} for ident in sorted(identifiers)]
+        for _, model, table, revisions in Store._fact_body_groups(store, connection, headers):
+            sql = _scalar_fact_json_sql(model, kind, table)
+            if sql is None:
+                continue
+            keys = canonical([row["id"] for row in revisions])
+            for ident, raw in connection.execute(sql, (keys,)):
+                result[ident] = hashlib.sha256(raw.encode("utf-8")).digest()
     return result
 
 
@@ -355,8 +358,8 @@ class Store:
         ).fetchone()
         if row is None:
             raise KernelError("unknown_fact", "fact revision does not exist")
-        model = self.registry.models[row["kind"]]
-        data = Store._fact_data(connection, fact_id, model, row["kind"])
+        _, model, table, _ = next(Store._fact_body_groups(self, connection, [row]))
+        data = Store._fact_data(connection, fact_id, model, row["kind"], table)
         evidence = tuple(
             r[0].hex()
             for r in connection.execute(
@@ -381,8 +384,45 @@ class Store:
         ).fetchone()
         if row is None:
             raise KernelError("unknown_fact", "fact revision does not exist")
-        model = self.registry.models[row["kind"]]
-        return Store._fact_data(connection, fact_id, model, row["kind"])
+        header = {"id": fact_id, "kind": row["kind"]}
+        _, model, table, _ = next(Store._fact_body_groups(self, connection, [header]))
+        return Store._fact_data(connection, fact_id, model, row["kind"], table)
+
+    def _fact_body_groups(self, connection, rows):
+        """Select each revision's exact immutable grammar, never today's defaults."""
+        by_kind = {}
+        for row in rows:
+            by_kind.setdefault(row["kind"], []).append(row)
+        for kind, revisions in by_kind.items():
+            bodies = self.registry.fact_bodies(kind)
+            if len(bodies) == 1:
+                model, table = bodies[0]
+                yield kind, model, table, revisions
+                continue
+            keys = canonical([row["id"] for row in revisions])
+            selected = {}
+            query = " UNION ALL ".join(
+                f"SELECT f.revision_id,{index} FROM json_each(?) ids "
+                f"JOIN {table} f ON f.revision_id=ids.value"
+                for index, (_, table) in enumerate(bodies)
+            )
+            for ident, index in connection.execute(query, (keys,) * len(bodies)):
+                if ident in selected:
+                    raise KernelError(
+                        "content_integrity_failed", "事实修订必须恰有一个合法正文",
+                        component="fact", record_id=ident,
+                    )
+                selected[ident] = index
+            if len(selected) != len(revisions):
+                raise KernelError(
+                    "content_integrity_failed", "事实修订缺少合法正文", component="fact"
+                )
+            grouped = {}
+            for row in revisions:
+                grouped.setdefault(selected[row["id"]], []).append(row)
+            for index, group in grouped.items():
+                model, table = bodies[index]
+                yield kind, model, table, group
 
     def fact_data_many(self, connection, fact_ids) -> dict[str, dict]:
         """Batch raw fact decoding without applying current model validation or defaults."""
@@ -404,21 +444,37 @@ class Store:
             raise KernelError("unknown_fact", "fact revision does not exist")
         return self._fact_data_many_from_headers(connection, rows)
 
+    def fact_versions_from_checked(self, connection, checked):
+        """Present independently verified raw bodies using their exact grammar.
+
+        This is a typed presentation adapter, not a content or digest proof.
+        Its caller must already own the checked source set and read snapshot.
+        """
+        headers = [{"id": ident, "kind": row["kind"]} for ident, row in checked.items()]
+        staged = {}
+        for _, model, _, revisions in Store._fact_body_groups(self, connection, headers):
+            for header in revisions:
+                ident = header["id"]
+                row = checked[ident]
+                staged[ident] = FactVersion(
+                    ident, row["subject_id"], row["revision"],
+                    model.model_validate_json(_validation_json(row["data"])),
+                    tuple(sorted(row["evidence"])),
+                )
+        return staged
+
     def _fact_data_many_from_headers(self, connection, rows) -> dict[str, dict]:
         """Decode current typed storage using this batch's exact source headers.
 
         Internal callers already selected and checked the requested fact set.
         Released storage retains its separate fact_data_many reader.
         """
-        by_kind = {}
-        for row in rows:
-            by_kind.setdefault(row["kind"], []).append(row["id"])
         result = {}
-        for kind, revision_ids in by_kind.items():
-            model = self.registry.models[kind]
+        for _kind, model, table, revisions in Store._fact_body_groups(self, connection, rows):
+            revision_ids = [row["id"] for row in revisions]
             keys = canonical(revision_ids)
             for row in connection.execute(
-                f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)} f "
+                f"SELECT f.* FROM json_each(?) ids JOIN {table} f "
                 "ON f.revision_id=ids.value",
                 (keys,),
             ):
@@ -432,7 +488,7 @@ class Store:
                 for ident in revision_ids:
                     result[ident][name] = []
                 for row in connection.execute(
-                    f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)}_{name} f "
+                    f"SELECT f.* FROM json_each(?) ids JOIN {table}_{name} f "
                     "ON f.revision_id=ids.value ORDER BY f.revision_id,f.item_no",
                     (keys,),
                 ):
@@ -444,9 +500,10 @@ class Store:
         return result
 
     @staticmethod
-    def _fact_data(connection, fact_id, model, kind) -> dict:
+    def _fact_data(connection, fact_id, model, kind, table=None) -> dict:
+        table = table or table_name(kind)
         row = connection.execute(
-            f"SELECT * FROM {table_name(kind)} WHERE revision_id=?", (fact_id,)
+            f"SELECT * FROM {table} WHERE revision_id=?", (fact_id,)
         ).fetchone()
         if row is None:
             raise KernelError("unknown_fact", "typed fact data does not exist")
@@ -457,7 +514,7 @@ class Store:
             item = _stored_sequence(model, name, info)
             if item is not None:
                 rows = connection.execute(
-                    f"SELECT * FROM {table_name(kind)}_{name} WHERE revision_id=? ORDER BY item_no",
+                    f"SELECT * FROM {table}_{name} WHERE revision_id=? ORDER BY item_no",
                     (fact_id,),
                 )
                 data[name] = [
@@ -490,16 +547,12 @@ class Store:
             (canonical(identifiers),),
         ):
             evidence[row["fact_id"]].append(row["evidence_digest"].hex())
-        by_kind = {}
-        for row in rows:
-            by_kind.setdefault(row["kind"], []).append(row)
         result = {}
         raw_sink = _snapshot_fact_raw_sink(self, connection)
         raw_values = {} if raw_sink is not None else None
-        for kind, revisions in by_kind.items():
-            model = self.registry.models[kind]
+        for kind, model, table, revisions in Store._fact_body_groups(self, connection, rows):
             keys = canonical([row["id"] for row in revisions])
-            scalar_sql = _scalar_fact_json_sql(model, kind)
+            scalar_sql = _scalar_fact_json_sql(model, kind, table)
             if scalar_sql is not None:
                 raw_by_id = {
                     row[0]: row[1].encode("utf-8")
@@ -519,7 +572,7 @@ class Store:
                 continue
             data = {}
             for row in connection.execute(
-                f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)} f "
+                f"SELECT f.* FROM json_each(?) ids JOIN {table} f "
                 "ON f.revision_id=ids.value",
                 (keys,),
             ):
@@ -533,7 +586,7 @@ class Store:
                 for values in data.values():
                     values[name] = []
                 for row in connection.execute(
-                    f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)}_{name} f "
+                    f"SELECT f.* FROM json_each(?) ids JOIN {table}_{name} f "
                     "ON f.revision_id=ids.value ORDER BY f.revision_id,f.item_no",
                     (keys,),
                 ):
@@ -569,6 +622,14 @@ class Store:
         from .entity_references import sync_entity_references, validate_entity_references
 
         fact = version.fact
+        if (
+            fact.kind in self.registry.historical_only
+            or type(fact) is not self.registry.models.get(fact.kind)
+        ):
+            raise KernelError(
+                "historical_fact_read_only", "历史事实正文仅可读取；请使用当前类型化输入"
+            )
+        table = self.registry.current_table(fact.kind)
         validate_entity_references(connection, fact, version.subject_id, store=self)
         connection.execute(
             "INSERT INTO subject VALUES(?,?) ON CONFLICT(id) DO NOTHING",
@@ -582,7 +643,7 @@ class Store:
         data = encode_fields(type(fact), raw)
         columns = ",".join(f'"{name}"' for name in data)
         connection.execute(
-            f"INSERT INTO {table_name(fact.kind)}(revision_id,{columns}) "
+            f"INSERT INTO {table}(revision_id,{columns}) "
             f"VALUES({','.join('?' for _ in range(len(data) + 1))})",
             (version.id, *data.values()),
         )
@@ -594,7 +655,7 @@ class Store:
                 encoded = encode_fields(item, entry)
                 fields = ",".join(f'"{key}"' for key in encoded)
                 connection.execute(
-                    f"INSERT INTO {table_name(fact.kind)}_{name}(revision_id,item_no,{fields}) "
+                    f"INSERT INTO {table}_{name}(revision_id,item_no,{fields}) "
                     f"VALUES({','.join('?' for _ in range(len(encoded) + 2))})",
                     (version.id, index, *encoded.values()),
                 )

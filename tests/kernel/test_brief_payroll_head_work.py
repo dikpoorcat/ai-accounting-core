@@ -26,20 +26,33 @@ def workforce(engine):
 
 
 def line_count_work(work):
-    return [row for row in work["sql"] if row["statement"].startswith(
-        "SELECT c.id,json_array_length(c.outcome,'$.lines') line_count "
-    )]
+    return [
+        row
+        for row in work["sql"]
+        if row["statement"].startswith(
+            "SELECT c.id,json_array_length(c.outcome,'$.lines') line_count "
+        )
+    ]
 
 
 @pytest.mark.parametrize("zero", [False, True])
 def test_only_unposted_payroll_states_read_line_counts_with_equal_amounts(company, zero):
     if zero:
-        company.save(profile(social_insurance_participating=False,
-                             social_insurance_base_fen=None), "profile", revision=1)
-        company.save(payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0,
-                             profile_revision={"subject_id": "profile", "revision": 2}),
-                     "january", revision=1)
+        company.save(
+            profile(social_insurance_participating=False, social_insurance_base_fen=None),
+            "profile",
+            revision=1,
+        )
+        company.save(
+            payroll(
+                accounting_gross_salary_fen=0,
+                profile_revision={"subject_id": "profile", "revision": 2},
+            ),
+            "january",
+            revision=1,
+        )
         company.confirm_payroll("january")
+        company.tax_basis("january", 0, revision=1)
     company.publish("january")
     original = module.adopted_head_metadata
     original_line_counts = dashboard_reads._head_line_counts
@@ -56,8 +69,13 @@ def test_only_unposted_payroll_states_read_line_counts_with_equal_amounts(compan
 
     # The control's complete head read already supplies state counts; avoid
     # charging it again for the optimized consumer's separate state phase.
-    with patch.object(module, "adopted_head_metadata", full_counts), patch.object(
-        dashboard_reads, "_head_line_counts", once_counted,
+    with (
+        patch.object(module, "adopted_head_metadata", full_counts),
+        patch.object(
+            dashboard_reads,
+            "_head_line_counts",
+            once_counted,
+        ),
     ):
         before_work, before = measure_work(company.engine, lambda: workforce(company.engine))
     after_work, after = measure_work(company.engine, lambda: workforce(company.engine))
@@ -70,8 +88,15 @@ def test_only_unposted_payroll_states_read_line_counts_with_equal_amounts(compan
     # removes a redundant scalar query, not the body or source trust boundary.
     for counter in ("calculation_result_rows_loaded", "calculation_result_json_decodes"):
         assert after_work["counters"][counter] == before_work["counters"][counter]
-    print(json.dumps({"zero": zero, "full_counts": before_work["counters"],
-                      "state_counts": after_work["counters"]}))
+    print(
+        json.dumps(
+            {
+                "zero": zero,
+                "full_counts": before_work["counters"],
+                "state_counts": after_work["counters"],
+            }
+        )
+    )
 
 
 @pytest.mark.parametrize("closed", [False, True])
@@ -85,9 +110,12 @@ def test_posted_payroll_no_impact_adopted_body_still_rejects_damage(company, mon
     if closed:
         company.close("2026-01")
     assert workforce(company.engine)["employee"]["gross_salary_fen"] == 1_000_000
-    damage(company.engine, "calculation",
-           "UPDATE calculation SET outcome=json_set(outcome,'$.values.gross_fen',7) WHERE id=?",
-           (reviewed["calculation_id"],))
+    damage(
+        company.engine,
+        "calculation",
+        "UPDATE calculation SET outcome=json_set(outcome,'$.values.gross_fen',7) WHERE id=?",
+        (reviewed["calculation_id"],),
+    )
     for _ in range(2):
         with pytest.raises(KernelError):
             workforce(company.engine)
@@ -103,8 +131,9 @@ def test_payroll_state_line_counts_keep_full_reader_fallback(company, reader):
     else:
         with company.engine.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            snap = _Snapshot(company.engine, connection, "2026-01",
-                             reads=QueryReads(company.engine, connection))
+            snap = _Snapshot(
+                company.engine, connection, "2026-01", reads=QueryReads(company.engine, connection)
+            )
             try:
                 assert _brief_workforce_cost(snap) == expected
             finally:

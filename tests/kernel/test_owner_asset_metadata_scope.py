@@ -36,7 +36,7 @@ from ai_accounting.kernel.query_reads import QueryReads
 
 @pytest.fixture
 def metadata_company(tmp_path):
-    company = Company(tmp_path / "owner-metadata.sqlite")
+    company = Company(tmp_path / "owner-metadata.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     with company.engine.store.connection(read_only=True) as connection:
         evidence = company.engine.store.current_fact(connection, "computer").evidence[0]
@@ -542,7 +542,7 @@ def test_missing_open_owner_voucher_pointer_is_not_empty_history(metadata_compan
 ])
 def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, domain, consumer):
     if domain == "bank":
-        engine, save, publish, _ = _bank_book.__wrapped__(tmp_path)
+        engine, save, publish, _ = _bank_book.__wrapped__(tmp_path, opening_period="2026-01")
         funding(save, publish)
         subject, period = "funding", "2026-09"
     elif domain == "payroll":

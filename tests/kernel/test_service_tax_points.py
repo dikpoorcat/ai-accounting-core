@@ -10,8 +10,8 @@ from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 
 
 @pytest.fixture
-def company(tmp_path):
-    result = Company(tmp_path / "service.sqlite")
+def company(tmp_path, *, opening_period="2026-01"):
+    result = Company(tmp_path / "service.sqlite", opening_period=opening_period)
     result.save(
         taxes.VatPolicyFact, "vat", period="2026-01", policy=vat_policy().model_dump(mode="json")
     )
@@ -22,6 +22,11 @@ def company(tmp_path):
         policy=surtax_policy().model_dump(mode="json"),
     )
     return result
+
+
+@pytest.fixture
+def march_company(tmp_path):
+    return company.__wrapped__(tmp_path, opening_period="2026-03")
 
 
 def sale(company, *, period="2026-03", tax_month="2026-04", **changes):
@@ -315,7 +320,8 @@ def test_return_before_tax_point_reduces_deferred_source_then_receipt_transfers_
     assert lines(company, "payment", "paid")[-2:] == [("222104", 1000, 0), ("222101", 0, 1000)]
 
 
-def test_later_return_does_not_reopen_earlier_closed_return(company):
+def test_later_return_does_not_reopen_earlier_closed_return(march_company):
+    company = march_company
     sale(company, tax_month="2026-03", gross_fen=202000)
     company.save(
         transactions.SaleReturn,

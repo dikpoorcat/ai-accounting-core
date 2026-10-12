@@ -41,11 +41,13 @@ def test_active_intent_keeps_only_immutable_exact_summary_and_no_caller_alias(re
     preview["manifest"]["owner_review"]["accounting_summary"]["month_expense_fen"] = 999
     assert execute("dashboard_close_review", period="2026-01")["owner_review"] == expected
     assert _owner_summary_text(expected) == _owner_review_text(
-        {**preview["manifest"]["owner_review"],
-         "accounting_summary": {
-             **preview["manifest"]["owner_review"]["accounting_summary"],
-             "month_expense_fen": 0,
-         }}
+        {
+            **preview["manifest"]["owner_review"],
+            "accounting_summary": {
+                **preview["manifest"]["owner_review"]["accounting_summary"],
+                "month_expense_fen": 0,
+            },
+        }
     )
     service.close()
     assert service.close_previews == service.active_close_previews == {}
@@ -118,28 +120,34 @@ def test_repreview_retires_old_intent_and_cross_company_month_swap_is_rejected(r
 
 
 def test_real_payroll_preview_summary_and_native_window_have_identical_money(resident):
-    from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+    from opening_fixture import adopt_empty_opening
+    from test_payroll import contribution_policy, payroll, profile
     from test_payroll_corrections import Company
 
     service, engine, company, proof, _, execute, read, _ = prepared_company(resident, prepare=False)
     helper = Company.__new__(Company)
     helper.engine, helper.sequence = engine, 0
     helper.materials, helper.owner_confirmation = defaultdict(list), proof
+    adopt_empty_opening(engine)
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
     ):
         helper.save(fact, subject)
     helper.confirm_payroll("january")
+    helper.tax_basis("january", 12_600)
     helper.publish("january")
     for category in MATERIAL_CATEGORIES:
         evidence = sorted({ev for month, ev in helper.materials[category] if month <= "2026-01"})
         Periods(engine).inventory(
-            "2026-01", category, evidence=evidence, expected=len(evidence),
-            no_business=not evidence, confirmation_evidence=proof, request_id=helper.request(),
+            "2026-01",
+            category,
+            evidence=evidence,
+            expected=len(evidence),
+            no_business=not evidence,
+            confirmation_evidence=proof,
+            request_id=helper.request(),
         )
     preview = execute("preview_close", period="2026-01", owner_confirmation=proof)
     expected = public_owner_review(preview["manifest"]["owner_review"])
@@ -149,8 +157,12 @@ def test_real_payroll_preview_summary_and_native_window_have_identical_money(res
         expected["amounts"]["month_expense_fen"]
     )
     request = service.security_controller.request(
-        kind="approve_period_close", company_id=company["id"], database_id=company["database_id"],
-        period="2026-01", preview_digest=preview["digest"], epochs=preview["epochs"],
+        kind="approve_period_close",
+        company_id=company["id"],
+        database_id=company["database_id"],
+        period="2026-01",
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
     )
     status, _, _, inspected = resident[3].native("native_inspect", request_id=request["request_id"])
     assert status == 200, inspected
@@ -168,19 +180,26 @@ def test_real_close_password_cancel_expiry_and_failed_close_keep_atomic_approval
     service, engine, company, proof, _, execute, _, preview = prepared_company(resident)
     controller, http = service.security_controller, resident[3]
     context = {
-        "kind": "approve_period_close", "company_id": company["id"],
-        "database_id": company["database_id"], "period": "2026-01",
-        "preview_digest": preview["digest"], "epochs": preview["epochs"],
+        "kind": "approve_period_close",
+        "company_id": company["id"],
+        "database_id": company["database_id"],
+        "period": "2026-01",
+        "preview_digest": preview["digest"],
+        "epochs": preview["epochs"],
     }
     cancelled = controller.request(**context)["request_id"]
     assert controller.cancel(cancelled)["status"] == "cancelled"
-    assert http.native("native_execute", request_id=cancelled,
-                       password=PASSWORD.get_secret_value())[0] == 400
+    assert (
+        http.native("native_execute", request_id=cancelled, password=PASSWORD.get_secret_value())[0]
+        == 400
+    )
     expired = controller.request(**context)["request_id"]
     controller._records[expired].created_at -= 30 * 60 * SECOND
     assert controller.status(expired)["status"] == "expired"
-    assert http.native("native_execute", request_id=expired,
-                       password=PASSWORD.get_secret_value())[0] == 400
+    assert (
+        http.native("native_execute", request_id=expired, password=PASSWORD.get_secret_value())[0]
+        == 400
+    )
     active = controller.request(**context)["request_id"]
     with pytest.raises(IdentityError, match="PRIVATE_CHANNEL"):
         controller.dispatch("native_inspect", {"request_id": active})
@@ -197,34 +216,49 @@ def test_real_close_password_cancel_expiry_and_failed_close_keep_atomic_approval
         "native_execute", request_id=active, password=PASSWORD.get_secret_value()
     )
     assert status == 200, approved
-    assert http.native("native_execute", request_id=active,
-                       password=PASSWORD.get_secret_value())[0] == 400
+    assert (
+        http.native("native_execute", request_id=active, password=PASSWORD.get_secret_value())[0]
+        == 400
+    )
     original = close_storage.write_close
 
     def failed_write(connection, *_args, **_kwargs):
         # The service has consumed approval inside this same company transaction.
-        assert connection.execute(
-            "SELECT consumed_at FROM security_close_approval WHERE id=?",
-            (approved["approval_id"],),
-        ).fetchone()[0] is not None
+        assert (
+            connection.execute(
+                "SELECT consumed_at FROM security_close_approval WHERE id=?",
+                (approved["approval_id"],),
+            ).fetchone()[0]
+            is not None
+        )
         raise RuntimeError("synthetic failure after approval consumption")
 
     monkeypatch.setattr(close_storage, "write_close", failed_write)
     close_payload = {
-        "period": "2026-01", "owner_confirmation": proof, "preview_digest": preview["digest"],
-        "epochs": preview["epochs"], "approval_id": approved["approval_id"], "request_id": "close",
+        "period": "2026-01",
+        "owner_confirmation": proof,
+        "preview_digest": preview["digest"],
+        "epochs": preview["epochs"],
+        "approval_id": approved["approval_id"],
+        "request_id": "close",
     }
     with pytest.raises(RuntimeError, match="after approval consumption"):
         execute("close", **close_payload)
     with engine.store.connection(read_only=True) as connection:
-        assert connection.execute(
-            "SELECT consumed_at FROM security_close_approval WHERE id=?",
-            (approved["approval_id"],),
-        ).fetchone()[0] is None
+        assert (
+            connection.execute(
+                "SELECT consumed_at FROM security_close_approval WHERE id=?",
+                (approved["approval_id"],),
+            ).fetchone()[0]
+            is None
+        )
         assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 0
-    assert service.require_active_close_preview(
-        company["id"], company["database_id"], "2026-01", preview["digest"]
-    )[0].owner_confirmation == proof
+    assert (
+        service.require_active_close_preview(
+            company["id"], company["database_id"], "2026-01", preview["digest"]
+        )[0].owner_confirmation
+        == proof
+    )
     monkeypatch.setattr(close_storage, "write_close", original)
     assert execute("close", **close_payload)["status"] == "closed"
     assert service.close_previews == service.active_close_previews == {}
@@ -248,14 +282,18 @@ def test_close_model_failure_rolls_back_approval_and_all_committed_state_then_re
         epochs=preview["epochs"],
     )
     status, _, _, approved = resident[3].native(
-        "native_execute", request_id=request["request_id"],
+        "native_execute",
+        request_id=request["request_id"],
         password=PASSWORD.get_secret_value(),
     )
     assert status == 200, approved
     close_payload = {
-        "period": "2026-01", "owner_confirmation": proof,
-        "preview_digest": preview["digest"], "epochs": preview["epochs"],
-        "approval_id": approved["approval_id"], "request_id": "retry-model-close",
+        "period": "2026-01",
+        "owner_confirmation": proof,
+        "preview_digest": preview["digest"],
+        "epochs": preview["epochs"],
+        "approval_id": approved["approval_id"],
+        "request_id": "retry-model-close",
     }
     before = state(engine)
     with engine.store.connection(read_only=True) as connection:
@@ -271,25 +309,35 @@ def test_close_model_failure_rolls_back_approval_and_all_committed_state_then_re
         model_id = original(connection, prepared, **kwargs)
         # Observe the late write boundary: approval, close, business receipt,
         # epochs and the new model already exist in this uncommitted transaction.
-        assert connection.execute(
-            "SELECT consumed_at FROM security_close_approval WHERE id=?",
-            (approved["approval_id"],),
-        ).fetchone()[0] is not None
+        assert (
+            connection.execute(
+                "SELECT consumed_at FROM security_close_approval WHERE id=?",
+                (approved["approval_id"],),
+            ).fetchone()[0]
+            is not None
+        )
         assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM request WHERE id=?", (close_payload["request_id"],)
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM audit WHERE request_id=? AND action='close'",
-            (close_payload["request_id"],),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM request WHERE id=?", (close_payload["request_id"],)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM audit WHERE request_id=? AND action='close'",
+                (close_payload["request_id"],),
+            ).fetchone()[0]
+            == 1
+        )
         pending_epochs = engine.store.epochs(connection)
         for lane in ("accounting", "material"):
             assert pending_epochs[lane] == before_epochs[lane] + 1
         assert pending_epochs["management"] == before_epochs["management"]
-        assert connection.execute(
-            "SELECT count(*) FROM dashboard_read_model_commit"
-        ).fetchone()[0] > before_models
+        assert (
+            connection.execute("SELECT count(*) FROM dashboard_read_model_commit").fetchone()[0]
+            > before_models
+        )
         interrupted.append(model_id)
         raise RuntimeError("synthetic close model persistence interruption")
 
@@ -303,13 +351,19 @@ def test_close_model_failure_rolls_back_approval_and_all_committed_state_then_re
     assert state(engine) == before
     with engine.store.connection(read_only=True) as connection:
         assert engine.store.epochs(connection) == before_epochs
-        assert connection.execute(
-            "SELECT consumed_at FROM security_close_approval WHERE id=?",
-            (approved["approval_id"],),
-        ).fetchone()[0] is None
-    assert service.require_active_close_preview(
-        company["id"], company["database_id"], "2026-01", preview["digest"]
-    )[0].owner_confirmation == proof
+        assert (
+            connection.execute(
+                "SELECT consumed_at FROM security_close_approval WHERE id=?",
+                (approved["approval_id"],),
+            ).fetchone()[0]
+            is None
+        )
+    assert (
+        service.require_active_close_preview(
+            company["id"], company["database_id"], "2026-01", preview["digest"]
+        )[0].owner_confirmation
+        == proof
+    )
 
     closed = execute("close", **close_payload)
     assert closed["status"] == "closed"
@@ -318,12 +372,16 @@ def test_close_model_failure_rolls_back_approval_and_all_committed_state_then_re
     assert execute("close", **close_payload) == closed
     assert state(engine) == after
     with engine.store.connection(read_only=True) as connection:
-        assert connection.execute(
-            "SELECT consumed_at FROM security_close_approval WHERE id=?",
-            (approved["approval_id"],),
-        ).fetchone()[0] is not None
+        assert (
+            connection.execute(
+                "SELECT consumed_at FROM security_close_approval WHERE id=?",
+                (approved["approval_id"],),
+            ).fetchone()[0]
+            is not None
+        )
         assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM dashboard_read_model_commit"
-        ).fetchone()[0] > before_models
+        assert (
+            connection.execute("SELECT count(*) FROM dashboard_read_model_commit").fetchone()[0]
+            > before_models
+        )
     assert Maintenance(engine).verify_integrity()["status"] == "verified"

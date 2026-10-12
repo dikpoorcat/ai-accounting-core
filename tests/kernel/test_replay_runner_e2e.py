@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from test_payroll import contribution_policy, income_tax_policy
+from test_payroll import contribution_policy
 
 from ai_accounting.kernel.replay_runner import run_ready
 from ai_accounting.kernel.types import digest
@@ -52,9 +52,9 @@ def test_durable_selector_resolves_dependency_and_rolls_back_missing_output(repl
                         "expected_revision": 0,
                     },
                     {
-                        "kind": "payroll_income_tax_policy",
+                        "kind": "payroll_contribution_policy",
                         "subject_id": entity_ref,
-                        "data": income_tax_policy().model_dump(mode="json"),
+                        "data": contribution_policy().model_dump(mode="json"),
                         "evidence": [book.proof],
                         "expected_revision": 0,
                     },
@@ -121,7 +121,7 @@ def test_durable_selector_resolves_dependency_and_rolls_back_missing_output(repl
     with book.app.engine(book.company).store.connection(read_only=True) as connection:
         saved = connection.execute(
             "SELECT count(*) FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
-            "WHERE s.kind IN ('payroll_contribution_policy','payroll_income_tax_policy')"
+            "WHERE s.kind='payroll_contribution_policy'"
         ).fetchone()[0]
         step = connection.execute(
             "SELECT * FROM replay_step WHERE run_id=? AND step_id='policies'", (queued["run_id"],)

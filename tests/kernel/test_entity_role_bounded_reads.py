@@ -23,8 +23,11 @@ from ai_accounting.kernel.types import canonical
 def save_profile(company, employee, subject, revision=0):
     fact = profile(employee_id=employee, social_insurance_base_fen=100_000 + revision)
     return company.engine.save_fact(
-        fact.kind, subject, fact.model_dump(mode="json"),
-        evidence=(company.owner_confirmation,), expected_revision=revision,
+        fact.kind,
+        subject,
+        fact.model_dump(mode="json"),
+        evidence=(company.owner_confirmation,),
+        expected_revision=revision,
         request_id=company.request(),
     )["fact_id"]
 
@@ -34,8 +37,7 @@ def test_role_lookup_work_ignores_unrelated_objects_and_historical_revisions(tmp
     engine = company.engine
     seed_entities(engine, [(f"selected-{i}", "person", None) for i in range(24)])
     requested = {
-        save_profile(company, f"selected-{i}", f"selected-{i}"): f"selected-{i}"
-        for i in range(24)
+        save_profile(company, f"selected-{i}", f"selected-{i}"): f"selected-{i}" for i in range(24)
     }
 
     def read():
@@ -51,24 +53,38 @@ def test_role_lookup_work_ignores_unrelated_objects_and_historical_revisions(tmp
             save_profile(company, f"unrelated-{index}", f"unrelated-{index}", revision)
     after, later = measure_work(engine, read)
     assert first == later == requested
-    statement = next(row["statement"] for row in after["sql"]
-                     if row["statement"].startswith("SELECT * FROM entity_reference_current"))
+    statement = next(
+        row["statement"]
+        for row in after["sql"]
+        if row["statement"].startswith("SELECT * FROM entity_reference_current")
+    )
     with engine.store.connection(read_only=True) as connection:
-        plan = [row[3] for row in connection.execute(
-            "EXPLAIN QUERY PLAN " + statement, (canonical(sorted(requested)),)
-        )]
+        plan = [
+            row[3]
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN " + statement, (canonical(sorted(requested)),)
+            )
+        ]
     assert any("SEARCH entity_reference_current" in item and "fact_id=?" in item for item in plan)
     assert not any("entity_current_role" in item for item in plan)
-    for counter in ("returned_rows", "returned_value_bytes", "stdlib_json_loads",
-                    "typed_fact_json_decodes", "raw_fact_json_decodes"):
+    for counter in (
+        "returned_rows",
+        "returned_value_bytes",
+        "stdlib_json_loads",
+        "typed_fact_json_decodes",
+        "raw_fact_json_decodes",
+    ):
         assert after["counters"].get(counter, 0) == before["counters"].get(counter, 0)
     assert before["counters"].get("sqlite_vm_steps", 0) > 0
     assert (
-        after["counters"].get("sqlite_vm_steps", 0)
-        <= before["counters"]["sqlite_vm_steps"] + 100
+        after["counters"].get("sqlite_vm_steps", 0) <= before["counters"]["sqlite_vm_steps"] + 100
     )
-    print(json.dumps({"role_plan": plan, "before": before["counters"],
-                      "after": after["counters"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"role_plan": plan, "before": before["counters"], "after": after["counters"]},
+            ensure_ascii=False,
+        )
+    )
 
 
 @pytest.mark.parametrize("corruption", ["role", "source_digest", "source_body", "omitted"])
@@ -78,17 +94,28 @@ def test_role_lookup_still_proves_complete_source_and_all_roles(tmp_path, corrup
     seed_entities(engine, [("employee-a", "person", None)])
     fact_id = save_profile(company, "employee-a", "profile")
     if corruption == "source_body":
-        damage(engine, "fact_payroll_profile",
-               "UPDATE fact_payroll_profile SET social_insurance_base_fen=999 WHERE revision_id=?",
-               (fact_id,))
+        damage(
+            engine,
+            "fact_payroll_profile_confirmed",
+            "UPDATE fact_payroll_profile_confirmed SET social_insurance_base_fen=999 "
+            "WHERE revision_id=?",
+            (fact_id,),
+        )
     elif corruption == "omitted":
-        damage(engine, "entity_reference_current",
-               "DELETE FROM entity_reference_current WHERE fact_id=?", (fact_id,))
+        damage(
+            engine,
+            "entity_reference_current",
+            "DELETE FROM entity_reference_current WHERE fact_id=?",
+            (fact_id,),
+        )
     else:
         value = "supplier" if corruption == "role" else bytes(32)
-        damage(engine, "entity_reference_current",
-               f"UPDATE entity_reference_current SET {corruption}=? WHERE fact_id=?",
-               (value, fact_id))
+        damage(
+            engine,
+            "entity_reference_current",
+            f"UPDATE entity_reference_current SET {corruption}=? WHERE fact_id=?",
+            (value, fact_id),
+        )
     with engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError) as failure:
             current_role_matches(connection, [fact_id], "employee", registry=engine.store.registry)
@@ -99,38 +126,69 @@ def test_role_lookup_still_proves_complete_source_and_all_roles(tmp_path, corrup
 
 def test_role_lookup_preserves_recorded_and_current_exact_correction(identity_engine):
     engine, evidence, first, second = identity_engine
+    from test_identity_corrections import opening_package
+
+    opening_package(engine, evidence, [])
     data = expense(engine, evidence, first)
     with engine.store.connection(read_only=True) as connection:
         fact_id = engine.store.current_fact(connection, "expense").id
-        roles = [row[0] for row in connection.execute(
-            "SELECT role FROM entity_reference_recorded WHERE fact_id=?", (fact_id,)
-        )]
+        roles = [
+            row[0]
+            for row in connection.execute(
+                "SELECT role FROM entity_reference_recorded WHERE fact_id=?", (fact_id,)
+            )
+        ]
     assert roles
-    confirm(engine, dict(
-        changes=[dict(subject_id="expense", expected_revision=1, action="reassign",
-                      data={**data, "counterparty_id": second})],
-        evidence=[evidence], reason="explicit synthetic identity correction",
-    ))
+    confirm(
+        engine,
+        dict(
+            changes=[
+                dict(
+                    subject_id="expense",
+                    expected_revision=1,
+                    action="reassign",
+                    data={**data, "counterparty_id": second},
+                )
+            ],
+            evidence=[evidence],
+            reason="explicit synthetic identity correction",
+        ),
+    )
     with engine.store.connection(read_only=True) as connection:
-        verify_hits(connection, [{"fact_id": fact_id}], identity_match="recorded",
-                    registry=engine.store.registry)
+        verify_hits(
+            connection,
+            [{"fact_id": fact_id}],
+            identity_match="recorded",
+            registry=engine.store.registry,
+        )
         for role in roles:
-            assert current_role_matches(connection, [fact_id], role,
-                                        registry=engine.store.registry) == {fact_id: second}
-        assert {row[0] for row in connection.execute(
-            "SELECT entity_id FROM entity_reference_recorded WHERE fact_id=?", (fact_id,)
-        )} == {first}
-    damage(engine, "entity_reference_current",
-           "UPDATE entity_reference_current SET entity_id=? WHERE fact_id=?", (first, fact_id))
+            assert current_role_matches(
+                connection, [fact_id], role, registry=engine.store.registry
+            ) == {fact_id: second}
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT entity_id FROM entity_reference_recorded WHERE fact_id=?", (fact_id,)
+            )
+        } == {first}
+    damage(
+        engine,
+        "entity_reference_current",
+        "UPDATE entity_reference_current SET entity_id=? WHERE fact_id=?",
+        (first, fact_id),
+    )
     with engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError, match="对象引用目录"):
             current_role_matches(connection, [fact_id], roles[0], registry=engine.store.registry)
 
 
-@pytest.mark.parametrize("period,table", [
-    ("2026-01", "entity_reference_recorded"),
-    ("2026-02", "entity_reference_current"),
-])
+@pytest.mark.parametrize(
+    "period,table",
+    [
+        ("2026-01", "entity_reference_recorded"),
+        ("2026-02", "entity_reference_current"),
+    ],
+)
 def test_payroll_head_role_lookup_is_bounded_in_frozen_and_open_periods(tmp_path, period, table):
     company = prepared(tmp_path)
     engine = company.engine
@@ -148,20 +206,37 @@ def test_payroll_head_role_lookup_is_bounded_in_frozen_and_open_periods(tmp_path
             save_profile(company, f"other-{index}", f"other-{index}", revision)
     after, later = measure_work(engine, read)
     assert first == later
-    sql = next(row["statement"] for row in after["sql"]
-               if row["statement"].startswith(f"SELECT * FROM {table}"))
+    sql = next(
+        row["statement"]
+        for row in after["sql"]
+        if row["statement"].startswith(f"SELECT * FROM {table}")
+    )
     with engine.store.connection(read_only=True) as connection:
-        plan = [row[3] for row in connection.execute(
-            "EXPLAIN QUERY PLAN " + sql, (canonical(sorted(first)),)
-        )]
+        plan = [
+            row[3]
+            for row in connection.execute("EXPLAIN QUERY PLAN " + sql, (canonical(sorted(first)),))
+        ]
     assert any(f"sqlite_autoindex_{table}_1 (fact_id=?)" in row for row in plan)
-    for key in ("returned_rows", "returned_value_bytes", "stdlib_json_loads",
-                "typed_fact_json_decodes", "raw_fact_json_decodes"):
+    for key in (
+        "returned_rows",
+        "returned_value_bytes",
+        "stdlib_json_loads",
+        "typed_fact_json_decodes",
+        "raw_fact_json_decodes",
+    ):
         assert before["counters"].get(key, 0) == after["counters"].get(key, 0)
     assert (
         after["counters"].get("sqlite_vm_steps", 0)
         <= before["counters"].get("sqlite_vm_steps", 0) + 100
     )
-    print(json.dumps({"period": period, "role_plan": plan,
-                      "before": before["counters"], "after": after["counters"]},
-                     ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "period": period,
+                "role_plan": plan,
+                "before": before["counters"],
+                "after": after["counters"],
+            },
+            ensure_ascii=False,
+        )
+    )

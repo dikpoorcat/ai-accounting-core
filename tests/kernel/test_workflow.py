@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 
 import pytest
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 from workflow_test_helpers import expand_workflow
 
@@ -32,6 +32,34 @@ def setup_company(tmp_path):
         b"owner confirmation", "text/plain", "owner", request_id=company.request()
     )["digest"]
     return company
+
+
+def publish_zero_opening(company):
+    """Explicit synthetic zero opening for tests that publish ordinary accounting."""
+    from ai_accounting.kernel.domains.opening import CATEGORIES, OpeningPackage
+
+    proof = company.engine.register_evidence(
+        "合成测试公司2026年1月期初资产、负债及权益各项明确为零，资料完整。".encode(),
+        "text/plain",
+        "workflow synthetic opening",
+        request_id=company.request(),
+    )["digest"]
+    package = OpeningPackage(
+        period="2026-01",
+        package_id="workflow-opening",
+        counts=dict.fromkeys(CATEGORIES.values(), 0),
+        members=(),
+        completeness_confirmed=True,
+    )
+    company.engine.save_fact(
+        package.kind,
+        "workflow-opening",
+        package.model_dump(mode="json"),
+        evidence=(proof,),
+        expected_revision=0,
+        request_id=company.request(),
+    )
+    company.publish("workflow-opening")
 
 
 def obligation(kind="individual_income_tax"):
@@ -120,6 +148,119 @@ def review_from_completion(completion, completion_fact_id, reviewed, result):
         reviewed_calculations=tuple(workflow.AcceptedCalculation(**item) for item in reviewed),
         review_result=result,
     )
+
+
+@pytest.mark.parametrize("accepted_accounting", [False, True])
+def test_tax_period_selects_prior_accounting_wage_and_compares_actual_return(
+    tmp_path,
+    accepted_accounting,
+):
+    from test_tax_import import company as tax_company
+
+    from ai_accounting.kernel.payroll_tax_declarations import PayrollTaxDeclarationActual
+    from ai_accounting.kernel.types import YearMonth
+
+    company = tax_company(tmp_path, publish=False)
+    with company.engine.store.connection(read_only=True) as connection:
+        wage = company.engine.store.current_fact(connection, "january")
+    from ai_accounting.kernel.remuneration_tax_basis import RemunerationTaxBasis
+
+    company.save(
+        RemunerationTaxBasis(
+            period="2026-01",
+            source_kind="payroll",
+            source_id="january",
+            source_fact_id=wage.id,
+            tax_period="2026-02",
+            tax_amount_fen=12600,
+            basis_type="final_statement",
+            confirmed=True,
+        ),
+        "february-tax",
+    )
+    company.publish("january")
+    company.save(obligation(), "january-obligation")
+    service = workflow.Workflow(company.engine)
+    assert service.obligation_basis("january-obligation")["candidate_calculations"] == []
+    company.save(
+        obligation().model_copy(
+            update={
+                "period": YearMonth("2026-02"),
+                "start_period": YearMonth("2026-02"),
+                "end_period": YearMonth("2026-02"),
+                "due_date": None,
+            }
+        ),
+        "obligation",
+    )
+    basis = service.obligation_basis("obligation")
+    assert basis["fact_issues"] == []
+    assert [item["subject_id"] for item in basis["candidate_calculations"]] == ["january"]
+    from ai_accounting.kernel.business_queries import BusinessQueries
+
+    business = BusinessQueries(company.engine).business_status(
+        "january", "2026-01", as_of="2026-02-28"
+    )
+    assert [item["id"] for item in business["external"]["obligations"]] == ["obligation"]
+    declared = company.save(
+        PayrollTaxDeclarationActual(
+            period="2026-02",
+            employee_id="employee",
+            tax_period="2026-02",
+            income_category="wages",
+            declared_tax_fen=12600,
+            declaration_confirmed=True,
+        ),
+        "february-return",
+    )
+    completion = completion_from_basis(
+        basis,
+        accepted_calculations=basis["candidate_calculations"] if accepted_accounting else (),
+        source_facts=[
+            {
+                "subject_id": "february-return",
+                "fact_id": declared["fact_id"],
+                "kind": PayrollTaxDeclarationActual.kind,
+            }
+        ],
+    )
+    saved = save_completion(company, completion)
+    company.publish("completion")
+    company.save(
+        review_from_completion(
+            completion,
+            saved["fact_id"],
+            basis["candidate_calculations"],
+            "matched",
+        ),
+        "review",
+    )
+    company.publish("review")
+    item = external_item(company, period="2026-02")
+    assert item["actual_completion_status"] == "completed"
+    assert item["basis_review_status"] == "reviewed"
+
+
+def test_multiple_current_tax_bases_are_an_explicit_workflow_conflict(tmp_path):
+    from test_tax_import import company as tax_company
+
+    company = tax_company(tmp_path)
+    with company.engine.store.connection(read_only=True) as connection:
+        adopted = company.engine.store.current_fact(connection, "tax-basis")
+    company.save(adopted.fact.model_copy(update={"tax_amount_fen": 10000}), "a-duplicate-basis")
+    company.save(obligation(), "obligation")
+    state = workflow.Workflow(company.engine).obligation_basis("obligation")
+    conflicts = [item for item in state["fact_issues"] if item["field"] == "remuneration_tax_basis"]
+    assert len(conflicts) == 1 and conflicts[0]["subject_id"] == "january"
+    assert len(conflicts[0]["reusable_sources"]) == 2
+    from pydantic import TypeAdapter
+
+    from ai_accounting.kernel.response_contracts import ReadinessIssue
+
+    TypeAdapter(ReadinessIssue).validate_python(conflicts[0])
+    with pytest.raises(KernelError) as error:
+        company.engine.preview(["january"])
+    assert error.value.code == "ambiguous_remuneration_tax_basis"
 
 
 def test_actual_filing_before_payroll_remains_complete_and_review_is_separate(tmp_path):
@@ -261,13 +402,13 @@ def test_published_review_needs_exact_adopted_accounting_basis(tmp_path):
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
     assert len(basis["candidate_calculations"]) == 1
@@ -285,6 +426,7 @@ def test_published_review_needs_exact_adopted_accounting_basis(tmp_path):
     changed = payroll().model_copy(update={"accounting_gross_salary_fen": 1100000})
     company.save(changed, "january", revision=1)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600, revision=1)
     company.publish("january")
     item = external_item(company)
     assert item["actual_completion_status"] == "completed"
@@ -333,12 +475,14 @@ def test_financial_report_and_quarterly_tax_can_record_completion_before_close(t
         save_completion(company, fact, subject)
     company.publish("tax-completion")
     company.publish("report-completion")
-    assert company.current("report-completion", "external_completion").values[
-        "completion_status"
-    ] == "submitted"
-    assert workflow.Workflow(company.engine).obligation_basis("report-obligation")[
-        "obligation_kind"
-    ] == "quarterly_financial_report"
+    assert (
+        company.current("report-completion", "external_completion").values["completion_status"]
+        == "submitted"
+    )
+    assert (
+        workflow.Workflow(company.engine).obligation_basis("report-obligation")["obligation_kind"]
+        == "quarterly_financial_report"
+    )
 
 
 def test_quarterly_tax_includes_income_tax_and_keeps_october_filing_after_september_change(
@@ -347,15 +491,21 @@ def test_quarterly_tax_includes_income_tax_and_keeps_october_filing_after_septem
     from ai_accounting.kernel.domains.taxes import IncomeTaxAssessment
 
     company = setup_company(tmp_path)
+    publish_zero_opening(company)
     company.save(
         workflow.ExternalObligation(
-            period="2026-09", obligation_kind="quarterly_tax", start_period="2026-07",
-            end_period="2026-09", applicability_confirmed=True,
+            period="2026-09",
+            obligation_kind="quarterly_tax",
+            start_period="2026-07",
+            end_period="2026-09",
+            applicability_confirmed=True,
         ),
         "obligation",
     )
     assessment = IncomeTaxAssessment(
-        period="2026-09", year=2026, cumulative_assessed_fen=120000,
+        period="2026-09",
+        year=2026,
+        cumulative_assessed_fen=120000,
         assessment_basis="confirmed_provision",
     )
     company.save(assessment, "income-tax")
@@ -369,12 +519,17 @@ def test_quarterly_tax_includes_income_tax_and_keeps_october_filing_after_septem
     assert basis["fact_issues"] == []
     assert {item["subject_id"] for item in basis["candidate_calculations"]} == {"income-tax"}
     completion = completion_from_basis(
-        basis, period="2026-10", completion_date="2026-10-12",
+        basis,
+        period="2026-10",
+        completion_date="2026-10-12",
     )
     saved = save_completion(company, completion)
     company.publish("completion")
     review = review_from_completion(
-        completion, saved["fact_id"], basis["candidate_calculations"], "matched",
+        completion,
+        saved["fact_id"],
+        basis["candidate_calculations"],
+        "matched",
     ).model_copy(update={"period": completion.period})
     company.save(review, "review")
     company.publish("review")
@@ -654,13 +809,13 @@ def test_completion_rejects_foreign_or_unverifiable_exact_history(tmp_path, forg
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
     accepted = [dict(item) for item in basis["candidate_calculations"]]
@@ -715,12 +870,12 @@ def test_explicit_zero_payroll_and_effective_end_leave_no_inferred_next_month_sa
     for fact, subject in (
         (profile(effective_to="2026-01", social_insurance_participating=False), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
-        (payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0), "january"),
+        (payroll(accounting_gross_salary_fen=0), "january"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 0)
     company.publish("january")
     assert company.current("january").values["net_fen"] == 0
     company.close("2026-01")
@@ -732,13 +887,13 @@ def test_completion_preserves_exact_adopted_source_after_obligation_update(tmp_p
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     service = workflow.Workflow(company.engine)
     basis = service.obligation_basis("obligation")
@@ -760,13 +915,13 @@ def test_equivalent_new_calculation_keeps_real_submission_and_requires_new_revie
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
     completion = completion_from_basis(basis)
@@ -803,13 +958,13 @@ def test_review_must_cover_all_current_calculations_even_if_filing_adopted_subse
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (obligation(), "obligation"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
     completion = completion_from_basis(
@@ -893,14 +1048,14 @@ def test_social_actual_amounts_are_compared_with_current_payroll_and_changes_sho
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (contribution_actual(), "actual-contribution"),
         (payroll(), "january"),
         (obligation("contribution_declaration"), "obligation"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     values = company.current("january").values
     assert (values["employee_contributions_fen"], values["employer_contributions_fen"]) == (
@@ -977,12 +1132,12 @@ def test_explicit_no_activity_submission_reconciles_to_later_accounting_differen
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
     ):
         company.save(fact, subject)
+    publish_zero_opening(company)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january")
     current = workflow.Workflow(company.engine).obligation_basis("obligation")
     review = review_from_completion(

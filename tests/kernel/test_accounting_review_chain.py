@@ -1,10 +1,10 @@
 """Evidence reviews preserve a closed wage/payment chain and its accepted filing."""
 
 import pytest
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
-from test_payroll_corrections import payment
-from test_payroll_withholding_actual import actual
-from test_workflow import completion_from_basis, obligation, review_from_completion, setup_company
+from test_payroll import contribution_policy, payroll, profile
+from test_payroll_corrections import Company, payment
+from test_workflow import completion_from_basis, obligation, review_from_completion
+from workflow_test_helpers import expand_workflow
 
 from ai_accounting.kernel import workflow
 from ai_accounting.kernel.contracts import KernelError
@@ -28,18 +28,10 @@ KINDS = {
 
 @pytest.fixture
 def review_chain(tmp_path):
-    company = setup_company(tmp_path)
-    withholding = actual(
-        period="2026-01",
-        amount=20_000,
-        reported_cumulative_standard_deduction_fen=None,
-    )
+    company = Company(tmp_path / "company.sqlite")
     for fact, subject in (
         (profile(effective_to="2026-02"), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
-        (withholding, "actual-withholding"),
         (payroll(), "january"),
         (payroll(period="2026-02"), "february"),
         (obligation(), "obligation"),
@@ -91,6 +83,10 @@ def review_chain(tmp_path):
         ),
     ):
         company.save(fact, subject)
+    company.tax_basis("january", 20_000, basis_type="actual_withholding")
+    company.tax_basis("february", 5_200)
+    with company.engine.store.connection(read_only=True) as connection:
+        withholding = company.engine.store.current_fact(connection, "tax-basis-january").fact
     company.confirm_payroll("january", "february")
     initial, _ = company.publish(
         "january", "february", "bank-opening", "funding", "payment", "statement", "reconciliation"
@@ -125,7 +121,7 @@ def journal_snapshot(company):
 
 
 def external_item(service):
-    result = service.query("2026-01", as_of="2026-03-31")
+    result = expand_workflow(service.query("2026-01", as_of="2026-03-31"))
     return next(
         item for item in result["sections"]["external"]["obligations"] if item["id"] == "obligation"
     )
@@ -153,11 +149,11 @@ def test_withholding_evidence_review_then_real_closed_correction(review_chain):
     assert external_item(service)["basis_review_status"] == "reviewed"
 
     for revision in (1, 2):
-        company.save(withholding, "actual-withholding", revision=revision)
+        company.save(withholding, "tax-basis-january", revision=revision)
         assert "review" in company.pending()
-        preview, confirmed = company.publish("actual-withholding")
+        preview, confirmed = company.publish("tax-basis-january")
         results = {row["subject_id"]: row for row in preview["results"]}
-        for subject in ("january", "payment", "february"):
+        for subject in ("january", "payment"):
             assert results[subject]["impact"] == "review_no_impact"
             assert confirmed[subject]["accounting"] == initial[subject]["accounting"]
         assert (
@@ -170,6 +166,7 @@ def test_withholding_evidence_review_then_real_closed_correction(review_chain):
         assert external_item(service)["actual_completion_status"] == "completed"
         assert external_item(service)["basis_review_status"] == "outdated"
         assert journal_snapshot(company) == original_journal
+        assert company.current("february") == original["february"]
         assert company.engine.ledger("2026-01") == january_ledger
         if revision == 1:
             frozen = company.close("2026-01")
@@ -177,25 +174,25 @@ def test_withholding_evidence_review_then_real_closed_correction(review_chain):
             assert Periods(company.engine).closed_report("2026-01") == frozen
 
     company.save(
-        withholding.model_copy(update={"withheld_tax_fen": 21_000}),
-        "actual-withholding",
+        withholding.model_copy(update={"tax_amount_fen": 21_000}),
+        "tax-basis-january",
         revision=3,
     )
     before = current_chain(company)
     count = company.count("calculation")
     with pytest.raises(KernelError) as failure:
-        company.publish("actual-withholding")
+        company.publish("tax-basis-january")
     assert failure.value.code == "posting_period_required"
     assert current_chain(company) == before
     assert company.count("calculation") == count
 
-    preview, confirmed = company.publish("actual-withholding", posting_period="2026-03")
+    preview, confirmed = company.publish("tax-basis-january", posting_period="2026-03")
     results = {row["subject_id"]: row for row in preview["results"]}
     corrected = current_chain(company)
     assert corrected["january"].values["tax_fen"] == 21_000
-    assert corrected["february"].values["tax_fen"] == 4_200
+    assert corrected["february"] == original["february"]
     assert corrected["payment"].fact_id == original["payment"].fact_id
-    for subject in ("january", "payment", "february"):
+    for subject in ("january", "payment"):
         assert results[subject]["impact"] == confirmed[subject]["impact"] == "accounting_changed"
     assert corrected["completion"].fact_id == original["completion"].fact_id
     assert external_item(service)["actual_completion_status"] == "completed"

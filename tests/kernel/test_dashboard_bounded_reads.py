@@ -15,7 +15,7 @@ from entity_fixture import seed_registration_entities
 from payroll_plan_fixture import confirm_wage_inputs
 from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 
 import ai_accounting.kernel.dashboard as dashboard_module
 from ai_accounting.kernel.asset_batches import AssetBatches
@@ -29,6 +29,7 @@ from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.permissions import create_private_file
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.read_indexes import sync_close, sync_job
+from ai_accounting.kernel.remuneration_tax_basis import RemunerationTaxBasis
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical
@@ -179,16 +180,12 @@ def layered_book(tmp_path_factory):
         )
         funding_subjects.add(subject)
     publish(*sorted(funding_subjects))
-    for fact, subject in (
-        (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-    ):
+    for fact, subject in ((contribution_policy(), "contributions"),):
         save(fact.kind, subject, fact.model_dump(mode="json"))
     for index in range(4):
         employee = f"employee-{index}"
         for fact, subject in (
             (profile(employee_id=employee), f"profile-{index}"),
-            (opening(employee_id=employee), f"tax-opening-{index}"),
             (payroll(employee_id=employee, profile_id=f"profile-{index}"), f"wage-{index}"),
         ):
             save(fact.kind, subject, fact.model_dump(mode="json"))
@@ -209,6 +206,18 @@ def layered_book(tmp_path_factory):
         confirm_wage_inputs(
             engine, f"wage-{index}", evidence=(proof,), request_id=f"confirm-wage-{index}"
         )
+        source = f"wage-{index}"
+        basis = RemunerationTaxBasis(
+            period="2026-01",
+            source_kind="payroll",
+            source_id=source,
+            source_fact_id=facts[source],
+            tax_period="2026-01",
+            tax_amount_fen=12_600,
+            basis_type="final_statement",
+            confirmed=True,
+        )
+        save(basis.kind, "tax-basis-" + source, basis.model_dump(mode="json"))
     publish(*(f"wage-{index}" for index in range(4)), *(f"asset-{index}" for index in range(4)))
     for revision in range(1, 4):
         save(
@@ -526,11 +535,11 @@ def test_employee_list_rejects_damaged_wage_identity_source(layered_book, tmp_pa
     engine = _copy_book(layered_book, tmp_path)
     with engine.store.connection() as connection:
         trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='immutable_fact_payroll_UPDATE'"
+            "SELECT sql FROM sqlite_master WHERE name='immutable_fact_payroll_confirmed_UPDATE'"
         ).fetchone()[0]
-        connection.execute("DROP TRIGGER immutable_fact_payroll_UPDATE")
+        connection.execute("DROP TRIGGER immutable_fact_payroll_confirmed_UPDATE")
         connection.execute(
-            "UPDATE fact_payroll SET employee_id='phantom-employee' WHERE revision_id=?",
+            "UPDATE fact_payroll_confirmed SET employee_id='phantom-employee' WHERE revision_id=?",
             (layered_book["facts"]["wage-0"],),
         )
         connection.execute(trigger)

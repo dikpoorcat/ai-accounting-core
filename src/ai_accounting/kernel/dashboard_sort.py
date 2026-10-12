@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from .contracts import KernelError
 from .domains.money import SETTLEMENT_PAYMENT_KINDS
-from .schema import sequence_model, table_name
+from .schema import sequence_model
 from .text_sort import pinyin_key
 from .types import YearMonth, canonical
 
@@ -82,15 +82,21 @@ def fact_identity_scalars(snapshot, headers):
                 result[ident] = dict(value)
         if not missing:
             continue
-        columns = ",".join(["revision_id", *(f'"{name}"' for name in fields)])
-        for row in snapshot.connection.execute(
-            f"SELECT {columns} FROM {table_name(kind)} WHERE revision_id IN "
-            "(SELECT value FROM json_each(?))",
-            (canonical(sorted(missing)),),
-        ):
-            value = {name: row[name] for name in fields}
-            result[row["revision_id"]] = value
-            pending[kind, row["revision_id"]] = dict(value)
+        bodies = snapshot.store._fact_body_groups(
+            snapshot.connection, [{"id": ident, "kind": kind} for ident in missing]
+        )
+        for _, model, table, body_rows in bodies:
+            body_ids = [header["id"] for header in body_rows]
+            body_fields = [name for name in fields if name in model.model_fields]
+            columns = ",".join(["revision_id", *(f'"{name}"' for name in body_fields)])
+            for row in snapshot.connection.execute(
+                f"SELECT {columns} FROM {table} WHERE revision_id IN "
+                "(SELECT value FROM json_each(?))",
+                (canonical(sorted(body_ids)),),
+            ):
+                value = {name: row[name] for name in body_fields}
+                result[row["revision_id"]] = value
+                pending[kind, row["revision_id"]] = dict(value)
         if not missing <= result.keys():
             raise KernelError("content_integrity_failed", "清单排序的业务来源缺失")
     cache.update(pending)
@@ -132,38 +138,42 @@ def fact_sort_scalars(snapshot, headers):
         identifiers = identifiers - stored.keys()
         if not identifiers:
             continue
-        model = snapshot.store.registry.models[kind]
-        fields = [name for name in dict.fromkeys((*wanted, business_amount_field(kind)))
-                  if name in model.model_fields]
-        columns = ",".join(["revision_id", "period", *(f'"{name}"' for name in fields)])
-        for row in snapshot.connection.execute(
-            f"SELECT {columns} FROM {table_name(kind)} WHERE revision_id IN "
-            "(SELECT value FROM json_each(?))",
-            (canonical(sorted(identifiers)),),
-        ):
-            value = dict(row)
-            value["period"] = str(YearMonth.from_ordinal(value["period"]))
-            if type(value.get("payroll_period")) is int:
-                value["payroll_period"] = str(YearMonth.from_ordinal(value["payroll_period"]))
-            value["recipients"] = []
-            result[row["revision_id"]] = value
-        for field in ("allocations", "sources"):
-            info = model.model_fields.get(field)
-            child = sequence_model(info.annotation) if info is not None else None
-            if child is None or "recipient_id" not in child.model_fields:
-                continue
-            columns = [
-                name
-                for name in ("recipient_id", "source_id", "source_kind", "obligation")
-                if name in child.model_fields
-            ]
+        bodies = snapshot.store._fact_body_groups(
+            snapshot.connection, [{"id": ident, "kind": kind} for ident in identifiers]
+        )
+        for _, model, table, body_rows in bodies:
+            body_ids = [header["id"] for header in body_rows]
+            fields = [name for name in dict.fromkeys((*wanted, business_amount_field(kind)))
+                      if name in model.model_fields]
+            columns = ",".join(["revision_id", "period", *(f'"{name}"' for name in fields)])
             for row in snapshot.connection.execute(
-                "SELECT revision_id," + ",".join(columns) + f" FROM {table_name(kind)}_{field} "
-                "WHERE revision_id IN (SELECT value FROM json_each(?)) "
-                "ORDER BY revision_id,item_no",
-                (canonical(sorted(identifiers)),),
+                f"SELECT {columns} FROM {table} WHERE revision_id IN "
+                "(SELECT value FROM json_each(?))",
+                (canonical(sorted(body_ids)),),
             ):
-                result[row["revision_id"]]["recipients"].append(dict(row))
+                value = dict(row)
+                value["period"] = str(YearMonth.from_ordinal(value["period"]))
+                if type(value.get("payroll_period")) is int:
+                    value["payroll_period"] = str(YearMonth.from_ordinal(value["payroll_period"]))
+                value["recipients"] = []
+                result[row["revision_id"]] = value
+            for field in ("allocations", "sources"):
+                info = model.model_fields.get(field)
+                child = sequence_model(info.annotation) if info is not None else None
+                if child is None or "recipient_id" not in child.model_fields:
+                    continue
+                columns = [
+                    name
+                    for name in ("recipient_id", "source_id", "source_kind", "obligation")
+                    if name in child.model_fields
+                ]
+                for row in snapshot.connection.execute(
+                    "SELECT revision_id," + ",".join(columns) + f" FROM {table}_{field} "
+                    "WHERE revision_id IN (SELECT value FROM json_each(?)) "
+                    "ORDER BY revision_id,item_no",
+                    (canonical(sorted(body_ids)),),
+                ):
+                    result[row["revision_id"]]["recipients"].append(dict(row))
         if not identifiers <= result.keys():
             raise KernelError("content_integrity_failed", "清单排序的业务来源缺失")
         pending.update({

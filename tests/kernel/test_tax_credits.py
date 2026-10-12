@@ -6,6 +6,7 @@ from datetime import date
 import pytest
 from entity_fixture import seed_fact_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 from pydantic import ValidationError
 from test_business_domains import surtax_policy, vat_policy
 
@@ -18,8 +19,9 @@ from ai_accounting.kernel.storage import Store
 
 
 class Company:
-    def __init__(self, path):
+    def __init__(self, path, *, opening_period="2026-01"):
         self.engine = Engine(Store.create(path, production_bundle(), "tax-test", "taxpayer", "db"))
+        adopt_empty_opening(self.engine, period=opening_period)
         self.counter = 0
         self.revisions = {}
         self.filing = self.engine.register_evidence(

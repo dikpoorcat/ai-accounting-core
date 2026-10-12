@@ -19,7 +19,9 @@ def prepare_materials(book):
     engine = book[0]
     periods = Periods(engine)
     with engine.store.connection(read_only=True) as connection:
-        proof = connection.execute("SELECT digest FROM evidence LIMIT 1").fetchone()[0].hex()
+        proof = connection.execute(
+            "SELECT digest FROM evidence WHERE name='proof'"
+        ).fetchone()[0].hex()
         kinds = {
             ordinal: {row[0] for row in connection.execute(
                 "SELECT s.kind FROM fact_current a JOIN fact_revision f ON f.id=a.fact_id "
@@ -80,7 +82,7 @@ def test_missing_payroll_in_earlier_open_month_blocks_balanced_ready_report(book
     report = report_cases.scenario(book)
     book[1]("payroll_profile", "employee-profile", {
         "period": "2026-01", "employee_id": "owner", "effective_from": "2026-01",
-        "effective_to": "2026-01", "withholding_start_date": "2026-01",
+        "effective_to": "2026-01",
         "social_insurance_base_fen": None, "housing_fund_base_fen": None,
         "social_insurance_participating": False, "housing_fund_participating": False,
         "contribution_shortfall": "reject",

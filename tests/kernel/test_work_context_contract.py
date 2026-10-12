@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 from jsonschema import Draft202012Validator
+from opening_fixture import adopt_empty_opening
 from pydantic import ValidationError
 from test_work_context import company as company_fixture
 from test_work_context import expense, query, source
@@ -19,6 +20,7 @@ def company(tmp_path):
 
 @pytest.fixture
 def populated(company):
+    adopt_empty_opening(company, period="2026-02")
     Discovery(company).update_company_note(
         "confirmed company background",
         expected_revision=0,

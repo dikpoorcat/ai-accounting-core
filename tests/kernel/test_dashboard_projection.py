@@ -16,7 +16,7 @@ from test_payroll import bonus, bonus_sources, payroll
 from test_payroll_corrections import Company, payment
 from test_payroll_corrections import company as _payroll_company
 from test_payroll_tax_declarations import declare
-from test_payroll_withholding_actual import actual, august_case
+from test_payroll_withholding_actual import august_case
 from test_reimbursement_assets import accepted_batch, activation, batch_card
 from test_reports import book as _report_book
 from test_reports import cit
@@ -392,9 +392,9 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     wage, sources = august_case()
     for source in sources:
         company.save(source.fact, source.subject_id)
-    company.save(actual(), "observed-tax")
     company.save(wage.fact, wage.subject_id)
     company.confirm_payroll(wage.subject_id)
+    company.tax_basis(wage.subject_id, 90_000, basis_type="actual_withholding")
     company.publish(wage.subject_id)
     save_entity_display_profile(
         company.engine,
@@ -414,8 +414,8 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     assert employee["individual_income_tax_fen"] == 90000
     assert employee["net_salary_fen"] == 3910000
     values = company.current(wage.subject_id).values
-    assert values["tax_input"]["withholding_start_date"] == "2026-03"
-    assert values["calculated_tax_fen"] == 30000
+    assert values["tax_basis"]["basis_type"] == "actual_withholding"
+    assert "tax_input" not in values and "calculated_tax_fen" not in values
     assert values["tax_fen"] == 90000
     assert employee["recorded_net_payments_fen"] == 0
     with company.engine.store.connection(read_only=True) as connection:
@@ -490,12 +490,11 @@ def test_bonus_remains_separate_from_regular_wages(tmp_path):
     for source in bonus_sources():
         company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
+    company.tax_basis("bonus", 90_000)
     company.publish("bonus")
-    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")[
-        "data"
-    ]["collections"]["employees"][
-        "items"
-    ][0]
+    employee = Dashboard(company.engine).employees("2026-01", employee_filter="all")["data"][
+        "collections"
+    ]["employees"]["items"][0]
     assert employee["annual_bonus_fen"] == 3000000
     assert employee["gross_salary_fen"] == 0
     assert employee["individual_income_tax_fen"] == 90000
@@ -584,9 +583,9 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     assert original_net["current_outstanding_fen"] == original_net["outstanding_fen"]
     company.save(payment(), "salary-payment")
     company.publish("salary-payment")
-    february = dashboard.employees("2026-02", employee_filter="all")["data"][
-        "collections"
-    ]["employees"]["items"][0]
+    february = dashboard.employees("2026-02", employee_filter="all")["data"]["collections"][
+        "employees"
+    ]["items"][0]
     assert february["recorded_net_payments_fen"] == 907400
     assert dashboard.funds("2026-02")["data"]["outflow_fen"] == 907400
     january = dashboard.brief("2026-01")["data"]["open_items"]
@@ -650,11 +649,12 @@ def test_business_status_keeps_distinct_current_and_frozen_amounts(payroll_compa
         "open_items"
     ]["items"]
     company.save(
-        payroll(accounting_gross_salary_fen=1_500_000, tax_reported_salary_fen=1_500_000),
+        payroll(accounting_gross_salary_fen=1_500_000),
         "january",
         revision=1,
     )
     company.confirm_payroll("january")
+    company.tax_basis("january", 27_600, revision=1)
     company.publish("january", posting_period="2026-02")
 
     data = Dashboard(company.engine).business_status("2026-01", "january", as_of="2026-02-28")[
@@ -950,9 +950,9 @@ def test_opening_net_wage_payment_does_not_require_current_payroll(opening_book)
         },
     )
     commit("old-wage-payment")
-    data = Dashboard(book).employees("2026-01", employee_filter="all")["data"][
-        "collections"
-    ]["employees"]
+    data = Dashboard(book).employees("2026-01", employee_filter="all")["data"]["collections"][
+        "employees"
+    ]
     assert data["items"][0]["recorded_net_payments_fen"] == 50000
     assert not data["items"][0]["has_payroll_activity"]
     assert data["items"][0]["gross_salary_fen"] == 0

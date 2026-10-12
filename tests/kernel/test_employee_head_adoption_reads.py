@@ -36,11 +36,11 @@ def test_verified_wage_heads_match_full_selection_after_multiple_late_reviews(
         payroll(
             period="2026-02",
             accounting_gross_salary_fen=0 if zero else 1_000_000,
-            tax_reported_salary_fen=0 if zero else 1_000_000,
         ),
         "february",
     )
     company.confirm_payroll("february")
+    company.tax_basis("february", 0 if zero else 12_600)
     company.publish("february")
     company.close("2026-02")
     # The frozen month remains an original adoption despite newer current heads.
@@ -72,9 +72,12 @@ def test_frozen_wage_head_bytes_require_authenticated_adoption(tmp_path, change)
     company = prepared(tmp_path)
     company.save(payroll(period="2026-02"), "february")
     company.confirm_payroll("february")
+    company.tax_basis("february", 12_600)
     company.publish("february")
     baseline = Dashboard(company.engine).employees(
-        "2026-02", preparation="deferred", employee_filter="all",
+        "2026-02",
+        preparation="deferred",
+        employee_filter="all",
     )
     with company.engine.store.connection(read_only=True) as connection:
         saved = connection.execute(
@@ -124,9 +127,12 @@ def test_frozen_wage_head_bytes_require_authenticated_adoption(tmp_path, change)
         # A focused card has the same current amount scope as the default
         # list; neither turns into a full historical-content verifier.
         for kwargs in ({}, {"employee_id": "employee", "section": "employees"}):
-            assert Dashboard(company.engine).employees(
-                "2026-02", preparation="deferred", **kwargs
-            , employee_filter="all")["data"]["employees"] == baseline["data"]["employees"]
+            assert (
+                Dashboard(company.engine).employees(
+                    "2026-02", preparation="deferred", **kwargs, employee_filter="all"
+                )["data"]["employees"]
+                == baseline["data"]["employees"]
+            )
         with pytest.raises(KernelError):
             verify(company.engine)
         from ai_accounting.kernel.backup import BackupError, verify_file
@@ -164,6 +170,7 @@ def test_canonical_frozen_wage_identity_does_not_decode_historical_result(tmp_pa
     company = prepared(tmp_path)
     company.save(payroll(period="2026-02"), "february")
     company.confirm_payroll("february")
+    company.tax_basis("february", 12_600)
     company.publish("february")
     import ai_accounting.kernel.stored_json as stored_json
 
@@ -199,9 +206,13 @@ def test_wage_identity_transfers_no_unused_result_and_matches_full_heads(tmp_pat
     def selected(identity):
         with Dashboard(company.engine)._snapshot("2026-02") as snap:
             candidates = heads(snap)
-            result = verified_payroll_heads(snap, candidates) if identity else (
-                snap.calculations.selected(
-                    kinds=PAYROLL_KINDS, subjects={head["subject_id"] for head in candidates}
+            result = (
+                verified_payroll_heads(snap, candidates)
+                if identity
+                else (
+                    snap.calculations.selected(
+                        kinds=PAYROLL_KINDS, subjects={head["subject_id"] for head in candidates}
+                    )
                 )
             )
             return {subject: (calc["id"], calc["fact_id"]) for subject, calc in result.items()}
@@ -211,8 +222,12 @@ def test_wage_identity_transfers_no_unused_result_and_matches_full_heads(tmp_pat
     assert narrow == full
     assert narrow_work["counters"].get("calculation_result_rows_loaded", 0) == 0
     assert full_work["counters"]["calculation_result_rows_loaded"] > 0
-    print(json.dumps({"wage_identity": narrow_work["counters"],
-                      "wage_core": full_work["counters"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"wage_identity": narrow_work["counters"], "wage_core": full_work["counters"]},
+            ensure_ascii=False,
+        )
+    )
 
 
 @pytest.mark.parametrize("change", ["missing", "changed"])
@@ -221,8 +236,8 @@ def test_wage_identity_rejects_missing_or_bad_frozen_leaf(tmp_path, change):
     company.save(payroll(period="2026-02"), "february-unpublished")
     statement = (
         "DELETE FROM close_storage_block WHERE field='adopted_results'"
-        if change == "missing" else
-        "UPDATE close_storage_block SET content='[]' WHERE field='adopted_results'"
+        if change == "missing"
+        else "UPDATE close_storage_block SET content='[]' WHERE field='adopted_results'"
     )
     damage(company.engine, "close_storage_block", statement)
     with pytest.raises(KernelError) as failure:
@@ -241,37 +256,53 @@ def test_open_identity_authority_work_ignores_unrelated_publications(tmp_path):
     company = prepared(tmp_path)
     company.save(payroll(period="2026-02"), "february-unpublished")
     company.confirm_payroll("february-unpublished")
+    company.tax_basis("february-unpublished", 12_600)
     company.publish("february-unpublished")
 
     def selected():
         with Dashboard(company.engine)._snapshot("2026-02") as snap:
-            return {subject: calc["id"] for subject, calc in
-                    verified_payroll_heads(snap, heads(snap)).items()}
+            return {
+                subject: calc["id"]
+                for subject, calc in verified_payroll_heads(snap, heads(snap)).items()
+            }
 
     def authority(work):
-        return next(row for row in work["sql"]
-                    if row["statement"].startswith("SELECT p.*,c.id calculation_exists,"))
+        return next(
+            row
+            for row in work["sql"]
+            if row["statement"].startswith("SELECT p.*,c.id calculation_exists,")
+        )
 
     before, original = measure_work(company.engine, selected)
     with company.engine.store.connection(read_only=True) as connection:
-        plan = [row[3] for row in connection.execute(
-            "EXPLAIN QUERY PLAN " + authority(before)["statement"],
-            (canonical(sorted(PAYROLL_KINDS | {"opening_payroll_payable"})),
-             YearMonth("2026-02").ordinal),
-        )]
+        plan = [
+            row[3]
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN " + authority(before)["statement"],
+                (
+                    canonical(sorted(PAYROLL_KINDS | {"opening_payroll_payable"})),
+                    YearMonth("2026-02").ordinal,
+                ),
+            )
+        ]
     assert any("SEARCH s USING COVERING INDEX subject_kind" in row for row in plan)
     assert any("SEARCH p USING INDEX publication_subject" in row for row in plan)
     for index in range(24):
-        company.save(LaborProjectCost.model_validate_json(json.dumps(
-            cost(period="2026-02")
-        )), f"unrelated-{index}")
+        company.save(
+            LaborProjectCost.model_validate_json(json.dumps(cost(period="2026-02"))),
+            f"unrelated-{index}",
+        )
         company.publish(f"unrelated-{index}")
     after, later = measure_work(company.engine, selected)
     assert later == original
     assert authority(after)["returned_rows"] == authority(before)["returned_rows"]
     assert authority(after)["sqlite_vm_steps"] <= authority(before)["sqlite_vm_steps"] + 100
-    print(json.dumps({"authority_plan": plan,
-                      "before": authority(before), "after": authority(after)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"authority_plan": plan, "before": authority(before), "after": authority(after)},
+            ensure_ascii=False,
+        )
+    )
 
 
 @pytest.mark.parametrize("kind", ["payroll", "reimbursed_asset"])
@@ -293,17 +324,30 @@ def test_identity_authenticates_normal_and_damaged_terminal_withdrawals(
     engine = company.engine
     options = {"recording_error_evidence": company.owner_confirmation}
     preview = engine.preview_delete(subject, **options)
-    engine.delete(subject, **options, preview_digest=preview["digest"], epochs=preview["epochs"],
-                  request_id=company.request())
+    engine.delete(
+        subject,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
     if damage_record:
-        damage(engine, "calculation_publication",
-               "UPDATE calculation_publication SET id=id||'-damaged' "
-               "WHERE subject_id=? AND mode='withdrawn'", (subject,), foreign_keys=False)
+        damage(
+            engine,
+            "calculation_publication",
+            "UPDATE calculation_publication SET id=id||'-damaged' "
+            "WHERE subject_id=? AND mode='withdrawn'",
+            (subject,),
+            foreign_keys=False,
+        )
 
     def read_identity():
         with Dashboard(engine)._snapshot("2026-02") as snap:
-            return (verified_payroll_heads(snap, heads(snap)) if kind == "payroll"
-                    else _asset_card_sources(snap)["acquisitions"])
+            return (
+                verified_payroll_heads(snap, heads(snap))
+                if kind == "payroll"
+                else _asset_card_sources(snap)["acquisitions"]
+            )
 
     if damage_record:
         with pytest.raises(KernelError) as failure:
@@ -320,9 +364,17 @@ def test_identity_authenticates_normal_and_damaged_terminal_withdrawals(
             assert response["data"]["collections"]["assets"]["page"]["total_count"] == 0
 
 
-@pytest.mark.parametrize("change", [
-    "calculation_seal", "fact_seal", "other_fact", "kind", "current_head", "publication",
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "calculation_seal",
+        "fact_seal",
+        "other_fact",
+        "kind",
+        "current_head",
+        "publication",
+    ],
+)
 def test_public_employees_reject_damaged_open_historical_wage_identity(company, change):
     company.publish("january", "february")
     dashboard = Dashboard(company.engine)
@@ -372,12 +424,14 @@ def test_public_employees_reject_damaged_open_historical_wage_identity(company, 
         )
     elif change == "current_head":
         damage(
-            company.engine, "calculation_current",
+            company.engine,
+            "calculation_current",
             "DELETE FROM calculation_current WHERE subject_id='january'",
         )
     else:
         damage(
-            company.engine, "calculation_publication",
+            company.engine,
+            "calculation_publication",
             "UPDATE calculation_publication SET mode='review_no_impact' WHERE calculation_id=?",
             (january["id"],),
         )

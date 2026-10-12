@@ -27,10 +27,11 @@ def production_contract_file_names():
     """Use the factory's declarations; never import service or construct its registry.
 
     Released history is declared from its first version through the active version.
-    The current draft package contains only its active contracts.
+    The current draft also ships its explicitly declared source snapshot.
     """
     from types import SimpleNamespace
 
+    from .development_contracts import REMUNERATION_SOURCE_FINGERPRINT
     from .schema_bundle import STATUS, VERSION
 
     versions = (0,) if STATUS == "draft" else range(1, VERSION + 1)
@@ -42,7 +43,9 @@ def production_contract_file_names():
                 kind: {version: {"status": STATUS} for version in versions}
                 for kind in ("company", "catalog")
             },
-            development_contracts={},
+            development_contracts=(
+                {"company": {REMUNERATION_SOURCE_FINGERPRINT: {}}} if STATUS == "draft" else {}
+            ),
         )
     )
 

@@ -5,8 +5,9 @@ import itertools
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 from test_dashboard_provenance import profile
-from test_payroll import labor, labor_policy
+from test_payroll import labor, tax_basis
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.engine import Engine
@@ -26,6 +27,7 @@ def book(tmp_path):
             "database",
         )
     )
+    adopt_empty_opening(engine, period="2026-09")
     proof = engine.register_evidence(
         b"Synthetic actual cash evidence", "text/plain", "proof", request_id="evidence"
     )["digest"]
@@ -409,18 +411,18 @@ def test_bank_reconciliation_matches_only_bank_sides_of_cash_withdrawals_and_dep
 def test_historical_gross_labor_cash_payment_and_accrual_publish_together(book):
     engine, save, publish, _ = book
     fund(save, amount=1_000_000)
-    save("labor_income_tax_policy", "labor-policy", labor_policy().model_dump(mode="json"))
     save(
         "labor",
         "labor",
         labor(
             period="2026-09",
             income_date="2026-09-10",
-            withholding_method="gross_paid_without_withholding",
-            gross_payment_kind="cash_payment",
-            gross_payment_id="cash-payment",
         ).model_dump(mode="json"),
     )
+    with engine.store.connection(read_only=True) as connection:
+        source = engine.store.current_fact(connection, "labor")
+    confirmed = tax_basis(source, 0, basis_type="actual_withholding")
+    save(confirmed.fact.kind, confirmed.subject_id, confirmed.fact.model_dump(mode="json"))
     payment(
         save,
         amount=1_000_000,
@@ -447,10 +449,13 @@ def test_historical_gross_labor_cash_payment_and_accrual_publish_together(book):
 
 def test_owner_may_advance_existing_payroll_tax_without_becoming_an_employee(book):
     engine, save, publish, _ = book
-    save("labor_income_tax_policy", "labor-policy", labor_policy().model_dump(mode="json"))
     save(
         "labor", "labor", labor(period="2026-09", income_date="2026-09-10").model_dump(mode="json")
     )
+    with engine.store.connection(read_only=True) as connection:
+        source = engine.store.current_fact(connection, "labor")
+    confirmed = tax_basis(source, 160_000)
+    save(confirmed.fact.kind, confirmed.subject_id, confirmed.fact.model_dump(mode="json"))
     publish("labor")
     save(
         "employee_advance",

@@ -22,7 +22,7 @@ from ai_accounting.kernel.types import YearMonth
 
 
 def test_many_activation_owners_keep_full_cards_and_consumption_history(tmp_path):
-    company = Company(tmp_path / "many-owners.sqlite")
+    company = Company(tmp_path / "many-owners.sqlite", opening_period="2026-02")
     ids = [f"card-{i:02}" for i in range(24)]
     for i, ident in enumerate(ids):
         company.save(

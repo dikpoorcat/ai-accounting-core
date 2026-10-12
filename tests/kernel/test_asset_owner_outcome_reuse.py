@@ -21,7 +21,7 @@ from ai_accounting.kernel.types import YearMonth
 
 @pytest.fixture
 def open_owners(tmp_path):
-    company = Company(tmp_path / "open-owner-outcomes.sqlite")
+    company = Company(tmp_path / "open-owner-outcomes.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     engine = company.engine
     with engine.store.connection(read_only=True) as connection:
@@ -64,7 +64,7 @@ def test_complete_members_have_equal_value_with_two_fewer_actual_owner_bodies(op
 
 @pytest.mark.parametrize("closed_history", [False, True], ids=["all-open", "closed-open-tail"])
 def test_public_assets_equal_with_less_actual_owner_body_work(tmp_path, closed_history):
-    company = Company(tmp_path / "public-owner-outcomes.sqlite")
+    company = Company(tmp_path / "public-owner-outcomes.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     engine = company.engine
     with engine.store.connection(read_only=True) as connection:

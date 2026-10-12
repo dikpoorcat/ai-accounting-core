@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
 from ai_accounting.kernel.contracts import KernelError
@@ -33,6 +34,7 @@ def asset_engine(tmp_path):
     evidence = engine.register_evidence(
         b"asset acceptance", "text/plain", "acceptance", request_id="evidence"
     )["digest"]
+    adopt_empty_opening(engine)
     from entity_fixture import seed_entities
 
     seed_entities(

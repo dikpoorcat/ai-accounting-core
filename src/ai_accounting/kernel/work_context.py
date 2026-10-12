@@ -30,6 +30,7 @@ ContextIds = Annotated[list[SubjectId], Field(max_length=500)]
 # These are the existing payroll preparation and tax-client export inputs.
 # They remain management facts; discovery does not change their business lane.
 MANAGEMENT_SOURCE_AREAS = {
+    "remuneration_tax_basis": "payroll",
     "payroll_plan_v2": "payroll",
     "payroll_change_notice_v2": "payroll",
     "payroll_no_change_v2": "payroll",

@@ -24,8 +24,6 @@ sys.path.insert(0, str(ROOT / "tests" / "kernel"))
 
 from test_payroll import (  # noqa: E402
     contribution_policy,
-    income_tax_policy,
-    opening,
     payroll,
     profile,
 )
@@ -64,16 +62,15 @@ def arrange(directory: Path, size: int):
     directory.mkdir(parents=True, exist_ok=False)
     company = Company(directory / "company.sqlite")
     company.save(contribution_policy(), "contributions")
-    company.save(income_tax_policy(), "income-tax")
     subjects = []
     for index in range(size):
         employee = f"employee-{index:04}"
         profile_id = f"profile-{index:04}"
         wage_id = f"january-{index:04}"
         company.save(profile(employee_id=employee), profile_id)
-        company.save(opening(employee_id=employee), f"opening-{index:04}")
         company.save(payroll(employee_id=employee, profile_id=profile_id), wage_id)
         company.confirm_payroll(wage_id)
+        company.tax_basis(wage_id, 12_600)
         subjects.append(wage_id)
     company.publish(*subjects)
     return company
@@ -103,6 +100,8 @@ def run_size(workspace: Path, size: int, repeats: int):
         request_id=company.request(),
     )
     subjects = saved["publish_subjects"]
+    for subject in subjects:
+        company.tax_basis(subject, 12_600)
     preview_metrics, preview = measured(repeats, lambda: company.engine.preview(subjects))
     company.engine.confirm(
         subjects,

@@ -19,10 +19,30 @@ from ai_accounting.kernel.dependencies import (
     calculation_matches,
     checked_lanes,
     fact_matches,
+    select_fact_dependencies,
 )
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth
+
+
+def test_frozen_protocol_carrier_without_final_hook_keeps_original_selections():
+    from types import SimpleNamespace
+
+    read = Read("fact", "archived_source", "#immutable-source")
+    original = (SimpleNamespace(id="immutable-source"),)
+    carrier = SimpleNamespace(fact=object(), subject_id="archived-subject")
+    calls = []
+
+    def select_many(reads):
+        calls.append(tuple(reads))
+        return {read: original}
+
+    result = select_fact_dependencies(
+        (carrier,), select_many, lambda version, selections=None: (read,)
+    )
+    assert result == {read: original} and result[read] is original
+    assert calls == [(read,)]
 
 
 class ClaimSource(Fact):
@@ -240,7 +260,9 @@ def test_typed_scope_selection_does_not_scan_other_kinds_in_the_same_month(depen
     subjects = [f"unrelated-{index}" for index in range(500)]
     preview = engine.preview(subjects)
     engine.confirm(
-        subjects, preview_digest=preview["digest"], epochs=preview["epochs"],
+        subjects,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
         request_id="publish-unrelated-scope-sources",
     )
     after, actual = measured()

@@ -21,7 +21,16 @@ from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.types import YearMonth, canonical, digest
 
 bank_book = banking.book
-investment_book = investments.book
+
+
+@pytest.fixture
+def investment_book(tmp_path):
+    from opening_fixture import adopt_empty_opening
+
+    book = investments.book.__wrapped__(tmp_path)
+    # This scenario's first formally recorded subscriptions belong to December.
+    adopt_empty_opening(book[0], period="2025-12")
+    return book
 
 
 def prepared(book, *, closed=True):

@@ -195,6 +195,11 @@ def main():
     )
     material_fixture = importlib.util.module_from_spec(material_spec)
     material_spec.loader.exec_module(material_fixture)
+    opening_spec = importlib.util.spec_from_file_location(
+        "stage3_opening_fixture", source / "tests/kernel/opening_fixture.py"
+    )
+    opening_fixture = importlib.util.module_from_spec(opening_spec)
+    opening_spec.loader.exec_module(opening_fixture)
 
     class Movement(Fact):
         kind: ClassVar[str] = "stage3_benchmark_movement"
@@ -338,6 +343,7 @@ def main():
         )
         entities = Entities(engine)
         if not args.read_existing:
+            opening_fixture.adopt_empty_opening(engine, period="2010-01")
             material_fixture.supporting_text(engine, proof, period="2010-01")
             owner_id = entities.register_entity(
                 "person", {"display_name": "Synthetic benchmark owner"},

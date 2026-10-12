@@ -69,7 +69,7 @@ def test_unpaid_labor_month_needs_no_invented_payment_date_or_tax_residency(comp
     assert result.values["gross_fen"] == 208_330
     assert result.values["net_fen"] == 208_330
     assert result.values["tax_fen"] == 0  # Withholding recorded by this accrual only.
-    assert result.values["theoretical_tax_fen"] is None
+    assert "theoretical_tax_fen" not in result.values
     assert result.values["tax_assessed"] is False
     assert result.values["tax_review_required"] is True
     assert result.values["rule_versions"] == ()
@@ -210,7 +210,7 @@ def test_closed_accrual_correction_uses_open_compensation(company):
     assert payable(company) == 300_000
 
 
-def test_unpaid_labor_enters_export_and_filing_basis_without_claiming_completion(company):
+def test_unpaid_labor_enters_filing_basis_but_cannot_supply_unconfirmed_net_export(company):
     company.save(accrual(), "labor")
     company.publish("labor")
     company.save(
@@ -242,8 +242,8 @@ def test_unpaid_labor_enters_export_and_filing_basis_without_claiming_completion
     export = Exports(company.engine)
     with pytest.raises(NeedsInformation) as missing:
         export.preview("2026-01", template_evidence_digest=template)
-    assert missing.value.issues[0]["field"] == "payee"
-    assert payable(company) == 208_330  # Missing account details only block this file.
+    assert missing.value.issues[0]["field"] == "net_disbursement_tax"
+    assert payable(company) == 208_330  # The gross creditor claim remains valid.
     export.save_payee(
         "contractor",
         name="测试劳务人员",
@@ -252,10 +252,12 @@ def test_unpaid_labor_enters_export_and_filing_basis_without_claiming_completion
         expected_revision=0,
         request_id=company.request(),
     )
-    preview = export.preview("2026-01", template_evidence_digest=template)
-    assert preview["total_fen"] == 208_330
-    assert preview["rows"][0]["category"] == "劳务"
-    assert preview["rows"][0]["sources"][0]["kind"] == "labor_accrual"
+    with pytest.raises(NeedsInformation) as unconfirmed:
+        export.preview("2026-01", template_evidence_digest=template)
+    assert unconfirmed.value.issues[0]["field"] == "net_disbursement_tax"
     company.save(actual_payment(100_000), "actual")
     company.publish("actual")
-    assert export.preview("2026-01", template_evidence_digest=template)["total_fen"] == 108_330
+    assert payable(company) == 108_330
+    with pytest.raises(NeedsInformation) as unpaid:
+        export.preview("2026-01", template_evidence_digest=template)
+    assert unpaid.value.issues[0]["field"] == "net_disbursement_tax"

@@ -602,5 +602,8 @@ def calculate_detail(version: FactVersion, ctx: Context) -> Outcome:
 
 def register(registry):
     for model in MODELS:
-        registry.register(model, calculate_detail)
+        if model.kind == "opening_payroll_state":
+            registry.register_history(model)
+        else:
+            registry.register(model, calculate_detail)
     registry.register(OpeningPackage, calculate_package)

@@ -76,14 +76,12 @@ def test_current_payroll_summary_loads_only_current_adopted_content(company, mon
     company.publish("january", "february")
     with company.engine.store.connection(read_only=True) as connection:
         current = {
-            row[0] for row in connection.execute(
-                "SELECT id FROM calculation WHERE subject_id='february'"
-            )
+            row[0]
+            for row in connection.execute("SELECT id FROM calculation WHERE subject_id='february'")
         }
         historical = {
-            row[0] for row in connection.execute(
-                "SELECT id FROM calculation WHERE subject_id='january'"
-            )
+            row[0]
+            for row in connection.execute("SELECT id FROM calculation WHERE subject_id='january'")
         }
     loaded = set()
     original = integrity._object
@@ -106,14 +104,18 @@ def test_current_payroll_summary_loads_only_current_adopted_content(company, mon
 def test_zero_journal_payroll_still_has_activity(company):
     company.save(
         profile(social_insurance_participating=False, social_insurance_base_fen=None),
-        "profile", revision=1,
+        "profile",
+        revision=1,
     )
     company.save(
-        payroll(accounting_gross_salary_fen=0, tax_reported_salary_fen=0,
-                profile_revision={"subject_id": "profile", "revision": 2}),
-        "january", revision=1,
+        payroll(
+            accounting_gross_salary_fen=0, profile_revision={"subject_id": "profile", "revision": 2}
+        ),
+        "january",
+        revision=1,
     )
     company.confirm_payroll("january")
+    company.tax_basis("january", 0, revision=1)
     company.publish("january")
     data = Dashboard(company.engine).brief("2026-01")["data"]
     assert data["voucher_count"] == 0
@@ -135,9 +137,11 @@ def test_missing_party_quick_path_keeps_confirmable_business_amounts(
     # still consumes the real typed expense and its exact saved voucher.
     monkeypatch.setattr(settlement_projection, "settlement_position_rows", lambda *_a, **_k: [])
     monkeypatch.setattr(
-        party_projection, "_party_balance_position_lines",
-        lambda *_a, **_k: None if quick_path == "unavailable"
-        else party_projection._PARTY_POSITION_SUMMARY_UNSAFE,
+        party_projection,
+        "_party_balance_position_lines",
+        lambda *_a, **_k: (
+            None if quick_path == "unavailable" else party_projection._PARTY_POSITION_SUMMARY_UNSAFE
+        ),
     )
     with dashboard._snapshot("2026-02") as snap:
         actual = _position(snap)
@@ -154,11 +158,16 @@ def _explicit_position_classification(book):
             "JOIN calculation c ON c.id=v.calculation_id WHERE c.subject_id='cost'"
         ).fetchone()[0]
     save(
-        "report_classification", "party-classification",
-        {"period": "2026-02", "voucher_version_id": version,
-         "counterparties": [{"line_no": 2, "counterparty_id": "supplier"}],
-         "profit_details": [{"line_no": 1, "detail_code": "management_entertainment",
-                             "amount_fen": 10000}]},
+        "report_classification",
+        "party-classification",
+        {
+            "period": "2026-02",
+            "voucher_version_id": version,
+            "counterparties": [{"line_no": 2, "counterparty_id": "supplier"}],
+            "profit_details": [
+                {"line_no": 1, "detail_code": "management_entertainment", "amount_fen": 10000}
+            ],
+        },
     )
     return version
 
@@ -200,8 +209,10 @@ def test_position_fallback_rejects_damaged_historical_voucher_lines(report_book,
         assert dashboard.brief("2026-03")["data"]["financial_position"]["assets_fen"] == 40000
     # This history voucher is outside the complete current-month money proof.
     damage(
-        engine, "voucher_line",
-        "UPDATE voucher_line SET credit=credit+1 WHERE version_id=? AND line_no=2", (version,),
+        engine,
+        "voucher_line",
+        "UPDATE voucher_line SET credit=credit+1 WHERE version_id=? AND line_no=2",
+        (version,),
     )
     with raw_read(), pytest.raises(KernelError) as rejected:
         dashboard.brief("2026-03")

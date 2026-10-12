@@ -4,6 +4,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from scalar_store_fixture import scalar_store
 
 from ai_accounting.kernel.dashboard_sort import business_sort_metadata
 from ai_accounting.kernel.schema import table_name
@@ -13,7 +14,10 @@ from ai_accounting.kernel.types import YearMonth, canonical
 @pytest.mark.parametrize("scenario", ["individual_payment", "no_balances", "mixed"])
 @pytest.mark.parametrize("funds", [False, True])
 def test_irrelevant_sort_ancestry_does_not_increase_work(
-    scenario, funds, record_property, monkeypatch,
+    scenario,
+    funds,
+    record_property,
+    monkeypatch,
 ):
     from ai_accounting.kernel import report_open_contribution
 
@@ -47,48 +51,87 @@ def test_irrelevant_sort_ancestry_does_not_increase_work(
             )
 
         kind = "funding" if scenario == "no_balances" else "payment"
-        calculation("root", kind, {"balances": [] if scenario == "no_balances" else [
-            {"key": "old-obligation", "amount": -100}
-        ]})
+        calculation(
+            "root",
+            kind,
+            {
+                "balances": []
+                if scenario == "no_balances"
+                else [{"key": "old-obligation", "amount": -100}]
+            },
+        )
         connection.execute(
             f"INSERT INTO {table_name(kind)} VALUES(?,?,?,?,?)",
             ("fact-root", period, "2026-09-01", "actual-party", "individual"),
         )
         identifiers = ["root"]
-        expected = {"root": {"date": "2026-09-01", "party": "actual-party",
-                             "identities": ("actual-party",)}}
+        expected = {
+            "root": {"date": "2026-09-01", "party": "actual-party", "identities": ("actual-party",)}
+        }
         if scenario == "mixed":
             calculation("required", "payment", {"balances": [{"key": "required-obligation"}]})
-            calculation("required-source", "expense", {"values": {"obligations": [
-                {"key": "required-obligation", "name": "primary", "counterparty_id": "source-party"}
-            ]}})
-            connection.execute("INSERT INTO dependency_calculation VALUES(?,?)",
-                               ("required", "required-source"))
+            calculation(
+                "required-source",
+                "expense",
+                {
+                    "values": {
+                        "obligations": [
+                            {
+                                "key": "required-obligation",
+                                "name": "primary",
+                                "counterparty_id": "source-party",
+                            }
+                        ]
+                    }
+                },
+            )
+            connection.execute(
+                "INSERT INTO dependency_calculation VALUES(?,?)", ("required", "required-source")
+            )
             connection.execute(
                 f"INSERT INTO {table_name('payment')} VALUES(?,?,?,?,?)",
                 ("fact-required", period, "2026-09-02", None, "bank_batch"),
             )
             identifiers.append("required")
-            expected["required"] = {"date": "2026-09-02", "party": "source-party",
-                                    "identities": ("source-party",)}
+            expected["required"] = {
+                "date": "2026-09-02",
+                "party": "source-party",
+                "identities": ("source-party",),
+            }
         snapshot = SimpleNamespace(
-            connection=connection, store=SimpleNamespace(registry=SimpleNamespace(models=models)),
-            metadata=SimpleNamespace(prime_profiles=lambda *_: None), party=lambda ident: ident,
+            connection=connection,
+            store=scalar_store(models),
+            metadata=SimpleNamespace(prime_profiles=lambda *_: None),
+            party=lambda ident: ident,
             reads=SimpleNamespace(verify_sql_outcomes=lambda *_: None),
-            profiles={kind: {ident: {"display_name": ident}
-                             for ident in ("actual-party", "source-party")}
-                      for kind in ("employee", "counterparty")},
-            current_profiles={kind: {ident: {"display_name": ident}
-                                     for ident in ("actual-party", "source-party")}
-                              for kind in ("employee", "counterparty")},
+            profiles={
+                kind: {ident: {"display_name": ident} for ident in ("actual-party", "source-party")}
+                for kind in ("employee", "counterparty")
+            },
+            current_profiles={
+                kind: {ident: {"display_name": ident} for ident in ("actual-party", "source-party")}
+                for kind in ("employee", "counterparty")
+            },
         )
         previous, baseline = 0, None
         for depth in (10, 100, 400):
             for index in range(previous, depth):
                 ident = f"parent-{index}"
-                calculation(ident, "expense", {"values": {"obligations": [
-                    {"key": "old-obligation", "name": "primary", "counterparty_id": "old-party"}
-                ]}})
+                calculation(
+                    ident,
+                    "expense",
+                    {
+                        "values": {
+                            "obligations": [
+                                {
+                                    "key": "old-obligation",
+                                    "name": "primary",
+                                    "counterparty_id": "old-party",
+                                }
+                            ]
+                        }
+                    },
+                )
                 connection.execute(
                     "INSERT INTO dependency_calculation VALUES(?,?)",
                     ("root" if index == 0 else f"parent-{index - 1}", ident),

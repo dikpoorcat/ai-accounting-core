@@ -204,14 +204,36 @@ def production_bundle():
         else {1: verify_v1_company, **({VERSION: verify_current_company} if VERSION > 1 else {})}
     )
 
+    from .development_contracts import (
+        REMUNERATION_SOURCE_FINGERPRINT,
+        REMUNERATION_TARGET_FINGERPRINT,
+        load_development_contracts,
+    )
+
+    directory = Path(__file__).with_name("schema_contracts")
+    development = (
+        load_development_contracts(
+            directory / "development" / "company", (REMUNERATION_SOURCE_FINGERPRINT,),
+            family=FAMILY, application_id=APPLICATION_ID,
+        ) if STATUS == "draft" else {}
+    )
+    # Bind both endpoints to shipped exact SQL contracts, never a database's
+    # own fingerprint declaration.
+    transitions = (
+        {"company": ((REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT),)}
+        if STATUS == "draft" else {}
+    )
+
     return _require_released_company_verifiers(
         load_bundle(
             default_registry(),
-            Path(__file__).with_name("schema_contracts"),
+            directory,
             family=FAMILY,
             application_id=APPLICATION_ID,
             status=STATUS,
             current_versions={"company": VERSION, "catalog": VERSION},
             company_verifiers=verifiers,
+            development_contracts=development,
+            draft_transitions=transitions,
         )
     )

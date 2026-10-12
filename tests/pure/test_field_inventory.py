@@ -136,6 +136,46 @@ def test_real_inventory_only_connects_to_memory_and_never_opens_store(monkeypatc
     assert sentinel.read_bytes() == before
 
 
+def test_remuneration_inventory_declares_each_current_and_archived_body_exactly():
+    from ai_accounting.kernel.service import default_registry
+
+    registry = default_registry()
+    result = inventory.build_inventory(registry=registry)
+    changed = {
+        "payroll",
+        "payroll_bounded",
+        "payroll_profile",
+        "annual_bonus",
+        "labor",
+        "tax_import_details_v2",
+        "remuneration_tax_basis",
+    }
+    storage = {row["key"]: row for row in result["storage"]}
+    for kind in changed:
+        for model, table in registry.fact_bodies(kind):
+            row = storage["company." + table + ".revision_id"]
+            expected = inventory.fact_source(kind, model, registry)
+            assert row["source"] == expected
+            assert inventory.model_key(model) in {
+                field["key"].rsplit(".", 1)[0] for field in result["fields"]
+            }
+            if model is not registry.models[kind]:
+                assert expected.basis.startswith("不可变历史正文")
+                assert "退出新登记" in expected.writer
+            else:
+                assert expected.basis.startswith("精确事实版本")
+    related_modules = (
+        "ai_accounting.kernel.domains.payroll.",
+        "ai_accounting.kernel.payroll_history.",
+        "ai_accounting.kernel.remuneration_tax_basis.",
+        "ai_accounting.kernel.tax_import.",
+    )
+    assert not [key for key in result["missing_semantics"] if key.startswith(related_modules)]
+    assert not [
+        error for error in result["errors"] if any(module in error for module in related_modules)
+    ]
+
+
 @pytest.mark.parametrize("argv", [[], ["--check"]])
 def test_default_and_check_never_write(monkeypatch, capsys, argv):
     result = small_inventory()

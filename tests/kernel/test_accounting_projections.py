@@ -15,10 +15,16 @@ from ai_accounting.kernel.domains.accounting import (
 )
 from ai_accounting.kernel.domains.assets import AssetActivation
 from ai_accounting.kernel.domains.cash import CashPayment
-from ai_accounting.kernel.domains.payroll import Payroll, PayrollBounded, PayrollWithholdingActual
+from ai_accounting.kernel.domains.payroll import Payroll
 from ai_accounting.kernel.domains.payroll_reserve_payment import PayrollReservePayment
 from ai_accounting.kernel.domains.platforms import PlatformPayment
 from ai_accounting.kernel.domains.transactions import Allocation, Payment
+from ai_accounting.kernel.payroll_history import (
+    HistoricalPayroll,
+    HistoricalPayrollBounded,
+    PayrollWithholdingActual,
+)
+from ai_accounting.kernel.remuneration_tax_basis import RemunerationTaxBasis, tax_basis_values
 from ai_accounting.kernel.types import YearMonth, digest
 
 
@@ -47,7 +53,7 @@ def wage():
         "wage-fact",
         "wage",
         1,
-        Payroll(
+        HistoricalPayroll(
             period="2026-08",
             employee_id="employee",
             profile_revision={"subject_id": "profile", "revision": 1},
@@ -202,6 +208,108 @@ def test_frozen_withholding_must_match_wage_identity(changes):
     with pytest.raises(KernelError) as error:
         project_payroll(wage(), wage_outcome(source), References(facts=(source,)))
     assert error.value.details["reason"] == "actual_withholding_identity_mismatch"
+
+
+def current_wage():
+    return FactVersion(
+        "current-wage-fact", "wage", 2,
+        Payroll(
+            period="2026-08", employee_id="employee", accounting_gross_salary_fen=1000,
+            profile_revision={"subject_id": "profile", "revision": 1},
+            contribution_policy_revision={"subject_id": "contribution", "revision": 1},
+            expense_class="management", contribution_basis="policy_until_actual",
+        ),
+    )
+
+
+def confirmed_tax(pointer, evidence, **changes):
+    payload = {
+        "period": "2026-08", "source_kind": "payroll", "source_id": "wage",
+        "source_fact_id": "current-wage-fact",
+        "tax_period": "2026-08", "tax_amount_fen": 100,
+        "basis_type": "final_statement", "confirmed": True,
+    } | changes
+    return FactVersion(pointer, "tax-basis-wage", 1, RemunerationTaxBasis(**payload), evidence)
+
+
+def confirmed_wage_outcome(source):
+    basis = tax_basis_values(source)
+    return {
+        "lines": [], "balances": [], "opening": False, "opening_lines": [],
+        "values": {
+            "employee_id": "employee", "tax_fen": source.fact.tax_amount_fen,
+            "source_versions": ["profile-v1", source.id], "rule_versions": ["rule-v1"],
+            "tax_basis": basis,
+            "payroll_confirmation": {
+                "mode": "monthly_plan", "confirmation_fact_id": "plan-fact-v2",
+                "confirmation_subject_id": "plan", "confirmation_revision": 2,
+                "notice_fact_ids": [], "profile_fact_id": "profile-v1",
+                "contribution_policy_fact_id": "rule-v1", "income_tax_policy_fact_id": None,
+            },
+        },
+        "explanation": [
+            {"step": "contribution_burden_allocation", "values": {"code": "pension"}},
+            {"step": "confirmed_remuneration_tax", "values": {"tax_basis": deepcopy(basis)}},
+        ],
+    }
+
+
+def test_confirmed_tax_evidence_and_observation_change_preserve_accounting_projection():
+    sources = (
+        confirmed_tax("basis-v1", ("a" * 64,)),
+        confirmed_tax(
+            "basis-v2", ("a" * 64, "b" * 64), basis_type="actual_withholding",
+            withholding_date="2026-08-31",
+        ),
+    )
+    projections = []
+    for source in sources:
+        outcome = confirmed_wage_outcome(source)
+        assert payroll_references(current_wage(), outcome) == (
+            Read("fact", "remuneration_tax_basis", "#" + source.id),
+        )
+        projections.append(project_payroll(current_wage(), outcome, References(facts=(source,))))
+    assert projections[0] == projections[1]
+    assert "tax_state" not in projections[0]["values"]
+
+
+@pytest.mark.parametrize("field", ["tax_amount_fen", "tax_period"])
+def test_confirmed_monetary_basis_remains_significant(field):
+    old = confirmed_tax("basis-v1", ("a" * 64,))
+    new = confirmed_tax(
+        "basis-v2", ("a" * 64,), **{field: 101 if field == "tax_amount_fen" else "2026-09"},
+    )
+    projections = [
+        project_payroll(current_wage(), confirmed_wage_outcome(source), References(facts=(source,)))
+        for source in (old, new)
+    ]
+    assert projections[0] != projections[1]
+
+
+@pytest.mark.parametrize("change", [
+    lambda outcome: outcome["values"]["tax_basis"].update(tax_amount_fen=999),
+    lambda outcome: outcome["values"]["tax_basis"].update(evidence=["b" * 64]),
+    lambda outcome: outcome["values"]["source_versions"].append("basis-v1"),
+    lambda outcome: outcome["explanation"][1]["values"]["tax_basis"].update(fact_id="wrong"),
+])
+def test_confirmed_frozen_basis_corruption_is_rejected(change):
+    source = confirmed_tax("basis-v1", ("a" * 64,))
+    outcome = confirmed_wage_outcome(source)
+    change(outcome)
+    with pytest.raises(KernelError) as failure:
+        project_payroll(current_wage(), outcome, References(facts=(source,)))
+    assert failure.value.code == "accounting_compatibility_required"
+
+
+def test_unknown_confirmed_basis_fields_are_not_silently_normalized():
+    source = confirmed_tax("basis-v1", ("a" * 64,))
+    original = confirmed_wage_outcome(source)
+    changed = deepcopy(original)
+    changed["values"]["tax_basis"]["future_accounting_meaning"] = "significant"
+    refs = References(facts=(source,))
+    assert project_payroll(current_wage(), original, refs) != project_payroll(
+        current_wage(), changed, refs,
+    )
 
 
 def payment(kind="payment"):
@@ -372,7 +480,7 @@ def add_wage(book, pointer, source, *, kind="payroll", record_dependency=True):
             version.id,
             version.subject_id,
             version.revision,
-            PayrollBounded(**version.fact.model_dump()),
+            HistoricalPayrollBounded(**version.fact.model_dump()),
         )
     outcome = wage_outcome(source)
     calculation = Calculation(
@@ -412,6 +520,29 @@ def test_book_requires_actual_source_to_be_a_recorded_dependency():
     with pytest.raises(KernelError) as error:
         book.signature("result")
     assert error.value.details["reason"] == "unrecorded_fact_dependency"
+
+
+@pytest.mark.parametrize("record_dependency", [True, False])
+def test_book_requires_current_confirmed_frozen_dependency(record_dependency):
+    book = accounting_book()
+    source = confirmed_tax("basis-v1", ("a" * 64,))
+    owner = current_wage()
+    outcome = confirmed_wage_outcome(source)
+    checksum = digest(outcome).hex()
+    calculation = Calculation(
+        "current-result", "wage", "payroll", owner.fact.period,
+        outcome["values"], owner.id, checksum,
+    )
+    book.facts[source.id] = source
+    book.add(calculation, owner, outcome, fact_ids=(source.id,) if record_dependency else ())
+    if record_dependency:
+        assert book.signature("current-result")["digest"]
+        assert digest(book.records["current-result"].outcome).hex() == checksum
+        assert book.records["current-result"].version.fact is owner.fact
+    else:
+        with pytest.raises(KernelError) as failure:
+            book.signature("current-result")
+        assert failure.value.details["reason"] == "unrecorded_fact_dependency"
 
 
 def test_book_rejects_unsupported_comparison_contract():

@@ -2,8 +2,8 @@
 
 import json
 
-from test_banking import book as book  # noqa: F401
 from test_banking import reconciliation, statement
+from test_banking import unopened_book as book  # noqa: F401
 from test_identity_corrections import confirm, opening_package
 from test_opening_continuation import _close_without_current_business
 
@@ -11,7 +11,9 @@ from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.periods import Periods
 
 
-def test_frozen_bank_opening_correction_connects_reconciliation_and_next_month(book):
+def test_frozen_bank_opening_correction_connects_reconciliation_and_next_month(
+    book,  # noqa: F811
+):
     engine, save, publish, proof = book
     accounts = [
         Entities(engine).register_entity(

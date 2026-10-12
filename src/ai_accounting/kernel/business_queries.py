@@ -23,7 +23,13 @@ from .query_semantics import (
 )
 from .stored_json import verify_outcome_bytes
 from .types import ActualDate, YearMonth, digest, is_sha256_hex
-from .workflow import NON_ACCOUNTING_CALCULATIONS, Workflow, _basis_state
+from .workflow import (
+    NON_ACCOUNTING_CALCULATIONS,
+    Workflow,
+    _basis_period,
+    _basis_reads_after,
+    _basis_state,
+)
 
 _CHINA = timezone(timedelta(hours=8))
 _PROFILE_FIELDS = (
@@ -2300,6 +2306,13 @@ class BusinessQueries:
                 (subject_id,),
             ).fetchone()
             if current:
+                source_read = Read("calculation", current["kind"], "@" + subject_id)
+                reads.prime_select((source_read,))
+                adopted = reads.select(source_read)
+                tax_period = (
+                    YearMonth(_basis_period("individual_income_tax", adopted[0])).ordinal
+                    if len(adopted) == 1 else current["period"]
+                )
                 kinds = [
                     key
                     for key, definition in OBLIGATION_DEFINITIONS.items()
@@ -2310,15 +2323,28 @@ class BusinessQueries:
                     for row in connection.execute(
                         "SELECT a.subject_id FROM fact_external_obligation f "
                         "JOIN fact_current a ON a.fact_id=f.revision_id "
-                        "WHERE f.start_period<=? AND f.end_period>=? "
+                        "WHERE ((f.obligation_kind='individual_income_tax' "
+                        "AND f.start_period<=? AND f.end_period>=?) "
+                        "OR (f.obligation_kind!='individual_income_tax' "
+                        "AND f.start_period<=? AND f.end_period>=?)) "
                         "AND f.obligation_kind IN (SELECT value FROM json_each(?))",
-                        (current["period"], current["period"], json.dumps(kinds)),
+                        (
+                            tax_period, tax_period, current["period"], current["period"],
+                            json.dumps(kinds),
+                        ),
                     )
                 )
             requested = [Read("fact", "external_obligation", "@" + ident) for ident in candidates]
             reads.prime_select(requested)
             versions = [version for read in requested for version in reads.select(read)]
             reads.prime_select(read for version in versions for read in version.fact.basis_reads())
+            reads.prime_select(
+                read for version in versions
+                for read in _basis_reads_after(
+                    version.fact.obligation_kind, version.fact.start_period,
+                    version.fact.end_period, reads.select,
+                )
+            )
             for version in versions:
                 basis, _ = _basis_state(version.fact, reads.select)
                 if any(item.subject_id == subject_id for item in basis):

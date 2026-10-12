@@ -2,7 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 
 from ai_accounting.kernel.command_schema import command_models, validate_command
@@ -25,11 +25,10 @@ from ai_accounting.kernel.domains.transactions import Allocation, Payment
 def company(tmp_path):
     company = Company(tmp_path / "whole-wage-batch.sqlite")
     company.save(contribution_policy(), "contributions")
-    company.save(income_tax_policy(), "income-tax")
     for person in ("one", "two"):
         company.save(profile(employee_id=person, effective_to="2026-01"), "profile-" + person)
-        company.save(opening(employee_id=person), "opening-" + person)
         company.save(payroll(employee_id=person, profile_id="profile-" + person), "wage-" + person)
+        company.tax_basis("wage-" + person, 12_600)
     company.confirm_payroll("wage-one", "wage-two")
     company.publish("wage-one", "wage-two")
     return company
@@ -191,6 +190,7 @@ def test_wage_amendment_expiry_and_current_net_must_still_match(company):
         revision=1,
     )
     company.confirm_payroll("wage-one")
+    company.tax_basis("wage-one", 12_600, revision=1)
     with pytest.raises(KernelError):
         company.engine.confirm(
             ["gross-batch"],

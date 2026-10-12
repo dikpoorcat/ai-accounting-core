@@ -123,7 +123,7 @@ export namespace WorkflowContract {
   export type ResultIssueRef = number | null;
   export type ContractIssueRefs = number[];
   export type Jobs = WorkFileJob[];
-  export type Status6 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type Status6 = "ready" | "needs_information" | "unsupported" | "pending_confirmation" | "not_applicable";
   export type BlockingScope = "tax_import_file";
   export type MappingFactIds = string[];
   export type CalculationIds = string[];

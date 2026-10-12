@@ -159,7 +159,7 @@ def test_business_date_object_order_crosses_pages_and_vouchers_have_separate_str
 def test_open_obligations_order_by_complete_object_before_page_in_open_and_frozen(
     tmp_path, closed, monkeypatch
 ):
-    company = Company(tmp_path / "ordered.sqlite")
+    company = Company(tmp_path / "ordered.sqlite", opening_period="2026-09")
     expected_names = [
         f"{name}{index:02}" for name in ("李四", "王五", "张三") for index in range(8)
     ][:23]

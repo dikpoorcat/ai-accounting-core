@@ -175,7 +175,7 @@ def test_asset_member_hit_proves_its_exact_current_owner(asset_engine, target):
 
 
 def test_closed_asset_member_keeps_its_frozen_basis_after_a_new_owner_review(tmp_path):
-    company = Company(tmp_path / "frozen-member.sqlite")
+    company = Company(tmp_path / "frozen-member.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     engine = company.engine
     old = _source(engine, "activate-computer")

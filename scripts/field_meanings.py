@@ -411,26 +411,33 @@ _add(
 _add(
     "ai_accounting.kernel.domains.payroll.AnnualBonus",
     bonus_fen="本次一次性奖金的明确税前金额，整数分",
-    bonus_policy_id="明确引用一次性奖金政策主题，按收入日校验生效及税率分档",
     employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
     expense_class="明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
-    income_tax_policy_id="一次性奖金并入工资比较所引用的累计工资所得税政策主题",
-    regular_payroll_id="奖金并入或比较计税所依据的同月正式工资业务主题引用",
-    tax_method="一次性奖金明确选择的单独计税或并入工资方法；内核只按该选择核算",
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.AnnualBonusOpeningUsage",
-    employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
-    separate_method_already_used="明确本年度一次性奖金是否已使用单独计税机会，后续选择须遵守次数限制",
+    "ai_accounting.kernel.payroll_history.AnnualBonus",
+    bonus_fen="仅历史正文：本次一次性奖金的明确税前金额，整数分",
+    bonus_policy_id="仅历史正文：明确引用一次性奖金政策主题，按收入日校验生效及税率分档",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    expense_class="仅历史正文：明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
+    income_tax_policy_id="仅历史正文：一次性奖金并入工资比较所引用的累计工资所得税政策主题",
+    regular_payroll_id="仅历史正文：奖金并入或比较计税所依据的同月正式工资业务主题引用",
+    tax_method="仅历史正文：一次性奖金明确选择的单独计税或并入工资方法；内核只按该选择核算",
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.AnnualBonusPolicy",
-    brackets="一次性奖金单独计税的有序税率档，按奖金除以12后的金额选择档位",
-    effective_to="明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
-    primary_source_url="本政策的首要官方来源网址，用于版本来源核验",
-    version="明确采用的政策版本标识，与内核事实修订序号相互独立",
+    "ai_accounting.kernel.payroll_history.AnnualBonusOpeningUsage",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    separate_method_already_used="仅历史正文：明确本年度一次性奖金是否已使用单独计税机会，后续选择须遵守次数限制",
+)
+
+_add(
+    "ai_accounting.kernel.payroll_history.AnnualBonusPolicy",
+    brackets="仅历史正文：一次性奖金单独计税的有序税率档，按奖金除以12后的金额选择档位",
+    effective_to="仅历史正文：明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
+    primary_source_url="仅历史正文：本政策的首要官方来源网址，用于版本来源核验",
+    version="仅历史正文：明确采用的政策版本标识，与内核事实修订序号相互独立",
 )
 
 _add(
@@ -461,14 +468,14 @@ _add(
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.LaborIncomeTaxPolicy",
-    brackets="政策明确的有序税率分档及速算扣除数；各档边界须满足政策模型约束",
-    effective_to="明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
-    fixed_expense_deduction_fen="较小劳务收入按政策允许扣除的定额费用，整数分",
-    large_payment_expense_rate="较大劳务收入按比例扣除费用的精确十进制比例",
-    primary_source_url="本政策的首要官方来源网址，用于版本来源核验",
-    small_payment_threshold_fen="劳务预扣政策中采用定额费用扣除的收入门槛，整数分",
-    version="明确采用的政策版本标识，与内核事实修订序号相互独立",
+    "ai_accounting.kernel.payroll_history.LaborIncomeTaxPolicy",
+    brackets="仅历史正文：政策明确的有序税率分档及速算扣除数；各档边界须满足政策模型约束",
+    effective_to="仅历史正文：明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
+    fixed_expense_deduction_fen="仅历史正文：较小劳务收入按政策允许扣除的定额费用，整数分",
+    large_payment_expense_rate="仅历史正文：较大劳务收入按比例扣除费用的精确十进制比例",
+    primary_source_url="仅历史正文：本政策的首要官方来源网址，用于版本来源核验",
+    small_payment_threshold_fen="仅历史正文：劳务预扣政策中采用定额费用扣除的收入门槛，整数分",
+    version="仅历史正文：明确采用的政策版本标识，与内核事实修订序号相互独立",
 )
 
 _add(
@@ -477,16 +484,23 @@ _add(
     commission_rate_ppm="佣金率，以百万分之一整数表示；按约定基数确定税前报酬",
     expense_class="明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
     fixed_fee_fen="按固定费用计价明确约定的劳务税前金额，整数分",
-    gross_payment_id="用于本次劳务计税核对的正式毛额付款主题引用",
-    gross_payment_kind="用于本次劳务计税核对的实际毛额付款业务类型",
     person_id="取得劳务报酬的公司目录人员身份，不意味着与公司存在工资任职关系",
-    policy_id="本次劳务所得税预扣采用的明确劳务税政策主题，按实际收入日核验生效",
-    recipient_tax_status="明确劳务收款人为普通居民个人，当前仅支持ordinary_resident",
     remuneration_method="劳务报酬的明确计价方法，固定费用或按基数佣金，不以付款反推约定",
-    withholding_method=(
-        "明确本次按扣税后净额支付net_after_withholding，或已毛额支付未扣税gross_paid_without_withholding；后"
-        "者须引用真实毛额付款，不推定税款已缴"
-    ),
+)
+
+_add(
+    "ai_accounting.kernel.payroll_history.LaborRemuneration",
+    commission_base_fen="仅历史正文：佣金计价所依据的明确业务基数金额，整数分",
+    commission_rate_ppm="仅历史正文：佣金率，以百万分之一整数表示；按约定基数确定税前报酬",
+    expense_class="仅历史正文：明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
+    fixed_fee_fen="仅历史正文：按固定费用计价明确约定的劳务税前金额，整数分",
+    gross_payment_id="仅历史正文：用于本次劳务计税核对的正式毛额付款主题引用",
+    gross_payment_kind="仅历史正文：用于本次劳务计税核对的实际毛额付款业务类型",
+    person_id="仅历史正文：取得劳务报酬的公司目录人员身份，不意味着与公司存在工资任职关系",
+    policy_id="仅历史正文：本次劳务所得税预扣采用的明确劳务税政策主题，按实际收入日核验生效",
+    recipient_tax_status="仅历史正文：明确劳务收款人为普通居民个人，当前仅支持ordinary_resident",
+    remuneration_method="仅历史正文：劳务报酬的明确计价方法，固定费用或按基数佣金，不以付款反推约定",
+    withholding_method="仅历史正文：明确本次按扣税后净额支付net_after_withholding，或已毛额支付未扣税gross_paid_without_withholding；后者须引用真实毛额付款，不推定税款已缴",
 )
 
 _add(
@@ -495,11 +509,21 @@ _add(
     contribution_basis="本月个人和公司缴费金额的依据选择：按政策计算或采用实际核定缴费",
     employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
     expense_class="明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
-    other_legal_deduction_fen="本税期新增的其他依法扣除，与基本减除、个人缴费及专项附加分别计算",
-    special_additional_deduction_fen="本税期新增专项附加扣除，按累计预扣算法接入年度累计",
-    tax_exempt_income_fen="本税期工资中明确的免税收入，用于计算累计应纳税所得额",
-    tax_relief_fen="本税期明确新增的税额减免，不是收入扣除或预估税额",
-    tax_reported_salary_fen="本税期用于累计预扣的工资申报收入，与工资核算总额独立确认",
+    profile_revision="核算采用的精确工资档案主题及修订，复用已确认payroll_profile；人员及社保依据须一致",
+    contribution_policy_revision="核算采用的精确社保公积金政策主题及修订，复用payroll_contribution_policy且须完整覆盖本月",
+)
+
+_add(
+    "ai_accounting.kernel.payroll_history.Payroll",
+    accounting_gross_salary_fen="仅历史正文：本月按权责发生确认的工资总额，作为工资成本和应付职工薪酬依据",
+    contribution_basis="仅历史正文：本月个人和公司缴费金额的依据选择：按政策计算或采用实际核定缴费",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    expense_class="仅历史正文：明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
+    other_legal_deduction_fen="仅历史正文：本税期新增的其他依法扣除，与基本减除、个人缴费及专项附加分别计算",
+    special_additional_deduction_fen="仅历史正文：本税期新增专项附加扣除，按累计预扣算法接入年度累计",
+    tax_exempt_income_fen="仅历史正文：本税期工资中明确的免税收入，用于计算累计应纳税所得额",
+    tax_relief_fen="仅历史正文：本税期明确新增的税额减免，不是收入扣除或预估税额",
+    tax_reported_salary_fen="仅历史正文：本税期用于累计预扣的工资申报收入，与工资核算总额独立确认",
 )
 
 _add(
@@ -508,7 +532,17 @@ _add(
     contribution_basis="本月个人和公司缴费金额的依据选择：按政策计算或采用实际核定缴费",
     employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
     expense_class="明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
-    tax_reported_salary_fen="本税期用于累计预扣的工资申报收入，与工资核算总额独立确认",
+    profile_revision="核算采用的精确工资档案主题及修订，复用已确认payroll_profile；人员及社保依据须一致",
+    contribution_policy_revision="核算采用的精确社保公积金政策主题及修订，复用payroll_contribution_policy且须完整覆盖本月",
+)
+
+_add(
+    "ai_accounting.kernel.payroll_history.PayrollBounded",
+    accounting_gross_salary_fen="仅历史正文：本月按权责发生确认的工资总额，作为工资成本和应付职工薪酬依据",
+    contribution_basis="仅历史正文：本月个人和公司缴费金额的依据选择：按政策计算或采用实际核定缴费",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    expense_class="仅历史正文：明确的成本费用性质，按内核封闭模板选择核算科目及报表归类",
+    tax_reported_salary_fen="仅历史正文：本税期用于累计预扣的工资申报收入，与工资核算总额独立确认",
 )
 
 _add(
@@ -527,32 +561,32 @@ _add(
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.PayrollFirstWageTreatment",
-    employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    "ai_accounting.kernel.payroll_history.PayrollFirstWageTreatment",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.PayrollIncomeTaxPolicy",
-    brackets="政策明确的有序税率分档及速算扣除数；各档边界须满足政策模型约束",
-    effective_to="明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
-    legal_basis_source_url="累计预扣方法法律依据的首要官方来源网址，与具体政策来源分开保存",
-    monthly_standard_deduction_fen="累计预扣政策规定的每月基本减除费用，整数分",
-    primary_source_url="本政策的首要官方来源网址，用于版本来源核验",
-    version="明确采用的政策版本标识，与内核事实修订序号相互独立",
+    "ai_accounting.kernel.payroll_history.PayrollIncomeTaxPolicy",
+    brackets="仅历史正文：政策明确的有序税率分档及速算扣除数；各档边界须满足政策模型约束",
+    effective_to="仅历史正文：明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
+    legal_basis_source_url="仅历史正文：累计预扣方法法律依据的首要官方来源网址，与具体政策来源分开保存",
+    monthly_standard_deduction_fen="仅历史正文：累计预扣政策规定的每月基本减除费用，整数分",
+    primary_source_url="仅历史正文：本政策的首要官方来源网址，用于版本来源核验",
+    version="仅历史正文：明确采用的政策版本标识，与内核事实修订序号相互独立",
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.PayrollOpeningState",
-    cumulative_employee_contributions_fen="截至through_period已采用的累计个人社保和公积金扣除，整数分",
-    cumulative_income_fen="截至through_period该纳税年度已计入累计预扣的工资收入，整数分",
-    cumulative_other_legal_deduction_fen="截至through_period已采用的累计其他依法扣除，整数分",
-    cumulative_special_additional_deduction_fen="截至through_period已采用的累计专项附加扣除，整数分",
-    cumulative_standard_deduction_fen="截至through_period已采用的累计基本减除费用，整数分",
-    cumulative_tax_exempt_income_fen="截至through_period同年度已采用的累计免税收入，整数分",
-    cumulative_tax_relief_fen="截至through_period已采用的累计税额减免，整数分",
-    cumulative_withheld_tax_fen="截至through_period实际已扣缴的累计工资税额，整数分",
-    employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
-    through_period="期初累计工资状态已经包含到的截止月，后续累计从其后开始",
+    "ai_accounting.kernel.payroll_history.PayrollOpeningState",
+    cumulative_employee_contributions_fen="仅历史正文：截至through_period已采用的累计个人社保和公积金扣除，整数分",
+    cumulative_income_fen="仅历史正文：截至through_period该纳税年度已计入累计预扣的工资收入，整数分",
+    cumulative_other_legal_deduction_fen="仅历史正文：截至through_period已采用的累计其他依法扣除，整数分",
+    cumulative_special_additional_deduction_fen="仅历史正文：截至through_period已采用的累计专项附加扣除，整数分",
+    cumulative_standard_deduction_fen="仅历史正文：截至through_period已采用的累计基本减除费用，整数分",
+    cumulative_tax_exempt_income_fen="仅历史正文：截至through_period同年度已采用的累计免税收入，整数分",
+    cumulative_tax_relief_fen="仅历史正文：截至through_period已采用的累计税额减免，整数分",
+    cumulative_withheld_tax_fen="仅历史正文：截至through_period实际已扣缴的累计工资税额，整数分",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    through_period="仅历史正文：期初累计工资状态已经包含到的截止月，后续累计从其后开始",
 )
 
 _add(
@@ -567,17 +601,42 @@ _add(
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.PayrollWithholdingActual",
-    employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
-    withholding_confirmed="明确确认该工资实际扣税记录成立，不把预计或拟申报税额当已扣",
+    "ai_accounting.kernel.payroll_history.PayrollProfile",
+    contribution_shortfall="仅历史正文：个人工资不足承担缴费时的明确处理：阻断或由公司承担，影响实际负担分配",
+    effective_to="仅历史正文：明确适用区间的终点，包含该日或月；允许空时表示未声明终点",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    housing_fund_base_fen="仅历史正文：有依据的住房公积金缴费基数，与社保基数独立确认",
+    housing_fund_participating="仅历史正文：明确的公积金参与状态，决定是否需要基数和对应缴费项目",
+    social_insurance_base_fen="仅历史正文：有依据的社保缴费基数，供明确参保项目与政策上下限计算使用",
+    social_insurance_participating="仅历史正文：明确的社保参保状态，决定是否需要基数和适用社保缴费项目",
 )
 
 _add(
-    "ai_accounting.kernel.domains.payroll.TaxBracketFact",
-    quick_deduction_fen="该税率档的速算扣除金额，整数分",
-    rate="该税率档的精确十进制税率比例，0至1，不是百分数单位",
-    upper_bound_fen="该税率档的上界，整数分；空表示无上界的最后一档",
+    "ai_accounting.kernel.payroll_history.PayrollWithholdingActual",
+    employee_id="仅历史正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    withholding_confirmed="仅历史正文：明确确认该工资实际扣税记录成立，不把预计或拟申报税额当已扣",
 )
+
+_add(
+    "ai_accounting.kernel.payroll_history.TaxBracketFact",
+    quick_deduction_fen="仅历史正文：该税率档的速算扣除金额，整数分",
+    rate="仅历史正文：该税率档的精确十进制税率比例，0至1，不是百分数单位",
+    upper_bound_fen="仅历史正文：该税率档的上界，整数分；空表示无上界的最后一档",
+)
+
+_add(
+    "ai_accounting.kernel.payroll_history.HistoricalTaxImportDetails",
+    period="仅历史导出资料正文：原文件对应的工资所属期，随原正式结果摘要保存，不转换为当前可跨期工资修订引用",
+    cumulative_personal_pension_fen="仅历史导出资料正文：税务导入所需个人养老金的年度累计扣除，整数分",
+    cumulative_special_fen="仅历史导出资料正文：税务模板各专项附加扣除列的明确年度累计金额字典，所有固定列包括零必须提供",
+    current_other_fen="仅历史导出资料正文：税务模板各其他扣除列的明确本期金额字典，所有固定列包括零必须提供",
+    employee_id="仅历史导出资料正文：公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
+    remark="仅历史导出资料正文：税务导入模板的明确备注文本，不代替计算或申报依据",
+    tax_relief_fen="仅历史导出资料正文：本税期明确税额减免，与协定减免合计按原格式核对当时绑定正式工资的本期减免；不供新内核反算",
+    treaty_relief_fen="仅历史导出资料正文：有依据的税收协定减免税额，整数分；不是一般工资扣除",
+    payroll_result_digest="仅历史导出资料正文：当时精确采用的正式工资结果摘要；保留冻结文件核验，不复制为当前工资修订引用",
+)
+
 
 _add(
     "ai_accounting.kernel.domains.payroll_reserve_payment.PayrollNetAllocation",
@@ -1157,6 +1216,44 @@ _add(
 )
 
 _add(
+    "ai_accounting.kernel.remuneration_tax_basis.HistoricalWithholdingOrigin",
+    kind="核算来源类型固定为历史个人实际扣税记录payroll_withholding_actual；申报或银行缴款不能代替",
+    subject_id="核算来源的稳定历史扣税主题，必须与精确事实版本属于同一业务身份",
+    fact_id="明确采用的历史扣税事实精确修订标识；核验人员、税期、金额及证据，不自动转换旧记录",
+)
+
+_add(
+    "ai_accounting.kernel.remuneration_tax_basis.PooledTaxAllocation",
+    source_kind="核算分配对应的工资、奖金或劳务类型，须与稳定报酬主题一致",
+    source_id="核算分配对应的已登记报酬主题身份；同一来源不可重复分配整笔合并申报税额",
+    period="核算分配对应报酬所属期，精度为年月；复用明确报酬来源，不取银行缴款月份",
+    tax_amount_fen="合并原件明确分配给此报酬的非负整数分税额；包含明确零额，不按毛额比例推算",
+)
+
+_add(
+    "ai_accounting.kernel.remuneration_tax_basis.PooledTaxProof",
+    evidence_digest="核算分配采用的不可变合并税额原件摘要，须在税依据的证据中真实存在",
+    source_location="核算来源在合并税额原件中的明确页、表或行位置；同原件不同明细分别核验",
+    total_tax_fen="该明确原件位置的合并税额，非负整数分；只校验完整分配合计，不生成个人扣税",
+    allocations="负责人明确确认的完整个人分配清单；每个报酬身份及年月唯一，合计必须等于原件总额",
+)
+
+_add(
+    "ai_accounting.kernel.remuneration_tax_basis.RemunerationTaxBasis",
+    period="核算依据绑定报酬所属期，精度为年月；复用明确报酬事实，不取申报或缴款月份",
+    source_kind="核算依据绑定的工资、奖金或劳务事实类型；与稳定source_id及精确source_fact_id共同核验",
+    source_id="核算依据绑定的已登记报酬稳定主题，复用负责人确认的报酬事实，不以姓名推定",
+    source_fact_id="税额确认时采用的精确报酬事实修订；复用已登记版本，人员或毛额变化须重新确认",
+    tax_period="原始最终报酬表或实际扣税记录明确的税期，精度为年月；独立于报酬所属期和缴款月",
+    tax_amount_fen="核算采用的非负整数分税额，来源为最终报酬表或实际扣税记录；零额也须明确证据",
+    basis_type="核算采用的明确依据类别：最终报酬表或个人实际扣税记录；申报与银行缴款不自动构成该事实",
+    confirmed="负责人对该笔有来源税额的明确确认，必须为true；缺确认阻断正式核算，不推断零税",
+    withholding_date="管理记录：原实际扣税材料明确的实际日，精度为日；仅actual_withholding可提供，未知留空",
+    origin_references="核算来源：显式采用的历史个人实际扣税精确修订，最多一份；只读取核验，不自动转换",
+    pooled_tax_proof="核算来源：合并申报原件的完整明确分配证明；不以整笔总额重复充当每人扣税，缺分配阻断",
+)
+
+_add(
     "ai_accounting.kernel.reports.CashDetail",
     amount_fen="原凭证行归入该现金流量表类别的明确正整数分份额",
     category="现金流量表固定模板的允许行类别编号，与核算科目及原行方向分别核验",
@@ -1229,13 +1326,17 @@ _add(
 
 _add(
     "ai_accounting.kernel.tax_import.TaxImportDetails",
+    period="负责人明确的工资薪金导入文件所属期，独立于引用工资的核算所属期，不从采用税额自动推定",
     cumulative_personal_pension_fen="税务导入所需个人养老金的年度累计扣除，整数分",
     cumulative_special_fen="税务模板各专项附加扣除列的明确年度累计金额字典，所有固定列包括零必须提供",
     current_other_fen="税务模板各其他扣除列的明确本期金额字典，所有固定列包括零必须提供",
     employee_id="公司对象目录中作为本项工资或垫付当事人的人员身份，不由姓名推定",
-    payroll_result_digest="这些税務导入明细精确绑定的正式工资结果摘要，工资重算后须重新核验",
+    payroll_revision="导入资料精确引用的当前负责人确认工资事实身份和修订；可与文件所属期不同，修订后须重新核验",
+    include_in_filing="有来源明确本文件所属期是否纳入正常工资薪金导入，不由工资金额或税额推断",
+    tax_reported_salary_fen="导入原件明确的申报工资收入，整数分；只服务导入文件，不改变工资核算毛额",
+    tax_exempt_income_fen="导入原件明确的免税收入，整数分且不超过该资料申报收入，不自行计算",
     remark="税务导入模板的明确备注文本，不代替计算或申报依据",
-    tax_relief_fen="税务导入文件本税期明确的税额减免字段，与协定减免合计须等于绑定正式工资的本期税额减免",
+    tax_relief_fen="导入原件明确的本期税额减免字段，整数分；不回算工资税额或要求与计算状态一致",
     treaty_relief_fen="有依据的税收协定减免税额，整数分；不是一般工资扣除",
 )
 

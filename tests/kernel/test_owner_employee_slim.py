@@ -4,16 +4,16 @@ import pytest
 from test_dashboard_model_integrity import raw_read
 from test_integrity_content import damage
 from test_labor_assets import cost
+from test_labor_people_dashboard import company_with_labor_opening
 from test_opening_continuation import book as opening_book_fixture
 from test_payroll_corrections import company as company_fixture
-from test_reimbursement_assets import book as labor_book_fixture
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Calculations, Dashboard, _Snapshot
+from ai_accounting.kernel.domains.labor_assets import LaborProjectCost
 from ai_accounting.kernel.response_contracts import validate_response
 
 opening_book = opening_book_fixture
-labor_book = labor_book_fixture
 company = company_fixture
 
 
@@ -100,10 +100,11 @@ def test_focused_employee_still_rejects_damaged_monthly_wage_source(company):
     assert failure.value.code == "content_integrity_failed"
 
 
-def test_labor_payment_details_keep_their_shared_summary_cache(labor_book, monkeypatch):
-    engine, save, publish = labor_book
-    save("labor_project_cost", "project-labor", cost())
-    publish("project-labor")
+def test_labor_payment_details_keep_their_shared_summary_cache(tmp_path, monkeypatch):
+    company = company_with_labor_opening(tmp_path / "labor-details.sqlite")
+    engine = company.engine
+    company.save(LaborProjectCost(**cost()), "project-labor")
+    company.publish("project-labor")
     original = _Snapshot.settlement_summary
     snapshots = []
 

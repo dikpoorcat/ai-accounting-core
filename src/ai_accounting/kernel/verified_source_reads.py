@@ -59,6 +59,7 @@ class VerifiedSourceReads(QueryReads):
         requested = set(identifiers)
         if not requested <= self._source["facts"].keys():
             raise KernelError("content_integrity_failed", "已核验来源缺少精确事实")
+        self.fact_versions(requested)
         for ident in requested - self._facts.keys():
             row = self._source["facts"][ident]
             version = self._fact_version(ident)
@@ -94,22 +95,15 @@ class VerifiedSourceReads(QueryReads):
         requested = set(identifiers)
         if not requested <= self._source["facts"].keys():
             raise KernelError("content_integrity_failed", "已核验来源缺少精确事实")
-        for ident in requested - self._fact_versions.keys():
-            self._fact_version(ident)
+        missing = requested - self._fact_versions.keys()
+        self._fact_versions.update(self.store.fact_versions_from_checked(
+            self.connection, {ident: self._source["facts"][ident] for ident in missing},
+        ))
         return {ident: self._fact_versions[ident] for ident in requested}
 
     def _fact_version(self, ident):
-        from .contracts import FactVersion
-        from .storage import _validation_json
-
         if ident not in self._fact_versions:
-            row = self._source["facts"][ident]
-            model = self.store.registry.models[row["kind"]]
-            self._fact_versions[ident] = FactVersion(
-                ident, row["subject_id"], row["revision"],
-                model.model_validate_json(_validation_json(row["data"])),
-                tuple(sorted(row["evidence"])),
-            )
+            self.fact_versions((ident,))
         return self._fact_versions[ident]
 
     def _calculation(self, ident, *, raw=False):

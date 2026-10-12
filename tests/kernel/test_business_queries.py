@@ -1034,9 +1034,7 @@ def test_closed_period_current_followups_include_only_related_later_settlement(d
     summary = result["current_followups"]["settlements"]
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        settlements = BusinessQueries(engine).settlements(
-            connection, "2026-01", current=True
-        )
+        settlements = BusinessQueries(engine).settlements(connection, "2026-01", current=True)
     obligations = settlements["obligations"]
 
     assert result["closure"]["state"] == "exact_close"
@@ -1055,6 +1053,7 @@ def test_closed_period_current_followups_include_only_related_later_settlement(d
     assert {item["subject_id"] for item in settlements["business"]} == {
         "expense",
         "payment",
+        "synthetic-opening",
     }
 
 

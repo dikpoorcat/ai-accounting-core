@@ -26,7 +26,7 @@ from ai_accounting.kernel.types import YearMonth
 
 
 class Company:
-    def __init__(self, tmp_path):
+    def __init__(self, tmp_path, *, opening_period="2026-01"):
         self.engine = Engine(
             Store.create(
                 tmp_path / "materials.sqlite",
@@ -36,6 +36,10 @@ class Company:
                 "database",
             )
         )
+        if opening_period is not None:
+            from opening_fixture import adopt_empty_opening
+
+            adopt_empty_opening(self.engine, period=opening_period)
         self.materials = Materials(self.engine)
         self.sequence = 0
         self.proof = self.evidence("负责人逐项确认".encode(), "confirmation.txt")
@@ -358,8 +362,7 @@ def test_guard_before_material_and_batch_local_repeat_use_one_exact_proof(compan
         assert result[month]["status"] == "complete"
         assert checked == [link["calculation_id"]]
         row = reads.connection.execute(
-            "SELECT id,outcome stored_outcome,digest result_digest "
-            "FROM calculation WHERE id=?",
+            "SELECT id,outcome stored_outcome,digest result_digest FROM calculation WHERE id=?",
             (unrelated[0]["calculation_id"],),
         ).fetchone()
         batch = reads._material_sql_outcome_batch(reads.connection)
@@ -609,8 +612,7 @@ def test_worklist_material_area_remains_incomplete_until_actual_rows_are_resolve
     )
     assert area["materials"]["status"] == "needs_information"
     assert any(
-        item.get("code") == "material_item_unresolved"
-        for item in area["materials"]["issues"]
+        item.get("code") == "material_item_unresolved" for item in area["materials"]["issues"]
     )
     company.resolve(source, "CSV!B2", [company.expense("expense", 1000)])
     area = next(

@@ -245,7 +245,7 @@ def test_selected_asset_members_batches_exact_metadata_and_rejects_missing(monke
 
 
 def test_close_freezes_batch_backed_asset_card_adoptions(tmp_path):
-    company = Company(tmp_path / "asset-card-close.sqlite")
+    company = Company(tmp_path / "asset-card-close.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     assert Dashboard(company.engine).assets("2026-02")["data"]["checking"] is False
 
@@ -288,7 +288,7 @@ def test_close_freezes_batch_backed_asset_card_adoptions(tmp_path):
 
 
 def test_close_rejects_missing_asset_card_adoptions(tmp_path, monkeypatch):
-    company = Company(tmp_path / "legacy-asset-card-close.sqlite")
+    company = Company(tmp_path / "legacy-asset-card-close.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     manifest = Periods._manifest
 

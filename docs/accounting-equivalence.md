@@ -23,7 +23,8 @@
 
 | 路径 | 机器消费者及保留的核算含义 |
 | --- | --- |
-| 工资 `actual_withholding.fact_id/evidence` 及 `actual_withholding_adopted` 解释中的同两项 | 以精确冻结实际扣税事实的稳定身份和完整 payload 摘要替代版本指针，仅排除附加证据；人员、期间、实际税额、确认状态和原申报累计扣除全部保留。代发使用的已记扣税状态、工资累计、估算差额、义务及未知边界继续参与比较。 |
+| 当前工资、奖金、劳务 `tax_basis` 及 `confirmed_remuneration_tax` 解释 | 核对精确冻结税依据后保留报酬类型、业务身份、核算所属期、税期及采用税额。仅更新证据、确认阶段、扣税日期或精确修订且金额与税期未变时，可无影响复核；完整采用来源仍保存于原结果和依赖，工资方案确认不会因此失效。 |
+| 历史工资 `actual_withholding.fact_id/evidence` 及 `actual_withholding_adopted` 解释中的同两项 | 以精确冻结实际扣税事实的稳定身份和完整 payload 摘要替代版本指针，仅排除附加证据；人员、期间、实际税额、确认状态和原申报累计扣除全部保留。旧累计状态及义务仍按原历史合同核验，不重新计算。 |
 | 工资 `source_versions` 中对应实际扣税事实的唯一元素 | 仅替换这一元素。准备检查使用的档案版本、其他实际来源、首次工资处理、规则版本及列表顺序保持严格。 |
 | 四类实际付款 `settlements[*].source_calculation` 中对应工资来源的指针 | 在核对 allocation、人员、义务、方向和清偿许可后，以精确来源工资的稳定身份、期间和完整核算签名替代指针。工资义务限制或累计状态变化也使付款不等价。报表按原指针读取的科目、方向、金额和交易方含义仍保留。 |
 
@@ -69,7 +70,7 @@ workflow 以派生签名判断真实已接受依据与当前核算是否等价�
 `reviewed_calculations` 保留精确的最新计算 ID 和完整结果摘要。
 
 `PayrollDisbursementBasis.declaration_fact_id`、外部完成事实中的精确引用、
-材料逐行处置、`TaxImportDetails.payroll_result_digest` 及导出预览/manifest
-保持原精确版本约束。补证后相关导出或材料仍可能需要复核；内容有效性和历史后补
+材料逐行处置、当前 `TaxImportDetails.payroll_revision` 及导出预览/manifest
+保持精确版本约束。当前个税输入文件绑定已确认工资事实及导出管理明细，不要求工资正式发布或取得扣税额；旧明细的 `payroll_result_digest` 仅用于原历史文件核验。补证后相关导出或材料仍可能需要复核；内容有效性和历史后补
 显示遵循[历史来源与内容版本](history-content-versions.md)，统一业务查询遵循
 [统一业务查询接入契约](unified-business-queries.md)。

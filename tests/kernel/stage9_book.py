@@ -33,7 +33,8 @@ def synthetic_employee_profile(name):
     """The fixture explicitly defines fictional employees as regularly employed."""
     return {
         "display_name": name,
-        "action": "hire", "effective_date": "2016-01-01",
+        "action": "hire",
+        "effective_date": "2016-01-01",
     }
 
 
@@ -254,7 +255,10 @@ class MixedBook:
             options["evidence_digest"] = self.proof
         if kind == "person" and "effective_date" in data:
             return self.entities.register_worker(
-                data, source=source, request_id=self.request("entity"), **options,
+                data,
+                source=source,
+                request_id=self.request("entity"),
+                **options,
             )["entity_id"]
         return self.entities.register_entity(
             kind,
@@ -346,7 +350,7 @@ class MixedBook:
         self.results.update({row["subject_id"]: row["calculation_id"] for row in result["results"]})
 
     def _setup(self):
-        from test_payroll import contribution_policy, income_tax_policy, profile
+        from test_payroll import contribution_policy, profile
 
         policy = contribution_policy().model_dump(mode="json")
         policy.update(
@@ -354,13 +358,6 @@ class MixedBook:
             effective_from="2016-01-01",
             effective_to="2035-12-31",
             version="synthetic-contribution-v1",
-        )
-        tax = income_tax_policy().model_dump(mode="json")
-        tax.update(
-            period=month_at(0),
-            effective_from="2016-01-01",
-            effective_to="2035-12-31",
-            version="synthetic-income-tax-v1",
         )
         vat = {
             "version": "synthetic-vat-v1",
@@ -394,7 +391,6 @@ class MixedBook:
                 },
             ),
             self.item("payroll_contribution_policy", "contributions", policy),
-            self.item("payroll_income_tax_policy", "income-tax", tax),
             self.item("vat_policy", "vat", {"period": month_at(0), "policy": vat}),
             self.item("surtax_policy", "surtax", {"period": month_at(0), "policy": surtax}),
             # A zero-opening declaration is still a formally adopted package.
@@ -427,7 +423,6 @@ class MixedBook:
                 employee_id=employee,
                 period=month_at(0),
                 effective_from=month_at(0),
-                withholding_start_date="2016-01-01",
             ).model_dump(mode="json")
             items.append(self.item("payroll_profile", f"profile-{i}", data))
         items.append(
@@ -565,7 +560,7 @@ class MixedBook:
 
     def add_month(self, index, *, close=True):
         from test_banking import activate_asset, consume_assets, entry, match
-        from test_payroll import opening, payroll
+        from test_payroll import payroll
 
         period = month_at(index)
         started = time.perf_counter()
@@ -588,7 +583,6 @@ class MixedBook:
                         followup,
                         {
                             "period": prior,
-
                             "drawdown_id": f"draw-{prior}",
                             "period_start": prior + "-19",
                             "period_end_exclusive": prior + "-20",
@@ -612,17 +606,6 @@ class MixedBook:
         expense_count, odd = divmod(self.businesses - fixed, 2)
         if expense_count < 1:
             raise ValueError("increase the business count for this mixed fixture")
-        if period.endswith("-01"):
-            self.save(
-                [
-                    self.item(
-                        "payroll_opening_state",
-                        f"tax-opening-{period}-{i}",
-                        opening(employee_id=employee, period=period).model_dump(mode="json"),
-                    )
-                    for i, employee in enumerate(self.employees)
-                ]
-            )
         wages, plans = [], []
         for i, employee in enumerate(self.employees):
             subject = f"wage-{period}-{i}"
@@ -631,7 +614,6 @@ class MixedBook:
                 employee_id=employee,
                 profile_id=f"profile-{i}",
                 accounting_gross_salary_fen=600000 + i * 100,
-                tax_reported_salary_fen=600000 + i * 100,
             ).model_dump(mode="json")
             wages.append(self.item("payroll", subject, data, business=True))
             plans.append(
@@ -647,6 +629,27 @@ class MixedBook:
             )
         self.save(wages)
         self.save(plans)
+        # Every synthetic employee's monthly final statement explicitly adopts
+        # 126 yuan of tax. This is sourced fixture input, never a tax formula.
+        self.save(
+            [
+                self.item(
+                    "remuneration_tax_basis",
+                    f"tax-basis-{item['subject_id']}",
+                    {
+                        "period": period,
+                        "source_kind": "payroll",
+                        "source_id": item["subject_id"],
+                        "source_fact_id": self.facts[item["subject_id"]],
+                        "tax_period": period,
+                        "tax_amount_fen": 12_600,
+                        "basis_type": "final_statement",
+                        "confirmed": True,
+                    },
+                )
+                for item in wages
+            ]
+        )
         acquisitions.extend(item["subject_id"] for item in wages if item["kind"] == "payroll")
         wage_rows = [
             (
@@ -847,7 +850,6 @@ class MixedBook:
                     interest,
                     {
                         "period": period,
-
                         "drawdown_id": draw,
                         "period_start": period + "-01",
                         "period_end_exclusive": period + "-20",

@@ -90,6 +90,10 @@ class Engine:
             reads += version.fact.reads_after(version.subject_id, Context(selections))
         return tuple(dict.fromkeys(reads))
 
+    def _final_reads(self, version, selections):
+        hook = getattr(version.fact, "reads_final", None)
+        return () if hook is None else hook(version.subject_id, Context(selections))
+
     def _explicit_roots(self, subjects):
         return set(subjects)
 
@@ -182,8 +186,16 @@ class Engine:
         return None
 
     def _write(
-        self, key, request_hash, expected, lanes, action, operation,
-        *, checked_lanes=None, _dashboard_periods=(),
+        self,
+        key,
+        request_hash,
+        expected,
+        lanes,
+        action,
+        operation,
+        *,
+        checked_lanes=None,
+        _dashboard_periods=(),
     ):
         from .backup_tasks import check_write_allowed
         from .dashboard_model_runtime import (
@@ -220,7 +232,11 @@ class Engine:
                     return replay
                 check_write_allowed(connection, action, lanes=lanes)
                 before_replay_write(
-                    self, connection, request_id=key, action=action, request_hash=request_hash,
+                    self,
+                    connection,
+                    request_id=key,
+                    action=action,
+                    request_hash=request_hash,
                 )
                 from .dashboard_async import record_write, sequence
 
@@ -233,13 +249,15 @@ class Engine:
                     )
                 self.fault("begin", connection)
                 with changed_periods(
-                    connection, enabled=supports_native_production(self),
+                    connection,
+                    enabled=supports_native_production(self),
                 ) as changed_months:
                     result = operation(connection)
                 self.fault("published", connection)
                 for lane in lanes:
                     connection.execute(f"UPDATE state SET {lane}={lane}+1 WHERE id=1")
                 from .replay_runner import replay_audit_actor
+
                 actor = replay_audit_actor(self.audit_actor)
                 audit = connection.execute(
                     "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
@@ -247,9 +265,7 @@ class Engine:
                         key,
                         action,
                         canonical(
-                            {"result": result, "actor": actor}
-                            if actor is not None
-                            else result
+                            {"result": result, "actor": actor} if actor is not None else result
                         ),
                     ),
                 )
@@ -260,24 +276,34 @@ class Engine:
                     "INSERT INTO request VALUES(?,?,?)", (key, request_hash, canonical(result))
                 )
                 after_replay_write(
-                    self, connection, request_id=key, action=action,
-                    request_hash=request_hash, result=result,
+                    self,
+                    connection,
+                    request_id=key,
+                    action=action,
+                    request_hash=request_hash,
+                    result=result,
                 )
                 record_write(
-                    self, connection, periods=(*_dashboard_periods, *sorted(changed_months)),
-                    before_sequence=before_sequence, action=action, lanes=lanes,
+                    self,
+                    connection,
+                    periods=(*_dashboard_periods, *sorted(changed_months)),
+                    before_sequence=before_sequence,
+                    action=action,
+                    lanes=lanes,
                 )
                 self.fault("commit", connection)
                 authorization_started = time.perf_counter()
                 if supports_native_production(self):
                     connection.executemany(
                         "INSERT INTO operation_timing(request_id,stage,elapsed_ms) VALUES(?,?,?)",
-                            [(key, stage, max(0, int(seconds * 1000)))
-                             for stage, seconds in (
-                            ("queue", started - queued),
-                            ("write", authorization_started - locked),
-                            ("calculation", calculation_seconds),
-                        )],
+                        [
+                            (key, stage, max(0, int(seconds * 1000)))
+                            for stage, seconds in (
+                                ("queue", started - queued),
+                                ("write", authorization_started - locked),
+                                ("calculation", calculation_seconds),
+                            )
+                        ],
                     )
                 authorization_started = time.perf_counter()
                 with self.commit_guard():
@@ -300,11 +326,13 @@ class Engine:
                         connection.executemany(
                             "INSERT INTO operation_timing(request_id,stage,elapsed_ms) "
                             "VALUES(?,?,?)",
-                            [(key, stage, max(0, int(seconds * 1000)))
-                             for stage, seconds in (
-                                ("authorization", authorized - authorization_started),
-                                ("commit", committed - authorized),
-                            )],
+                            [
+                                (key, stage, max(0, int(seconds * 1000)))
+                                for stage, seconds in (
+                                    ("authorization", authorized - authorization_started),
+                                    ("commit", committed - authorized),
+                                )
+                            ],
                         )
                         connection.commit()
                     except sqlite3.Error:
@@ -354,6 +382,12 @@ class Engine:
 
         if kind not in self.store.registry.models:
             raise KernelError("unknown_fact_type", f"unknown business fact {kind}")
+        if kind in self.store.registry.historical_only:
+            raise KernelError(
+                "historical_fact_read_only",
+                "此类事实只保留历史读取，不再接收新登记",
+                kind=kind,
+            )
         if not subject_id or len(subject_id) > 200:
             raise KernelError("invalid_subject", "invalid stable business identity")
         _reject_binary_numbers(data)
@@ -577,6 +611,12 @@ class Engine:
         return request_hash, operation
 
     def _require_direct_registration(self, kind):
+        if kind in self.store.registry.historical_only:
+            raise KernelError(
+                "historical_fact_read_only",
+                "此类事实只保留历史读取，不再接收新登记",
+                kind=kind,
+            )
         model = self.store.registry.models.get(kind)
         if model is not None and model.registration_command:
             raise KernelError(
@@ -820,7 +860,14 @@ class Engine:
             report_snapshots = prepare_review_snapshots(self, connection, facts.values())
             connection.commit()
         return (
-            epochs, facts, selections, pending, closed, previous, accounting, publications,
+            epochs,
+            facts,
+            selections,
+            pending,
+            closed,
+            previous,
+            accounting,
+            publications,
             report_snapshots,
         )
 
@@ -829,14 +876,29 @@ class Engine:
 
     def _prepare(self, subjects, posting_period=None):
         (
-            epochs, facts, selections, pending, closed, previous, accounting, publications,
+            epochs,
+            facts,
+            selections,
+            pending,
+            closed,
+            previous,
+            accounting,
+            publications,
             report_snapshots,
-        ) = (
-            self._snapshot(subjects)
-        )
+        ) = self._snapshot(subjects)
         if not facts:
             raise KernelError("no_calculations", "没有可发布的业务计算")
-        declared = {sid: self._reads(version, selections) for sid, version in facts.items()}
+        declared = {
+            sid: tuple(
+                dict.fromkeys(
+                    (
+                        *self._reads(version, selections),
+                        *self._final_reads(version, selections),
+                    )
+                )
+            )
+            for sid, version in facts.items()
+        }
         scopes = {
             sid: scope_keys("calculation", version.fact, sid) for sid, version in facts.items()
         }
@@ -1128,8 +1190,10 @@ class Engine:
             for result, item in zip(public["results"], prepared, strict=True):
                 if item.outcome is not None:
                     result["fund_line_details"] = preview_fund_details(
-                        connection, item.version.fact.kind,
-                        item.version.fact.model_dump(mode="json"), item.outcome,
+                        connection,
+                        item.version.fact.kind,
+                        item.version.fact.model_dump(mode="json"),
+                        item.outcome,
                         fact_sources=preview_facts,
                         calculation_sources=preview_calculations,
                     )
@@ -1268,7 +1332,8 @@ class Engine:
         from .publication import append, head, route
 
         version, cid, outcome = prepared.version, prepared.calculation_id, prepared.outcome
-        if (version.fact.lane == "accounting"
+        if (
+            version.fact.lane == "accounting"
             and not version.fact.kind.startswith("opening_")
             and "opening_package" in self.store.registry.models
             and not connection.execute(
@@ -1276,11 +1341,20 @@ class Engine:
                 "JOIN calculation_publication p ON p.calculation_id=c.id "
                 "WHERE c.kind='opening_package' AND NOT EXISTS("
                 "SELECT 1 FROM pending WHERE subject_id=c.subject_id) LIMIT 1"
-            ).fetchone()):
-            raise NeedsInformation([
-                {"field": "opening_adoption", "message": "普通业务发布前必须正式采用有来源的期初包",
-                 "semantics": "accounting", "reusable_sources": [], "allowed_precision": []},
-            ], "期初尚未正式采用")
+            ).fetchone()
+        ):
+            raise NeedsInformation(
+                [
+                    {
+                        "field": "opening_adoption",
+                        "message": "普通业务发布前必须正式采用有来源的期初包",
+                        "semantics": "accounting",
+                        "reusable_sources": [],
+                        "allowed_precision": [],
+                    },
+                ],
+                "期初尚未正式采用",
+            )
         old = connection.execute(
             "SELECT c.* FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
             "WHERE a.subject_id=?",

@@ -17,33 +17,6 @@ from ai_accounting.kernel.replay_report_classification import (
 )
 
 
-@pytest.fixture(autouse=True)
-def adopted_opening(book):
-    _engine, save, publish, _proof = book
-    save(
-        "opening_package",
-        "opening",
-        {
-            "period": "2026-09",
-            "package_id": "opening",
-            "members": [],
-            "counts": {
-                "bank": 0,
-                "cash": 0,
-                "counterparties": 0,
-                "assets": 0,
-                "loans": 0,
-                "taxes": 0,
-                "payroll_payables": 0,
-                "payroll_cumulative": 0,
-                "equity": 0,
-            },
-            "completeness_confirmed": True,
-        },
-    )
-    publish("opening")
-
-
 def test_expense_and_actual_payment_cash_line_use_source_semantics(book):
     engine, save, publish, _ = book
     save(

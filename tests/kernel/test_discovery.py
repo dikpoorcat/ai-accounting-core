@@ -1,6 +1,7 @@
 import sqlite3
 
 import pytest
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.discovery import Discovery
@@ -73,7 +74,6 @@ def test_find_facts_recovers_people_periods_versions_and_publication_states(comp
         "employee_id": employee,
         "effective_from": "2026-02",
         "effective_to": None,
-        "withholding_start_date": "2026-02-01",
         "social_insurance_base_fen": None,
         "housing_fund_base_fen": None,
         "social_insurance_participating": False,
@@ -140,11 +140,12 @@ def test_find_sources_distinguishes_saved_published_and_deleted(company):
     query = Discovery(company)
     assert len(query.find_facts(status="pending")["items"]) == 1
     assert query.find_facts(status="published")["items"] == []
+    adopt_empty_opening(company)
     preview = company.preview(["cost"])
     company.confirm(
         ["cost"], preview_digest=preview["digest"], epochs=preview["epochs"], request_id="publish"
     )
-    published = query.find_facts(status="published")["items"]
+    published = query.find_facts(kind="expense", status="published")["items"]
     assert len(published) == 1
     assert published[0]["adoption"]["basis"] == "direct_publication"
     assert published[0]["adoption"]["calculation_id"] == published[0]["calculation_id"]
@@ -153,8 +154,8 @@ def test_find_sources_distinguishes_saved_published_and_deleted(company):
     company.delete(
         "cost", preview_digest=preview["digest"], epochs=preview["epochs"], request_id="delete"
     )
-    assert query.find_facts()["items"] == []
-    deleted = query.find_facts(status="deleted")["items"]
+    assert query.find_facts(kind="expense")["items"] == []
+    deleted = query.find_facts(kind="expense", status="deleted")["items"]
     assert len(deleted) == 1
     assert deleted[0]["adoption"]["current"] is False
 

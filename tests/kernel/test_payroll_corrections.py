@@ -6,21 +6,21 @@ from collections import defaultdict
 
 import pytest
 from payroll_plan_fixture import confirm_wage_inputs
-from test_payroll import actual, contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import actual, contribution_policy, payroll, profile
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
-from ai_accounting.kernel.domains.payroll import PayrollOpeningState, PayrollProfile
+from ai_accounting.kernel.domains.payroll import PayrollProfile
 from ai_accounting.kernel.domains.transactions import Allocation, Overpayment, Payment
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import YearMonth, canonical
+from ai_accounting.kernel.types import YearMonth, canonical, digest
 
 
 class Company:
-    def __init__(self, path):
+    def __init__(self, path, *, opening_period="2026-01"):
         self.engine = Engine(
             Store.create(
                 path,
@@ -38,6 +38,32 @@ class Company:
             "owner confirmation",
             request_id=self.request(),
         )["digest"]
+        # A synthetic company has an explicit, evidenced opening before ordinary
+        # publication.  This is fixture business data, never a verifier bypass.
+        from ai_accounting.kernel.domains.opening import CATEGORIES, OpeningPackage
+
+        opening_proof = self.engine.register_evidence(
+            f"合成测试公司{opening_period}期初各类资产、负债和权益均明确为零，资料完整。".encode(),
+            "text/plain",
+            "synthetic opening confirmation",
+            request_id=self.request(),
+        )["digest"]
+        package = OpeningPackage(
+            period=opening_period,
+            package_id="fixture-opening",
+            counts=dict.fromkeys(CATEGORIES.values(), 0),
+            members=(),
+            completeness_confirmed=True,
+        )
+        self.engine.save_fact(
+            package.kind,
+            "fixture-opening",
+            package.model_dump(mode="json"),
+            evidence=(opening_proof,),
+            expected_revision=0,
+            request_id=self.request(),
+        )
+        self.publish("fixture-opening")
 
     def request(self):
         self.sequence += 1
@@ -125,6 +151,30 @@ class Company:
             )["digest"]
             confirm_wage_inputs(self.engine, subject, evidence=(proof,), request_id=self.request())
 
+    def tax_basis(self, subject, amount, *, basis_type="final_statement", revision=0):
+        """Record an explicitly chosen synthetic deduction, never calculate one."""
+        from ai_accounting.kernel.remuneration_tax_basis import RemunerationTaxBasis
+
+        with self.engine.store.connection(read_only=True) as connection:
+            source = self.engine.store.current_fact(connection, subject)
+        basis_subject = "tax-basis-" + subject
+        if len(basis_subject) > 200:
+            basis_subject = "tax-basis-" + digest([source.fact.kind, subject]).hex()
+        return self.save(
+            RemunerationTaxBasis(
+                period=source.fact.period,
+                source_kind=source.fact.kind,
+                source_id=subject,
+                source_fact_id=source.id,
+                tax_period=source.fact.period,
+                tax_amount_fen=amount,
+                basis_type=basis_type,
+                confirmed=True,
+            ),
+            basis_subject,
+            revision,
+        )
+
     def publish(self, *subjects, posting_period=None):
         preview = self.engine.preview(list(subjects), posting_period=posting_period)
         result = self.engine.confirm(
@@ -179,13 +229,13 @@ def company(tmp_path):
     for fact, subject in (
         (profile(effective_to="2026-02"), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (payroll(period="2026-02"), "february"),
     ):
         result.save(fact, subject)
     result.confirm_payroll("january", "february")
+    result.tax_basis("january", 12_600)
+    result.tax_basis("february", 12_600)
     return result
 
 
@@ -212,26 +262,25 @@ def test_sqlite_actual_backfill_recomputes_its_employee_chain_and_preserves_numb
     company.save(
         PayrollProfile(**profile().model_dump() | {"employee_id": "other"}), "other-profile"
     )
-    company.save(
-        PayrollOpeningState(**opening().model_dump() | {"employee_id": "other"}), "other-opening"
-    )
     company.save(payroll(employee_id="other", profile_id="other-profile"), "other-january")
     company.save(
         payroll(period="2026-02", employee_id="other", profile_id="other-profile"), "other-february"
     )
     company.confirm_payroll("other-january", "other-february")
+    company.tax_basis("other-january", 12_600)
+    company.tax_basis("other-february", 12_600)
     _, first = company.publish("january", "february", "other-january", "other-february")
     before = {sid: company.current(sid) for sid in first}
     saved = company.save(actual(), "actual")
-    assert set(saved["pending"]) == company.pending() == {"january", "february"}
+    assert set(saved["pending"]) == company.pending() == {"january"}
     preview, amended = company.publish("actual")
-    assert set(preview["subjects"]) == {"january", "february"}
+    assert set(preview["subjects"]) == {"january"}
     assert company.pending() == set()
-    for subject in ("january", "february"):
+    for subject in ("january",):
         assert amended[subject]["voucher_number"] == first[subject]["voucher_number"]
         assert company.current(subject).id != before[subject].id
-    assert company.current("january").values["net_fen"] == 888_000
-    assert company.current("february").values["tax_state"]["cumulative_withheld_tax_fen"] == 24_600
+    assert company.current("january").values["net_fen"] == 887_400
+    assert company.current("february") == before["february"]
     for subject in ("other-january", "other-february"):
         assert company.current(subject) == before[subject]
     old = company.engine.trace(before["january"].id)
@@ -258,7 +307,7 @@ def test_sqlite_payment_stays_immutable_and_unexplained_overpayment_blocks_publi
     assert error.value.response()["fact_issues"][0]["field"] == "overpayment"
     assert company.current("payment", "payment") == paid_calculation
     assert {name: company.count(name) for name in counts} == counts
-    assert company.pending() == {"january", "february", "payment"}
+    assert company.pending() == {"january", "payment"}
 
     company.save(
         Overpayment(
@@ -267,7 +316,7 @@ def test_sqlite_payment_stays_immutable_and_unexplained_overpayment_blocks_publi
             source_id="january",
             obligation_name="net",
             counterparty_id="employee",
-            amount_fen=19_400,
+            amount_fen=20_000,
             recovery_right_confirmed=True,
         ),
         "recovery",
@@ -287,10 +336,10 @@ def test_sqlite_payment_stays_immutable_and_unexplained_overpayment_blocks_publi
         ).fetchone()[0]
     assert outstanding == 0
     assert bank_total == 907_400
-    assert company.current("recovery", "overpayment").values["overpayment_fen"] == 19_400
+    assert company.current("recovery", "overpayment").values["overpayment_fen"] == 20_000
     assert company.pending() == set()
     with pytest.raises(KernelError) as immutable:
-        company.save(payment(888_000), "payment", revision=1)
+        company.save(payment(887_400), "payment", revision=1)
     assert immutable.value.code == "immutable_fact"
 
 
@@ -300,7 +349,7 @@ def test_sqlite_closed_source_correction_keeps_history_and_reuses_open_compensat
     frozen = company.close("2026-01")
     original_ledger = company.engine.ledger("2026-01")
     first_source = company.save(actual(), "actual")
-    assert set(first_source["pending"]) == {"january", "february"}
+    assert set(first_source["pending"]) == {"january"}
     assert Periods(company.engine).closed_report("2026-01") == frozen
     before_count = company.count("calculation")
     with pytest.raises(KernelError) as missing_period:
@@ -327,7 +376,7 @@ def test_sqlite_closed_source_correction_keeps_history_and_reuses_open_compensat
     second_march = company.engine.ledger("2026-03")
     assert len(second_march) == 2
     assert next(x for x in second_march if x["reverses_id"]) == reversal
-    assert company.current("january").values["net_fen"] == 878_300
+    assert company.current("january").values["net_fen"] == 877_400
     assert company.pending() == set()
     assert Periods(company.engine).closed_report("2026-01") == frozen
 
@@ -356,7 +405,7 @@ def test_sqlite_correction_after_compensation_is_closed_targets_latest_frozen_re
     company.save(actual(employee=120_000, employer=240_000), "actual", revision=2)
     company.publish("actual", posting_period="2026-04")
     april = company.engine.ledger("2026-04")
-    assert len(april) == 4  # The current January replacement and February are both now closed.
+    assert len(april) == 2  # Only the corrected January obligation changes after March closes.
     assert any(row["reverses_id"] == latest_replacement["id"] for row in april)
     assert company.engine.ledger("2026-03") == march_ledger
     assert Periods(company.engine).closed_report("2026-01") == january_frozen

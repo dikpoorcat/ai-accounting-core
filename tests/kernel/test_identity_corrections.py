@@ -80,6 +80,7 @@ def confirm(engine, kwargs, request="correction"):
 
 def test_reassign_is_atomic_and_repeatable(identity_engine):
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     data = expense(engine, evidence, first)
     kwargs = dict(
         changes=[
@@ -116,6 +117,7 @@ def test_reassign_is_atomic_and_repeatable(identity_engine):
 
 def test_supersede_retains_history_and_cancels_only_duplicate(identity_engine):
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     expense(engine, evidence, first, "duplicate", 100)
     expense(engine, evidence, second, "retained", 120)
     kwargs = dict(
@@ -148,6 +150,7 @@ def test_supersede_retains_history_and_cancels_only_duplicate(identity_engine):
 
 def test_correction_rolls_back_and_rejects_stale_preview(identity_engine):
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     data = expense(engine, evidence, first)
     kwargs = dict(
         changes=[
@@ -198,6 +201,7 @@ def test_closed_correction_preserves_frozen_manifest(identity_engine):
     from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     data = expense(engine, evidence, first)
     from test_materials import csv_spec
 
@@ -509,6 +513,27 @@ def save_model(engine, evidence, subject, fact):
     )
 
 
+def confirmed_tax(engine, evidence, subject, amount):
+    from test_payroll import tax_basis
+
+    with engine.store.connection(read_only=True) as connection:
+        source = engine.store.current_fact(connection, subject)
+    fact = tax_basis(source, amount).fact
+    save_model(engine, evidence, "tax-basis-" + subject, fact)
+
+
+def tax_companion(engine, subject):
+    with engine.store.connection(read_only=True) as connection:
+        basis = engine.store.current_fact(connection, "tax-basis-" + subject)
+    return dict(
+        subject_id=basis.subject_id,
+        expected_revision=basis.revision,
+        action="reassign",
+        data=basis.fact.model_dump(mode="json"),
+        remuneration_source_revision=dict(subject_id=subject, revision=2),
+    )
+
+
 def publish_subjects(engine, subjects, request):
     p = engine.preview(subjects)
     return engine.confirm(
@@ -518,32 +543,11 @@ def publish_subjects(engine, subjects, request):
 
 @pytest.mark.parametrize("closed", [False, True])
 def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_engine, closed):
-    from test_payroll import (
-        bonus,
-        bonus_policy,
-        contribution_policy,
-        income_tax_policy,
-        opening,
-        payroll,
-        profile,
-    )
-
-    from ai_accounting.kernel.domains.payroll import (
-        AnnualBonusOpeningUsage,
-        PayrollWithholdingActual,
-    )
+    from test_payroll import bonus, contribution_policy, payroll, profile
 
     engine, evidence, first, second = identity_engine
     save_model(engine, evidence, "contributions", contribution_policy())
-    save_model(engine, evidence, "income-tax", income_tax_policy())
-    save_model(
-        engine,
-        evidence,
-        "actual-tax",
-        PayrollWithholdingActual(
-            period="2026-01", employee_id=second, withheld_tax_fen=12345, withholding_confirmed=True
-        ),
-    )
+    opening_package(engine, evidence, [])
     for suffix, person in (("a", first), ("b", second)):
         save_model(
             engine,
@@ -555,7 +559,6 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
                 social_insurance_base_fen=None,
             ),
         )
-        save_model(engine, evidence, "tax-opening-" + suffix, opening(employee_id=person))
     facts = {}
     for subject, person, profile_id, month, amount in (
         ("jan-a", first, "profile-a", "2026-01", 1000000),
@@ -567,9 +570,9 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
             profile_id=profile_id,
             period=month,
             accounting_gross_salary_fen=amount,
-            tax_reported_salary_fen=amount,
         )
         save_model(engine, evidence, subject, facts[subject])
+        confirmed_tax(engine, evidence, subject, 12345 if subject == "jan-b" else 0)
         confirm_wage_inputs(
             engine,
             subject,
@@ -577,30 +580,13 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
             request_id="confirm-payroll-" + subject,
         )
         publish_subjects(engine, [subject], "publish-" + subject)
-    save_model(engine, evidence, "bonus-policy", bonus_policy())
-    save_model(
-        engine,
-        evidence,
-        "bonus-usage",
-        AnnualBonusOpeningUsage(
-            period="2026-01", employee_id=second, separate_method_already_used=False
-        ),
-    )
-    save_model(
-        engine,
-        evidence,
-        "bonus",
-        bonus(
-            employee_id=second, bonus_fen=1000000, tax_method="combined", regular_payroll_id="jan-b"
-        ),
-    )
+    save_model(engine, evidence, "bonus", bonus(employee_id=second, bonus_fen=1000000))
+    confirmed_tax(engine, evidence, "bonus", 0)
     publish_subjects(engine, ["bonus", "feb-b"], "publish-bonus")
     frozen = None
     if closed:
         frozen = close_calculated_payroll(engine, evidence, ["jan-a", "jan-b", "bonus"])
-    corrected = facts["jan-b"].model_dump(mode="json") | dict(
-        accounting_gross_salary_fen=1500000, tax_reported_salary_fen=1500000
-    )
+    corrected = facts["jan-b"].model_dump(mode="json") | dict(accounting_gross_salary_fen=1500000)
     with engine.store.connection(read_only=True) as connection:
         plan_version = engine.store.select(
             connection,
@@ -628,6 +614,7 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
                 replacement_subject_id="jan-b",
             ),
             dict(subject_id="jan-b", expected_revision=1, action="reassign", data=corrected),
+            tax_companion(engine, "jan-b"),
         ],
         evidence=[evidence],
         reason="verified sole monthly payroll and duplicate",
@@ -683,12 +670,10 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
     retention = preview["items"][0]["payroll_resolution"]
     assert retention["retained_subject_id"] == "jan-b"
     assert [c["subject_id"] for c in retention["candidates"]] == ["jan-a", "jan-b"]
-    feb = next(r for r in preview["results"] if r["subject_id"] == "feb-b")
-    assert feb["values"]["prior_tax_state"]["cumulative_income_fen"] == 2500000
-    assert feb["values"]["tax_state"]["cumulative_income_fen"] == 3800000
-    assert feb["posting_period"] == "2026-02"
+    assert not {"feb-b", "bonus"} & {r["subject_id"] for r in preview["results"]}
     jan = next(r for r in preview["results"] if r["subject_id"] == "jan-b")
-    assert jan["values"]["actual_withholding"]["withheld_tax_fen"] == 12345
+    assert jan["values"]["tax_fen"] == 12345
+    assert "tax_state" not in jan["values"]
     from ai_accounting.kernel.dashboard import Dashboard
 
     employees = Dashboard(engine).employees(
@@ -709,7 +694,7 @@ def test_payroll_conflict_resolution_recomputes_later_cumulative_state(identity_
 
 
 def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(identity_engine):
-    from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+    from test_payroll import contribution_policy, payroll, profile
 
     from ai_accounting.kernel.contracts import Read
     from ai_accounting.kernel.payroll_confirmation import (
@@ -719,13 +704,11 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
     from ai_accounting.kernel.payroll_preparation import PayrollChangeNotice, PayrollPlan
 
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     for subject, fact in (
         ("contributions", contribution_policy()),
-        ("income-tax", income_tax_policy()),
         ("profile-first", profile(employee_id=first)),
         ("profile-second", profile(employee_id=second)),
-        ("opening-first", opening(employee_id=first)),
-        ("opening-second", opening(employee_id=second)),
     ):
         save_model(engine, evidence, subject, fact)
     wage = payroll(employee_id=first, profile_id="profile-first")
@@ -734,6 +717,7 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
     )
     save_model(engine, evidence, "notice", notice)
     save_model(engine, evidence, "wage", wage)
+    confirmed_tax(engine, evidence, "wage", 12600)
     with engine.store.connection(read_only=True) as connection:
         wage_version = engine.store.current_fact(connection, "wage")
         notice_version = engine.store.current_fact(connection, "notice")
@@ -747,9 +731,12 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
 
     with engine.store.connection(read_only=True) as connection:
         profile_second = engine.store.current_fact(connection, "profile-second")
-    corrected_wage = wage.model_copy(update={
-        "employee_id": second, "profile_revision": revision_reference(profile_second),
-    })
+    corrected_wage = wage.model_copy(
+        update={
+            "employee_id": second,
+            "profile_revision": revision_reference(profile_second),
+        }
+    )
     command = IdentityCorrections(engine)
     with pytest.raises(KernelError) as missing_sources:
         command.preview_identity_correction(
@@ -795,6 +782,7 @@ def test_payroll_identity_correction_carries_exact_plan_and_notice_versions(iden
                 action="reassign",
                 data=corrected_plan.model_dump(mode="json"),
             ),
+            tax_companion(engine, "wage"),
         ],
         evidence=[evidence],
         reason="confirmed corrected employee identity with exact wage sources",
@@ -914,19 +902,34 @@ def close_calculated_payroll(engine, evidence, subjects):
 
 def test_frozen_payroll_opening_binding_feeds_new_person_cumulative(identity_engine):
     from test_opening_continuation import _close_without_current_business
-    from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+    from test_payroll import contribution_policy, payroll, profile
 
-    from ai_accounting.kernel.domains.opening import OpeningPayrollState
+    from ai_accounting.kernel.periods import Periods
 
     engine, evidence, first, second = identity_engine
-    fields = opening(employee_id=first).model_dump(mode="json")
-    fields.pop("period")
-    fields["separate_method_already_used"] = False
-    opening_package(engine, evidence, [("opening_payroll_state", "employee-opening", fields)])
+    fields = dict(
+        employee_id=first,
+        recipient_id=first,
+        payroll_period="2025-12",
+        component="net",
+        outstanding_fen=100000,
+    )
+    opening_package(
+        engine,
+        evidence,
+        [
+            ("opening_payroll_payable", "employee-opening", fields),
+            (
+                "opening_equity",
+                "loss",
+                dict(
+                    equity_kind="retained_earnings", balance_fen=-100000, holder_or_basis_id=first
+                ),
+            ),
+        ],
+    )
     _close_without_current_business(engine, "2026-01", evidence)
-    corrected = OpeningPayrollState(period="2026-01", package_id="opening", **fields).model_dump(
-        mode="json"
-    ) | dict(employee_id=second)
+    frozen = Periods(engine).closed_report("2026-01")
     confirm(
         engine,
         dict(
@@ -935,44 +938,59 @@ def test_frozen_payroll_opening_binding_feeds_new_person_cumulative(identity_eng
                     subject_id="employee-opening",
                     expected_revision=1,
                     action="reassign",
-                    data=corrected,
+                    data=dict(
+                        period="2026-01",
+                        package_id="opening",
+                        **(fields | {"employee_id": second, "recipient_id": second}),
+                    ),
                 )
             ],
             evidence=[evidence],
-            reason="same employee",
+            reason="same employee confirmed for original unpaid wages",
             posting_period="2026-02",
         ),
     )
     save_model(engine, evidence, "contributions", contribution_policy())
-    save_model(engine, evidence, "income-tax", income_tax_policy())
     save_model(
         engine,
         evidence,
         "profile",
         profile(
-            employee_id=second,
-            withholding_start_date="2026-02",
-            social_insurance_participating=False,
-            social_insurance_base_fen=None,
+            employee_id=second, social_insurance_participating=False, social_insurance_base_fen=None
         ),
     )
     save_model(engine, evidence, "feb-payroll", payroll(employee_id=second, period="2026-02"))
+    confirmed_tax(engine, evidence, "feb-payroll", 15000)
     confirm_wage_inputs(
-        engine,
-        "feb-payroll",
-        evidence=(evidence,),
-        request_id="confirm-feb-payroll",
+        engine, "feb-payroll", evidence=(evidence,), request_id="confirm-feb-payroll"
     )
-    p = engine.preview(["feb-payroll"])
-    assert p["results"][0]["values"]["employee_id"] == second
-    assert p["results"][0]["values"]["tax_state"]["cumulative_income_fen"] == 1000000
+    preview = engine.preview(["feb-payroll"])
+    values = preview["results"][0]["values"]
+    assert values["employee_id"] == second
+    assert values["tax_fen"] == 15000
+    assert "tax_state" not in values
     publish_subjects(engine, ["feb-payroll"], "publish-payroll")
+    assert Periods(engine).closed_report("2026-01") == frozen
+    with engine.store.connection(read_only=True) as connection:
+        retained = engine.store.current_fact(connection, "employee-opening")
+        assert retained.fact.employee_id == retained.fact.recipient_id == first
+        assert (
+            dict(
+                connection.execute(
+                    "SELECT path,entity_id FROM entity_reference_current WHERE fact_id=?",
+                    (retained.id,),
+                )
+            )["employee_id"]
+            == second
+        )
+        assert retained.fact.outstanding_fen == 100000
 
 
 def test_asset_identity_differs_from_acquisition_and_reassigns_owned_members(identity_engine):
     from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
 
     engine, evidence, supplier, _ = identity_engine
+    opening_package(engine, evidence, [])
     entities = Entities(engine)
     assets = [
         entities.register_entity("asset", {}, source="synthetic", request_id=f"asset-{i}")[
@@ -1240,6 +1258,7 @@ def test_fact_only_identity_change_and_supersession_cycle(identity_engine):
     from test_payroll import profile
 
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     fact = profile(employee_id=first)
     save_model(engine, evidence, "profile", fact)
     p, _ = confirm(
@@ -1393,6 +1412,7 @@ def test_superseded_business_can_be_restored_by_exact_reassign(identity_engine):
     from ai_accounting.kernel.identity_corrections import superseded_subject_ids
 
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     original = expense(engine, evidence, first, "discarded", 100)
     expense(engine, evidence, second, "retained", 120)
     confirm(
@@ -1431,6 +1451,7 @@ def test_superseded_business_can_be_restored_by_exact_reassign(identity_engine):
 
 def test_correction_cannot_claim_unrelated_entity_resolution(identity_engine):
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     third = Entities(engine).register_entity(
         "person", {}, source="synthetic", request_id="unrelated"
     )["entity_id"]
@@ -1453,6 +1474,7 @@ def test_correction_cannot_claim_unrelated_entity_resolution(identity_engine):
 
 def test_identity_reduction_preserves_actual_payment_and_requires_exact_recovery(identity_engine):
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     original = expense(engine, evidence, first)
     account = Entities(engine).register_entity(
         "fund_account",
@@ -1544,6 +1566,7 @@ def test_correction_approval_binds_repair_revision_and_exact_result(identity_eng
     from ai_accounting.kernel.identity_corrections import verify_identity_corrections
 
     engine, evidence, first, second = identity_engine
+    opening_package(engine, evidence, [])
     data = expense(engine, evidence, first)
     kwargs = dict(
         changes=[
@@ -1780,71 +1803,115 @@ def test_conflicting_frozen_payroll_bases_choose_one_without_adding_cumulative_a
     identity_engine,
 ):
     from test_opening_continuation import _close_without_current_business
-    from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+    from test_payroll import contribution_policy, payroll, profile
+
+    from ai_accounting.kernel.periods import Periods
 
     engine, evidence, first, second = identity_engine
     members = []
     for sid, person, amount in (("basis-a", first, 1000000), ("basis-b", second, 2000000)):
-        fields = opening(
-            employee_id=person,
-            period="2026-04",
-            through_period="2026-03",
-            cumulative_income_fen=amount,
-        ).model_dump(mode="json")
-        fields.pop("period")
-        fields["separate_method_already_used"] = False
-        members.append(("opening_payroll_state", sid, fields))
+        members.extend(
+            [
+                (
+                    "opening_payroll_payable",
+                    sid,
+                    dict(
+                        employee_id=person,
+                        recipient_id=person,
+                        payroll_period="2026-03",
+                        component="net",
+                        outstanding_fen=amount,
+                    ),
+                ),
+                (
+                    "opening_equity",
+                    "loss-" + sid,
+                    dict(
+                        equity_kind="retained_earnings",
+                        balance_fen=-amount,
+                        holder_or_basis_id=person,
+                    ),
+                ),
+            ]
+        )
     opening_package(engine, evidence, members, period="2026-04")
     _close_without_current_business(engine, "2026-04", evidence)
-    p, _ = confirm(
+    frozen = Periods(engine).closed_report("2026-04")
+    changes = [
+        dict(
+            subject_id="basis-a",
+            expected_revision=1,
+            action="supersede",
+            replacement_subject_id="basis-b",
+        )
+    ]
+    command = IdentityCorrections(engine)
+    with pytest.raises(KernelError, match="未平衡"):
+        command.preview_identity_correction(
+            changes=changes,
+            evidence=[evidence],
+            reason="duplicate unpaid wages require exact balanced loss counterpart",
+            posting_period="2026-05",
+        )
+    changes.append(
+        dict(
+            subject_id="loss-basis-a",
+            expected_revision=1,
+            action="supersede",
+            replacement_subject_id="loss-basis-b",
+        )
+    )
+    preview, _ = confirm(
         engine,
         dict(
-            changes=[
-                dict(
-                    subject_id="basis-a",
-                    expected_revision=1,
-                    action="supersede",
-                    replacement_subject_id="basis-b",
-                )
-            ],
+            changes=changes,
             evidence=[evidence],
-            reason="retained original cumulative basis explicitly verified",
+            reason="retained original unpaid wages and loss counterpart explicitly verified",
             posting_period="2026-05",
         ),
     )
-    owner = next(r for r in p["results"] if r["kind"] == "opening_basis_correction")
-    assert not owner["lines"] and not owner["balances"]
+    owner = next(r for r in preview["results"] if r["kind"] == "opening_basis_correction")
+    assert sum(line["debit"] for line in owner["lines"]) == 1000000
     save_model(engine, evidence, "contributions", contribution_policy())
-    save_model(engine, evidence, "income-tax", income_tax_policy())
     save_model(
         engine,
         evidence,
         "profile",
         profile(
-            employee_id=second,
-            withholding_start_date="2026-04",
-            social_insurance_participating=False,
-            social_insurance_base_fen=None,
+            employee_id=second, social_insurance_participating=False, social_insurance_base_fen=None
         ),
     )
     save_model(
         engine, evidence, "late-april-payroll", payroll(employee_id=second, period="2026-04")
     )
+    confirmed_tax(engine, evidence, "late-april-payroll", 30000)
     confirm_wage_inputs(
-        engine,
-        "late-april-payroll",
-        evidence=(evidence,),
-        request_id="confirm-late-april-payroll",
+        engine, "late-april-payroll", evidence=(evidence,), request_id="confirm-late-april-payroll"
     )
-    p = engine.preview(["late-april-payroll"], posting_period="2026-05")
-    assert p["results"][0]["values"]["tax_state"]["cumulative_income_fen"] == 3000000
+    preview = engine.preview(["late-april-payroll"], posting_period="2026-05")
+    assert preview["results"][0]["values"]["tax_fen"] == 30000
+    assert "tax_state" not in preview["results"][0]["values"]
     engine.confirm(
         ["late-april-payroll"],
         posting_period="2026-05",
-        preview_digest=p["digest"],
-        epochs=p["epochs"],
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
         request_id="publish-late-april",
     )
+    assert Periods(engine).closed_report("2026-04") == frozen
+    with engine.store.connection(read_only=True) as connection:
+        original = engine.store.current_fact(connection, "basis-a")
+        assert original.fact.outstanding_fen == 1000000
+        assert (
+            dict(
+                connection.execute(
+                    "SELECT path,entity_id FROM entity_reference_current WHERE fact_id=?",
+                    (original.id,),
+                )
+            )["employee_id"]
+            == second
+        )
+        assert engine.store.current_fact(connection, "basis-b").fact.outstanding_fen == 2000000
 
 
 def test_opening_asset_economic_supersession_rebuilds_month_owner_without_member_voucher(

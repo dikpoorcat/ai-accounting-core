@@ -34,7 +34,7 @@ def old_page(engine, period, *, owner_fact_ids=(), **options):
 
 
 def closed_cards(tmp_path, count):
-    company = Company(tmp_path / "cards.sqlite")
+    company = Company(tmp_path / "cards.sqlite", opening_period="2026-02")
     identities = [f"card-{index:02}" for index in range(count)]
     for index, ident in enumerate(identities):
         company.save(ReimbursedAsset.model_validate_json(json.dumps(asset(
@@ -172,7 +172,7 @@ def test_complete_card_response_and_work_with_object_and_profile_history_growth(
 
 @pytest.fixture
 def activated_company(tmp_path):
-    company = Company(tmp_path / "activation.sqlite")
+    company = Company(tmp_path / "activation.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     with company.engine.store.connection(read_only=True) as connection:
         evidence = company.engine.store.current_fact(connection, "computer").evidence[0]

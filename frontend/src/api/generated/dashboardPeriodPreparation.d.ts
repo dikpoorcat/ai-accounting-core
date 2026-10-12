@@ -146,7 +146,7 @@ export namespace DashboardPeriodPreparationContract {
   export type FactIssues = ReadinessIssue[];
   export type TotalCount = number;
   export type IssueCount = number;
-  export type Status8 = "ready" | "needs_information" | "unsupported" | "pending_publication" | "not_applicable";
+  export type Status8 = "ready" | "needs_information" | "unsupported" | "pending_confirmation" | "not_applicable";
   export type BlockingScope = "tax_import_file";
   export type MappingFactIds = string[];
   export type CalculationIds = string[];

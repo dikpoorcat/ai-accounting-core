@@ -60,8 +60,8 @@ def test_owner_tasks_do_not_accept_a_model_valid_wage_with_wrong_source_digest(p
     company = payroll_company
     saved = unconfirmed_wage(company)
     damage(
-        company.engine, "fact_payroll",
-        "UPDATE fact_payroll SET accounting_gross_salary_fen=accounting_gross_salary_fen+1 "
+        company.engine, "fact_payroll_confirmed",
+        "UPDATE fact_payroll_confirmed SET accounting_gross_salary_fen=accounting_gross_salary_fen+1 "
         "WHERE revision_id=?",
         (saved["fact_id"],),
     )

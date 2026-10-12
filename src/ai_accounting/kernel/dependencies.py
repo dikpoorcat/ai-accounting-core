@@ -4,26 +4,36 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .contracts import Calculation, Fact, FactVersion, KernelError, Read, Registry
+from .contracts import Calculation, Context, Fact, FactVersion, KernelError, Read, Registry
 
 ALL_LANES = frozenset({"accounting", "material", "management"})
 NO_PERIOD_LIMIT = 119988
 
 
 def select_fact_dependencies(versions, select_many, reads_for):
-    """Batch both declared stages in the same caller-owned transaction."""
+    """Batch declared stages and bounded historical follow-ups in one snapshot."""
     versions = tuple(versions)
     first = {read for version in versions for read in reads_for(version)}
     selections = select_many(sorted(first, key=repr))
-    additional = {
-        read for version in versions for read in reads_for(version, selections)
-    } - first
+    additional = {read for version in versions for read in reads_for(version, selections)} - first
     for read in additional:
         validate_read(read)
         if read.key == "*" or len(additional) > 64 * max(1, len(versions)):
             raise KernelError("unbounded_read", "第二阶段只允许有界的精确身份依赖")
     if additional:
         selections.update(select_many(sorted(additional, key=repr)))
+    final = {
+        read
+        for version in versions
+        for hook in (getattr(version.fact, "reads_final", None),)
+        for read in (() if hook is None else hook(version.subject_id, Context(selections)))
+    } - selections.keys()
+    for read in final:
+        validate_read(read)
+        if read.key == "*" or len(final) > 64 * max(1, len(versions)):
+            raise KernelError("unbounded_read", "最后阶段只允许有界的精确历史依赖")
+    if final:
+        selections.update(select_many(sorted(final, key=repr)))
     return selections
 
 

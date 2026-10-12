@@ -52,6 +52,7 @@ def test_current_wage_details_retain_explicit_no_change_evidence(tmp_path):
     plan = service.prepare("2026-02")
     saved = service.confirm("2026-02", preview_digest=plan["digest"], request_id=company.request())
     subject_id = saved["results"][0]["subject_id"]
+    company.tax_basis(subject_id, 12_600)
     company.publish(subject_id)
 
     result = BusinessQueries(company.engine).business_status(

@@ -392,7 +392,6 @@ class Display:
         """
         from .materials import check_completeness
         from .payroll_tax_declarations import declaration_scope, disbursement_scope
-        from .schema import table_name
 
         if registry is None:
             from .service import default_registry
@@ -534,16 +533,31 @@ class Display:
         for kind in ("payroll", "payroll_bounded"):
             if kind not in registry.models:
                 continue
-            for row in connection.execute(
-                f"SELECT f.subject_id,f.period,p.employee_id FROM {table_name(kind)} p "
-                "JOIN fact_revision f ON f.id=p.revision_id "
-                "JOIN json_each(?) ids ON ids.value=f.id",
-                (canonical(sorted(related_facts)),),
-            ):
-                scopes.add(
-                    declaration_scope(row["employee_id"], YearMonth.from_ordinal(row["period"]))
-                )
-                scopes.add(disbursement_scope(kind, row["subject_id"]))
+            for _, table in registry.fact_bodies(kind):
+                for row in connection.execute(
+                    f"SELECT f.subject_id,f.period,p.employee_id FROM {table} p "
+                    "JOIN fact_revision f ON f.id=p.revision_id "
+                    "JOIN json_each(?) ids ON ids.value=f.id",
+                    (canonical(sorted(related_facts)),),
+                ):
+                    scopes.add(
+                        declaration_scope(row["employee_id"], YearMonth.from_ordinal(row["period"]))
+                    )
+                    scopes.add(disbursement_scope(kind, row["subject_id"]))
+                if "remuneration_tax_basis" in registry.models:
+                    tax_table = registry.current_table("remuneration_tax_basis")
+                    for row in connection.execute(
+                        f"SELECT p.employee_id,t.tax_period FROM {tax_table} t "
+                        f"JOIN {table} p ON p.revision_id=t.source_fact_id "
+                        "JOIN json_each(?) ids ON ids.value=t.revision_id "
+                        "WHERE t.source_kind=?",
+                        (canonical(sorted(related_facts)), kind),
+                    ):
+                        scopes.add(
+                            declaration_scope(
+                                row["employee_id"], YearMonth.from_ordinal(row["tax_period"])
+                            )
+                        )
         supplementary = [
             Display._record(row)
             for row in connection.execute(

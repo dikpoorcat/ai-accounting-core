@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from entity_fixture import seed_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 from openpyxl import load_workbook
 
 from ai_accounting.kernel.contracts import KernelError
@@ -33,9 +34,7 @@ def test_open_publication_probe_checks_exact_months_and_scales_with_month_count(
             "CREATE TABLE voucher_current(version_id TEXT UNIQUE);"
         )
         assert not _has_open_publication(connection, 10)
-        connection.executemany(
-            "INSERT INTO calculation_publication VALUES(?)", [(1,), (3,), (8,)]
-        )
+        connection.executemany("INSERT INTO calculation_publication VALUES(?)", [(1,), (3,), (8,)])
         connection.executemany("INSERT INTO period_close VALUES(?)", [(1,), (8,)])
         assert not _has_open_publication(connection, 2)
         assert _has_open_publication(connection, 3)
@@ -71,12 +70,13 @@ def test_open_publication_probe_checks_exact_months_and_scales_with_month_count(
 
 
 @pytest.fixture
-def book(tmp_path):
+def book(tmp_path, *, opening_period="2026-01"):
     engine = Engine(
         Store.create(
             tmp_path / "company.sqlite", production_bundle(), "co", "911100000000000001", "db"
         )
     )
+    adopt_empty_opening(engine, period=opening_period)
     seed_entities(
         engine,
         (
@@ -292,7 +292,11 @@ def test_report_reuses_frozen_end_amounts_without_changing_complete_plan(book, s
         connection.set_trace_callback(statements.append)
         try:
             plan = report._report(
-                2026, 1, source=source, connection=connection, reads=reads,
+                2026,
+                1,
+                source=source,
+                connection=connection,
+                reads=reads,
                 _issues_only=issues_only,
             )
         finally:
@@ -300,7 +304,8 @@ def test_report_reuses_frozen_end_amounts_without_changing_complete_plan(book, s
         # This is the shared totals reader's actual frozen-baseline SQL, not
         # a mock of the conditional being optimized. Other cutoffs still read.
         end_reads = [
-            sql for sql in statements
+            sql
+            for sql in statements
             if sql.startswith("SELECT period,manifest,digest FROM period_close ")
             and f"period<={cutoff} " in sql
         ]
@@ -329,17 +334,27 @@ def test_report_without_frozen_baseline_retains_both_end_amount_reads(book):
         reads.connection.set_trace_callback(statements.append)
         try:
             owned = report._report(
-                2026, 1, source="open", connection=reads.connection, reads=reads,
+                2026,
+                1,
+                source="open",
+                connection=reads.connection,
+                reads=reads,
             )
         finally:
             reads.connection.set_trace_callback(None)
     independent = report.report(2026, 1)
     assert owned == independent
-    assert len([
-        sql for sql in statements
-        if sql.startswith("SELECT account,sum(debit-credit) amount FROM monthly_account ")
-        and f"period<={cutoff} " in sql
-    ]) == 2
+    assert (
+        len(
+            [
+                sql
+                for sql in statements
+                if sql.startswith("SELECT account,sum(debit-credit) amount FROM monthly_account ")
+                and f"period<={cutoff} " in sql
+            ]
+        )
+        == 2
+    )
 
 
 def test_readiness_issues_match_full_report_without_full_history_id_output(book):
@@ -354,16 +369,28 @@ def test_readiness_issues_match_full_report_without_full_history_id_output(book)
     period = YearMonth("2026-03")
     with QueryReads.snapshot(engine) as reads:
         full = report._report(
-            2026, 1, source="open", connection=reads.connection, reads=reads,
+            2026,
+            1,
+            source="open",
+            connection=reads.connection,
+            reads=reads,
             through_period=period,
         )
     with QueryReads.snapshot(engine) as reads:
         issues_only = report._report(
-            2026, 1, source="open", connection=reads.connection, reads=reads,
-            through_period=period, _issues_only=True,
+            2026,
+            1,
+            source="open",
+            connection=reads.connection,
+            reads=reads,
+            through_period=period,
+            _issues_only=True,
         )
         readiness = check_report_readiness(
-            engine.store, reads.connection, period, reads=reads,
+            engine.store,
+            reads.connection,
+            period,
+            reads=reads,
         )
     assert issues_only["fact_issues"] == full["fact_issues"] == readiness
     assert set(issues_only["report_fact_ids"]) < set(full["report_fact_ids"])
@@ -383,7 +410,11 @@ def test_readiness_issue_selection_falls_back_to_full_refs_without_directory(boo
     period = YearMonth("2026-03")
     with QueryReads.snapshot(engine) as reads:
         full = report._report(
-            2026, 1, source="open", connection=reads.connection, reads=reads,
+            2026,
+            1,
+            source="open",
+            connection=reads.connection,
+            reads=reads,
             through_period=period,
         )
     with QueryReads.snapshot(engine) as reads:
@@ -601,13 +632,18 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
         assert validate_response("workflow", workflow) == workflow
         readiness = BusinessQueries(book[0]).period_readiness("2026-03", as_of="2026-04-01")
         assert validate_response("period_readiness", readiness) == readiness
-        for jobs in (workflow["sections"]["files"]["jobs"],
-                     readiness["current_followups"]["file_jobs"]):
+        for jobs in (
+            workflow["sections"]["files"]["jobs"],
+            readiness["current_followups"]["file_jobs"],
+        ):
             job = next(job for job in jobs if job["kind"] == "report_export")
             assert job["status"] == status
             assert job["period"] == {
-                "year": 2026, "quarter": 1, "quarter_start": "2026-01-01",
-                "quarter_end": "2026-03-31", "label": "2026 年第 1 季度",
+                "year": 2026,
+                "quarter": 1,
+                "quarter_start": "2026-01-01",
+                "quarter_end": "2026-03-31",
+                "label": "2026 年第 1 季度",
             }
             assert job["verified_when_succeeded"] is (status == "succeeded")
 
@@ -625,8 +661,9 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
     assert run_report_jobs(book[0])[0]["status"] == "succeeded"
     projected("succeeded")
     core_job = book[0].jobs(job_id=failed["job_id"])[0]
-    assert hashlib.sha256(Path(core_job["result"]["path"]).read_bytes()).hexdigest() == (
-        core_job["result"]["sha256"]
+    assert (
+        hashlib.sha256(Path(core_job["result"]["path"]).read_bytes()).hexdigest()
+        == (core_job["result"]["sha256"])
     )
     workbook = load_workbook(core_job["result"]["path"])
     assert len(workbook.worksheets) == 3
@@ -858,8 +895,9 @@ def test_tax_surtax_credit_needs_detail_and_does_not_repeat_original_assessment(
     assert result["10"]["current_fen"] == 250
 
 
-def test_prior_year_income_tax_adjustment_is_current_expense_not_current_year_assessment(book):
-    engine, save, publish, close = book
+def test_prior_year_income_tax_adjustment_is_current_expense_not_current_year_assessment(tmp_path):
+    book_records = book.__wrapped__(tmp_path, opening_period="2025-12")
+    engine, save, publish, close = book_records
     save(
         "report_profile",
         "profile",
@@ -900,6 +938,6 @@ def test_prior_year_income_tax_adjustment_is_current_expense_not_current_year_as
     )
     publish("annual")
     cit(save, publish, "2026-03")
-    close_quarter(book)
+    close_quarter(book_records)
     plan = Reports(engine).preview_export(2026, 1)
     assert plan["statements"]["profit_statement"]["31"]["current_fen"] == -40

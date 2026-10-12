@@ -16,7 +16,7 @@ from ai_accounting.kernel.contracts import BalanceEffect, Calculation, Line, Out
 from ai_accounting.kernel.display import BusinessProfile
 from ai_accounting.kernel.entities import entity_profile_models
 from ai_accounting.kernel.fund_accounts import IDENTITY_FIELDS, fund_profile_models
-from ai_accounting.kernel.schema import schema_sql, sequence_model, table_name
+from ai_accounting.kernel.schema import schema_sql, sequence_model
 from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.work_draft_contract import WorkDraft
 
@@ -266,12 +266,21 @@ def source_for_table(database, name, typed_tables):
 
 
 def fact_source(kind, model, registry):
+    historical = kind in registry.historical_only or model is not registry.models[kind]
     evaluator = registry.evaluators.get(kind)
-    consumer = model_key(evaluator) if evaluator is not None else "注册事实的准备及来源核验"
+    consumer = (
+        "历史审计／冻结核验／既有清偿；不运行历史个税计算"
+        if historical
+        else model_key(evaluator)
+        if evaluator is not None
+        else "注册事实的准备及来源核验"
+    )
     module = Path(inspect.getsourcefile(model)).resolve().relative_to(ROOT).as_posix()
     return Source(
-        "精确事实版本：" + kind,
-        model.registration_command or "save_fact／amend_fact／save_facts",
+        ("不可变历史正文：" if historical else "精确事实版本：") + kind,
+        "原修订封存，退出新登记"
+        if historical
+        else model.registration_command or "save_fact／amend_fact／save_facts",
         consumer,
         (module, "src/ai_accounting/kernel/storage.py"),
     )
@@ -279,7 +288,11 @@ def fact_source(kind, model, registry):
 
 def registered_models(registry):
     """Canonical roots and actual nested classes, without traversing wire DTOs."""
-    roots = [(model, fact_source(kind, model, registry)) for kind, model in registry.models.items()]
+    roots = [
+        (model, fact_source(kind, model, registry))
+        for kind in registry.models
+        for model, _table in registry.fact_bodies(kind)
+    ]
     roots += [(model, SOURCES["entity"]) for model in entity_profile_models().values()]
     roots += [(model, SOURCES["fund"]) for model in fund_profile_models().values()]
     roots += [(BusinessProfile, SOURCES["business"]), (WorkDraft, SOURCES["draft"])]
@@ -347,13 +360,13 @@ def build_inventory(*, registry=None, roots=None, scripts=None, supplements=None
     for exact in sorted(supplements.keys() - known):
         errors.append("失效语义补充：" + exact)
     typed_tables = {}
-    for kind, model in registry.models.items():
-        table = table_name(kind)
-        policy = fact_source(kind, model, registry)
-        typed_tables[table] = policy
-        for name, field in model.model_fields.items():
-            if sequence_model(field.annotation) is not None:
-                typed_tables[table + "_" + name] = policy
+    for kind in registry.models:
+        for model, table in registry.fact_bodies(kind):
+            policy = fact_source(kind, model, registry)
+            typed_tables[table] = policy
+            for name, field in model.model_fields.items():
+                if sequence_model(field.annotation) is not None:
+                    typed_tables[table + "_" + name] = policy
     storage, tables = [], 0
     for database, ddl in scripts:
         with sqlite3.connect(":memory:") as connection:

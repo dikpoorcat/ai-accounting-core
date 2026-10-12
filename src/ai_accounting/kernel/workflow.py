@@ -17,6 +17,7 @@ from ai_accounting.policy_sources import OfficialPolicySourceURL
 from .contracts import Fact, KernelError, NeedsInformation, Outcome, Read
 from .domains.payroll import PAYROLL_KINDS
 from .provenance import recorded_times
+from .remuneration_tax_basis import RemunerationTaxBasis, remuneration_tax_period_scope
 from .types import ActualDate, YearMonth, digest, sum_fen
 
 
@@ -24,6 +25,7 @@ from .types import ActualDate, YearMonth, digest, sum_fen
 class ObligationDefinition:
     basis_kinds: tuple[str, ...]
     check_payroll_population: bool = False
+    # Archived contribution-only outcomes retain their original applicability.
     exclude_not_started: bool = False
 
 
@@ -143,7 +145,47 @@ def _basis_reads(kind, start, end):
             for source in (("calculation",) if source_kind == "*" else ("fact", "calculation"))
         ),
         *((Read("fact", "payroll_profile", "*"),) if definition.check_payroll_population else ()),
+        *(
+            tuple(
+                Read("fact", RemunerationTaxBasis.kind, key)
+                for month in range(start.ordinal, end.ordinal + 1)
+                for key in (
+                    str(YearMonth.from_ordinal(month)),
+                    remuneration_tax_period_scope(YearMonth.from_ordinal(month)),
+                )
+            )
+            if kind == "individual_income_tax"
+            else ()
+        ),
     )
+
+
+def _basis_reads_after(kind, start, end, select):
+    if kind != "individual_income_tax":
+        return ()
+    return tuple(
+        sorted(
+            {
+                Read(source, item.fact.source_kind, str(item.fact.period))
+                for month in range(start.ordinal, end.ordinal + 1)
+                for item in select(
+                    Read(
+                        "fact",
+                        RemunerationTaxBasis.kind,
+                        remuneration_tax_period_scope(YearMonth.from_ordinal(month)),
+                    )
+                )
+                for source in ("fact", "calculation")
+            },
+            key=repr,
+        )
+    )
+
+
+def _basis_period(kind, calculation):
+    if kind == "individual_income_tax":
+        return calculation.values.get("tax_basis", {}).get("tax_period", calculation.period)
+    return calculation.period
 
 
 class ExternalObligation(Fact):
@@ -276,6 +318,7 @@ class ExternalCompletion(Fact):
                 else ()
             ),
         )
+
 
 def calculate_completion(version, context):
     fact = version.fact
@@ -427,7 +470,7 @@ def _accepted_history(fact, select):
         if (
             item.subject_id != reference.subject_id
             or item.kind in NON_ACCOUNTING_CALCULATIONS
-            or not fact.start_period <= item.period <= fact.end_period
+            or not fact.start_period <= _basis_period(fact.obligation_kind, item) <= fact.end_period
             or (
                 "*" not in OBLIGATION_DEFINITIONS[fact.obligation_kind].basis_kinds
                 and item.kind not in OBLIGATION_DEFINITIONS[fact.obligation_kind].basis_kinds
@@ -471,29 +514,102 @@ def _reviewed_basis(calculations):
 
 def _basis_state(obligation, select):
     """Known source facts and current results must describe the same population."""
-    facts, calculations, profiles = {}, {}, {}
-    for read in obligation.basis_reads():
+    facts, calculations, profiles, tax_bases = {}, {}, {}, {}
+    extra = _basis_reads_after(
+        obligation.obligation_kind, obligation.start_period, obligation.end_period, select
+    )
+    for read in (*obligation.basis_reads(), *extra):
         for item in select(read):
             if read.source == "calculation" and item.kind in NON_ACCOUNTING_CALCULATIONS:
                 continue
             collection = (
-                profiles
-                if read.kind == "payroll_profile"
-                else (facts if read.source == "fact" else calculations)
+                tax_bases
+                if read.kind == RemunerationTaxBasis.kind
+                else (
+                    profiles
+                    if read.kind == "payroll_profile"
+                    else (facts if read.source == "fact" else calculations)
+                )
             )
             collection[item.subject_id] = item
     definition = OBLIGATION_DEFINITIONS[obligation.obligation_kind]
+    population_facts = tuple(facts.values())
+    tax_groups = {}
+    for item in tax_bases.values():
+        tax_groups.setdefault(item.fact.source_id, []).append(item)
+    tax_by_source = {subject: items[0] for subject, items in tax_groups.items() if len(items) == 1}
+    ambiguous_tax = [
+        {
+            "field": "remuneration_tax_basis",
+            "subject_id": subject,
+            "reusable_sources": sorted(item.id for item in items),
+            "allowed_precision": ["exact_fact_revision"],
+            "semantics": "accounting",
+            "code": "ambiguous_remuneration_tax_basis",
+            "message": "同一报酬来源有多份当前税额依据，须明确唯一采用版本",
+        }
+        for subject, items in sorted(tax_groups.items())
+        if len(items) > 1
+    ]
+    if obligation.obligation_kind == "individual_income_tax":
+
+        def in_range(subject):
+            if len(tax_groups.get(subject, ())) > 1:
+                return any(
+                    obligation.start_period <= item.fact.tax_period <= obligation.end_period
+                    for item in tax_groups[subject]
+                )
+            basis = tax_by_source.get(subject)
+            calc = calculations.get(subject)
+            period = (
+                basis.fact.tax_period
+                if basis is not None
+                else _basis_period(obligation.obligation_kind, calc)
+                if calc is not None
+                else facts[subject].fact.period
+            )
+            return obligation.start_period <= period <= obligation.end_period
+
+        subjects = {subject for subject in facts.keys() | calculations.keys() if in_range(subject)}
+        facts = {subject: item for subject, item in facts.items() if subject in subjects}
+        calculations = {
+            subject: item for subject, item in calculations.items() if subject in subjects
+        }
+    additional_months = {
+        (item.fact.employee_id, tax_by_source[item.subject_id].fact.tax_period)
+        for item in facts.values()
+        if item.fact.kind in PAYROLL_KINDS and item.subject_id in tax_by_source
+    }
     issues = (
         _payroll_population_issues(
-            profiles.values(), facts.values(), obligation.start_period, obligation.end_period
+            profiles.values(),
+            population_facts,
+            obligation.start_period,
+            obligation.end_period,
+            additional_months=additional_months,
         )
         if definition.check_payroll_population
         else []
     )
+    issues.extend(ambiguous_tax)
     if "*" not in definition.basis_kinds:
-        for subject in sorted(facts.keys() | calculations.keys()):
+        expected_tax_sources = {
+            item.fact.source_id
+            for item in tax_bases.values()
+            if obligation.start_period <= item.fact.tax_period <= obligation.end_period
+        }
+        for subject in sorted(facts.keys() | calculations.keys() | expected_tax_sources):
             fact, calc = facts.get(subject), calculations.get(subject)
-            if fact is None or calc is None or calc.fact_id != fact.id:
+            basis = tax_by_source.get(subject)
+            if (
+                fact is None
+                or calc is None
+                or calc.fact_id != fact.id
+                or (
+                    basis is not None
+                    and calc.values.get("tax_basis", {}).get("fact_id") != basis.id
+                )
+            ):
                 issues.append(
                     {
                         "field": "unpublished_basis",
@@ -555,6 +671,11 @@ class ExternalBasisReview(Fact):
             *_basis_reads(self.obligation_kind, self.start_period, self.end_period),
         )
 
+    def reads_after(self, subject_id, context):
+        return _basis_reads_after(
+            self.obligation_kind, self.start_period, self.end_period, context.select
+        )
+
 
 def calculate_basis_review(version, context):
     fact = version.fact
@@ -607,19 +728,25 @@ def calculate_basis_review(version, context):
             report_snapshot.get("current_report_source") != "closed"
             and report_calculations != snapshot_calculations
         ):
-            issues.append({
-                "field": "report_basis", "message": "报表核对须在上游正式发布后重新准备",
-            })
+            issues.append(
+                {
+                    "field": "report_basis",
+                    "message": "报表核对须在上游正式发布后重新准备",
+                }
+            )
         if report_snapshot["comparison_result"] == "outdated":
             issues.append({"field": "report_basis", "message": "当前报表核对依据已过期"})
     report_values = (
         {
             key: report_snapshot.get(key)
             for key in (
-                "submitted_report_binding", "reviewed_report_signature", "current_report_basis",
+                "submitted_report_binding",
+                "reviewed_report_signature",
+                "current_report_basis",
             )
         }
-        if report_snapshot is not None else {}
+        if report_snapshot is not None
+        else {}
     )
     if report_snapshot is not None and report_snapshot["basis_issues"]:
         report_values["basis_issues"] = list(report_snapshot["basis_issues"])
@@ -741,7 +868,7 @@ def _compare_reported_sources(review, completion, current, context):
         if key in reported:
             raise KernelError("duplicate_reported_source", "同一员工税期申报明细不能重复")
         reported[key] = amount
-    calculated = {}
+    adopted = {}
     for item in current:
         employee = item.values.get("employee_id")
         if review.obligation_kind == "individual_income_tax":
@@ -757,24 +884,25 @@ def _compare_reported_sources(review, completion, current, context):
             else any(type(value) is not int for value in amount)
         ):
             return None
-        key = (employee, item.period)
+        key = (employee, _basis_period(review.obligation_kind, item))
         if review.obligation_kind == "individual_income_tax":
-            calculated[key] = calculated.get(key, 0) + amount
+            adopted[key] = adopted.get(key, 0) + amount
         else:
-            previous = calculated.get(key, (0, 0))
-            calculated[key] = (previous[0] + amount[0], previous[1] + amount[1])
-    if not current or set(reported) != set(calculated):
+            previous = adopted.get(key, (0, 0))
+            adopted[key] = (previous[0] + amount[0], previous[1] + amount[1])
+    if not current or set(reported) != set(adopted):
         return None
-    return "matched" if reported == calculated else "different"
+    return "matched" if reported == adopted else "different"
 
 
-def _payroll_population_issues(profiles, facts, start, end):
+def _payroll_population_issues(profiles, facts, start, end, *, additional_months=()):
     issues = []
     payroll_months = {
         (item.fact.employee_id, item.fact.period)
         for item in facts
         if item.fact.kind in PAYROLL_KINDS
     }
+    payroll_months.update(additional_months)
     missing = set()
     for version in profiles:
         profile = version.fact
@@ -1075,7 +1203,18 @@ class Workflow:
             fact = version.fact
             if fact.applicability != "required":
                 raise KernelError("obligation_not_applicable", "明确不适用的事项无需申报依据")
-            selections = {read: self.store.select(connection, read) for read in fact.basis_reads()}
+            selections = self.store.select_many(connection, fact.basis_reads())
+            selections.update(
+                self.store.select_many(
+                    connection,
+                    _basis_reads_after(
+                        fact.obligation_kind,
+                        fact.start_period,
+                        fact.end_period,
+                        selections.__getitem__,
+                    ),
+                )
+            )
             pending = {
                 row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")
             }
@@ -1148,6 +1287,20 @@ class Workflow:
             )
         )
         reads.prime_select(requested)
+        additional = tuple(
+            dict.fromkeys(
+                read
+                for version in facts
+                for read in _basis_reads_after(
+                    version.fact.obligation_kind,
+                    version.fact.start_period,
+                    version.fact.end_period,
+                    reads.select,
+                )
+            )
+        )
+        reads.prime_select(additional)
+        requested = (*requested, *additional)
         candidate_ids = {item.subject_id for read in requested for item in reads.select(read)}
         pending = {
             row[0]
@@ -1281,7 +1434,11 @@ class Workflow:
                     from .report_snapshot import review_snapshot_state
 
                     report_review = review_snapshot_state(
-                        self.engine, reads, obligation, terminal[1], calc,
+                        self.engine,
+                        reads,
+                        obligation,
+                        terminal[1],
+                        calc,
                     )
                     # Frozen report adoption can remain valid after a source
                     # gets a new current head whose posting is in a later quarter.

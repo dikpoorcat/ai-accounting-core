@@ -21,12 +21,13 @@ from test_dashboard_empty_replay import (
 from test_dashboard_matters import formal_payment_samples
 from test_dashboard_provenance import profile as display_profile
 from test_opening_continuation import book as opening_book
-from test_payroll import contribution_policy, income_tax_policy, payroll
-from test_payroll import opening as payroll_opening
+from test_payroll import payroll
 from test_payroll import profile as payroll_profile
 from test_payroll_corrections import Company
 from test_payroll_corrections import company as correction_company
-from test_tax_import import contribution_rule, replace_contribution_policy
+from test_tax_import import company as tax_import_company
+from test_tax_import import complete_details as tax_import_details
+from test_tax_import import contribution_rule
 
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.command_schema import validate_command
@@ -41,7 +42,7 @@ from ai_accounting.kernel.response_contracts import http_response, validate_resp
 def public_bank_book(path):
     """Adapt older scenario helpers to generated IDs through the public entity API."""
 
-    engine, save, publish, proof = banking.book.__wrapped__(path)
+    engine, save, publish, proof = banking.book.__wrapped__(path, opening_period=None)
     entities = Entities(engine)
     identifiers = {
         "owner": entities.register_entity(
@@ -397,29 +398,21 @@ def native_samples(root):
 
     wage_path = root / "wages"
     wage_path.mkdir()
-    wage_book = Company(wage_path / "wages.sqlite")
-    publish_empty_opening_package(
-        wage_book.engine, wage_book.owner_confirmation, "2026-01", "opening-package"
-    )
-    for fact, subject in (
-        (payroll_profile(), "profile"),
-        (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (payroll_opening(), "opening"),
-        (payroll(), "january"),
-    ):
-        wage_book.save(fact, subject)
-    wage_book.confirm_payroll("january")
-    wage_book.publish("january")
+    wage_book = tax_import_company(wage_path)
+    tax_import_details(wage_book, mapping=False)
     add("wage_mapping_missing", "dashboard_funds", Dashboard(wage_book.engine).funds("2026-01"))
-    replace_contribution_policy(
-        wage_book,
-        tuple(contribution_rule(code) for code in ("pension", "medical", "unemployment", "injury")),
+    unsupported_path = root / "unsupported-wage-file"
+    unsupported_path.mkdir()
+    unsupported_wage = tax_import_company(
+        unsupported_path,
+        rules=tuple(contribution_rule(code)
+                    for code in ("pension", "medical", "unemployment", "injury")),
     )
+    tax_import_details(unsupported_wage)
     add(
         "wage_mapping_unsupported",
         "dashboard_funds",
-        Dashboard(wage_book.engine).funds("2026-01"),
+        Dashboard(unsupported_wage.engine).funds("2026-01"),
     )
     wage_book.close("2026-01")
     wage_book.save(payroll(period="2026-02"), "february")
@@ -444,10 +437,7 @@ def native_samples(root):
     personnel_path = root / "personnel"
     personnel_path.mkdir()
     personnel = correction_company.__wrapped__(personnel_path)
-    publish_empty_opening_package(
-        personnel.engine, personnel.owner_confirmation, "2026-01", "opening-package"
-    )
-    personnel.save(payroll_profile(withholding_start_date="2026-01"), "profile", revision=1)
+    personnel.save(payroll_profile(), "profile", revision=1)
     for subject in ("january", "february"):
         with personnel.engine.store.connection(read_only=True) as connection:
             current = personnel.engine.store.current_fact(connection, subject)
@@ -556,9 +546,6 @@ def native_samples(root):
         ),
         "labor",
     )
-    publish_empty_opening_package(
-        labor.engine, labor.owner_confirmation, "2026-01", "opening-package"
-    )
     labor.publish("labor")
     display_profile(labor.engine, "employee", "person", display_name="合成劳务人员")
     Entities(labor.engine).register_worker(
@@ -633,15 +620,6 @@ def native_samples(root):
     asset_path = root / "asset-payment-summary"
     asset_path.mkdir()
     asset_engine, asset_save, asset_publish = asset_book.__wrapped__(asset_path)
-    asset_owner_confirmation = asset_engine.register_evidence(
-        b"Synthetic owner confirmation: no opening balances in this sample",
-        "text/plain",
-        "opening confirmation",
-        request_id="opening-confirmation",
-    )["digest"]
-    publish_empty_opening_package(
-        asset_engine, asset_owner_confirmation, "2026-01", "opening-package"
-    )
     asset_save("reimbursed_asset", "computer", asset())
     asset_publish("computer")
     add("asset_payment_summary", "dashboard_assets", Dashboard(asset_engine).assets("2026-02"))

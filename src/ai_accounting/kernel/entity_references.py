@@ -153,6 +153,10 @@ _declare("opening_identity_binding", "assignments.*.entity_id", "corrected_objec
 # determine exact existence, versions and permitted lifecycle; they are never
 # registered as real objects simply because an input field contains an ID.
 BUSINESS_PATHS = {
+    "remuneration_tax_basis": (
+        "source_id source_fact_id origin_references.*.subject_id origin_references.*.fact_id "
+        "pooled_tax_proof.allocations.*.source_id"
+    ),
     "opening_identity_binding": (
         "source_subject_id source_fact_id source_calculation_id package_calculation_id "
         "replacement_source_fact_id replacement_source_calculation_id "
@@ -296,9 +300,12 @@ def _at(value, segments, path=()):
         yield from _at(value[segment], rest, (*path, segment))
 
 
-def declarations_for(kind, *, registry=None):
+def declarations_for(kind, model=None, *, registry=None):
     declarations = getattr(registry, "reference_declarations", DECLARATIONS)
-    return tuple(declarations.get(kind, ()))
+    return tuple(
+        item for item in declarations.get(kind, ())
+        if model is None or item["path"].split(".", 1)[0] in model.model_fields
+    )
 
 
 def references_for(fact, subject_id, *, registry=None):

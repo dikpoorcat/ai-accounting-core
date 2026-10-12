@@ -9,18 +9,24 @@ from ai_accounting.kernel import offline_development_upgrade as development
 from ai_accounting.kernel.backup import verify_file
 from ai_accounting.kernel.contract_files import production_contract_file_names
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.development_contracts import REMUNERATION_SOURCE_FINGERPRINT
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import objects, verify_schema
 
 
-def test_production_bundle_has_no_archived_draft_sources_or_transitions():
+def test_production_bundle_declares_only_the_exact_remuneration_source_and_target():
     bundle = production_bundle()
     assert bundle.status == "draft"
-    assert dict(bundle.development_contracts) == {}
-    assert dict(bundle.draft_transitions) == {}
-    assert set(production_contract_file_names()) == {"company/draft.json", "catalog/draft.json"}
+    assert set(bundle.development_contracts["company"]) == {REMUNERATION_SOURCE_FINGERPRINT}
+    assert bundle.draft_transitions["company"] == {
+        (REMUNERATION_SOURCE_FINGERPRINT, bundle.current()["sha256"]),
+    }
+    assert set(production_contract_file_names()) == {
+        "company/draft.json", "catalog/draft.json",
+        f"development/company/{REMUNERATION_SOURCE_FINGERPRINT}.json",
+    }
 
 
 def test_new_baseline_has_only_its_actual_installation_history(tmp_path):
@@ -76,5 +82,5 @@ def test_production_draft_upgrade_rejects_before_creating_a_root(tmp_path):
     root = tmp_path / "nonexistent-root"
     with pytest.raises(KernelError) as failure:
         development.upgrade_root(root, bundle=production_bundle())
-    assert failure.value.code == "migration_not_declared"
+    assert failure.value.code == "database_root_unrecognized"
     assert not root.exists()

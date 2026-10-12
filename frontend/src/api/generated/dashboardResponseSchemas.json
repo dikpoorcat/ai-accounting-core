@@ -11581,7 +11581,7 @@
               "ready",
               "needs_information",
               "unsupported",
-              "pending_publication",
+              "pending_confirmation",
               "not_applicable"
             ],
             "title": "Status",
@@ -13749,7 +13749,7 @@
               "ready",
               "needs_information",
               "unsupported",
-              "pending_publication",
+              "pending_confirmation",
               "not_applicable"
             ],
             "title": "Status",
@@ -25605,7 +25605,7 @@
               "ready",
               "needs_information",
               "unsupported",
-              "pending_publication",
+              "pending_confirmation",
               "not_applicable"
             ],
             "title": "Status",

@@ -38,7 +38,7 @@ class SchemaQuery(BaseModel):
 def _fact_schema(kind, model):
     from .entity_references import declarations_for
 
-    result = model.model_json_schema() | {"x-references": list(declarations_for(kind))}
+    result = model.model_json_schema() | {"x-references": list(declarations_for(kind, model))}
     if model.registration_command:
         result["x-registration-command"] = model.registration_command
     if model.material_amount_aliases:
@@ -150,9 +150,11 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
                 "lane": model.lane,
                 "material_category": model.material_category,
                 "registration_commands": (
+                    [] if kind in registry.historical_only else
                     [model.registration_command] if model.registration_command
                     else sorted(REGISTRATION_COMMANDS)
                 ),
+                "historical_only": kind in registry.historical_only,
             }
             for kind, model in sorted(registry.models.items())
         }
@@ -163,11 +165,14 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
     kinds = set(registry.models) if query.view == "full" else set(query.fact_kinds)
     commands = set(command_models) if query.view == "full" else set(query.commands)
     responses = set(response_adapters) if query.view == "full" else set(query.response_types)
-    generic_kinds = {kind for kind in kinds if not registry.models[kind].registration_command}
+    generic_kinds = {
+        kind for kind in kinds
+        if kind not in registry.historical_only and not registry.models[kind].registration_command
+    }
     if query.view == "selected":
         commands.update(
             registry.models[kind].registration_command for kind in kinds
-            if registry.models[kind].registration_command
+            if kind not in registry.historical_only and registry.models[kind].registration_command
         )
         if not generic_kinds:
             commands.difference_update(REGISTRATION_COMMANDS)
@@ -184,7 +189,11 @@ def discover_schema(metadata, registry, command_models, query, *, response_adapt
                 name: metadata["agent_operating_protocol"]["topics"][name]
                 for name in sorted(topics)
             }
-    result["facts"] = {kind: _fact_schema(kind, registry.models[kind]) for kind in sorted(kinds)}
+    result["facts"] = {
+        kind: _fact_schema(kind, registry.models[kind])
+        | ({"x-historical-only": True} if kind in registry.historical_only else {})
+        for kind in sorted(kinds)
+    }
     result["commands"] = sorted(commands)
     result["command_schemas"] = {
         command: (

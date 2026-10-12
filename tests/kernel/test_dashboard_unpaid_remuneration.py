@@ -5,7 +5,7 @@ from test_dashboard_model_integrity import raw_read
 from test_labor_accrual import accrual
 from test_labor_assets import cost
 from test_opening_continuation import book as opening_book_fixture
-from test_payroll import bonus, bonus_sources, labor, labor_policy
+from test_payroll import bonus, labor
 from test_payroll_corrections import Company
 from test_payroll_corrections import company as payroll_company_fixture
 from test_settlement_period_scopes import allocation, cash_payment, setup
@@ -64,8 +64,9 @@ def test_unpaid_remuneration_covers_prior_labor_beyond_current_page_and_employee
     payroll_company,
 ):
     company = payroll_company
-    company.save(labor_policy(), "labor-policy")
     company.save(labor(person_id="prior-contractor"), "prior-labor")
+    # The synthetic final remuneration statement explicitly deducts 160,000 fen.
+    company.tax_basis("prior-labor", 160_000)
     company.save(accrual(period="2026-02", person_id="current-contractor"), "current-labor")
     company.save(LaborProjectCost(**cost(period="2026-02")), "capital-labor")
     company.save(
@@ -82,7 +83,7 @@ def test_unpaid_remuneration_covers_prior_labor_beyond_current_page_and_employee
 
     february = employee_data(company.engine, "2026-02", limit=1)
     assert february["employees"]["outstanding_net_fen"] == 1814800
-    # 1,814,800 wages + 840,000 taxed labor + 208,330 accrual + 1,600,000 capital labor.
+    # Wages 1,814,800 + labor net 840,000 after confirmed deduction + two gross accruals.
     assert february["outstanding_remuneration_fen"] == 4463130
     assert "labor_sources" not in february["collections"]
     first_page = employee_data(company.engine, "2026-02", section="labor_sources", limit=1)[
@@ -106,8 +107,8 @@ def test_unpaid_remuneration_covers_prior_labor_beyond_current_page_and_employee
 
 def test_unpaid_remuneration_counts_labor_net_and_excludes_tax_and_owner_reimbursement(tmp_path):
     company = Company(tmp_path / "taxed-labor.sqlite")
-    company.save(labor_policy(), "labor-policy")
     company.save(labor(), "labor")
+    company.tax_basis("labor", 160_000)
     company.publish("labor")
     january = employee_data(company.engine, "2026-01")
     assert january["employees"]["outstanding_net_fen"] == 0
@@ -265,9 +266,9 @@ def test_unpaid_labor_replacement_and_closed_compensation_keep_exact_month_end(
 
 def test_unpaid_remuneration_includes_bonus_net_without_including_bonus_tax(tmp_path):
     company = Company(tmp_path / "bonus-labor.sqlite")
-    for source in bonus_sources():
-        company.save(source.fact, source.subject_id)
     company.save(bonus(), "bonus")
+    # The supplied bonus statement confirms a 90,000-fen deduction and 2,910,000 net.
+    company.tax_basis("bonus", 90_000)
     company.save(accrual(), "labor")
     company.publish("bonus", "labor")
     data = employee_data(company.engine, "2026-01")
@@ -297,7 +298,6 @@ def test_unknown_labor_outstanding_propagates_without_erasing_known_employee_wag
 
 def test_no_established_remuneration_has_zero_unpaid_amount(tmp_path):
     company = Company(tmp_path / "no-remuneration.sqlite")
-    company.save(labor_policy(), "labor-policy")
     data = employee_data(company.engine, "2026-01")
     assert data["employees"]["outstanding_net_fen"] == 0
     assert data["outstanding_remuneration_fen"] == 0

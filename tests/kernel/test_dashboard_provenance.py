@@ -84,12 +84,14 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
         selected = snapshot.profile("employee", "employee")
         person = snapshot.party_details("employee")
         payroll_profile = snapshot.fact(snapshot.fact_ids_of_kind("payroll_profile")[0])
-        tax_start = snapshot.fact_source(payroll_profile, field="withholding_start_date")
+        social_participation = snapshot.fact_source(
+            payroll_profile, field="social_insurance_participating"
+        )
         snapshot.attach_recorded_times()
     sources = {
         "name": person["field_sources"]["name"],
         "employment_end_date": selected["field_sources"]["employment_end"],
-        "tax_withholding_start_date": tax_start,
+        "social_insurance_participating": social_participation,
     }
     assert sources["name"]["id"] == old["id"]
     assert sources["name"]["basis"] == "frozen"
@@ -99,8 +101,8 @@ def test_mixed_historical_fields_reach_employee_and_business_outputs(company, mo
     assert sources["employment_end_date"]["evidence_digest"] == company.owner_confirmation
     assert sources["employment_end_date"]["basis"] == "current_supplement"
     assert sources["employment_end_date"]["recorded_at"]
-    assert sources["tax_withholding_start_date"]["source_type"] == "fact"
-    assert sources["tax_withholding_start_date"]["basis"] == "frozen"
+    assert sources["social_insurance_participating"]["source_type"] == "fact"
+    assert sources["social_insurance_participating"]["basis"] == "frozen"
     assert response["read_semantics"]["knowledge"] == "current_knowledge"
     assert response["read_semantics"]["accounting"] == "as_posted"
     assert response["read_semantics"]["business_basis"] == "frozen_adoption"

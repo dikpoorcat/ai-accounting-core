@@ -6,7 +6,7 @@ import pytest
 from entity_fixture import seed_entities
 from payroll_plan_fixture import confirm_wage_inputs
 from test_opening_continuation import book as opening_fixture
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll
+from test_payroll import contribution_policy, payroll, tax_basis
 from test_payroll import profile as employee_profile
 from test_reports import book as report_book
 from test_reports import cit, close_quarter, profile
@@ -371,7 +371,6 @@ def test_statutory_contributions_reuse_exact_obligations_without_fictional_credi
         "contributions",
         contribution_policy().model_dump(mode="json"),
     )
-    save("payroll_income_tax_policy", "income-tax", income_tax_policy().model_dump(mode="json"))
     wage_confirmation = engine.register_evidence(
         b"Synthetic owner approval of each exact wage and current sources",
         "text/plain",
@@ -383,11 +382,6 @@ def test_statutory_contributions_reuse_exact_obligations_without_fictional_credi
             "payroll_profile",
             "profile-" + person,
             employee_profile(employee_id=person, effective_to="2026-02").model_dump(mode="json"),
-        )
-        save(
-            "payroll_opening_state",
-            "opening-" + person,
-            opening(employee_id=person).model_dump(mode="json"),
         )
         for period in ("2026-01", "2026-02"):
             subject = person + "-" + period
@@ -404,6 +398,10 @@ def test_statutory_contributions_reuse_exact_obligations_without_fictional_credi
                 evidence=(wage_confirmation,),
                 request_id="confirm-" + subject,
             )
+            with engine.store.connection(read_only=True) as connection:
+                wage = engine.store.current_fact(connection, subject)
+            confirmed = tax_basis(wage, 12_600).fact
+            save(confirmed.kind, "tax-" + subject, confirmed.model_dump(mode="json"))
             publish(subject)
     sources = [
         {

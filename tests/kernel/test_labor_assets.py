@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from test_payroll_corrections import Company
 from test_reimbursement_assets import book as asset_book
 from test_reimbursement_assets import result
-from test_reports import cit, profile
+from test_reports import cit
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -157,7 +157,8 @@ def test_complete_labor_asset_chain_has_one_cost_no_tax_debt_and_exact_cash(book
     assert values["tax_assessed"] is False
     assert values["tax_review_required"] is True
     assert values["withholding_method"] == "not_withheld_not_filed"
-    assert values["tax_fen"] == 0 and values["theoretical_tax_fen"] is None
+    assert values["tax_fen"] == 0
+    assert "theoretical_tax_fen" not in values
     assert len(values["obligations"]) == 1
     assert values["obligations"][0]["cashflow"] == "asset_acquisition"
     assert result(engine, "asset")["values"]["obligations"] == []
@@ -203,7 +204,10 @@ def test_complete_labor_asset_chain_has_one_cost_no_tax_debt_and_exact_cash(book
         assert connection.execute("SELECT count(*) FROM pending").fetchone()[0] == 0
     assert DEFAULT_CATEGORIES["labor_project_cost"] == "劳务"
     assert "labor_project_cost" in EXPORT_KINDS
+    # Gross payment rights survive actual clearing; selection alone is not net-tax proof.
     assert _export_obligations("labor_project_cost", values)[0]["amount_fen"] == 1_600_000
+    assert values["tax_assessed"] is False
+    assert values["tax_review_required"] is True
 
 
 @pytest.mark.parametrize(
@@ -238,12 +242,19 @@ def test_missing_authoritative_facts_block_without_default_or_partial_entries(
 ):
     engine, save, publish = book
     save(kind, "incomplete", data)
+    with engine.store.connection(read_only=True) as connection:
+        before = {
+            table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in ("calculation", "voucher")
+        }
     with pytest.raises(NeedsInformation) as error:
         publish("incomplete")
     assert error.value.issues[0]["field"] == field
     with engine.store.connection(read_only=True) as connection:
-        assert connection.execute("SELECT count(*) FROM calculation").fetchone()[0] == 0
-        assert connection.execute("SELECT count(*) FROM voucher").fetchone()[0] == 0
+        assert {
+            table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in before
+        } == before
 
 
 @pytest.mark.parametrize("model,data", [(AssetAdvance, advance()), (LaborProjectCost, cost())])
@@ -450,7 +461,17 @@ def test_labor_filing_basis_includes_capitalized_cost_without_social_or_fake_com
 
 def test_real_reports_show_both_cash_payments_as_investing_without_expense(book):
     engine, save, publish = book
-    profile(save, publish)
+    save(
+        "report_profile",
+        "profile",
+        {
+            "period": "2026-02",
+            "company_name": "测试企业",
+            "accounting_standard": "small_enterprise",
+            "bookkeeping_start": "2026-02",
+            "newly_established_zero_opening_confirmed": True,
+        },
+    )
     cit(save, publish, "2026-03")
     cit(save, publish, "2026-06")
     cit(save, publish, "2026-09")

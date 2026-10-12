@@ -200,7 +200,9 @@ def test_zero_line_state_is_direct_and_omission_is_damage(engine):
     replace_manifest(engine, manifest)
     with pytest.raises(KernelError) as failure:
         verify(engine, include_indexes=False)
-    assert failure.value.details["reason"] == "direct_adoption_set_mismatch"
+    # The exact journal-source coverage proof now detects the omitted state
+    # adoption before the downstream direct-adoption set comparison.
+    assert failure.value.details["reason"] == "journal_source_coverage_mismatch"
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ from test_dashboard_model_transactions import raw_read
 from test_employee_roster_scope import current_zero_company
 from test_integrity_content import damage
 from test_labor_accrual import accrual
-from test_payroll import actual, contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import actual, contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 from test_payroll_corrections import company as company
 from test_settlement_late_reviews import prepared, review
@@ -36,13 +36,20 @@ def unowned_candidate_scope():
 def heads(engine, period, *, kinds=PAYROLL_KINDS):
     with Dashboard(engine)._snapshot(period) as snap:
         return dashboard_reads.adopted_head_metadata(
-            snap, kinds, posting_period=period, read_line_counts=False,
+            snap,
+            kinds,
+            posting_period=period,
+            read_line_counts=False,
         )
 
 
 def candidate_work(work):
-    return [row for row in work["sql"] if "selection(month,posting_period) AS" in row["statement"]
-            and row["statement"].endswith("WHERE h.rn=1")]
+    return [
+        row
+        for row in work["sql"]
+        if "selection(month,posting_period) AS" in row["statement"]
+        and row["statement"].endswith("WHERE h.rn=1")
+    ]
 
 
 def normalized_brief(engine, period):
@@ -62,61 +69,82 @@ def test_public_month_heads_preserve_outputs_with_unpublished_history(company, r
             for index in range(count - (measured[-1][0] if measured else 0)):
                 company.save(payroll(period="2025-12"), f"unpublished-{count}-{index}")
         actual_work, actual = measure_work(
-            company.engine, lambda: normalized_brief(company.engine, "2026-02"),
+            company.engine,
+            lambda: normalized_brief(company.engine, "2026-02"),
         )
         with unowned_candidate_scope():
             unowned_work, expected = measure_work(
-                company.engine, lambda: normalized_brief(company.engine, "2026-02"),
+                company.engine,
+                lambda: normalized_brief(company.engine, "2026-02"),
             )
         assert actual == expected
         owned, unowned = candidate_work(actual_work), candidate_work(unowned_work)
-        assert sum(row.get("returned_rows", 0) for row in owned) == sum(
-            row.get("returned_rows", 0) for row in unowned
-        ) == 1
+        assert (
+            sum(row.get("returned_rows", 0) for row in owned)
+            == sum(row.get("returned_rows", 0) for row in unowned)
+            == 1
+        )
         owned_vm = sum(row.get("sqlite_vm_steps", 0) for row in owned)
         unowned_vm = sum(row.get("sqlite_vm_steps", 0) for row in unowned)
         measured.append((count, owned_vm, unowned_vm))
-        record_property(f"heads_{count}", {
-            "owned_vm": owned_vm, "unowned_vm": unowned_vm, "required_rows": 1,
-        })
+        record_property(
+            f"heads_{count}",
+            {
+                "owned_vm": owned_vm,
+                "unowned_vm": unowned_vm,
+                "required_rows": 1,
+            },
+        )
 
 
 def test_public_closed_month_heads_keep_complete_proofs_with_history_growth(
-    tmp_path, record_property,
+    tmp_path,
+    record_property,
 ):
     book = Company(tmp_path / "closed-months.sqlite")
     for fact, subject in (
-        (profile(effective_to="2026-12", social_insurance_participating=False,
-                 social_insurance_base_fen=None), "profile"),
+        (
+            profile(
+                effective_to="2026-12",
+                social_insurance_participating=False,
+                social_insurance_base_fen=None,
+            ),
+            "profile",
+        ),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"), (opening(), "opening"),
     ):
         book.save(fact, subject)
     measurements = []
     for index in range(6):
         period = f"2026-{index + 1:02d}"
         subject = f"wage-{index}"
-        book.save(payroll(period=period, accounting_gross_salary_fen=0,
-                          tax_reported_salary_fen=0), subject)
+        book.save(payroll(period=period, accounting_gross_salary_fen=0), subject)
         book.confirm_payroll(subject)
+        book.tax_basis(subject, 0)
         book.publish(subject)
         book.close(period)
         if index not in (0, 5):
             continue
         owned_work, actual = measure_work(
-            book.engine, lambda period=period: normalized_brief(book.engine, period),
+            book.engine,
+            lambda period=period: normalized_brief(book.engine, period),
         )
         with unowned_candidate_scope():
             unowned_work, expected = measure_work(
-                book.engine, lambda period=period: normalized_brief(book.engine, period),
+                book.engine,
+                lambda period=period: normalized_brief(book.engine, period),
             )
         assert actual == expected
         owned, unowned = candidate_work(owned_work), candidate_work(unowned_work)
         assert sum(row.get("returned_rows", 0) for row in owned) == sum(
             row.get("returned_rows", 0) for row in unowned
         )
-        measurements.append((sum(row.get("sqlite_vm_steps", 0) for row in owned),
-                             sum(row.get("sqlite_vm_steps", 0) for row in unowned)))
+        measurements.append(
+            (
+                sum(row.get("sqlite_vm_steps", 0) for row in owned),
+                sum(row.get("sqlite_vm_steps", 0) for row in unowned),
+            )
+        )
     record_property("closed_head_sql_vm", measurements)
 
 
@@ -124,13 +152,21 @@ def test_public_closed_month_heads_keep_complete_proofs_with_history_growth(
 def test_month_frozen_fact_and_calculation_lanes_keep_damage_visible(tmp_path, change):
     company = prepared(tmp_path, zero=True)
     table, sql = {
-        "publication": ("calculation_publication", "DELETE FROM calculation_publication "
-                        "WHERE subject_id='january'"),
-        "fact_reference": ("close_reference", "UPDATE close_reference SET reference_id='missing' "
-                           "WHERE path='adopted_results[*].fact_id'"),
+        "publication": (
+            "calculation_publication",
+            "DELETE FROM calculation_publication WHERE subject_id='january'",
+        ),
+        "fact_reference": (
+            "close_reference",
+            "UPDATE close_reference SET reference_id='missing' "
+            "WHERE path='adopted_results[*].fact_id'",
+        ),
         "calculation": ("calculation", "DELETE FROM calculation WHERE subject_id='january'"),
-        "type": ("close_reference", "UPDATE close_reference SET reference_type='damaged-type' "
-                 "WHERE path='adopted_results[*].calculation_id'"),
+        "type": (
+            "close_reference",
+            "UPDATE close_reference SET reference_type='damaged-type' "
+            "WHERE path='adopted_results[*].calculation_id'",
+        ),
     }[change]
     damage(company.engine, table, sql, foreign_keys=False)
     for unowned in (False, True):
@@ -149,8 +185,12 @@ def test_month_frozen_fact_and_calculation_lanes_keep_damage_visible(tmp_path, c
 
 def test_earlier_missing_publication_current_is_not_hidden_by_month_scope(company):
     company.publish("january", "february")
-    damage(company.engine, "calculation_publication",
-           "DELETE FROM calculation_publication WHERE subject_id='january'", foreign_keys=False)
+    damage(
+        company.engine,
+        "calculation_publication",
+        "DELETE FROM calculation_publication WHERE subject_id='january'",
+        foreign_keys=False,
+    )
     with pytest.raises(KernelError):
         heads(company.engine, "2026-02")
     with unowned_candidate_scope(), pytest.raises(KernelError):
@@ -161,17 +201,27 @@ def test_month_subject_kind_filter_retains_historical_calculation_kind(tmp_path,
     company = current_zero_company(tmp_path)
     current = review(company, monkeypatch, 1)
     damage(company.engine, "subject", "UPDATE subject SET kind='expense' WHERE id='january'")
-    damage(company.engine, "calculation", "UPDATE calculation SET kind='expense' WHERE id=?",
-           (current,))
+    damage(
+        company.engine,
+        "calculation",
+        "UPDATE calculation SET kind='expense' WHERE id=?",
+        (current,),
+    )
 
     def raw_heads():
         with Dashboard(company.engine)._snapshot("2026-01") as snap:
             sql, parameters = dashboard_reads._adopted_heads_sql(
-                snap, PAYROLL_KINDS, posting_period="2026-01",
+                snap,
+                PAYROLL_KINDS,
+                posting_period="2026-01",
             )
-            return [tuple(row) for row in snap.connection.execute(
-                sql + "SELECT subject_id,calculation_id,kind FROM heads WHERE rn=1", parameters,
-            )]
+            return [
+                tuple(row)
+                for row in snap.connection.execute(
+                    sql + "SELECT subject_id,calculation_id,kind FROM heads WHERE rn=1",
+                    parameters,
+                )
+            ]
 
     actual = raw_heads()
     with unowned_candidate_scope():
@@ -196,12 +246,21 @@ def test_month_labor_withdrawal_keeps_original_absence(tmp_path):
     company = Company(tmp_path / "withdrawn-labor.sqlite")
     company.save(accrual(), "labor")
     company.publish("labor")
-    assert [row["subject_id"] for row in heads(
-        company.engine, "2026-01", kinds=LABOR_KINDS,
-    )] == ["labor"]
+    assert [
+        row["subject_id"]
+        for row in heads(
+            company.engine,
+            "2026-01",
+            kinds=LABOR_KINDS,
+        )
+    ] == ["labor"]
     preview = company.engine.preview_delete("labor")
-    company.engine.delete("labor", preview_digest=preview["digest"], epochs=preview["epochs"],
-                          request_id=company.request())
+    company.engine.delete(
+        "labor",
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
     assert heads(company.engine, "2026-01", kinds=LABOR_KINDS) == []
     with unowned_candidate_scope():
         assert heads(company.engine, "2026-01", kinds=LABOR_KINDS) == []

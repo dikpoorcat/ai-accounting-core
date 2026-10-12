@@ -6,7 +6,7 @@ from test_banking import book as book
 from test_banking import close_month, inventories
 from test_business_domains import surtax_policy, vat_policy
 from test_dashboard_provenance import profile
-from test_payroll import labor, labor_policy
+from test_payroll import labor, tax_basis
 
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.response_contracts import validate_response
@@ -80,7 +80,6 @@ def _publish_pending_business(book):
             "tax_obligation_period": PERIOD,
         },
     )
-    save("labor_income_tax_policy", "labor-policy", labor_policy().model_dump(mode="json"))
     save(
         "labor",
         "contractor-fee",
@@ -89,6 +88,13 @@ def _publish_pending_business(book):
             income_date="2026-09-30",
             person_id="contractor",
         ).model_dump(mode="json"),
+    )
+    with engine.store.connection(read_only=True) as connection:
+        source = engine.store.current_fact(connection, "contractor-fee")
+    save(
+        "remuneration_tax_basis",
+        "contractor-tax",
+        tax_basis(source, 160000).fact.model_dump(mode="json"),
     )
     publish("unnamed-supplier", "enterprise-tax", "sale", "contractor-fee")
     save(

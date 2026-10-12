@@ -78,13 +78,15 @@ class NeedsInformation(KernelError):
         registry=None,
     ):
         if isinstance(field, str):
-            issues = [{
-                "field": field,
-                "message": message,
-                "semantics": "accounting",
-                "reusable_sources": list(sources),
-                "allowed_precision": list(precision),
-            }]
+            issues = [
+                {
+                    "field": field,
+                    "message": message,
+                    "semantics": "accounting",
+                    "reusable_sources": list(sources),
+                    "allowed_precision": list(precision),
+                }
+            ]
         elif isinstance(field, list) and field and all(isinstance(issue, dict) for issue in field):
             issues = [dict(issue) for issue in field]
         else:
@@ -179,13 +181,15 @@ class Fact(BaseModel):
             extra = info.json_schema_extra
             metadata = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
             if metadata.get("required_for_registration") and getattr(self, name) is None:
-                issues.append({
-                    "field": name,
-                    "message": metadata["constraint"],
-                    "semantics": metadata["role"],
-                    "reusable_sources": metadata.get("reusable_sources", []),
-                    "allowed_precision": [],
-                })
+                issues.append(
+                    {
+                        "field": name,
+                        "message": metadata["constraint"],
+                        "semantics": metadata["role"],
+                        "reusable_sources": metadata.get("reusable_sources", []),
+                        "allowed_precision": [],
+                    }
+                )
         if issues:
             raise NeedsInformation(issues)
 
@@ -201,6 +205,10 @@ class Fact(BaseModel):
 
     def reads_after(self, subject_id: str, context: Context) -> tuple[Read, ...]:
         """One bounded second stage derived from the first stage's verified sources."""
+        return ()
+
+    def reads_final(self, subject_id: str, context: Context) -> tuple[Read, ...]:
+        """Bounded exact historical references absent from the second stage."""
         return ()
 
     def scopes_for(self, subject_id: str) -> tuple[str, ...]:
@@ -388,6 +396,10 @@ Evaluator = Callable[[FactVersion, Context], Outcome]
 class Registry:
     def __init__(self):
         self.models: dict[str, type[Fact]] = {}
+        # Public input and retained body grammars are separate contracts.  A
+        # stable business kind may have several immutable body generations.
+        self.historical_only: set[str] = set()
+        self.body_models: dict[str, tuple[tuple[type[Fact], str], ...]] = {}
         self.evaluators: dict[str, Evaluator] = {}
         self.readiness: dict[str, tuple[Callable, Callable]] = {}
         self.snapshot_readiness: dict[str, Callable] = {}
@@ -422,19 +434,60 @@ class Registry:
             raise ValueError(f"duplicate readiness check {name}")
         self.readiness[name] = (required_reads, evaluator)
 
-    def register(self, model: type[Fact], evaluator: Evaluator | None = None):
+    def register(
+        self,
+        model: type[Fact],
+        evaluator: Evaluator | None = None,
+        *,
+        table: str | None = None,
+        historical=(),
+    ):
+        from .schema import table_name
+
         if model.kind in self.models:
             raise ValueError(f"duplicate fact kind {model.kind}")
+        bodies = ((model, table or table_name(model.kind)), *tuple(historical))
+        names = []
+        for body_model, body_table in bodies:
+            if body_model.kind != model.kind:
+                raise ValueError("historical body must retain its business kind")
+            # table_name validates SQL identifiers; the prefix is irrelevant.
+            table_name(body_table)
+            names.append(body_table)
+        if len(set(names)) != len(names):
+            raise ValueError("fact body tables must be distinct")
         self.models[model.kind] = model
+        self.body_models[model.kind] = bodies
         if evaluator is not None:
             self.evaluators[model.kind] = evaluator
+
+    def register_history(self, model: type[Fact], *, table: str | None = None):
+        """Retain a fact grammar for decoding without exposing a write input."""
+        self.register(model, table=table)
+        self.historical_only.add(model.kind)
+
+    def fact_bodies(self, kind):
+        from .schema import table_name
+
+        # Synthetic and frozen v1 registries historically populate models
+        # directly; their one-body storage contract remains unchanged.
+        return self.body_models.get(kind, ((self.models[kind], table_name(kind)),))
+
+    def current_table(self, kind):
+        return self.fact_bodies(kind)[0][1]
+
+    @property
+    def input_models(self):
+        return {
+            kind: model for kind, model in self.models.items() if kind not in self.historical_only
+        }
 
     def schemas(self) -> dict:
         from .entity_references import declarations_for
 
         return {
             kind: model.model_json_schema()
-            | {"x-references": list(declarations_for(kind))}
+            | {"x-references": list(declarations_for(kind, model))}
             | (
                 {"x-registration-command": model.registration_command}
                 if model.registration_command
@@ -445,5 +498,5 @@ class Registry:
                 if model.material_amount_aliases
                 else {}
             )
-            for kind, model in self.models.items()
+            for kind, model in self.input_models.items()
         }

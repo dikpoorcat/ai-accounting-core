@@ -8,8 +8,9 @@ from functools import partial
 
 import pytest
 from entity_fixture import seed_fact_entities, seed_registration_entities
+from opening_fixture import adopt_empty_opening
 from payroll_plan_fixture import confirm_wage_inputs
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile, tax_basis
 
 from ai_accounting.kernel.backup import create_portable
 from ai_accounting.kernel.contracts import KernelError
@@ -21,14 +22,13 @@ from ai_accounting.kernel.service import LocalService
 def test_employee_native_and_http_responses_keep_verified_wage_identity(service):
     app, company = service
     engine = app.engine(company)
+    adopt_empty_opening(engine)
     proof = engine.register_evidence(
         b"synthetic payroll response", "text/plain", "proof", request_id="wage-proof"
     )["digest"]
     sources = (
         ("contributions", contribution_policy()),
-        ("income-tax", income_tax_policy()),
         ("profile", profile(employee_id="employee")),
-        ("tax-opening", opening(employee_id="employee")),
         (
             "wage",
             payroll(
@@ -48,6 +48,17 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
             request_id="save-" + subject,
         )
     confirm_wage_inputs(engine, "wage", evidence=(proof,), request_id="confirm-wage")
+    with engine.store.connection(read_only=True) as connection:
+        wage = engine.store.current_fact(connection, "wage")
+    basis = tax_basis(wage, 12_600).fact
+    engine.save_fact(
+        basis.kind,
+        "wage-tax",
+        basis.model_dump(mode="json"),
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="wage-tax",
+    )
     preview = engine.preview(["wage"])
     engine.confirm(
         ["wage"],
@@ -61,10 +72,15 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
         "preparation": "deferred",
         "employee_filter": "all",
     }
+    from ai_accounting.kernel.dashboard_async import run_pending
+
+    run_pending(engine, limit=100)
     native = app.dispatch("dashboard_employees", payload)
     from ai_accounting.kernel.response_contracts import RESPONSE_ADAPTERS
 
-    expected_http = RESPONSE_ADAPTERS["dashboard_employees"].dump_python(native, mode="json")
+    expected_http = RESPONSE_ADAPTERS["dashboard_employees_delivery"].dump_python(
+        native, mode="json"
+    )
     server, _ = create_server(app, token="employee-response-test")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -80,7 +96,10 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
         connection.close()
         assert response.status == 200
         assert json.loads(body) == expected_http
-        assert native["data"]["collections"]["employees"]["items"][0]["employee_id"] == "employee"
+        assert (
+            native["response"]["data"]["collections"]["employees"]["items"][0]["employee_id"]
+            == "employee"
+        )
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -90,6 +109,7 @@ def test_employee_native_and_http_responses_keep_verified_wage_identity(service)
 def test_calculation_does_not_block_reads_and_revocation_wins_before_commit(service):
     app, company = service
     engine = app.engine(company)
+    adopt_empty_opening(engine)
     engine.save_facts(records(engine)[:1], request_id="source")
     preview = engine.preview(["expense-0"])
     entered, release = threading.Event(), threading.Event()
@@ -208,6 +228,7 @@ def test_source_batch_rolls_back_late_failure_and_replays_once(service):
 def test_loopback_auth_origin_read_only_and_large_money(service, tmp_path):
     app, company = service
     engine = app.engine(company)
+    adopt_empty_opening(engine)
     batch = records(engine)[:1]
     batch[0]["data"]["amount_fen"] = 9007199254740993
     engine.save_facts(batch, request_id="batch")
@@ -331,6 +352,7 @@ def test_generated_command_schemas_validate_typed_facts_and_exclude_journals(ser
 def test_explicit_recording_correction_retains_actual_fact_history_and_voucher_number(service):
     app, company = service
     engine = app.engine(company)
+    adopt_empty_opening(engine)
     proof = engine.register_evidence(
         b"verified actual cash receipt", "text/plain", "proof", request_id="evidence"
     )["digest"]
@@ -395,4 +417,9 @@ def test_explicit_recording_correction_retains_actual_fact_history_and_voucher_n
     assert engine.overview("2026-01")["accounts"] == []
     with engine.store.connection(read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0] == 2
-        assert connection.execute("SELECT count(*) FROM fact_revision").fetchone()[0] == 2
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_revision WHERE subject_id='capital'"
+            ).fetchone()[0]
+            == 2
+        )

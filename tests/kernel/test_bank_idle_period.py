@@ -56,6 +56,9 @@ def book(tmp_path):
         "fixture",
         request_id="evidence",
     )["digest"]
+    from opening_fixture import adopt_empty_opening
+
+    adopt_empty_opening(engine, period="2026-09")
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
@@ -169,7 +172,9 @@ def test_published_empty_bank_context_can_close_and_remains_frozen(book):
     assert not issues(book)
     book.close()
     frozen = book.periods.closed_report("2026-09")
-    assert {item["subject_id"] for item in frozen["adopted_results"]} == set(subjects)
+    assert {item["subject_id"] for item in frozen["adopted_results"]} == set(subjects) | {
+        "synthetic-opening"
+    }
     assert all(item["posting_period"] == "2026-09" for item in frozen["adopted_results"])
     assert frozen["vouchers"] == []
     assert all(item["fact_id"] for item in frozen["adopted_results"])

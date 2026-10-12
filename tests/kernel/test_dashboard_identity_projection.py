@@ -5,6 +5,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from scalar_store_fixture import scalar_store
 from test_banking import book as book
 from test_banking import close_month, inventories
 from test_dashboard_open_cohort_work import _identity_headers
@@ -24,7 +25,9 @@ PERIOD = "2026-09"
 
 @pytest.mark.parametrize("cache_source", ["sort", "identity"])
 def test_prior_small_projection_only_reads_missing_exact_facts(
-    book, cache_source, monkeypatch,
+    book,
+    cache_source,
+    monkeypatch,
 ):
     engine, *_ = book
     total = expenses(book, 40)
@@ -33,8 +36,9 @@ def test_prior_small_projection_only_reads_missing_exact_facts(
         first = headers[:3]
         loaded = {row["fact_id"] for row in first}
         all_ids = {row["fact_id"] for row in headers}
-        reader = (sorting.fact_sort_scalars if cache_source == "sort"
-                  else sorting.fact_identity_scalars)
+        reader = (
+            sorting.fact_sort_scalars if cache_source == "sort" else sorting.fact_identity_scalars
+        )
         original_values = reader(snap, first)
         selected, returned = [], []
         original = _PrivateConnection.execute
@@ -62,8 +66,10 @@ def test_prior_small_projection_only_reads_missing_exact_facts(
         assert type(scalars) is dict and len(scalars) == 40
         assert selected == [all_ids - loaded]
         assert {row[0] for row in returned} == all_ids - loaded
-        assert all(scalars[ident] == {name: original_values[ident][name]
-                                     for name in scalars[ident]} for ident in loaded)
+        assert all(
+            scalars[ident] == {name: original_values[ident][name] for name in scalars[ident]}
+            for ident in loaded
+        )
         again = sorting.fact_identity_scalars(snap, headers)
         assert again == scalars
         assert selected == [all_ids - loaded]
@@ -109,7 +115,9 @@ def test_identity_projection_proves_every_exact_fact_and_releases_cache(book, co
 
 @pytest.mark.parametrize("closed", [False, True])
 def test_whole_groups_all_member_pages_and_current_followup_keep_exact_identities(
-    book, closed, monkeypatch,
+    book,
+    closed,
+    monkeypatch,
 ):
     engine, _, _, proof = book
     for party, name in (("first", "张供应商"), ("second", "李供应商"), ("third", "张供应商")):
@@ -130,8 +138,12 @@ def test_unreturned_fact_damage_fails_before_identity_projection(book, entry):
         page = groups.open_group_page(snap, summary_only=True)
         key = snap._open_group_data["ordered"][0]
         assert page["total_count"] == 4
-    damage(engine, "fact_expense", "UPDATE fact_expense SET amount_fen=amount_fen+1 "
-           "WHERE revision_id IN (SELECT id FROM fact_revision WHERE subject_id='expense-003')")
+    damage(
+        engine,
+        "fact_expense",
+        "UPDATE fact_expense SET amount_fen=amount_fen+1 "
+        "WHERE revision_id IN (SELECT id FROM fact_revision WHERE subject_id='expense-003')",
+    )
     with snapshot(engine, PERIOD) as snap:
         with pytest.raises(KernelError) as failure:
             if entry == "member":
@@ -145,23 +157,37 @@ def test_unreturned_fact_damage_fails_before_identity_projection(book, entry):
 def _scalar_snapshot(monkeypatch, fields=("side",)):
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    connection.execute("CREATE TABLE fact_expense(revision_id TEXT PRIMARY KEY,"
-                       + ",".join(f'"{name}" ANY COLLATE NOCASE' for name in fields) + ") STRICT")
+    connection.execute(
+        "CREATE TABLE fact_expense(revision_id TEXT PRIMARY KEY,"
+        + ",".join(f'"{name}" ANY COLLATE NOCASE' for name in fields)
+        + ") STRICT"
+    )
     reads = SimpleNamespace(_report_snapshot_cache={})
     model = SimpleNamespace(model_fields=dict.fromkeys(fields))
     snap = SimpleNamespace(
-        connection=connection, reads=reads,
-        store=SimpleNamespace(registry=SimpleNamespace(models={"expense": model})),
+        connection=connection,
+        reads=reads,
+        store=scalar_store({"expense": model}),
     )
-    monkeypatch.setattr("ai_accounting.kernel.query_reads._owns_current_selector_snapshot",
-                        lambda supplied, conn: supplied is reads and conn is connection)
+    monkeypatch.setattr(
+        "ai_accounting.kernel.query_reads._owns_current_selector_snapshot",
+        lambda supplied, conn: supplied is reads and conn is connection,
+    )
     return snap
 
 
 def test_identity_projection_keeps_binary_text_null_and_integer_types(monkeypatch):
     snap = _scalar_snapshot(monkeypatch)
-    values = {"upper": "A", "lower": "a", "integer": 1, "text": "1",
-              "null-a": None, "null-b": None, "unicode": "员工", "unicode-copy": "员工"}
+    values = {
+        "upper": "A",
+        "lower": "a",
+        "integer": 1,
+        "text": "1",
+        "null-a": None,
+        "null-b": None,
+        "unicode": "员工",
+        "unicode-copy": "员工",
+    }
     snap.connection.executemany("INSERT INTO fact_expense VALUES(?,?)", values.items())
     headers = [{"kind": "expense", "fact_id": ident} for ident in values]
     actual = sorting.fact_identity_scalars(snap, headers)
@@ -175,8 +201,15 @@ def test_identity_projection_keeps_binary_text_null_and_integer_types(monkeypatc
 
 def test_cached_and_sql_inputs_keep_exact_scalar_types(monkeypatch):
     snap = _scalar_snapshot(monkeypatch)
-    values = {"cached-int": 1, "sql-int": 1, "sql-text": "1",
-              "cached-null": None, "sql-null": None, "upper": "A", "lower": "a"}
+    values = {
+        "cached-int": 1,
+        "sql-int": 1,
+        "sql-text": "1",
+        "cached-null": None,
+        "sql-null": None,
+        "upper": "A",
+        "lower": "a",
+    }
     snap.connection.executemany("INSERT INTO fact_expense VALUES(?,?)", values.items())
     snap.reads._report_snapshot_cache["dashboard_fact_identity_scalars"] = {
         ("expense", "cached-int"): {"side": 1},
@@ -185,7 +218,8 @@ def test_cached_and_sql_inputs_keep_exact_scalar_types(monkeypatch):
         ("expense", "cached-null"): {"side": None, "amount_fen": 100},
     }
     actual = sorting.fact_identity_scalars(
-        snap, [{"kind": "expense", "fact_id": ident} for ident in values],
+        snap,
+        [{"kind": "expense", "fact_id": ident} for ident in values],
     )
     assert actual == {ident: {"side": value} for ident, value in values.items()}
     assert all(type(actual[ident]["side"]) is type(value) for ident, value in values.items())
@@ -195,8 +229,9 @@ def test_cached_and_sql_inputs_keep_exact_scalar_types(monkeypatch):
 @pytest.mark.parametrize("value", [1.0, float("inf"), b"opaque"])
 def test_exceptional_physical_scalar_preserves_sql_value(value, monkeypatch):
     snap = _scalar_snapshot(monkeypatch)
-    snap.connection.executemany("INSERT INTO fact_expense VALUES(?,?)", [("good", "supplier"),
-                                                                       ("exception", value)])
+    snap.connection.executemany(
+        "INSERT INTO fact_expense VALUES(?,?)", [("good", "supplier"), ("exception", value)]
+    )
     headers = [{"kind": "expense", "fact_id": ident} for ident in ("good", "exception")]
     actual = sorting.fact_identity_scalars(snap, headers)
     assert type(actual) is dict
@@ -216,8 +251,9 @@ def test_late_missing_kind_does_not_publish_partial_identity_cache(monkeypatch, 
     before = {("expense", "good"): {"side": "supplier"}} if cached else {}
     snap.reads._report_snapshot_cache["dashboard_fact_identity_scalars"] = dict(before)
     with pytest.raises(KernelError) as failure:
-        sorting.fact_identity_scalars(snap, [{"kind": "expense", "fact_id": "good"},
-                                           {"kind": "labor", "fact_id": "missing"}])
+        sorting.fact_identity_scalars(
+            snap, [{"kind": "expense", "fact_id": "good"}, {"kind": "labor", "fact_id": "missing"}]
+        )
     assert failure.value.code == "content_integrity_failed"
     actual = snap.reads._report_snapshot_cache["dashboard_fact_identity_scalars"]
     assert actual == before

@@ -62,14 +62,19 @@ def test_overview_is_a_directory_without_generating_contracts(contracts, monkeyp
     assert result["commands"] == sorted(commands)
     assert result["response_types"] == sorted(RESPONSE_ADAPTERS)
     assert result["facts"]["expense"]["registration_commands"] == [
-        "amend_fact", "save_fact", "save_facts"
+        "amend_fact",
+        "save_fact",
+        "save_facts",
     ]
     assert result["facts"]["asset_activation"]["registration_commands"] == [
         "prepare_asset_activation_batch"
     ]
     for field in (
-        "command_schemas", "response_schemas", "publication_contract",
-        "period_close_contract", "security_request_schema",
+        "command_schemas",
+        "response_schemas",
+        "publication_contract",
+        "period_close_contract",
+        "security_request_schema",
     ):
         assert field not in result
     assert "scope_schema" not in result["replay_close_contract"]
@@ -107,8 +112,10 @@ def test_selected_registration_has_only_requested_variants_and_reference_closure
         "kind": "expense",
         "subject_id": "expense",
         "data": {
-            "period": "2026-01", "amount_fen": 100,
-            "counterparty_id": "supplier", "expense_class": "administration",
+            "period": "2026-01",
+            "amount_fen": 100,
+            "counterparty_id": "supplier",
+            "expense_class": "administration",
             "creditor_kind": "supplier",
         },
         "evidence": ["a" * 64],
@@ -129,7 +136,9 @@ def test_selected_registration_has_only_requested_variants_and_reference_closure
 
 def test_selected_dedicated_facts_keep_correct_entry_without_an_empty_union(contracts):
     result = discover(
-        contracts, view="selected", fact_kinds=["asset_activation"],
+        contracts,
+        view="selected",
+        fact_kinds=["asset_activation"],
         commands=["save_fact", "amend_fact", "save_facts"],
     )
     assert result["facts"]["asset_activation"]["x-registration-command"] == (
@@ -138,13 +147,16 @@ def test_selected_dedicated_facts_keep_correct_entry_without_an_empty_union(cont
     assert set(result["command_schemas"]) == {"prepare_asset_activation_batch"}
     assert result["selection"]["commands"] == ["prepare_asset_activation_batch"]
     mixed = discover(
-        contracts, view="selected", fact_kinds=["expense", "asset_activation"],
+        contracts,
+        view="selected",
+        fact_kinds=["expense", "asset_activation"],
         commands=["save_facts"],
     )
     assert set(mixed["command_schemas"]) == {"save_facts", "prepare_asset_activation_batch"}
     assert set(
-        mixed["command_schemas"]["save_facts"]["properties"]["facts"]["items"]
-        ["discriminator"]["mapping"]
+        mixed["command_schemas"]["save_facts"]["properties"]["facts"]["items"]["discriminator"][
+            "mapping"
+        ]
     ) == {"expense"}
 
 
@@ -180,9 +192,18 @@ def test_selected_metadata_does_not_repeat_operating_instructions(contracts):
     assert selected["error_handling"]["version"] == 1
     assert len(json.dumps(selected["error_handling"], ensure_ascii=False)) < 250
     assert set(selected) == {
-        "format", "build_identity", "agent_operating_protocol_version", "error_handling",
-        "view", "schema_query", "schema_discovery", "selection", "facts", "commands",
-        "command_schemas", "response_schemas",
+        "format",
+        "build_identity",
+        "agent_operating_protocol_version",
+        "error_handling",
+        "view",
+        "schema_query",
+        "schema_discovery",
+        "selection",
+        "facts",
+        "commands",
+        "command_schemas",
+        "response_schemas",
         "agent_operating_rules",
     }
     assert set(selected["agent_operating_rules"]) == {"workflow"}
@@ -199,17 +220,20 @@ def test_unknown_selections_are_rejected(contracts, field):
     assert error.value.details == {"field": field, "unknown": ["unknown-contract"]}
 
 
-@pytest.mark.parametrize("query", [
-    {"view": "selected"},
-    {"view": "selected", "commands": ["save_fact"]},
-    {"view": "full", "fact_kinds": ["expense"]},
-    {"view": "overview", "commands": ["workflow"]},
-    {"view": "unsupported"},
-    {"view": "selected", "fact_kinds": "expense"},
-    {"view": "overview", "protocol_topics": ["payroll"]},
-    {"view": "full", "protocol_topics": ["payroll"]},
-    {"view": "selected", "protocol_topics": "payroll"},
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"view": "selected"},
+        {"view": "selected", "commands": ["save_fact"]},
+        {"view": "full", "fact_kinds": ["expense"]},
+        {"view": "overview", "commands": ["workflow"]},
+        {"view": "unsupported"},
+        {"view": "selected", "fact_kinds": "expense"},
+        {"view": "overview", "protocol_topics": ["payroll"]},
+        {"view": "full", "protocol_topics": ["payroll"]},
+        {"view": "selected", "protocol_topics": "payroll"},
+    ],
+)
 def test_invalid_discovery_shapes_are_rejected_by_the_public_command(contracts, query):
     registry, commands = contracts
     with pytest.raises(KernelError) as error:
@@ -226,7 +250,14 @@ def test_full_is_explicit_and_runtime_models_stay_complete(contracts):
     }
     selected = discover(contracts, view="selected", fact_kinds=["expense"], commands=["save_fact"])
     full = discover(contracts, view="full")
-    assert full["facts"] == registry.schemas()
+    assert {
+        kind: schema
+        for kind, schema in full["facts"].items()
+        if kind not in registry.historical_only
+    } == registry.schemas()
+    assert all(
+        full["facts"][kind]["x-historical-only"] is True for kind in registry.historical_only
+    )
     assert full["command_schemas"] == {
         name: adapter.json_schema() for name, adapter in commands.items()
     }
@@ -242,7 +273,10 @@ def test_full_is_explicit_and_runtime_models_stay_complete(contracts):
         name: commands[name].json_schema() for name in ("save_fact", "amend_fact", "save_facts")
     }
     assert validate_command(commands, "schema", {}) == {
-        "view": "overview", "fact_kinds": [], "commands": [], "response_types": [],
+        "view": "overview",
+        "fact_kinds": [],
+        "commands": [],
+        "response_types": [],
         "protocol_topics": [],
     }
 
@@ -260,6 +294,7 @@ def test_mcp_schema_passes_explicit_selection_to_the_shared_service(monkeypatch,
             def register(function):
                 registered[function.__name__] = function
                 return function
+
             return register
 
         def run(self, **kwargs):
@@ -279,20 +314,33 @@ def test_mcp_schema_passes_explicit_selection_to_the_shared_service(monkeypatch,
     tool = registered["finance_local_schema"]
     assert tool() == {"view": "overview"}
     assert tool(
-        view="selected", fact_kinds=["expense"], commands=["save_fact"],
+        view="selected",
+        fact_kinds=["expense"],
+        commands=["save_fact"],
         response_types=["workflow"],
         protocol_topics=["materials"],
     ) == {"view": "selected"}
     assert dispatched == [
-        ("schema", {
-            "view": "overview", "fact_kinds": [], "commands": [], "response_types": [],
-            "protocol_topics": [],
-        }),
-        ("schema", {
-            "view": "selected", "fact_kinds": ["expense"], "commands": ["save_fact"],
-            "response_types": ["workflow"],
-            "protocol_topics": ["materials"],
-        }),
+        (
+            "schema",
+            {
+                "view": "overview",
+                "fact_kinds": [],
+                "commands": [],
+                "response_types": [],
+                "protocol_topics": [],
+            },
+        ),
+        (
+            "schema",
+            {
+                "view": "selected",
+                "fact_kinds": ["expense"],
+                "commands": ["save_fact"],
+                "response_types": ["workflow"],
+                "protocol_topics": ["materials"],
+            },
+        ),
     ]
 
 
@@ -314,16 +362,19 @@ def test_operating_topics_can_be_read_without_generating_contracts(contracts, mo
     }
 
 
-@pytest.mark.parametrize(("command", "topics"), [
-    ("prepare_payroll", {"payroll", "tax_files"}),
-    ("inspect_material", {"materials"}),
-    ("save_work_draft", {"work_drafts"}),
-    ("preview_close", {"closing"}),
-    ("preview_replay_close_range", {"replay"}),
-    ("company_context", {"management"}),
-    ("preview_export", {"deliveries"}),
-    ("prepare_obligations", {"external_actions"}),
-])
+@pytest.mark.parametrize(
+    ("command", "topics"),
+    [
+        ("prepare_payroll", {"payroll", "tax_files"}),
+        ("inspect_material", {"materials"}),
+        ("save_work_draft", {"work_drafts"}),
+        ("preview_close", {"closing"}),
+        ("preview_replay_close_range", {"replay"}),
+        ("company_context", {"management"}),
+        ("preview_export", {"deliveries"}),
+        ("prepare_obligations", {"external_actions"}),
+    ],
+)
 def test_selected_commands_include_only_related_operating_topics(contracts, command, topics):
     result = discover(contracts, view="selected", commands=[command])
     assert set(result["agent_operating_rules"]) == topics
@@ -333,21 +384,27 @@ def test_selected_commands_include_only_related_operating_topics(contracts, comm
 
 def test_fact_and_response_selection_also_select_operating_rules(contracts):
     result = discover(
-        contracts, view="selected", fact_kinds=["asset_activation", "managed_reserve_expense"],
-        response_types=["workflow"], protocol_topics=["payroll"],
+        contracts,
+        view="selected",
+        fact_kinds=["asset_activation", "managed_reserve_expense"],
+        response_types=["workflow"],
+        protocol_topics=["payroll"],
     )
     assert set(result["agent_operating_rules"]) == {"assets", "reserve", "workflow", "payroll"}
     assert "prepare_asset_activation_batch" in result["selection"]["commands"]
 
 
-@pytest.mark.parametrize(("kind", "topic"), [
-    ("bank_statement", "management"),
-    ("asset", "assets"),
-    ("reimbursed_asset", "assets"),
-    ("reimbursed_asset_batch", "assets"),
-    ("tax_import_identity_v2", "tax_files"),
-    ("tax_import_details_v2", "tax_files"),
-])
+@pytest.mark.parametrize(
+    ("kind", "topic"),
+    [
+        ("bank_statement", "management"),
+        ("asset", "assets"),
+        ("reimbursed_asset", "assets"),
+        ("reimbursed_asset_batch", "assets"),
+        ("tax_import_identity_v2", "tax_files"),
+        ("tax_import_details_v2", "tax_files"),
+    ],
+)
 def test_related_registration_facts_do_not_lose_specialized_rules(contracts, kind, topic):
     result = discover(contracts, view="selected", fact_kinds=[kind], commands=["save_fact"])
     assert set(result["agent_operating_rules"]) == {topic}
@@ -368,9 +425,13 @@ def test_shared_service_returns_common_and_selected_rules_from_one_source(tmp_pa
     service = LocalService(tmp_path)
     try:
         overview = service.dispatch("schema", {})
-        selected = service.dispatch("schema", {
-            "view": "selected", "protocol_topics": ["payroll"],
-        })
+        selected = service.dispatch(
+            "schema",
+            {
+                "view": "selected",
+                "protocol_topics": ["payroll"],
+            },
+        )
     finally:
         service.close()
     assert overview["agent_operating_protocol"]["core"] == OPERATING_PROTOCOL["core"]

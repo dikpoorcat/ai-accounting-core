@@ -10,7 +10,7 @@ from test_identity_corrections import identity_engine as identity_engine_fixture
 from test_integrity_content import damage
 from test_opening_continuation import _close_without_current_business
 from test_opening_continuation import book as opening_book_fixture
-from test_payroll import bonus, bonus_sources, payroll
+from test_payroll import bonus, bonus_sources, payroll, payroll_sources
 from test_payroll_corrections import actual
 from test_payroll_corrections import company as company_fixture
 from test_settlement_late_reviews import prepared, review
@@ -50,11 +50,11 @@ def test_cohorts_preserve_closed_and_late_review_employee_response(tmp_path, mon
         payroll(
             period="2026-02",
             accounting_gross_salary_fen=0 if zero else 1_000_000,
-            tax_reported_salary_fen=0 if zero else 1_000_000,
         ),
         "february",
     )
     company.confirm_payroll("february")
+    company.tax_basis("february", 0 if zero else 12_600)
     company.publish("february")
     for period in ("2026-01", "2026-02"):
         for kwargs in ({}, {"employee_id": "employee", "section": "employees"}):
@@ -94,11 +94,17 @@ def test_actual_multi_period_identity_correction_keeps_complete_employee_respons
 
     def differences(first, second, path=""):
         if isinstance(first, dict) and isinstance(second, dict):
-            return [item for key in first.keys() | second.keys()
-                    for item in differences(first.get(key), second.get(key), path + "." + str(key))]
+            return [
+                item
+                for key in first.keys() | second.keys()
+                for item in differences(first.get(key), second.get(key), path + "." + str(key))
+            ]
         if isinstance(first, list) and isinstance(second, list) and len(first) == len(second):
-            return [item for i, (a, b) in enumerate(zip(first, second, strict=True))
-                    for item in differences(a, b, path + f"[{i}]")]
+            return [
+                item
+                for i, (a, b) in enumerate(zip(first, second, strict=True))
+                for item in differences(a, b, path + f"[{i}]")
+            ]
         return [] if first == second else [(path, first, second)]
 
     class ComparedDashboard:
@@ -122,8 +128,12 @@ def test_actual_multi_period_identity_correction_keeps_complete_employee_respons
     engine = identity_engine[0]
     compared = ComparedDashboard(engine)
     focused = compared.employees(
-        "2026-02", employee_id=identity_engine[3], section="employees", preparation="deferred"
-    , employee_filter="all")
+        "2026-02",
+        employee_id=identity_engine[3],
+        section="employees",
+        preparation="deferred",
+        employee_filter="all",
+    )
     assert len(focused["data"]["collections"]["employees"]["items"]) == 1
     assert len(comparisons) == 2
 
@@ -301,11 +311,13 @@ def test_closed_bonus_net_cohorts_match_complete_obligations(tmp_path, monkeypat
     from test_payroll_corrections import Company
 
     company = Company(tmp_path / "bonus.sqlite")
-    for source in bonus_sources():
+    for source in [*payroll_sources(), *bonus_sources()]:
         company.save(source.fact, source.subject_id)
     company.save(payroll(), "january")
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.save(bonus(), "bonus")
+    company.tax_basis("bonus", 90_000)
     company.publish("january", "bonus")
     company.close("2026-01")
     assert response(company.engine, "2026-01") == full_response(

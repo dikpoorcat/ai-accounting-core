@@ -4,6 +4,7 @@ import itertools
 import json
 
 import pytest
+from opening_fixture import adopt_empty_opening
 from pydantic import ValidationError
 
 from ai_accounting.kernel.asset_batches import AssetBatches
@@ -21,6 +22,7 @@ def book(tmp_path):
             tmp_path / "book.sqlite", production_bundle(), "co", "911100000000000001", "db"
         )
     )
+    adopt_empty_opening(engine, period="2026-02")
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):

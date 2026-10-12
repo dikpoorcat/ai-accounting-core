@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 14,
+    "version": 15,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -341,10 +341,14 @@ OPERATING_PROTOCOL = {
                     "本期政策及通知后原子生成本期输入。工资、政策或通知变化使确认失效。"
                     "prepare_payroll也检查已有工资；"
                     "confirm_payroll_preparation只登记事实，不代表已发布。"
-                    "累计或实际扣款重算不自动使工资输入确认失效；先处理明确的待重算来源，"
-                    "不补造负责人确认。payroll_first_wage_treatment.period是有源适用首月，"
-                    "standard_deduction_start_month是累计扣除起点；工资只采用当月及以前的处理，"
-                    "未来月份规则不能反向改变历史工资。历史无界依赖误标待复核时先用同subject公"
+                    "实际扣款重算不自动使工资输入确认失效；先处理明确的待重算来源，"
+                    "不补造负责人确认。工资、奖金和劳务只采用有来源的remuneration_tax_basis，"
+                    "按source_kind/source_id绑定本项报酬，明确最终报酬表应扣或实际扣税依据、税期"
+                    "和整数分金额；零税也须有本期明确依据。缺税时先保存报酬事实，正式发布和净额"
+                    "代发等待税依据；工资无变化不能复制上月税额。申报、扣税和银行缴款分别保存，"
+                    "不自行算税，也不把申报额或整笔缴款自动当作个人扣税。旧计税格式与旧扣税事实"
+                    "只供历史读取，补齐当前格式后才可重算；不把原计算金额复制为实际金额。"
+                    "历史无界依赖误标待复核时先用同subject公"
                     "开预览核对；完整签名相等才可review_no_impact发布，保留原凭证和冻结，"
                     "不直接改待复核记录或强制声称无影响。"
                 ),
@@ -393,8 +397,10 @@ OPERATING_PROTOCOL = {
                     "工资准备和期间待办的tax_import_mapping只检查个税文件列对应。"
                     "缺失或错误映射按明确资料补正；tax_import_format_unsupported是文件能力限制"
                     "，不能变成负责人业务追问，也不阻止工资记账、真实付款、"
-                    "关账或有依据的外部完成。正式个税文件仍须重新核对映射、人员和扣除明细，"
-                    "不能把映射就绪当成文件已完成。"
+                    "关账或有依据的外部完成。个税导入文件采用已确认的精确工资输入修订及有源"
+                    "申报范围、收入、免税、扣除和减免明细，不依赖工资正式发布或已取得税额；"
+                    "因此可先生成客户端输入文件，再取得真实税额核算。文件确认须重新核对映射、"
+                    "人员、社保公积金和原始扣除明细，不能把映射就绪当成文件已完成。"
                 ),
             },
         },
@@ -578,6 +584,7 @@ TOPIC_SELECTORS = {
             "housing_",
             "tax_declaration_actual",
             "tax_withholding_actual",
+            "remuneration_tax_basis",
         ],
         "responses": ["payroll"],
     },

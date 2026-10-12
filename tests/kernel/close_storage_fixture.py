@@ -10,7 +10,7 @@ from ai_accounting.kernel.close_storage import decode_close, write_close
 from ai_accounting.kernel.types import YearMonth
 
 
-def use_v4_close_manifest(monkeypatch):
+def use_v4_close_manifest(monkeypatch, *, source_version=None):
     """Generate synthetic historical v4 inputs without broadening production writes."""
     from ai_accounting.kernel import close_fund_details
     from ai_accounting.kernel.close_contract_v1 import require_close_contract
@@ -24,24 +24,72 @@ def use_v4_close_manifest(monkeypatch):
         # depend on the activation and continuity rules introduced by v5.
         value = {
             "contract": close_fund_details.CONTRACT,
-            "definitions": [], "balances": [], "summary": [],
+            "definitions": [],
+            "balances": [],
+            "summary": [],
             "adjustments": [],
             "sources": {
                 "contract": "ai-accounting-kernel/2/fund-line-details/1",
-                "period": YearMonth(manifest["period"]).ordinal, "activation": None,
-                "opening": [], "lines": [], "opening_lines": [],
+                "period": YearMonth(manifest["period"]).ordinal,
+                "activation": None,
+                "opening": [],
+                "lines": [],
+                "opening_lines": [],
             },
         }
         return {**value, "digest": digest(value).hex()}
 
     def historical_manifest(self, *args, **kwargs):
-        manifest = original(self, *args, **kwargs)
+        if source_version is None:
+            manifest = original(self, *args, **kwargs)
+        else:
+            from ai_accounting.kernel.content_history_context import historical_content
+
+            with historical_content(source_version):
+                manifest = original(self, *args, **kwargs)
         manifest.pop("fund_details")
         manifest["format_version"] = 4
         return require_close_contract(manifest)
 
     monkeypatch.setattr(Periods, "_manifest", historical_manifest)
     monkeypatch.setattr(close_fund_details, "build_fund_close_snapshot", unused_funds)
+
+
+def v1_source_schema_sql(registry):
+    """Build an isolated v1 fixture with its exact historical journal alphabet.
+
+    The fixture declares this SQL before any business row is installed. It does
+    not relabel current journal events or relax the immutable historical reader.
+    """
+    from ai_accounting.kernel import change_journal, change_journal_v1
+    from ai_accounting.kernel.schema import schema_sql
+
+    current = change_journal.journal_ddl()
+    later_sources = set(change_journal.SOURCES) - set(change_journal_v1.SOURCES)
+    old_triggers = [
+        statement
+        for statement in current.splitlines()
+        if not any(
+            statement.startswith("CREATE TRIGGER change_" + source + "_insert ")
+            for source in later_sources
+        )
+    ]
+    current_alphabet = ",".join(repr(source) for source in change_journal.SOURCES)
+    historical_alphabet = ",".join(repr(source) for source in change_journal_v1.SOURCES)
+    historical = (
+        "\n".join(old_triggers).replace(
+            "CHECK(source IN(" + current_alphabet + "))",
+            "CHECK(source IN(" + historical_alphabet + "))",
+        )
+        + "\n"
+    )
+    assert all(
+        "CREATE TRIGGER change_" + source + "_insert " not in historical for source in later_sources
+    )
+    assert "CHECK(source IN(" + historical_alphabet + "))" in historical
+    current_schema = schema_sql(registry)
+    assert current_schema.count(current) == 1
+    return current_schema.replace(current, historical)
 
 
 def stored_manifest(connection, period=None):

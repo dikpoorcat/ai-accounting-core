@@ -359,6 +359,13 @@ CORE_FIELDS = {
 
 DUPLICATE_ROLES = {kind: kind for kind in ELIGIBLE_KINDS}
 
+# Archived labor signatures retain their original policy/withholding fields.
+# Current remuneration facts have an independent confirmed tax basis.
+CURRENT_LABOR_SIGNATURE_FIELDS = (
+    "period", "person_id", "income_date", "expense_class", "remuneration_method",
+    "fixed_fee_fen", "commission_base_fen", "commission_rate_ppm",
+)
+
 if set(SIGNATURE_FIELDS) != ELIGIBLE_KINDS or not set(CORE_FIELDS) <= ELIGIBLE_KINDS:
     raise RuntimeError("duplicate comparison fields must cover the declared allowlist")
 
@@ -681,8 +688,13 @@ def _fact_data(fact: Fact) -> dict[str, Any]:
 
 def _signature(fact: Fact) -> str:
     data = _fact_data(fact)
+    fields = (
+        CURRENT_LABOR_SIGNATURE_FIELDS
+        if fact.kind == "labor" and "policy_id" not in type(fact).model_fields
+        else SIGNATURE_FIELDS[fact.kind]
+    )
     return digest(
-        [DUPLICATE_ROLES[fact.kind], {key: data[key] for key in SIGNATURE_FIELDS[fact.kind]}]
+        [DUPLICATE_ROLES[fact.kind], {key: data[key] for key in fields}]
     ).hex()
 
 
@@ -1207,25 +1219,27 @@ def _strong_pair_fact_ids(connection, rows, location_paired, registry, through_p
     period_clause = " AND f.period<=?" if through_period is not None else ""
     origin_parts, parameters = [], []
     for kind in sorted(ORIGIN_KINDS & kinds):
-        table = table_name(kind)
-        columns = {row["name"] for row in connection.execute(f'PRAGMA table_info("{table}")')}
-        # Structured arrays are normalized by the model before _signature;
-        # their stored JSON text is not an admissible necessary equality key.
+        bodies = registry.fact_bodies(kind)
+        common_fields = set.intersection(*(set(model.model_fields) for model, _ in bodies))
+        # Original and current body generations share the same necessary
+        # business coordinates. Unused historical tax columns must not hide a
+        # duplicate remuneration in the new input grammar.
         scalar = [
-            field
-            for field in SIGNATURE_FIELDS[kind]
-            if field in columns
+            field for field in SIGNATURE_FIELDS[kind]
+            if field in common_fields
             and field not in {"project_sources", "creditors", "assets", "annual_rate_percent"}
         ]
         signature = "json_array(" + ",".join(f'd."{field}"' for field in scalar) + ")"
-        origin_parts.append(
-            f"SELECT f.id,f.period,'{kind}' kind,{signature} signature "
-            "FROM subject s CROSS JOIN fact_current c ON c.subject_id=s.id "
-            f"CROSS JOIN {table} d ON d.revision_id=c.fact_id "
-            f"CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE s.kind='{kind}'" + period_clause
-        )
-        if through_period is not None:
-            parameters.append(through_period)
+        for _, table in bodies:
+            origin_parts.append(
+                f"SELECT f.id,f.period,'{kind}' kind,{signature} signature "
+                "FROM subject s CROSS JOIN fact_current c ON c.subject_id=s.id "
+                f"CROSS JOIN {table} d ON d.revision_id=c.fact_id "
+                f"CROSS JOIN fact_revision f ON f.id=c.fact_id WHERE s.kind='{kind}'"
+                + period_clause
+            )
+            if through_period is not None:
+                parameters.append(through_period)
     if origin_parts:
         origin = " UNION ALL ".join(origin_parts)
         # Each current fact occurs once in origin and fact_evidence's composite

@@ -3,23 +3,43 @@
 import json
 
 import pytest
-from test_exports import inventory, queue
-from test_exports import setup as export_fixture
+from test_exports import evidence, inventory, queue, template_bytes
 from test_payroll import payroll
+from test_tax_import import company as tax_company
 from test_workflow import obligation
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.payroll import LaborAccrual
 from ai_accounting.kernel.domains.transactions import Allocation, Payment
-from ai_accounting.kernel.exports import run_export_jobs
+from ai_accounting.kernel.exports import Exports, run_export_jobs
 from ai_accounting.kernel.payroll_tax_declarations import (
     PayrollDisbursementBasis,
     PayrollTaxDeclarationActual,
 )
 from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.remuneration_tax_basis import (
+    PooledTaxAllocation,
+    PooledTaxProof,
+    RemunerationTaxBasis,
+)
 from ai_accounting.kernel.workflow import Workflow
 
-setup = export_fixture
+
+@pytest.fixture
+def setup(tmp_path):
+    company = tax_company(tmp_path)
+    export = Exports(company.engine)
+    export.save_payee(
+        "employee",
+        name="张三",
+        account="001234567890",
+        evidence_digest=company.owner_confirmation,
+        expected_revision=0,
+        request_id=company.request(),
+    )
+    template = evidence(company, template_bytes())
+    inventory(company)
+    return company, export, template
 
 
 def declare(company, *, extra=60000, subject="declared", **changes):
@@ -102,6 +122,8 @@ def test_declared_difference_preserves_wages_and_leaves_600_payable(setup, tmp_p
         record["basis_calculation_id"] == company.current("basis", "payroll_disbursement_basis").id
     )
     assert record["held_fen"] == 60000 and record["withholding_recorded"] is False
+    assert record["adopted_tax_fen"] == original.values["tax_fen"]
+    assert "calculated_tax_fen" not in record
     assert company.engine.ledger("2026-01") == ledger
     assert company.current("january") == original
     assert run_export_jobs(company.engine)[0]["job_id"] == job["job_id"]
@@ -138,6 +160,319 @@ def test_equal_declared_tax_keeps_existing_net_and_freezes_fact(setup):
     plan = preview(export, template)
     assert plan["total_fen"] == 907400
     assert plan["payroll_disbursements"][0]["declaration_fact_id"] == declaration["fact_id"]
+    assert plan["payroll_disbursements"][0]["withholding_recorded"] is False
+
+
+def test_unrelated_stale_tax_source_does_not_block_selected_person(setup):
+    company, export, template = setup
+    from test_payroll import profile
+
+    company.save(profile(employee_id="other"), "other-profile")
+    other = payroll(employee_id="other", profile_id="other-profile")
+    company.save(other, "b-wage")
+    company.tax_basis("b-wage", 12600)
+    company.save(other.model_copy(update={"accounting_gross_salary_fen": 2000000}), "b-wage", 1)
+    inventory(company)
+    _, declaration = declare(company, extra=0)
+    from ai_accounting.kernel.payroll_tax_declarations import export_disbursement
+
+    adopted = company.current("january")
+    selected = {
+        "kind": adopted.kind,
+        "subject_id": adopted.subject_id,
+        "period": adopted.period.ordinal,
+        "id": adopted.id,
+        "fact_id": adopted.fact_id,
+    }
+    with company.engine.store.connection(read_only=True) as connection:
+        amount, details = export_disbursement(
+            company.engine.store,
+            connection,
+            selected,
+            adopted.values,
+            907400,
+        )
+    assert amount == 907400 and details["declared_tax_fen"] == 12600
+    adopt(company, declaration)
+    with company.engine.store.connection(read_only=True) as connection:
+        amount, details = export_disbursement(
+            company.engine.store,
+            connection,
+            selected,
+            adopted.values,
+            907400,
+        )
+    assert amount == 907400 and details["declared_tax_fen"] == 12600
+
+
+@pytest.mark.parametrize(("expired_sources", "reassigned"), [(0, False), (65, False), (1, True)])
+def test_large_tax_period_cohort_keeps_bounded_reads_and_explicit_history_limit(
+    expired_sources,
+    reassigned,
+):
+    from ai_accounting.kernel.contracts import Context, FactVersion, Read
+    from ai_accounting.kernel.dependencies import select_fact_dependencies
+    from ai_accounting.kernel.payroll_tax_declarations import _declared_for_source
+    from ai_accounting.kernel.remuneration_tax_basis import remuneration_tax_period_scope
+    from ai_accounting.kernel.types import YearMonth
+
+    month, proof = YearMonth("2026-01"), "0" * 64
+    current, taxes = [], []
+    for index in range(101):
+        source = FactVersion(
+            f"source-{index}",
+            f"wage-{index}",
+            1,
+            payroll(employee_id="employee-0" if reassigned and index == 1 else f"employee-{index}"),
+            (proof,),
+        )
+        current.append(
+            FactVersion(
+                f"current-{index}",
+                source.subject_id,
+                2,
+                source.fact.model_copy(update={"employee_id": "reassigned-person"})
+                if reassigned
+                else source.fact,
+                (proof,),
+            )
+            if (index == 1 if reassigned else index < expired_sources)
+            else source
+        )
+        if reassigned and index == 1:
+            reassigned_original = source
+        taxes.append(
+            FactVersion(
+                f"tax-{index}",
+                f"basis-{index}",
+                1,
+                RemunerationTaxBasis(
+                    period=month,
+                    source_kind="payroll",
+                    source_id=source.subject_id,
+                    source_fact_id=source.id,
+                    tax_period=month,
+                    tax_amount_fen=12600,
+                    basis_type="final_statement",
+                    confirmed=True,
+                ),
+                (proof,),
+            )
+        )
+    plan = PayrollDisbursementBasis(
+        period=month,
+        payroll_kind="payroll",
+        payroll_id="wage-0",
+        employee_id="employee-0",
+        tax_period=month,
+        declaration_id="declared",
+        declaration_fact_id="declaration-version",
+        use_declared_tax_for_disbursement=True,
+    )
+    selected = {read: () for read in plan.reads()}
+    selected[Read("fact", RemunerationTaxBasis.kind, remuneration_tax_period_scope(month))] = tuple(
+        taxes
+    )
+    selected[Read("fact", "payroll", str(month))] = tuple(current)
+    selected[Read("calculation", "payroll", str(month))] = ()
+    if reassigned:
+        selected[Read("fact", "payroll", "#" + reassigned_original.id)] = (reassigned_original,)
+    widths = []
+
+    def select_many(reads):
+        widths.append(len(reads))
+        return {read: selected[read] for read in reads}
+
+    def declared_reads(version, selections=None):
+        return (
+            version.fact.reads()
+            if selections is None
+            else (
+                *version.fact.reads(),
+                *version.fact.reads_after(version.subject_id, Context(selections)),
+            )
+        )
+
+    version = FactVersion("plan-version", "plan", 1, plan, (proof,))
+    if expired_sources > 64:
+        with pytest.raises(NeedsInformation) as error:
+            select_fact_dependencies((version,), select_many, declared_reads)
+        assert error.value.issues[0]["field"] == "disbursement_tax_allocation"
+    else:
+        context = Context(select_fact_dependencies((version,), select_many, declared_reads))
+        declaration = FactVersion(
+            "declaration-version",
+            "declared",
+            1,
+            PayrollTaxDeclarationActual(
+                period=month,
+                employee_id="employee-0",
+                tax_period=month,
+                income_category="wages",
+                declared_tax_fen=12600,
+                declaration_confirmed=True,
+            ),
+            (proof,),
+        )
+        if reassigned:
+            with pytest.raises(NeedsInformation) as error:
+                _declared_for_source(
+                    context,
+                    declaration,
+                    "employee-0",
+                    month,
+                    "payroll",
+                    "wage-0",
+                    {"tax_basis": {"fact_id": taxes[0].id}},
+                )
+            assert error.value.issues[0]["field"] == "disbursement_tax_allocation"
+            assert "wage-1" in error.value.issues[0]["reusable_sources"]
+        else:
+            assert (
+                _declared_for_source(
+                    context,
+                    declaration,
+                    "employee-0",
+                    month,
+                    "payroll",
+                    "wage-0",
+                    {"tax_basis": {"fact_id": taxes[0].id}},
+                )
+                == 12600
+            )
+    assert len(widths) == (3 if reassigned else 2) and max(widths) < 64
+
+
+def test_equal_actual_withholding_is_recorded_without_theoretical_fallback(setup):
+    company, export, template = setup
+    company.save(
+        RemunerationTaxBasis(
+            period="2026-01",
+            source_kind="payroll",
+            source_id="january",
+            source_fact_id=company.current("january").fact_id,
+            tax_period="2026-01",
+            tax_amount_fen=12_600,
+            basis_type="actual_withholding",
+            confirmed=True,
+        ),
+        "tax-basis",
+        revision=1,
+    )
+    company.publish("january")
+    _, declaration = declare(company, extra=0)
+    plan = preview(export, template)
+    assert plan["total_fen"] == 907400
+    assert plan["payroll_disbursements"][0]["withholding_recorded"] is True
+
+
+def test_declared_tax_uses_adopted_tax_period_instead_of_wage_month(setup):
+    company, export, template = setup
+    company.save(
+        RemunerationTaxBasis(
+            period="2026-01",
+            source_kind="payroll",
+            source_id="january",
+            source_fact_id=company.current("january").fact_id,
+            tax_period="2026-02",
+            tax_amount_fen=12_600,
+            basis_type="final_statement",
+            confirmed=True,
+        ),
+        "tax-basis",
+        revision=1,
+    )
+    company.publish("january")
+    _, declaration = declare(company, period="2026-02", tax_period="2026-02")
+    adopt(company, declaration, period="2026-02", tax_period="2026-02")
+    plan = preview(export, template)
+    assert plan["total_fen"] == 847_400
+    assert plan["payroll_disbursements"][0]["tax_period"] == "2026-02"
+    assert company.current("january").period == "2026-01"
+
+
+@pytest.mark.parametrize("allocated", [False, True])
+def test_tax_period_summary_cannot_be_duplicated_across_wage_sources(setup, allocated):
+    company, export, template = setup
+    february = company.save(payroll(period="2026-02"), "february")
+    company.confirm_payroll("february")
+    proof = (
+        PooledTaxProof(
+            evidence_digest=company.owner_confirmation,
+            source_location="合成申报第1行",
+            total_tax_fen=25_200,
+            allocations=(
+                PooledTaxAllocation(
+                    source_kind="payroll",
+                    source_id="january",
+                    period="2026-01",
+                    tax_amount_fen=12_600,
+                ),
+                PooledTaxAllocation(
+                    source_kind="payroll",
+                    source_id="february",
+                    period="2026-02",
+                    tax_amount_fen=12_600,
+                ),
+            ),
+        )
+        if allocated
+        else None
+    )
+    for subject, source_fact, source_period, basis_id, revision in (
+        ("january", company.current("january").fact_id, "2026-01", "tax-basis", 1),
+        ("february", february["fact_id"], "2026-02", "february-tax", 0),
+    ):
+        basis = RemunerationTaxBasis(
+            period=source_period,
+            source_kind="payroll",
+            source_id=subject,
+            source_fact_id=source_fact,
+            tax_period="2026-02",
+            tax_amount_fen=12_600,
+            basis_type="final_statement",
+            confirmed=True,
+            pooled_tax_proof=proof,
+        )
+        company.engine.save_fact(
+            basis.kind,
+            basis_id,
+            basis.model_dump(mode="json"),
+            evidence=(company.owner_confirmation,),
+            expected_revision=revision,
+            request_id=company.request(),
+        )
+    company.publish("january", "february")
+    declared = PayrollTaxDeclarationActual(
+        period="2026-02",
+        employee_id="employee",
+        tax_period="2026-02",
+        income_category="wages",
+        declared_tax_fen=25_200,
+        declaration_confirmed=True,
+    )
+    declaration = company.engine.save_fact(
+        declared.kind,
+        "declared",
+        declared.model_dump(mode="json"),
+        evidence=(company.owner_confirmation,),
+        expected_revision=0,
+        request_id=company.request(),
+    )
+    inventory(company)
+    if not allocated:
+        with pytest.raises(NeedsInformation) as exc:
+            preview(export, template, ["january"])
+        assert exc.value.issues[0]["field"] == "disbursement_tax_allocation"
+        adopt(company, declaration, publish=False, period="2026-02", tax_period="2026-02")
+        with pytest.raises(NeedsInformation) as exc:
+            company.engine.preview(["basis"])
+        assert exc.value.issues[0]["field"] == "disbursement_tax_allocation"
+    else:
+        plan = preview(export, template, ["january"])
+        assert plan["total_fen"] == 907_400
+        assert plan["payroll_disbursements"][0]["declared_tax_fen"] == 12_600
+        assert plan["payroll_disbursements"][0]["declared_period_total_fen"] == 25_200
 
 
 @pytest.mark.parametrize("change", ["unknown", "wrong_person", "wrong_month", "wrong_version"])
@@ -238,12 +573,12 @@ def test_unfiled_labor_does_not_block_approved_wage_disbursement(setup):
 
 def test_unchosen_conflicting_wage_does_not_block_another_person(setup):
     company, export, template = setup
-    from test_payroll import opening, profile
+    from test_payroll import profile
 
     company.save(profile(employee_id="other"), "other-profile")
-    company.save(opening(employee_id="other"), "other-opening")
     company.save(payroll(employee_id="other", profile_id="other-profile"), "other-wage")
     company.confirm_payroll("other-wage")
+    company.tax_basis("other-wage", 12_600)
     company.publish("other-wage")
     inventory(company)
     _, declaration = declare(company, employee_id="other")
@@ -260,7 +595,8 @@ def test_pending_changed_plan_blocks_only_its_own_source_and_not_quarter_basis(s
     company.save(obligation("quarterly_financial_report"), "quarter")
     company.close("2026-01")
     accepted = Workflow(company.engine).obligation_basis("quarter")["candidate_calculations"]
-    assert [item["subject_id"] for item in accepted] == ["january"]
+    accepted_subjects = {item["subject_id"] for item in accepted}
+    assert "january" in accepted_subjects and "basis" not in accepted_subjects
     actual, _ = declare(company, subject="other-declared", employee_id="other")
     # A metadata-only declaration revision must not rewrite closed accounting.
     closed = company.engine.ledger("2026-01")

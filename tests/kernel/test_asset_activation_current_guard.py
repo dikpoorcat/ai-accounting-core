@@ -83,7 +83,7 @@ def test_complete_assets_equal_with_less_actual_activation_body_work(tmp_path, c
 
 @pytest.fixture
 def closed_activation(tmp_path):
-    company = Company(tmp_path / "current-activation.sqlite")
+    company = Company(tmp_path / "current-activation.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.close("2026-02")
     return company

@@ -6,16 +6,15 @@ import json
 import pytest
 from monthly_close_fixture import ready
 from test_materials import Company as MaterialCompany
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_reports import book as book  # noqa: F401
 from test_reports import scenario
-from test_workflow import obligation, setup_company
+from test_workflow import obligation, publish_zero_opening, setup_company
 from workflow_test_helpers import expand_workflow
 
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.domains.assets import LoanAgreement
-from ai_accounting.kernel.domains.payroll import PayrollFirstWageTreatment
 from ai_accounting.kernel.domains.transactions import Expense
 from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
@@ -153,35 +152,43 @@ def test_loan_business_anchors_financing_but_report_policy_does_not(tmp_path):
     assert financing["accounting"]["fact_count"] == 1
     assert financing["sources"][0]["kind"] == "loan_agreement"
     assert financing["accounting"] == {
-        "status": "ready", "fact_count": 1, "calculation_count": 0,
-        "pending_count": 0, "issues": [],
+        "status": "ready",
+        "fact_count": 1,
+        "calculation_count": 0,
+        "pending_count": 0,
+        "issues": [],
     }
 
 
 def test_payroll_basis_is_not_unpublished_but_wage_confirmation_and_pending_still_block(tmp_path):
     company = setup_company(tmp_path)
+    publish_zero_opening(company)
     for fact, subject in (
-        (profile(), "profile"), (opening(), "opening"),
-        (PayrollFirstWageTreatment(period="2026-01", employee_id="employee",
-                                   standard_deduction_start_month=1), "first-wage"),
-        (contribution_policy(), "contributions"), (income_tax_policy(), "income-tax"),
+        (profile(), "profile"),
+        (contribution_policy(), "contributions"),
     ):
         company.save(fact, subject)
 
     def wage_area():
-        return next(item for item in view(company, period="2026-01")["sections"][
-            "materials_and_accounting"] if item["id"] == "payroll")
+        return next(
+            item
+            for item in view(company, period="2026-01")["sections"]["materials_and_accounting"]
+            if item["id"] == "payroll"
+        )
 
     basis = wage_area()
     # An active employee still requires this month's explicit wage inputs.
     # The basis itself requires no calculation; keep the real roster gate.
     assert basis["accounting"]["status"] == "needs_information"
-    assert (basis["accounting"]["fact_count"], basis["accounting"]["calculation_count"],
-            basis["accounting"]["pending_count"]) == (5, 0, 0)
+    assert (
+        basis["accounting"]["fact_count"],
+        basis["accounting"]["calculation_count"],
+        basis["accounting"]["pending_count"],
+    ) == (2, 0, 0)
     assert {issue["field"] for issue in basis["accounting"]["issues"]} == {"missing_payroll"}
     assert {item["kind"] for item in basis["sources"] if item["lane"] == "accounting"} == {
-        "payroll_profile", "payroll_opening_state", "payroll_first_wage_treatment",
-        "payroll_contribution_policy", "payroll_income_tax_policy",
+        "payroll_profile",
+        "payroll_contribution_policy",
     }
     company.save(payroll(), "wage")
     unconfirmed = wage_area()["accounting"]
@@ -189,11 +196,15 @@ def test_payroll_basis_is_not_unpublished_but_wage_confirmation_and_pending_stil
     assert unconfirmed["pending_count"] == 1
     assert unconfirmed["issues"]
     company.confirm_payroll("wage")
+    company.tax_basis("wage", 12_600)
     company.publish("wage")
     published = wage_area()["accounting"]
     assert published["status"] == "ready"
-    assert (published["fact_count"], published["calculation_count"],
-            published["pending_count"]) == (6, 1, 0)
+    assert (
+        published["fact_count"],
+        published["calculation_count"],
+        published["pending_count"],
+    ) == (4, 1, 0)
     company.save(profile(social_insurance_base_fen=1_100_000), "profile", revision=1)
     revised = wage_area()["accounting"]
     assert revised["status"] == "needs_information"
@@ -209,8 +220,11 @@ def test_report_classification_and_tax_confirmation_remain_sources_without_calcu
         ("2026-02", "transactions", "report_classification"),
         ("2026-03", "tax", "report_income_tax_confirmation"),
     ):
-        item = next(item for item in view(company, period=month)["sections"][
-            "materials_and_accounting"] if item["id"] == area)
+        item = next(
+            item
+            for item in view(company, period=month)["sections"]["materials_and_accounting"]
+            if item["id"] == area
+        )
         source = next(source for source in item["sources"] if source["kind"] == kind)
         assert source["calculation_id"] is None and source["pending"] is False
         assert item["accounting"]["status"] == "ready"
@@ -220,24 +234,34 @@ def test_report_classification_and_tax_confirmation_remain_sources_without_calcu
 
 def test_real_unpublished_and_revised_business_still_needs_processing(tmp_path):
     company = setup_company(tmp_path)
-    expense = Expense(period="2026-01", counterparty_id="supplier", amount_fen=1000,
-                      expense_class="administration", creditor_kind="supplier")
+    publish_zero_opening(company)
+    expense = Expense(
+        period="2026-01",
+        counterparty_id="supplier",
+        amount_fen=1000,
+        expense_class="administration",
+        creditor_kind="supplier",
+    )
 
     def transactions():
-        return next(item for item in view(company, period="2026-01")["sections"][
-            "materials_and_accounting"] if item["id"] == "transactions")["accounting"]
+        return next(
+            item
+            for item in view(company, period="2026-01")["sections"]["materials_and_accounting"]
+            if item["id"] == "transactions"
+        )["accounting"]
 
     company.save(expense, "expense")
     initial = transactions()
     assert initial["status"] == "needs_information"
-    assert (initial["calculation_count"], initial["pending_count"]) == (0, 1)
+    # The separately adopted zero opening is an established accounting result.
+    assert (initial["calculation_count"], initial["pending_count"]) == (1, 1)
     assert any(issue["field"] == "expense" for issue in initial["issues"])
     company.publish("expense")
     assert transactions()["pending_count"] == 0
     company.save(expense.model_copy(update={"amount_fen": 2000}), "expense", revision=1)
     amended = transactions()
     assert amended["status"] == "needs_information"
-    assert (amended["calculation_count"], amended["pending_count"]) == (0, 1)
+    assert (amended["calculation_count"], amended["pending_count"]) == (1, 1)
 
 
 def test_material_lane_source_anchors_its_declared_business_area(tmp_path):
@@ -257,6 +281,7 @@ def test_material_lane_source_anchors_its_declared_business_area(tmp_path):
 
 def test_close_backup_job_keeps_its_actual_month(tmp_path):
     company = setup_company(tmp_path)
+    publish_zero_opening(company)
     ready(company.engine, company.owner_confirmation, first="2026-01", last="2026-01")
     periods = Periods(company.engine)
     preview = periods.preview_close("2026-01", owner_confirmation=company.owner_confirmation)
@@ -303,7 +328,8 @@ def test_all_file_job_states_project_months_and_complete_quarter_periods(tmp_pat
     company = setup_company(tmp_path)
     month = f"2026-{quarter * 3:02d}"
     saved_period = {
-        "year": 2026, "quarter": quarter,
+        "year": 2026,
+        "quarter": quarter,
         "quarter_start": f"2026-{quarter * 3 - 2:02d}-01",
         "quarter_end": f"{month}-{calendar.monthrange(2026, quarter * 3)[1]}",
     }
@@ -316,18 +342,25 @@ def test_all_file_job_states_project_months_and_complete_quarter_periods(tmp_pat
                 ident = kind + "-" + status
                 plan = (
                     {"period": saved_period, "report_fact_ids": [], "source_closes": []}
-                    if kind == "report_export" else
-                    {"period": month, "rows": []} if kind == "payment_export" else
-                    {"period": month, "source_versions": []}
+                    if kind == "report_export"
+                    else {"period": month, "rows": []}
+                    if kind == "payment_export"
+                    else {"period": month, "source_versions": []}
                 )
                 plans[ident] = json.dumps({"plan": plan})
                 connection.execute(
                     "INSERT INTO jobs(id,kind,payload,status,error_code,result) "
                     "VALUES(?,?,?,?,?,?)",
-                    (ident, kind, plans[ident], status,
-                     "private failure" if status == "failed" else None,
-                     json.dumps({"path": "synthetic.xlsx", "sha256": "a" * 64})
-                     if status == "succeeded" else None),
+                    (
+                        ident,
+                        kind,
+                        plans[ident],
+                        status,
+                        "private failure" if status == "failed" else None,
+                        json.dumps({"path": "synthetic.xlsx", "sha256": "a" * 64})
+                        if status == "succeeded"
+                        else None,
+                    ),
                 )
                 sync_job(connection, ident)
         connection.commit()
@@ -350,10 +383,12 @@ def test_all_file_job_states_project_months_and_complete_quarter_periods(tmp_pat
             row[0]: row[1] for row in connection.execute("SELECT id,payload FROM jobs")
         } == plans
         company_jobs = Worklist._company_jobs(connection)
-        assert all(job["period"] == expected_period for job in company_jobs
-                   if job["kind"] == "report_export")
+        assert all(
+            job["period"] == expected_period
+            for job in company_jobs
+            if job["kind"] == "report_export"
+        )
     assert len(company.engine.jobs()) == len(plans)
-
 
 
 @pytest.mark.parametrize(
@@ -362,8 +397,8 @@ def test_all_file_job_states_project_months_and_complete_quarter_periods(tmp_pat
         ('{"private":"do-not-leak"', None),
         ('["do-not-leak"]', None),
         ('{"plan":["do-not-leak"]}', None),
-        ('{}', '{"private":"do-not-leak"'),
-        ('{}', '["do-not-leak"]'),
+        ("{}", '{"private":"do-not-leak"'),
+        ("{}", '["do-not-leak"]'),
     ],
 )
 def test_company_job_rejects_malformed_content_without_disclosure(payload, result):

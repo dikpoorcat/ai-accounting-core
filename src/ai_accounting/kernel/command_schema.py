@@ -295,7 +295,7 @@ def command_models(registry):
             result[name] = TypeAdapter(create_model(name + "Command", __config__=CONFIG, **fields))
     records = {}
     for kind, model in registry.models.items():
-        if model.registration_command:
+        if kind in registry.historical_only or model.registration_command:
             continue
         records[kind] = create_model(
             kind + "Registration",

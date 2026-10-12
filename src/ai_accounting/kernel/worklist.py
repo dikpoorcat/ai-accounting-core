@@ -25,6 +25,7 @@ AREA_LABELS = {
     "financing": "融资",
 }
 OTHER_ACCOUNTING_AREAS = {
+    "remuneration_tax_basis": "payroll",
     "opening_bank": "bank",
     "opening_cash": "transactions",
     "opening_obligation": "transactions",
@@ -356,7 +357,11 @@ class Worklist:
                 close_period = payload.get("close_period")
                 if close_period is not None:
                     try:
-                        period = str(YearMonth(close_period))
+                        period = str(
+                            YearMonth.from_ordinal(close_period)
+                            if type(close_period) is int
+                            else YearMonth(close_period)
+                        )
                     except (TypeError, ValueError):
                         raise KernelError(
                             "content_integrity_failed", "job.payload.close_period 无效"

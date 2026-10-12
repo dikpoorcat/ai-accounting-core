@@ -1,8 +1,8 @@
-"""Proven-zero wage tax remains usable without inventing exact deduction facts."""
+"""Confirmed zero wage deductions serve bookkeeping without tax assessment inputs."""
 
 import pytest
 from test_exports import evidence, inventory, template_bytes
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 from test_workflow import obligation
 from workflow_test_helpers import expand_workflow
@@ -20,25 +20,12 @@ def bounded_company(tmp_path):
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
     ):
         company.save(fact, subject)
-    data = payroll(accounting_gross_salary_fen=300_000, tax_reported_salary_fen=300_000).model_dump(
-        mode="json"
-    )
-    data.update(
-        dict.fromkeys(
-            (
-                "tax_exempt_income_fen",
-                "special_additional_deduction_fen",
-                "other_legal_deduction_fen",
-                "tax_relief_fen",
-            )
-        )
-    )
+    data = payroll(accounting_gross_salary_fen=300_000).model_dump(mode="json")
     company.save(PayrollBounded.model_validate(data), "bounded-january")
     company.confirm_payroll("bounded-january")
+    company.tax_basis("bounded-january", 0)
     return company
 
 
@@ -51,9 +38,7 @@ def test_unpublished_bounded_wage_is_not_missing_person_or_empty_external_basis(
         item for item in before["sections"]["materials_and_accounting"] if item["id"] == "payroll"
     )
     payroll_issues = [
-        item
-        for item in payroll_area["accounting"]["issues"]
-        if item.get("domain") == "payroll"
+        item for item in payroll_area["accounting"]["issues"] if item.get("domain") == "payroll"
     ]
     assert any(item["field"] == "unpublished_payroll" for item in payroll_issues)
     assert not any(item["field"] == "missing_payroll" for item in payroll_issues)
@@ -62,11 +47,9 @@ def test_unpublished_bounded_wage_is_not_missing_person_or_empty_external_basis(
     assert any(item["field"] == "unpublished_basis" for item in unpublished["fact_issues"])
     company.publish("bounded-january")
     basis = workflow.obligation_basis("obligation")
-    assert [item["subject_id"] for item in basis["candidate_calculations"]] == [
-        "bounded-january"
-    ]
+    assert [item["subject_id"] for item in basis["candidate_calculations"]] == ["bounded-january"]
     assert basis["fact_issues"] == []
-    assert company.current("bounded-january", "payroll_bounded").values["tax_state"] is None
+    assert "tax_state" not in company.current("bounded-january", "payroll_bounded").values
     # Publishing an exact zero-tax outcome never records an actual external filing.
     state = workflow.query("2026-01", as_of="2026-02-25")
     assert state["sections"]["external"]["obligations"][0]["actual_completion_status"] == "due"
@@ -90,7 +73,7 @@ def test_exact_net_export_includes_bounded_wage_and_still_requires_payee(bounded
     )
     plan = exports.preview("2026-01", template_evidence_digest=template)
     wage = company.current("bounded-january", "payroll_bounded")
-    assert wage.values["tax_fen"] == 0 and wage.values["tax_state"] is None
+    assert wage.values["tax_fen"] == 0 and "tax_state" not in wage.values
     assert len(plan["rows"]) == 1
     assert len(plan["rows"][0]["sources"]) == 1
     assert plan["rows"][0]["sources"][0]["kind"] == "payroll_bounded"

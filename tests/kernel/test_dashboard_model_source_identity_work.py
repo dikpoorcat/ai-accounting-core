@@ -24,10 +24,12 @@ def published_sources(book):
     with engine.store.connection(read_only=True) as connection:
         rows = {
             row["subject_id"]: dict(row)
-            for row in connection.execute("SELECT * FROM calculation")
+            for row in connection.execute("SELECT * FROM calculation WHERE kind<>'opening_package'")
         }
         assert set(rows) == {"opening-bank-a", "first-funding", "second-funding"}
-        assert connection.execute("SELECT count(*) FROM calculation_publication").fetchone()[0] == 3
+        # The fourth adoption is the explicit zero formation package. These
+        # candidate-identity cases select the three bank transaction sources.
+        assert connection.execute("SELECT count(*) FROM calculation_publication").fetchone()[0] == 4
     return engine, rows
 
 
@@ -35,19 +37,24 @@ def identity_candidates(connection, row):
     """Independently reproduce the old asdict identity bytes, not the new helper."""
     ident = row["id"]
     dependencies = {
-        item[0] for item in connection.execute(
+        item[0]
+        for item in connection.execute(
             "SELECT upstream_id FROM dependency_calculation WHERE calculation_id=?", (ident,)
         )
     }
     facts = {
-        item[0] for item in connection.execute(
+        item[0]
+        for item in connection.execute(
             "SELECT fact_id FROM dependency_fact WHERE calculation_id=?", (ident,)
         )
     }
     reads = [
         read_type()(
-            item["source"], item["kind"], item["scope_key"],
-            None if item["before_period"] == 119988
+            item["source"],
+            item["kind"],
+            item["scope_key"],
+            None
+            if item["before_period"] == 119988
             else month_type().from_ordinal(item["before_period"]),
         )
         for item in connection.execute(
@@ -56,7 +63,8 @@ def identity_candidates(connection, row):
     ]
     versions = dependencies | (facts - {row["fact_id"]})
     payload = {
-        "fact": row["fact_id"], "outcome": _outcome(row),
+        "fact": row["fact_id"],
+        "outcome": _outcome(row),
         "reads": [asdict(read) for read in sorted(reads, key=repr)],
         "program": row["program_version"],
     }
@@ -71,9 +79,12 @@ def count_candidates(monkeypatch):
     original = sources.calculation_identity_digest
 
     def counted(**arguments):
-        observed.append({
-            "fact_id": arguments["fact_id"], "versions": tuple(arguments["versions"]),
-        })
+        observed.append(
+            {
+                "fact_id": arguments["fact_id"],
+                "versions": tuple(arguments["versions"]),
+            }
+        )
         return original(**arguments)
 
     monkeypatch.setattr(sources, "calculation_identity_digest", counted)
@@ -113,8 +124,10 @@ def test_identity_mismatch_rejects_after_both_candidates(published_sources, monk
     engine, rows = published_sources
     row = rows["first-funding"]
     damage(
-        engine, "calculation",
-        "UPDATE calculation SET program_version=program_version||'-bad' WHERE id=?", (row["id"],),
+        engine,
+        "calculation",
+        "UPDATE calculation SET program_version=program_version||'-bad' WHERE id=?",
+        (row["id"],),
     )
     observed = count_candidates(monkeypatch)
     with engine.store.connection(read_only=True) as connection:
@@ -125,10 +138,14 @@ def test_identity_mismatch_rejects_after_both_candidates(published_sources, monk
 
 
 @pytest.mark.parametrize(
-    "subject, expected_candidates", (("first-funding", 1), ("opening-bank-a", 2)),
+    "subject, expected_candidates",
+    (("first-funding", 1), ("opening-bank-a", 2)),
 )
 def test_real_outcome_is_encoded_once_for_both_identity_formats(
-    published_sources, monkeypatch, subject, expected_candidates,
+    published_sources,
+    monkeypatch,
+    subject,
+    expected_candidates,
 ):
     engine, rows = published_sources
     calls = []
@@ -143,7 +160,9 @@ def test_real_outcome_is_encoded_once_for_both_identity_formats(
     candidates = count_candidates(monkeypatch)
     with engine.store.connection(read_only=True) as connection:
         result = sources.verify_model_sources(
-            engine, connection, calculation_ids=[rows[subject]["id"]] * 2,
+            engine,
+            connection,
+            calculation_ids=[rows[subject]["id"]] * 2,
         )
     assert set(result) == {rows[subject]["id"]}
     assert calls == [1]
@@ -152,20 +171,25 @@ def test_real_outcome_is_encoded_once_for_both_identity_formats(
 
 @pytest.mark.parametrize("kind", ("outcome", "fact", "missing"))
 def test_duplicate_source_selection_does_not_hide_invalid_member(
-    published_sources, monkeypatch, kind,
+    published_sources,
+    monkeypatch,
+    kind,
 ):
     engine, rows = published_sources
     good, bad = rows["first-funding"], rows["second-funding"]
     ids = [good["id"], good["id"], bad["id"], bad["id"]]
     if kind == "outcome":
         damage(
-            engine, "calculation",
+            engine,
+            "calculation",
             "UPDATE calculation SET outcome=json_set(outcome,'$.values.amount',30) WHERE id=?",
             (bad["id"],),
         )
     elif kind == "fact":
         damage(
-            engine, "fact_funding", "UPDATE fact_funding SET amount_fen=30 WHERE revision_id=?",
+            engine,
+            "fact_funding",
+            "UPDATE fact_funding SET amount_fen=30 WHERE revision_id=?",
             (bad["fact_id"],),
         )
     else:
@@ -175,14 +199,18 @@ def test_duplicate_source_selection_does_not_hide_invalid_member(
     with engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError) as failure:
             sources.verify_model_sources(
-                engine, connection, calculation_ids=ids, normalized_lines=normalized,
+                engine,
+                connection,
+                calculation_ids=ids,
+                normalized_lines=normalized,
             )
     assert failure.value.code == "content_integrity_failed"
     assert normalized == {}
 
 
 def test_model_physical_comparison_reuses_only_its_local_normalized_sources(
-    published_sources, monkeypatch,
+    published_sources,
+    monkeypatch,
 ):
     engine, rows = published_sources
     selected = {rows[name]["id"] for name in ("first-funding", "second-funding")}
@@ -199,14 +227,23 @@ def test_model_physical_comparison_reuses_only_its_local_normalized_sources(
             connection.execute("BEGIN")
             normalized = {}
             outcomes = sources.verify_model_sources(
-                engine, connection, calculation_ids=[*selected, *selected],
+                engine,
+                connection,
+                calculation_ids=[*selected, *selected],
                 normalized_lines=normalized,
             )
-            versions = {row[0] for row in connection.execute(
-                "SELECT id FROM voucher_version WHERE calculation_id IN (?,?)", tuple(selected),
-            )}
+            versions = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM voucher_version WHERE calculation_id IN (?,?)",
+                    tuple(selected),
+                )
+            }
             physical = sources.verify_model_voucher_lines(
-                connection, versions, outcomes, normalized_lines=normalized,
+                connection,
+                versions,
+                outcomes,
+                normalized_lines=normalized,
             )
             assert set(physical) == versions and len(versions) == 2
             assert set(normalized) == selected
@@ -219,7 +256,8 @@ def test_model_physical_comparison_reuses_only_its_local_normalized_sources(
 
 
 def test_full_sources_reuse_normalized_lines_without_changing_returned_rows(
-    published_sources, monkeypatch,
+    published_sources,
+    monkeypatch,
 ):
     engine, _ = published_sources
     calls = []
@@ -233,7 +271,7 @@ def test_full_sources_reuse_normalized_lines_without_changing_returned_rows(
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         result = integrity._check_sources(engine, connection)
-    assert len(result["calculations"]) == 3 and len(result["vouchers"]) == 2
+    assert len(result["calculations"]) == 4 and len(result["vouchers"]) == 2
     for ident, row in result["calculations"].items():
         assert calls.count(("calculation", ident, False)) == 1
         assert calls.count(("calculation", ident, True)) == 1
@@ -245,13 +283,20 @@ def test_full_sources_reuse_normalized_lines_without_changing_returned_rows(
 def test_failed_current_adoption_never_publishes_normalized_lines(published_sources):
     engine, rows = published_sources
     row = rows["first-funding"]
-    damage(engine, "calculation_current", "DELETE FROM calculation_current WHERE calculation_id=?",
-           (row["id"],))
+    damage(
+        engine,
+        "calculation_current",
+        "DELETE FROM calculation_current WHERE calculation_id=?",
+        (row["id"],),
+    )
     normalized = {}
     with engine.store.connection(read_only=True) as connection:
         with pytest.raises(KernelError) as failure:
             sources.verify_model_sources(
-                engine, connection, calculation_ids=[row["id"]], normalized_lines=normalized,
+                engine,
+                connection,
+                calculation_ids=[row["id"]],
+                normalized_lines=normalized,
             )
     assert failure.value.code == "content_integrity_failed"
     assert normalized == {}

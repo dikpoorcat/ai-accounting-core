@@ -72,6 +72,7 @@ export const localBusinessNames: Record<string, string> = {
   payroll_bounded: "工资计提",
   payroll_tax_declaration_actual: "工资个税实际申报记录",
   payroll_withholding_actual: "实际工资扣税确认",
+  remuneration_tax_basis: "报酬扣税依据",
   payroll_disbursement_basis: "按实际申报个税编制代发",
   annual_bonus_policy: "全年一次性奖金规则",
   annual_bonus_opening_usage: "奖金既有计税记录",

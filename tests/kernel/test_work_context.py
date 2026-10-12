@@ -577,7 +577,10 @@ def test_payroll_management_month_sources_are_discoverable_without_known_subject
         tax_import.TaxImportDetails(
             period="2026-02",
             employee_id="employee",
-            payroll_result_digest=instance.current("january").result_digest,
+            payroll_revision={"subject_id": "regular-wage", "revision": 1},
+            include_in_filing=True,
+            tax_reported_salary_fen=1_000_000,
+            tax_exempt_income_fen=0,
             cumulative_special_fen={key: 0 for key in tax_import.SPECIAL_COLUMNS},
             current_other_fen={key: 0 for key in tax_import.OTHER_COLUMNS},
             cumulative_personal_pension_fen=0,

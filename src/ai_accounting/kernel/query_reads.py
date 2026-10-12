@@ -1452,9 +1452,7 @@ class QueryReads:
         A model dump is never used to authenticate the stored source. Released
         v1 and unowned reads retain their existing storage adapter path.
         """
-        from .contracts import FactVersion
         from .integrity import verify_sources
-        from .storage import _validation_json
 
         identifiers = set(identifiers)
         checked = verify_sources(
@@ -1465,14 +1463,7 @@ class QueryReads:
             or getattr(self.store.registry, "content_version", None) == 1
         ):
             return
-        staged = {}
-        for ident, row in checked.items():
-            model = self.store.registry.models[row["kind"]]
-            staged[ident] = FactVersion(
-                ident, row["subject_id"], row["revision"],
-                model.model_validate_json(_validation_json(row["data"])),
-                tuple(sorted(row["evidence"])),
-            )
+        staged = self.store.fact_versions_from_checked(self.connection, checked)
         # Typed construction can fail even after a raw proof succeeds. No
         # half-batch typed cache is published in that case.
         self._fact_versions.update(staged)
@@ -2108,7 +2099,6 @@ class QueryReads:
         Header identity/seals are checked by each caller before reaching here.
         """
         from .integrity import verify_fact_child_order
-        from .schema import table_name
         from .storage import _scalar_fact_hashes, _snapshot_fact_hashes, _snapshot_fact_raws
 
         headers = tuple(headers)
@@ -2168,11 +2158,16 @@ class QueryReads:
             fact_periods[ident] = header["fact_period"]
             fact_digests[ident] = header["fact_digest"]
         verify_fact_child_order(self.engine, self.connection, kinds)
-        for kind, identifiers in kinds.items():
+        body_headers = [
+            {"id": ident, "kind": kind} for kind, identifiers in kinds.items()
+            for ident in sorted(identifiers)
+        ]
+        for _, _, table, revisions in self.store._fact_body_groups(self.connection, body_headers):
+            identifiers = {row["id"] for row in revisions}
             physical = dict(
                 self.connection.execute(
                     f"SELECT f.revision_id,f.period FROM json_each(?) ids "
-                    f"CROSS JOIN {table_name(kind)} f ON f.revision_id=ids.value",
+                    f"CROSS JOIN {table} f ON f.revision_id=ids.value",
                     (canonical(sorted(identifiers)),),
                 )
             )

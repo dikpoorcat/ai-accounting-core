@@ -160,7 +160,13 @@ def test_unactivated_unpaid_batch_can_be_withdrawn_in_dependency_order(book):
         )
     with engine.store.connection(read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM balance").fetchone()[0] == 0
-        assert connection.execute("SELECT count(*) FROM fact_revision").fetchone()[0] == 3
+        assert connection.execute("SELECT count(*) FROM fact_revision").fetchone()[0] == 4
+        assert {row[0] for row in connection.execute("SELECT subject_id FROM fact_revision")} == {
+            "synthetic-opening",
+            "batch",
+            "computer",
+            "chair",
+        }
 
 
 def test_batch_narrow_source_scope_does_not_make_unrelated_direct_card_a_consumer(book):

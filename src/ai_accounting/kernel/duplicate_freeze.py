@@ -15,14 +15,13 @@ from typing import Annotated
 
 from pydantic import Field, StrictStr, TypeAdapter
 
-from .contracts import FactVersion, KernelError
+from .contracts import KernelError
 from .key_membership_filter import (
     DecodedKeysFilter,
     build_keys_filter,
     decode_keys_filter,
     may_contain,
 )
-from .storage import _validation_json
 from .types import canonical, digest
 
 DERIVED_ROOT_NAME = "duplicate"
@@ -1044,18 +1043,9 @@ def narrowed_duplicate_candidates(
         if query_reads is not None and query_reads._snapshot_active
         else {}
     )
-    versions.update({
-        fact_id: FactVersion(
-            fact_id,
-            verified_facts[fact_id]["subject_id"],
-            verified_facts[fact_id]["revision"],
-            engine.store.registry.models[verified_facts[fact_id]["kind"]].model_validate_json(
-                _validation_json(verified_facts[fact_id]["data"])
-            ),
-            tuple(sorted(verified_facts[fact_id]["evidence"])),
-        )
-        for fact_id in changed_ids - versions.keys()
-    })
+    versions.update(engine.store.fact_versions_from_checked(
+        connection, {fact_id: verified_facts[fact_id] for fact_id in changed_ids - versions.keys()},
+    ))
     frozen_keys = set()
     for fact_id in changed_ids:
         version = versions[fact_id]

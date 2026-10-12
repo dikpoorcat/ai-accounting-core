@@ -22,7 +22,11 @@ test("funds validate the selected account even when its movement page is empty",
   const previousWindow = globalThis.window, previousFetch = globalThis.fetch;
   globalThis.window = { location: { origin: "http://localhost", search: `?company_id=${original.read_context.company_id}` } };
   let value = original;
-  globalThis.fetch = async () => new Response(JSON.stringify(value));
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    schema_version: 6, company_id: original.read_context.company_id,
+    period: original.selected_period.key, model_version: value.snapshot_version,
+    state: "ready", response: value,
+  }));
   try {
     const api = await server.ssrLoadModule("/src/api/funds.ts");
     const period = original.selected_period.key;

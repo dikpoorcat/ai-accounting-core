@@ -4,6 +4,8 @@ import sqlite3
 from collections import Counter
 from types import SimpleNamespace
 
+from scalar_store_fixture import scalar_store
+
 from ai_accounting.kernel.dashboard_sort import business_sort_metadata
 from ai_accounting.kernel.schema import table_name
 from ai_accounting.kernel.types import canonical
@@ -150,7 +152,7 @@ def test_obligation_arrays_expand_once_instead_of_once_per_balance_key(
         )
         snapshot = SimpleNamespace(
             connection=connection,
-            store=SimpleNamespace(registry=SimpleNamespace(models={"funding": model})),
+            store=scalar_store({"funding": model}),
             metadata=SimpleNamespace(prime_profiles=lambda *_: None),
             party=lambda ident: ident,
             reads=SimpleNamespace(verify_sql_outcomes=lambda *_: None),
@@ -202,9 +204,14 @@ def test_obligation_arrays_expand_once_instead_of_once_per_balance_key(
             ).replace("json_extract(b.value,", "json_extract(observe_child(b.value),")
             if text_children:
                 instrumented = instrumented.replace("jsonb_each(c.outcome,", "json_each(c.outcome,")
-            actual = [tuple(row) for row in sqlite3.Connection.execute(
-                connection, instrumented, parameters,
-            )]
+            actual = [
+                tuple(row)
+                for row in sqlite3.Connection.execute(
+                    connection,
+                    instrumented,
+                    parameters,
+                )
+            ]
             assert actual == text_rows
             child_reads.append(observed)
         text_reads, binary_reads = child_reads

@@ -13,10 +13,7 @@ from payroll_plan_fixture import confirm_wage_inputs
 from test_payroll import (
     actual,
     contribution_policy,
-    income_tax_policy,
     labor,
-    labor_policy,
-    opening,
     payroll,
     profile,
 )
@@ -72,8 +69,6 @@ def setup(tmp_path):
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
     ):
         company.save(fact, subject)
@@ -83,6 +78,7 @@ def setup(tmp_path):
         evidence=(company.owner_confirmation,),
         request_id=company.request(),
     )
+    company.tax_basis("january", 12_600)
     company.publish("january")
     export = Exports(company.engine)
     export.save_payee(
@@ -120,31 +116,42 @@ def test_new_export_previews_use_pinyin_and_saved_plan_keeps_its_original_names(
         source = "reimbursement-" + party
         company.save(
             Expense(
-                period="2026-01", counterparty_id=party, amount_fen=100,
-                expense_class="administration", creditor_kind="employee",
+                period="2026-01",
+                counterparty_id=party,
+                amount_fen=100,
+                expense_class="administration",
+                creditor_kind="employee",
             ),
             source,
         )
         company.publish(source)
         export.save_payee(
-            party, name=name, account="0012345601" if party == "party-z" else "0012345602",
-            evidence_digest=company.owner_confirmation, expected_revision=0,
+            party,
+            name=name,
+            account="0012345601" if party == "party-z" else "0012345602",
+            evidence_digest=company.owner_confirmation,
+            expected_revision=0,
             request_id=company.request(),
         )
     inventory(company)
     preview, queued, _ = queue(company, export, template, tmp_path / "pinyin-export")
     assert [row["name"] for row in preview["rows"]] == ["李四", "王五", "张三"]
     export.save_payee(
-        "employee", name="阿三", account="001234567890",
-        evidence_digest=company.owner_confirmation, expected_revision=1,
+        "employee",
+        name="阿三",
+        account="001234567890",
+        evidence_digest=company.owner_confirmation,
+        expected_revision=1,
         request_id=company.request(),
     )
     fresh = export.preview("2026-01", template_evidence_digest=template)
     assert [row["name"] for row in fresh["rows"]] == ["阿三", "李四", "王五"]
     with company.engine.store.connection(read_only=True) as connection:
-        frozen = json.loads(connection.execute(
-            "SELECT payload FROM jobs WHERE id=?", (queued["job_id"],)
-        ).fetchone()[0])["plan"]
+        frozen = json.loads(
+            connection.execute(
+                "SELECT payload FROM jobs WHERE id=?", (queued["job_id"],)
+            ).fetchone()[0]
+        )["plan"]
     assert frozen == preview
     completed = run_export_jobs(company.engine)[0]
     assert completed["status"] == "succeeded"
@@ -224,8 +231,8 @@ def test_personal_advances_export_only_explicit_employee_reimbursement(setup):
 
 def test_complete_export_uses_salary_labor_and_explicit_employee_reimbursement(setup):
     company, export, template = setup
-    company.save(labor_policy(), "labor-policy")
     company.save(labor(), "labor")
+    company.tax_basis("labor", 160_000)
     company.save(
         Expense(
             period="2026-01",
@@ -537,7 +544,6 @@ def test_management_grouping_does_not_change_accounting_period_or_amount(setup):
     before = company.current("january")
     Periods(company.engine).management(
         "january",
-
         payment_period="2026-02",
         payment_category="次月工资",
         expected_revision=0,
@@ -576,8 +582,8 @@ def test_template_and_payee_reject_formula_injection_and_caller_cannot_supply_am
 
 def test_missing_payee_is_a_management_information_gap_not_zero_payment(setup):
     company, export, template = setup
-    company.save(labor_policy(), "labor-policy")
     company.save(labor(), "labor")
+    company.tax_basis("labor", 160_000)
     company.publish("labor")
     inventory(company)
     with pytest.raises(NeedsInformation) as error:

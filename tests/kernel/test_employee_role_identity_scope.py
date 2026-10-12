@@ -3,7 +3,7 @@
 import pytest
 from test_dashboard_model_transactions import raw_read
 from test_integrity_content import verify
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 
 from ai_accounting.kernel.backup import BackupError, verify_file
@@ -23,60 +23,60 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
             "profile-b",
         ),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening-b"),
         (
-            payroll(profile_id="profile-b", accounting_gross_salary_fen=gross_fen,
-                    tax_reported_salary_fen=gross_fen),
+            payroll(profile_id="profile-b", accounting_gross_salary_fen=gross_fen),
             "january-b",
         ),
         (
-            payroll(period="2026-02", profile_id="profile-b",
-                    accounting_gross_salary_fen=gross_fen, tax_reported_salary_fen=gross_fen),
+            payroll(
+                period="2026-02", profile_id="profile-b", accounting_gross_salary_fen=gross_fen
+            ),
             "february-b",
         ),
         (
             profile(
-                employee_id="employee-a", social_insurance_base_fen=0,
+                employee_id="employee-a",
+                social_insurance_base_fen=0,
                 social_insurance_participating=False,
             ),
             "profile-a",
         ),
-        (opening(employee_id="employee-a"), "opening-a"),
         (
             payroll(
-                employee_id="employee-a", profile_id="profile-a",
-                accounting_gross_salary_fen=gross_fen, tax_reported_salary_fen=gross_fen,
+                employee_id="employee-a",
+                profile_id="profile-a",
+                accounting_gross_salary_fen=gross_fen,
             ),
             "january-a",
         ),
         (
             payroll(
-                period="2026-02", employee_id="employee-a", profile_id="profile-a",
-                accounting_gross_salary_fen=gross_fen, tax_reported_salary_fen=gross_fen,
+                period="2026-02",
+                employee_id="employee-a",
+                profile_id="profile-a",
+                accounting_gross_salary_fen=gross_fen,
             ),
             "february-a",
         ),
     ):
         company.save(fact, fact_subject)
     company.confirm_payroll("january-a", "january-b", "february-a", "february-b")
+    for source in ("january-a", "january-b", "february-a", "february-b"):
+        company.tax_basis(source, 0 if gross_fen == 0 else 12_600)
     company.publish("january-a", "january-b", "february-a", "february-b")
     company.close("2026-01")
     company.close("2026-02")
     dashboard = Dashboard(company.engine)
 
     def read(period="2026-02", **kwargs):
-        return dashboard.employees(
-            period, preparation="deferred", employee_filter="all", **kwargs
-        )
+        return dashboard.employees(period, preparation="deferred", employee_filter="all", **kwargs)
 
     baseline = read()
     employees = baseline["data"]["collections"]["employees"]["items"]
     assert {row["employee_id"] for row in employees} == {"employee", "employee-a"}
     assert baseline["data"]["employees"]["gross_salary_fen"] == 2 * gross_fen
     assert {
-        row["employee_id"]: (row["gross_salary_fen"], row["wage_tax_scope"])
-        for row in employees
+        row["employee_id"]: (row["gross_salary_fen"], row["wage_tax_scope"]) for row in employees
     } == {
         "employee": (gross_fen, "wage_income"),
         "employee-a": (gross_fen, "wage_income"),

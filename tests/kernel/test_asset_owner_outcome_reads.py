@@ -134,7 +134,7 @@ def test_mixed_owner_batch_failure_preserves_prior_proofs_and_publishes_no_half_
 
 
 def test_frozen_owner_uses_same_adoption_without_reloading_its_body(tmp_path):
-    company = Company(tmp_path / "frozen-owner.sqlite")
+    company = Company(tmp_path / "frozen-owner.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     company.close("2026-02")
 

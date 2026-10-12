@@ -1,10 +1,4 @@
-"""Versioned remuneration facts and pure calculators, with no persistence imports.
-
-Every policy and opening balance is supplied explicitly. Contribution selections
-include empty scopes; later actual assessments therefore invalidate their users.
-Actual cash belongs to the payment module, which revalidates unchanged payments
-against the replacement obligations produced here.
-"""
+"""Typed remuneration accounting from confirmed deductions and contribution facts."""
 
 from __future__ import annotations
 
@@ -18,10 +12,6 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ai_accounting.payroll import (
-    AnnualBonusScenarioInput,
-    AnnualBonusTaxMethod,
-    AnnualBonusTaxPolicy,
-    AnnualBonusUsage,
     CalculationValidationError,
     ContributionBaseKind,
     ContributionBases,
@@ -29,25 +19,13 @@ from ai_accounting.payroll import (
     ContributionPolicy,
     ContributionResult,
     ContributionRule,
-    CumulativeIncomeTaxPolicy,
-    CumulativeTaxPeriodInput,
-    CumulativeTaxState,
     EmployeeContributionShortfallTreatment,
     NeedsInformationError,
-    RegularPayrollInput,
     RoundingRule,
     allocate_contribution_burden,
-    calculate_annual_bonus_scenarios,
     calculate_contributions,
-    calculate_cumulative_withholding,
-    calculate_regular_payroll,
-    select_annual_bonus_tax_method,
 )
-from ai_accounting.payroll import (
-    YearMonth as CalculationMonth,
-)
-from ai_accounting.payroll.annual_bonus import AnnualBonusBracket
-from ai_accounting.payroll.income_tax import TaxBracket
+from ai_accounting.payroll import YearMonth as CalculationMonth
 from ai_accounting.payroll.types import TraceEntry
 from ai_accounting.policy_sources import OfficialPolicySourceURL
 
@@ -69,28 +47,34 @@ from ..payroll_confirmation import (
     payroll_policy_source,
     resolve_payroll_confirmation,
 )
-from ..types import (
-    ActualDate,
-    NonNegativeFen,
-    PositiveFen,
-    SubjectId,
-    YearMonth,
-    canonical,
-    checked,
-    sum_fen,
+from ..payroll_history import (
+    AnnualBonusOpeningUsage,
+    AnnualBonusPolicy,
+    HistoricalAnnualBonus,
+    HistoricalLaborRemuneration,
+    HistoricalPayroll,
+    HistoricalPayrollBounded,
+    HistoricalPayrollProfile,
+    LaborIncomeTaxPolicy,
+    PayrollFirstWageTreatment,
+    PayrollIncomeTaxPolicy,
+    PayrollOpeningState,
+    PayrollWithholdingActual,
 )
+from ..payroll_history import TaxBracketFact as TaxBracketFact
+from ..remuneration_tax_basis import (
+    remuneration_tax_reads,
+    remuneration_tax_reads_after,
+    resolve_remuneration_tax,
+    tax_basis_values,
+)
+from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, checked, sum_fen
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
 Rate = Annotated[str, Field(pattern=r"^(?:0(?:\.[0-9]{1,18})?|1(?:\.0{1,18})?)$")]
 SourceURL = OfficialPolicySourceURL
 ExpenseClass = Literal["management", "sales", "service"]
 PAYROLL_KINDS = ("payroll", "payroll_bounded")
-UNKNOWN_DEDUCTIONS = (
-    "tax_exempt_income_fen",
-    "special_additional_deduction_fen",
-    "other_legal_deduction_fen",
-    "tax_relief_fen",
-)
 
 
 def employee_month(employee_id: str, period: str) -> str:
@@ -103,40 +87,6 @@ def employee_year(employee_id: str, period: str) -> str:
 
 def _month(period: YearMonth) -> CalculationMonth:
     return CalculationMonth(int(period[:4]), int(period[5:]))
-
-
-def _state_values(state: CumulativeTaxState) -> dict:
-    result = asdict(state)
-    for key, value in result.items():
-        if key.endswith("_fen"):
-            checked(value)
-    result["through_period"] = str(state.through_period) if state.through_period else None
-    return result
-
-
-def _state(value: dict) -> CumulativeTaxState:
-    fields = dict(value)
-    through = fields["through_period"]
-    fields["through_period"] = _month(YearMonth(through)) if through else None
-    return CumulativeTaxState(**fields)
-
-
-def _tax_input_values(value: CumulativeTaxPeriodInput) -> dict:
-    result = asdict(value)
-    for key in ("income_date", "withholding_start_date"):
-        result[key] = result[key].isoformat()
-    return result
-
-
-def _tax_input(value: dict, period: YearMonth | None = None) -> CumulativeTaxPeriodInput:
-    fields = dict(value)
-    if fields["income_date"] is None and period is not None:
-        fields["income_date"] = _month(period).end_date.isoformat()
-    if len(fields["withholding_start_date"]) == 7:
-        fields["withholding_start_date"] += "-01"
-    for key in ("income_date", "withholding_start_date"):
-        fields[key] = date.fromisoformat(fields[key])
-    return CumulativeTaxPeriodInput(**fields)
 
 
 def _trace(*groups) -> tuple[dict, ...]:
@@ -211,58 +161,12 @@ class PayrollContributionPolicy(EffectivePolicy):
         return self
 
 
-class TaxBracketFact(Detail):
-    upper_bound_fen: PositiveFen | None
-    rate: Rate
-    quick_deduction_fen: NonNegativeFen
-
-
-class PayrollIncomeTaxPolicy(EffectivePolicy):
-    kind: ClassVar[str] = "payroll_income_tax_policy"
-    legal_basis_source_url: SourceURL
-    monthly_standard_deduction_fen: NonNegativeFen
-    brackets: Annotated[tuple[TaxBracketFact, ...], Field(min_length=1)]
-
-    def calculation_policy(self) -> CumulativeIncomeTaxPolicy:
-        return CumulativeIncomeTaxPolicy(
-            self.version,
-            date.fromisoformat(self.effective_from),
-            date.fromisoformat(self.effective_to) if self.effective_to else None,
-            self.primary_source_url,
-            self.legal_basis_source_url,
-            self.monthly_standard_deduction_fen,
-            tuple(
-                TaxBracket(x.upper_bound_fen, Decimal(x.rate), x.quick_deduction_fen)
-                for x in self.brackets
-            ),
-        )
-
-    @model_validator(mode="after")
-    def valid_policy(self):
-        self.calculation_policy()
-        return self
-
-
 class PayrollProfile(Fact):
     kind: ClassVar[str] = "payroll_profile"
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id",)
     employee_id: Identifier
     effective_from: YearMonth
     effective_to: YearMonth | None
-    withholding_start_date: ActualDate | YearMonth = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "wage_withholding_relationship_start",
-                "allowed_precision": ["month", "day"],
-                "reusable_sources": [
-                    "confirmed_first_withholding_month",
-                    "withholding_registration",
-                ],
-                "constraint": "保留明确月份或实际日；累计减除按月，不将月起点记作实际开始日",
-            }
-        },
-    )
     social_insurance_base_fen: NonNegativeFen | None
     housing_fund_base_fen: NonNegativeFen | None
     social_insurance_participating: bool
@@ -307,108 +211,6 @@ class PayrollContributionActual(Fact):
         return self
 
 
-class PayrollOpeningState(Fact):
-    kind: ClassVar[str] = "payroll_opening_state"
-    identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
-    employee_id: Identifier
-    through_period: YearMonth | None
-    cumulative_income_fen: NonNegativeFen
-    cumulative_tax_exempt_income_fen: NonNegativeFen
-    cumulative_standard_deduction_fen: NonNegativeFen
-    cumulative_employee_contributions_fen: NonNegativeFen
-    cumulative_special_additional_deduction_fen: NonNegativeFen
-    cumulative_other_legal_deduction_fen: NonNegativeFen
-    cumulative_tax_relief_fen: NonNegativeFen
-    cumulative_withheld_tax_fen: NonNegativeFen
-
-    def scopes(self) -> tuple[str, ...]:
-        return (employee_year(self.employee_id, self.period),)
-
-    def calculation_state(self) -> CumulativeTaxState:
-        values = self.model_dump(exclude={"period", "employee_id", "through_period"})
-        return CumulativeTaxState(
-            tax_year=int(self.period[:4]),
-            through_period=_month(self.through_period) if self.through_period else None,
-            **values,
-        )
-
-    @model_validator(mode="after")
-    def valid_state(self):
-        self.calculation_state()
-        return self
-
-
-class PayrollFirstWageTreatment(Fact):
-    kind: ClassVar[str] = "payroll_first_wage_treatment"
-    identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
-    period: YearMonth = Field(
-        description="首次工资处理开始适用的核算月份，不是录入或负责人确认月份",
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "first_wage_treatment_effective_month",
-                "allowed_precision": ["month"],
-                "reusable_sources": ["confirmed_first_wage_treatment_effective_month"],
-                "constraint": "仅工资所属期不早于本月时适用；有源适用月不能改为录入确认月",
-            }
-        },
-    )
-    employee_id: Identifier
-    standard_deduction_start_month: Annotated[
-        int,
-        Field(
-            ge=1,
-            le=12,
-            description="适用后累计基本减除费用的起算月，不改变本处理的适用首月",
-            json_schema_extra={
-                "x-accounting-fact": {
-                    "role": "accounting",
-                    "meaning": "cumulative_standard_deduction_clock_start",
-                    "allowed_precision": ["month_number"],
-                    "reusable_sources": ["confirmed_first_wage_standard_deduction_start_month"],
-                    "constraint": "仅决定累计减除费用时钟；不向更早工资月份追溯应用本处理",
-                }
-            },
-        ),
-    ]
-
-    def scopes(self) -> tuple[str, ...]:
-        return (employee_year(self.employee_id, self.period),)
-
-
-def first_wage_read(employee_id: str, period: YearMonth) -> Read:
-    """Only treatments already effective in this wage month may be adopted."""
-    cutoff = YearMonth.from_ordinal(period.ordinal + 1) if period.ordinal < 119987 else None
-    return Read("fact", PayrollFirstWageTreatment.kind, employee_year(employee_id, period), cutoff)
-
-
-class PayrollWithholdingActual(Fact):
-    """Confirmed actual withholding, distinct from a declaration or bank payment."""
-
-    kind: ClassVar[str] = "payroll_withholding_actual"
-    identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
-    employee_id: Identifier
-    withheld_tax_fen: NonNegativeFen = Field(
-        description="有原始扣税记录或负责人确认依据的本期实际工资扣税额，不是预估或仅拟申报金额",
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "observed_wage_tax_withholding",
-                "allowed_precision": ["integer_fen"],
-                "reusable_sources": ["confirmed_tax_withholding", "actual_wage_tax_record"],
-            }
-        },
-    )
-    withholding_confirmed: Literal[True]
-    reported_cumulative_standard_deduction_fen: NonNegativeFen | None = Field(
-        default=None,
-        description="原申报明确的本税期累计基本减除费用；未知保留空，不改写扣缴关系起点",
-    )
-
-    def scopes(self) -> tuple[str, ...]:
-        return (employee_month(self.employee_id, self.period),)
-
-
 class Payroll(Fact):
     material_amount_aliases: ClassVar[dict[str, str]] = {
         "fact.accounting_gross_salary_fen": "result.gross_fen"
@@ -416,171 +218,60 @@ class Payroll(Fact):
     kind: ClassVar[str] = "payroll"
     identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
     employee_id: Identifier
-    profile_revision: FactRevisionReference = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "exact_wage_profile_version",
-                "reusable_sources": ["payroll_profile"],
-            }
-        }
-    )
-    contribution_policy_revision: FactRevisionReference = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "exact_wage_contribution_rule_version",
-                "reusable_sources": ["payroll_contribution_policy"],
-            }
-        }
-    )
-    income_tax_policy_revision: FactRevisionReference | None = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "exact_adopted_wage_income_tax_rule_version",
-                "reusable_sources": ["payroll_income_tax_policy"],
-                "constraint": "扣缴已开始时必须明确；尚未开始且未采用时为null",
-            }
-        }
-    )
+    profile_revision: FactRevisionReference
+    contribution_policy_revision: FactRevisionReference
     accounting_gross_salary_fen: NonNegativeFen
-    tax_reported_salary_fen: NonNegativeFen
-    tax_exempt_income_fen: NonNegativeFen
-    special_additional_deduction_fen: NonNegativeFen
-    other_legal_deduction_fen: NonNegativeFen
-    tax_relief_fen: NonNegativeFen
     expense_class: ExpenseClass
     contribution_basis: Literal["policy_until_actual", "actual_required"]
 
-    def scopes(self) -> tuple[str, ...]:
+    def scopes(self):
         return (employee_month(self.employee_id, self.period),)
 
-    def reads(self, subject_id: str | None = None) -> tuple[Read, ...]:
-        from ..identity_corrections import opening_binding_reads
-
-        current_scope = employee_month(self.employee_id, self.period)
-        year_scope = employee_year(self.employee_id, self.period)
-        prior = tuple(
-            Read("calculation", kind, employee_month(self.employee_id, f"{self.period[:4]}-{m:02}"))
-            for m in range(1, int(self.period[5:]))
-            for kind in (*PAYROLL_KINDS, "annual_bonus")
+    def reads(self, subject_id=None):
+        reads = payroll_contribution_reads(self, subject_id)
+        return reads + (
+            remuneration_tax_reads(self.kind, subject_id) if subject_id is not None else ()
         )
-        reads = (
-            *(Read("fact", kind, current_scope) for kind in PAYROLL_KINDS),
-            Read("fact", PayrollProfile.kind, "@" + self.profile_revision.subject_id),
-            Read(
-                "fact",
-                PayrollContributionPolicy.kind,
-                "@" + self.contribution_policy_revision.subject_id,
-            ),
-            *(
-                (
-                    Read(
-                        "fact",
-                        PayrollIncomeTaxPolicy.kind,
-                        "@" + self.income_tax_policy_revision.subject_id,
-                    ),
-                )
-                if self.income_tax_policy_revision is not None
-                else ()
-            ),
-            Read("fact", PayrollContributionActual.kind, current_scope),
-            Read("fact", PayrollOpeningState.kind, year_scope),
-            Read("fact", "opening_payroll_state", year_scope),
-            Read("calculation", "opening_payroll_state", year_scope),
-            *opening_binding_reads(year_scope),
-            first_wage_read(self.employee_id, self.period),
-            Read("fact", PayrollWithholdingActual.kind, current_scope),
-            *prior,
-        )
-        return tuple(dict.fromkeys((*reads, *confirmation_reads(self, subject_id))))
 
-    def reads_for(self, subject_id: str) -> tuple[Read, ...]:
+    def reads_for(self, subject_id):
         return self.reads(subject_id)
 
-
-UnknownDeduction = Annotated[
-    NonNegativeFen | None,
-    Field(
-        default=None,
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "deduction_unknown_until_supported",
-                "reusable_sources": ["confirmed_payroll_deductions", "tax_deduction_record"],
-                "constraint": "null保留未知；仅税额上界为零时可发布，不作为已知零值",
-            }
-        },
-    ),
-]
+    def reads_after(self, subject_id, context):
+        return remuneration_tax_reads_after(self.kind, subject_id, context)
 
 
-class PayrollBounded(Fact):
-    """Wage facts with explicit month precision and unresolved nonnegative deductions."""
+class PayrollBounded(Payroll):
+    """Retains existing stable business identities; shares the current wage algorithm."""
 
     kind: ClassVar[str] = "payroll_bounded"
-    identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
-    material_amount_aliases: ClassVar[dict[str, str]] = Payroll.material_amount_aliases
-    employee_id: Identifier
-    profile_revision: FactRevisionReference = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "exact_wage_profile_version",
-                "reusable_sources": ["payroll_profile"],
-            }
-        }
-    )
-    contribution_policy_revision: FactRevisionReference = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "exact_wage_contribution_rule_version",
-                "reusable_sources": ["payroll_contribution_policy"],
-            }
-        }
-    )
-    income_tax_policy_revision: FactRevisionReference | None = Field(
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "exact_adopted_wage_income_tax_rule_version",
-                "reusable_sources": ["payroll_income_tax_policy"],
-                "constraint": "扣缴已开始时必须明确；尚未开始且未采用时为null",
-            }
-        }
-    )
-    accounting_gross_salary_fen: NonNegativeFen
-    tax_reported_salary_fen: NonNegativeFen
-    tax_exempt_income_fen: UnknownDeduction
-    special_additional_deduction_fen: UnknownDeduction
-    other_legal_deduction_fen: UnknownDeduction
-    tax_relief_fen: UnknownDeduction
-    expense_class: ExpenseClass
-    contribution_basis: Literal["policy_until_actual", "actual_required"]
-    tax_income_date: ActualDate | None = Field(
-        default=None,
-        json_schema_extra={
-            "x-accounting-fact": {
-                "role": "accounting",
-                "meaning": "tax_income_date_when_day_affects_treatment",
-                "allowed_precision": ["month", "day"],
-                "reusable_sources": ["confirmed_tax_income_period", "actual_payment"],
-                "constraint": "缺日仅当规则覆盖整个period且计算与日无关；不推定实际付款日",
-            }
-        },
+
+
+def payroll_contribution_reads(fact, subject_id=None):
+    current_scope = employee_month(fact.employee_id, fact.period)
+    return tuple(
+        dict.fromkeys(
+            (
+                *(Read("fact", kind, current_scope) for kind in PAYROLL_KINDS),
+                Read("fact", PayrollProfile.kind, "@" + fact.profile_revision.subject_id),
+                Read(
+                    "fact",
+                    PayrollContributionPolicy.kind,
+                    "@" + fact.contribution_policy_revision.subject_id,
+                ),
+                Read("fact", PayrollContributionActual.kind, current_scope),
+                *confirmation_reads(fact, subject_id),
+            )
+        )
     )
 
-    @model_validator(mode="after")
-    def valid_income_date(self):
-        if self.tax_income_date is not None and self.tax_income_date.period != self.period:
-            raise ValueError("tax income day must belong to the declared tax month")
-        return self
 
-    scopes = Payroll.scopes
-    reads = Payroll.reads
-    reads_for = Payroll.reads_for
+def require_current_remuneration(version, model):
+    if not isinstance(version.fact, model):
+        raise NeedsInformation(
+            "remuneration_revision",
+            "历史报酬正文须明确修订为当前来源确认格式，不能重新计算个税",
+            sources=(version.subject_id,),
+        )
 
 
 def _unique_subject(version: FactVersion, context: Context, key: str) -> None:
@@ -597,139 +288,6 @@ def _optional_one(
     if len(items) > 1:
         raise KernelError("ambiguous_source", f"同一范围存在多个 {kind} 来源")
     return items[0] if items else None
-
-
-@dataclass(frozen=True)
-class _TaxBasis:
-    # This internal state contains lower bounds only when unknown_fields is nonempty.
-    lower_bound: CumulativeTaxState
-    unknown_fields: tuple[dict, ...] = ()
-
-
-def _prior_state(
-    fact: Payroll | PayrollBounded, context: Context, first_withholding_period: YearMonth
-) -> _TaxBasis:
-    opening = _optional_one(
-        context, PayrollOpeningState.kind, employee_year(fact.employee_id, fact.period)
-    )
-    continuation = _continuation_state(context, employee_year(fact.employee_id, fact.period))
-    if opening is not None and continuation is not None:
-        raise KernelError("ambiguous_source", "不能同时采用独立工资期初与公司接续累计期初")
-    opening = opening or continuation
-    candidates = []
-    for month in range(int(first_withholding_period[5:]), int(fact.period[5:])):
-        for kind in (*PAYROLL_KINDS, "annual_bonus"):
-            scope = employee_month(fact.employee_id, f"{fact.period[:4]}-{month:02}")
-            for calculation in context.calculations(kind, scope):
-                if (
-                    calculation.values.get("tax_state") is not None
-                    or calculation.values.get("tax_state_bounds") is not None
-                ):
-                    candidates.append(calculation)
-    if candidates:
-        if (
-            opening is not None
-            and opening.fact.through_period is not None
-            and (opening.fact.through_period >= min(item.period for item in candidates))
-        ):
-            raise KernelError("opening_state_overlap", "期初累计数与已形成的工资计算范围重叠")
-        latest_period = max(item.period for item in candidates)
-        latest = [item for item in candidates if item.period == latest_period]
-        combined_bonus = [item for item in latest if item.kind == "annual_bonus"]
-        chosen = combined_bonus or latest
-        if len(chosen) != 1:
-            raise KernelError("ambiguous_tax_state", "同一税期存在不唯一的累计计算终态")
-        values = chosen[0].values
-        if values.get("tax_state") is not None:
-            return _TaxBasis(_state(values["tax_state"]))
-        bounds = values["tax_state_bounds"]
-        return _TaxBasis(_state(bounds["lower_bound"]), tuple(bounds["unknown_fields"]))
-    if opening is None:
-        raise NeedsInformation(
-            "payroll_opening_state",
-            "需要明确的个税累计期初数，已知为零也须明确确认",
-            sources=(employee_year(fact.employee_id, fact.period),),
-        )
-    return _TaxBasis(opening.fact.calculation_state())
-
-
-def _deduction_requirement(unknown_fields, message):
-    error = NeedsInformation(unknown_fields[0]["field"], message)
-    error.issues = [
-        {
-            **item,
-            "message": message,
-            "semantics": "accounting",
-            "allowed_precision": ["integer_fen"],
-            "reusable_sources": [item["fact_id"], "confirmed_payroll_deductions"],
-        }
-        for item in unknown_fields
-    ]
-    return error
-
-
-def _assert_month_policy(policy, period, field):
-    first = date(int(period[:4]), int(period[5:]), 1)
-    last = _month(period).end_date
-    if date.fromisoformat(policy.effective_from) > first or (
-        policy.effective_to is not None and date.fromisoformat(policy.effective_to) < last
-    ):
-        raise NeedsInformation(
-            field,
-            "月份精度要求政策完整覆盖本月；日内政策变化需明确适用日期或月份处理依据",
-            sources=(policy.kind,),
-            precision=("day", "month"),
-        )
-
-
-def _withholding_upper_bound(policy, taxable_upper, relief_lower, withheld):
-    # Nonnegative rates are monotone within each bracket, but custom policy data
-    # need not be continuous at boundaries. Check every reachable upper endpoint.
-    assessed_upper, lower = 0, 0
-    for bracket in policy.brackets:
-        if lower > taxable_upper:
-            break
-        upper = min(taxable_upper, bracket.upper_bound_fen or taxable_upper)
-        assessed_upper = max(
-            assessed_upper,
-            int((Decimal(upper) * Decimal(bracket.rate)).quantize(Decimal("1")))
-            - bracket.quick_deduction_fen,
-        )
-        if bracket.upper_bound_fen is None:
-            break
-        lower = bracket.upper_bound_fen + 1
-    return max(0, assessed_upper - relief_lower - withheld)
-
-
-def _continuation_state(context, scope):
-    from types import SimpleNamespace
-
-    from ..identity_corrections import opening_bindings
-    from .opening import OpeningPayrollState
-
-    bindings = opening_bindings(context, "opening_payroll_state", scope)
-    replaced = {v.fact.source_subject_id for v, _ in bindings}
-    sources = [
-        v for v in context.facts("opening_payroll_state", scope) if v.subject_id not in replaced
-    ]
-    adopted = [
-        c for v, c in bindings if scope in v.fact.adopted_scopes and not c.values.get("superseded")
-    ]
-    if len(sources) + len(adopted) > 1:
-        raise KernelError("ambiguous_source", "纠错后仍存在冲突人员累计期初，不能自动合计")
-    if adopted:
-        return SimpleNamespace(
-            fact=OpeningPayrollState.model_validate_json(canonical(adopted[0].values["basis_data"]))
-        )
-    source = sources[0] if sources else None
-    results = [
-        c
-        for c in context.calculations("opening_payroll_state", scope)
-        if c.subject_id not in replaced
-    ]
-    if source is not None and (len(results) != 1 or results[0].fact_id != source.id):
-        raise NeedsInformation("opening_package", "人员累计期初尚未由完整接续清单核验发布")
-    return source
 
 
 def _remuneration_outcome(
@@ -893,22 +451,14 @@ def _assessed_contributions(
 
 
 @_translate_errors
-def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
+def prepare_payroll_contributions(version: FactVersion, context: Context) -> dict:
+    """Shared pre-tax owner-confirmed wage preparation for accounting and export."""
+    require_current_remuneration(version, (Payroll, PayrollBounded))
     fact = version.fact
-    assert isinstance(fact, (Payroll, PayrollBounded))
     scope = employee_month(fact.employee_id, fact.period)
     _unique_subject(version, context, scope)
-    withholding = _optional_one(context, PayrollWithholdingActual.kind, scope)
-    if withholding is not None:
-        if not withholding.evidence:
-            raise NeedsInformation("withholding_actual.evidence", "确认实际工资扣税需要依据")
     profile_version = payroll_policy_source(context, fact, "profile_revision", PayrollProfile.kind)
     profile = profile_version.fact
-    if profile.employee_id != fact.employee_id or not (
-        profile.effective_from <= fact.period
-        and (profile.effective_to is None or fact.period <= profile.effective_to)
-    ):
-        raise KernelError("payroll_profile_mismatch", "员工工资档案不属于本员工和所属期")
     contribution_policy = payroll_policy_source(
         context, fact, "contribution_policy_revision", PayrollContributionPolicy.kind
     )
@@ -919,16 +469,21 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
         contribution_policy_version=contribution_policy,
     )
     period = _month(fact.period)
-    income_day = period.end_date
-    if isinstance(fact, PayrollBounded):
-        _assert_month_policy(contribution_policy.fact, fact.period, "contribution_policy_revision")
-        if fact.tax_income_date is not None:
-            income_day = date.fromisoformat(fact.tax_income_date)
+    policy = contribution_policy.fact
+    if date.fromisoformat(policy.effective_from) > date(
+        int(fact.period[:4]), int(fact.period[5:]), 1
+    ) or (
+        policy.effective_to is not None
+        and date.fromisoformat(policy.effective_to) < period.end_date
+    ):
+        raise NeedsInformation(
+            "contribution_policy_revision", "工资月份需由明确适用的社保公积金规则完整覆盖"
+        )
     actual = _optional_one(context, PayrollContributionActual.kind, scope)
     if actual is not None and not actual.evidence:
         raise NeedsInformation("contribution_actual.evidence", "实际社保数需要留存证据")
     contributions = _assessed_contributions(
-        contribution_policy.fact.calculation_policy(),
+        policy.calculation_policy(),
         ContributionBases(
             profile.social_insurance_base_fen,
             profile.housing_fund_base_fen,
@@ -944,315 +499,72 @@ def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
         fact.accounting_gross_salary_fen,
         EmployeeContributionShortfallTreatment(profile.contribution_shortfall),
     )
-    first_withholding_period = max(
-        YearMonth(f"{fact.period[:4]}-01"), YearMonth(profile.withholding_start_date[:7])
-    )
-    if fact.period < first_withholding_period:
-        if withholding is not None:
-            raise NeedsInformation(
-                "withholding_start_date", "实际扣税与未来扣缴起点冲突，需核对已有事实"
-            )
-        if fact.tax_reported_salary_fen:
-            raise NeedsInformation(
-                "tax_reported_salary_fen",
-                "税报收入与已确认的未来扣缴起点冲突，须核对税收入月份和扣缴起点",
-                sources=(profile_version.id,),
-                precision=("month",),
-            )
-        if fact.accounting_gross_salary_fen != burden.employee_total_fen:
-            raise NeedsInformation(
-                "accounting_gross_salary_fen",
-                "扣缴起点前仅可处理有据的零净工资社保成本；非零净工资须明确收入归属",
-                sources=(profile_version.id, *([actual.id] if actual else [])),
-                precision=("integer_fen",),
-            )
-        if fact.tax_exempt_income_fen:
-            raise KernelError("invalid_tax_input", "免税收入不能超过已确认的税报收入")
-        return _remuneration_outcome(
-            version,
-            {"management": "560201", "sales": "560101", "service": "540101"}[fact.expense_class],
-            fact.accounting_gross_salary_fen,
-            (
-                ("net", "221101", 0, fact.employee_id),
-                ("tax", "222103", 0, None),
-                ("employee_social", "224102", burden.employee_social_insurance_fen, None),
-                ("employee_housing", "224103", burden.employee_housing_fund_fen, None),
-                ("employer_social", "221102", burden.employer_social_insurance_fen, None),
-                ("employer_housing", "221103", burden.employer_housing_fund_fen, None),
-            ),
-            {
-                "employee_id": fact.employee_id,
-                "gross_fen": fact.accounting_gross_salary_fen,
-                "net_fen": 0,
-                "tax_fen": 0,
-                "employee_contributions_fen": burden.employee_total_fen,
-                "employer_contributions_fen": burden.employer_total_fen,
-                "tax_status": "not_started",
-                "withholding_start": profile.withholding_start_date,
-                "tax_state": None,
-                "prior_tax_state": None,
-                "tax_input": None,
-                "rule_versions": [contribution_policy.id],
-                "source_versions": [profile_version.id, *([actual.id] if actual else [])],
-                "payroll_confirmation": confirmation,
-            },
-            _trace(contributions.trace, burden.trace)
-            + (
-                {
-                    "step": "withholding_not_started",
-                    "values": {
-                        "profile_fact_id": profile_version.id,
-                        "withholding_start": profile.withholding_start_date,
-                        "recognition_period": str(fact.period),
-                        "meaning": "本月仅确认已有承担依据的社保成本和义务，不启动工资税累计",
-                    },
-                },
-            ),
-            employer_cost_fen=burden.employer_total_fen,
-        )
-    tax_policy = payroll_policy_source(
-        context, fact, "income_tax_policy_revision", PayrollIncomeTaxPolicy.kind
-    )
-    if isinstance(fact, PayrollBounded) and fact.tax_income_date is None:
-        _assert_month_policy(tax_policy.fact, fact.period, "tax_income_date")
-    prior_basis = _prior_state(fact, context, first_withholding_period)
-    prior = prior_basis.lower_bound
-    unknown_fields = (
-        *prior_basis.unknown_fields,
-        *(
-            {
-                "kind": fact.kind,
-                "subject_id": version.subject_id,
-                "fact_id": version.id,
-                "period": str(fact.period),
-                "field": field,
-            }
-            for field in UNKNOWN_DEDUCTIONS
-            if getattr(fact, field) is None
-        ),
-    )
-    if (prior.through_period is None and fact.period > first_withholding_period) or (
-        prior.through_period is not None
-        and YearMonth(str(prior.through_period)).ordinal != fact.period.ordinal - 1
-    ):
-        raise NeedsInformation(
-            "payroll_opening_state.through_period",
-            "需要截至上月的完整累计数；缺失月份不能自动当作零工资",
-            sources=(employee_year(fact.employee_id, fact.period),),
-            precision=("month",),
-        )
-    treatment = _optional_one(
-        context,
-        PayrollFirstWageTreatment.kind,
-        employee_year(fact.employee_id, fact.period),
-        read=first_wage_read(fact.employee_id, fact.period),
-    )
-    if treatment is not None and not treatment.evidence:
-        raise NeedsInformation("first_wage_treatment.evidence", "首次工资扣除处理需要留存依据")
-    tax_input = CumulativeTaxPeriodInput(
-        income_date=income_day,
-        withholding_start_date=date.fromisoformat(
-            profile.withholding_start_date
-            + ("-01" if len(profile.withholding_start_date) == 7 else "")
-        ),
-        income_fen=fact.tax_reported_salary_fen,
-        tax_exempt_income_fen=fact.tax_exempt_income_fen or 0,
-        employee_contributions_fen=burden.employee_total_fen,
-        special_additional_deduction_fen=fact.special_additional_deduction_fen or 0,
-        other_legal_deduction_fen=fact.other_legal_deduction_fen or 0,
-        tax_relief_fen=fact.tax_relief_fen or 0,
-        standard_deduction_start_month=(
-            treatment.fact.standard_deduction_start_month if treatment else None
-        ),
-    )
-    tax = calculate_cumulative_withholding(
-        tax_policy.fact.calculation_policy(), period, prior, tax_input
-    )
-    estimated_upper = _withholding_upper_bound(
-        tax_policy.fact,
-        tax.cumulative_taxable_income_fen,
-        tax.new_state.cumulative_tax_relief_fen,
-        prior.cumulative_withheld_tax_fen,
-    )
-    if unknown_fields and estimated_upper and withholding is None:
-        raise _deduction_requirement(
-            unknown_fields, "现有扣除下界不能证明本期应扣税额为零，需补齐所列本期或历史事实"
-        )
-    actual_values = {}
-    if withholding is not None:
-        calculated_tax = tax
-        observed_tax = withholding.fact.withheld_tax_fen
-        reported_deduction = withholding.fact.reported_cumulative_standard_deduction_fen
-        # Keep the rule-derived deduction clock for the next policy estimate.
-        # The observed report's different deduction is preserved below, never
-        # rewritten into an invented withholding-start date. Future estimates
-        # must offset the actual amount already withheld, not today's estimate.
-        tax = replace(
-            tax,
-            current_withholding_tax_fen=observed_tax,
-            new_state=replace(
-                tax.new_state,
-                cumulative_withheld_tax_fen=sum_fen(
-                    (prior.cumulative_withheld_tax_fen, observed_tax)
-                ),
-            ),
-        )
-        actual_values = {
-            "tax_state_basis": "policy_deductions_with_actual_withholding",
-            (
-                "calculated_tax_upper_bound_fen" if unknown_fields else "calculated_tax_fen"
-            ): calculated_tax.current_withholding_tax_fen,
-            "calculated_tax_state": None
-            if unknown_fields
-            else _state_values(calculated_tax.new_state),
-            "actual_withholding": {
-                "fact_id": withholding.id,
-                "withheld_tax_fen": observed_tax,
-                "reported_cumulative_standard_deduction_fen": reported_deduction,
-                "difference_from_calculation_fen": sum_fen(
-                    (observed_tax, -calculated_tax.current_withholding_tax_fen)
-                ),
-                "evidence": list(withholding.evidence),
-                "cash_payment_recorded": False,
-            },
-        }
-    payroll = calculate_regular_payroll(
-        RegularPayrollInput(
-            fact.tax_reported_salary_fen,
-            fact.special_additional_deduction_fen or 0,
-            fact.other_legal_deduction_fen or 0,
-            fact.accounting_gross_salary_fen,
-        ),
-        contributions,
-        tax,
-        burden,
-    )
-    input_values = _tax_input_values(tax_input)
-    input_values["withholding_start_date"] = profile.withholding_start_date
-    if isinstance(fact, PayrollBounded):
-        # The representative day used by the pure month-based algorithm is not
-        # an observed income/payment date and must not enter the stored facts.
-        input_values["income_date"] = fact.tax_income_date
-        input_values.update({field: getattr(fact, field) for field in UNKNOWN_DEDUCTIONS})
-    uncertainty = {}
-    tax_trace = tax.trace
-    if unknown_fields:
-        uncertainty = {
-            "tax_state_bounds": {
-                "lower_bound": _state_values(tax.new_state),
-                "unknown_fields": list(unknown_fields),
-                "uncertain_cumulative_fields": sorted(
-                    {"cumulative_" + item["field"] for item in unknown_fields}
-                ),
-                "current_withholding_upper_bound_fen": estimated_upper,
-            },
-        }
-        if prior_basis.unknown_fields:
-            uncertainty["prior_tax_state_bounds"] = {
-                "lower_bound": _state_values(prior),
-                "unknown_fields": list(prior_basis.unknown_fields),
-            }
-        tax_trace = (
-            TraceEntry(
-                "withholding_estimate_bounds"
-                if withholding is not None
-                else "zero_withholding_proof",
-                {
-                    "rule_fact_id": tax_policy.id,
-                    "taxable_income_upper_bound_fen": tax.cumulative_taxable_income_fen,
-                    "tax_relief_lower_bound_fen": tax.new_state.cumulative_tax_relief_fen,
-                    "known_prior_withheld_fen": prior.cumulative_withheld_tax_fen,
-                    "current_withholding_upper_bound_fen": estimated_upper,
-                    "unknown_fields": list(unknown_fields),
-                    "meaning": (
-                        "未知扣除保留计算上界；实际扣税由独立确认来源采用"
-                        if withholding is not None
-                        else "扣除下界仅用于零税证明，不是已知扣除累计或已申报明细"
-                    ),
-                },
-            ),
-        )
-    if withholding is not None:
-        tax_trace = (*tax_trace, TraceEntry("actual_withholding_adopted", actual_values))
+    return {
+        "profile_version": profile_version,
+        "contribution_policy_version": contribution_policy,
+        "actual": actual,
+        "contributions": contributions,
+        "burden": burden,
+        "confirmation": confirmation,
+    }
+
+
+@_translate_errors
+def calculate_payroll(version: FactVersion, context: Context) -> Outcome:
+    prepared = prepare_payroll_contributions(version, context)
+    fact = version.fact
+    tax_source = resolve_remuneration_tax(version, context)
+    tax = tax_source.fact.tax_amount_fen
+    contributions, burden = prepared["contributions"], prepared["burden"]
+    gross = fact.accounting_gross_salary_fen
+    net = sum_fen((gross, -burden.employee_total_fen, -tax))
+    if net < 0:
+        raise KernelError("negative_net_pay", "已确认的员工承担社保公积金和扣税金额超过税前工资")
+    actual = prepared["actual"]
+    basis = tax_basis_values(tax_source)
     return _remuneration_outcome(
         version,
         {"management": "560201", "sales": "560101", "service": "540101"}[fact.expense_class],
-        payroll.gross_salary_fen,
+        gross,
         (
-            ("net", "221101", payroll.net_pay_fen, fact.employee_id),
-            ("tax", "222103", payroll.individual_income_tax_fen, None),
-            ("employee_social", "224102", payroll.employee_social_insurance_fen, None),
-            ("employee_housing", "224103", payroll.employee_housing_fund_fen, None),
-            ("employer_social", "221102", payroll.employer_social_insurance_fen, None),
-            ("employer_housing", "221103", payroll.employer_housing_fund_fen, None),
+            ("net", "221101", net, fact.employee_id),
+            ("tax", "222103", tax, None),
+            ("employee_social", "224102", burden.employee_social_insurance_fen, None),
+            ("employee_housing", "224103", burden.employee_housing_fund_fen, None),
+            ("employer_social", "221102", burden.employer_social_insurance_fen, None),
+            ("employer_housing", "221103", burden.employer_housing_fund_fen, None),
         ),
         {
             "employee_id": fact.employee_id,
-            "gross_fen": payroll.gross_salary_fen,
-            "net_fen": payroll.net_pay_fen,
-            "tax_fen": payroll.individual_income_tax_fen,
+            "gross_fen": gross,
+            "net_fen": net,
+            "tax_fen": tax,
             "employee_contributions_fen": burden.employee_total_fen,
             "employer_contributions_fen": burden.employer_total_fen,
-            "tax_state": None if unknown_fields else _state_values(tax.new_state),
-            "prior_tax_state": None if prior_basis.unknown_fields else _state_values(prior),
-            "tax_input": input_values,
-            **uncertainty,
-            **actual_values,
-            "rule_versions": [contribution_policy.id, tax_policy.id],
+            "tax_basis": basis,
+            "rule_versions": [prepared["contribution_policy_version"].id],
             "source_versions": [
-                profile_version.id,
+                prepared["profile_version"].id,
                 *([actual.id] if actual else []),
-                *([treatment.id] if treatment else []),
-                *([withholding.id] if withholding is not None else []),
+                tax_source.id,
             ],
-            "payroll_confirmation": confirmation,
+            "payroll_confirmation": prepared["confirmation"],
         },
-        tuple(
-            entry
-            | (
-                {
-                    "values": entry["values"]
-                    | {"withholding_start_date": profile.withholding_start_date}
-                }
-                if "withholding_start_date" in entry.get("values", {})
-                else {}
-            )
-            for entry in _trace(contributions.trace, burden.trace, tax_trace, payroll.trace)
+        (
+            *_trace(contributions.trace, burden.trace),
+            {"step": "confirmed_remuneration_tax", "values": {"tax_basis": basis}},
+            {
+                "step": "net_pay_reconciliation",
+                "values": {
+                    "gross_salary_fen": gross,
+                    "employee_contributions_fen": burden.employee_total_fen,
+                    "individual_income_tax_fen": tax,
+                    "net_pay_fen": net,
+                },
+            },
         ),
         employer_cost_fen=burden.employer_total_fen,
     )
-
-
-class AnnualBonusPolicy(EffectivePolicy):
-    kind: ClassVar[str] = "annual_bonus_policy"
-    brackets: Annotated[tuple[TaxBracketFact, ...], Field(min_length=1)]
-
-    def calculation_policy(self) -> AnnualBonusTaxPolicy:
-        return AnnualBonusTaxPolicy(
-            self.version,
-            date.fromisoformat(self.effective_from),
-            date.fromisoformat(self.effective_to) if self.effective_to else None,
-            self.primary_source_url,
-            tuple(
-                AnnualBonusBracket(x.upper_bound_fen, Decimal(x.rate), x.quick_deduction_fen)
-                for x in self.brackets
-            ),
-        )
-
-    @model_validator(mode="after")
-    def valid_policy(self):
-        self.calculation_policy()
-        return self
-
-
-class AnnualBonusOpeningUsage(Fact):
-    kind: ClassVar[str] = "annual_bonus_opening_usage"
-    identity_fields: ClassVar[tuple[str, ...]] = ("employee_id", "period")
-    employee_id: Identifier
-    separate_method_already_used: bool
-
-    def scopes(self) -> tuple[str, ...]:
-        return (employee_year(self.employee_id, self.period),)
 
 
 class AnnualBonus(Fact):
@@ -1263,10 +575,6 @@ class AnnualBonus(Fact):
     income_date: ActualDate
     bonus_fen: PositiveFen
     expense_class: ExpenseClass
-    bonus_policy_id: SubjectId
-    income_tax_policy_id: SubjectId
-    tax_method: Literal["separate", "combined"] | None = None
-    regular_payroll_id: SubjectId | None = None
 
     @model_validator(mode="after")
     def income_period_matches(self):
@@ -1274,135 +582,47 @@ class AnnualBonus(Fact):
             raise ValueError("bonus income date must belong to its period")
         return self
 
-    def scopes(self) -> tuple[str, ...]:
+    def scopes(self):
         return (
             employee_month(self.employee_id, self.period),
             employee_year(self.employee_id, self.period),
         )
 
-    def reads(self) -> tuple[Read, ...]:
-        from ..identity_corrections import opening_binding_reads
-
-        result = (
-            Read("fact", AnnualBonusPolicy.kind, f"@{self.bonus_policy_id}"),
-            Read("fact", PayrollIncomeTaxPolicy.kind, f"@{self.income_tax_policy_id}"),
-            Read(
-                "fact", AnnualBonusOpeningUsage.kind, employee_year(self.employee_id, self.period)
-            ),
-            Read("fact", "opening_payroll_state", employee_year(self.employee_id, self.period)),
-            *opening_binding_reads(employee_year(self.employee_id, self.period)),
-            Read(
-                "calculation", "opening_payroll_state", employee_year(self.employee_id, self.period)
-            ),
-            Read("fact", self.kind, employee_year(self.employee_id, self.period)),
+    def reads_for(self, subject_id):
+        return (
+            Read("fact", self.kind, employee_month(self.employee_id, self.period)),
+            *remuneration_tax_reads(self.kind, subject_id),
         )
-        if self.regular_payroll_id:
-            result += tuple(
-                Read("calculation", kind, f"@{self.regular_payroll_id}") for kind in PAYROLL_KINDS
-            )
-        return result
+
+    def reads_after(self, subject_id, context):
+        return remuneration_tax_reads_after(self.kind, subject_id, context)
 
 
-@_translate_errors
 def calculate_annual_bonus(version: FactVersion, context: Context) -> Outcome:
+    require_current_remuneration(version, AnnualBonus)
     fact = version.fact
-    assert isinstance(fact, AnnualBonus)
-    if fact.tax_method is None:
-        raise NeedsInformation("tax_method", "需要明确选择奖金单独计税或并入综合所得")
-    scope = employee_year(fact.employee_id, fact.period)
-    old_usage = _optional_one(context, AnnualBonusOpeningUsage.kind, scope)
-    continued_usage = _continuation_state(context, scope)
-    if old_usage is not None and continued_usage is not None:
-        raise KernelError("ambiguous_source", "不能同时采用独立奖金期初与接续累计记录")
-    prior_usage = old_usage or continued_usage
-    if prior_usage is None:
-        raise NeedsInformation("annual_bonus_opening_usage", "需要明确本年度此前是否使用过单独计税")
-    other_bonuses = [
-        x for x in context.facts(AnnualBonus.kind, scope) if x.subject_id != version.subject_id
-    ]
-    if any(x.fact.period == fact.period for x in other_bonuses):
-        raise KernelError("duplicate_remuneration", "同一人员同月奖金必须在同一笔事实中合并确认")
-    usage = AnnualBonusUsage(
-        int(fact.period[:4]),
-        prior_usage.fact.separate_method_already_used
-        or any(x.fact.tax_method == "separate" for x in other_bonuses),
-    )
-    bonus_policy = context.one(AnnualBonusPolicy.kind, f"@{fact.bonus_policy_id}")
-    wage_policy = context.one(PayrollIncomeTaxPolicy.kind, f"@{fact.income_tax_policy_id}")
-    regular = None
-    if fact.regular_payroll_id:
-        values = [
-            item
-            for kind in PAYROLL_KINDS
-            for item in context.calculations(kind, f"@{fact.regular_payroll_id}")
-        ]
-        if len(values) != 1:
-            raise NeedsInformation("regular_payroll_id", "需要已确认且唯一的当月工资计算")
-        regular = values[0]
-        if regular.period != fact.period or regular.values["employee_id"] != fact.employee_id:
-            raise KernelError("bonus_regular_mismatch", "奖金引用的工资不属于本员工同月")
-        if regular.values.get("tax_status") == "not_started":
-            raise NeedsInformation(
-                "regular_payroll_id",
-                "本月来源仅处理扣缴起点前的社保成本，不能作为奖金工资税累计依据",
-                sources=(regular.fact_id,),
-                precision=("month",),
-            )
-        if regular.values.get("tax_state_bounds"):
-            raise _deduction_requirement(
-                regular.values["tax_state_bounds"]["unknown_fields"],
-                "奖金方案比较和合并计税需要完整累计扣除；工资零税证明不能替代完整明细",
-            )
-    if fact.tax_method == "combined" and regular is None:
-        raise NeedsInformation("regular_payroll_id", "奖金合并计税需要引用同月工资计算")
-    regular_input = _tax_input(regular.values["tax_input"], regular.period) if regular else None
-    prior_state = _state(regular.values["prior_tax_state"]) if regular else None
-    scenario_input = AnnualBonusScenarioInput(
-        _month(fact.period),
-        date.fromisoformat(fact.income_date),
-        fact.bonus_fen,
-        prior_state,
-        regular_input,
-        usage,
-        regular.values["tax_fen"] if regular else None,
-    )
-    scenarios = calculate_annual_bonus_scenarios(
-        bonus_policy.fact.calculation_policy(),
-        wage_policy.fact.calculation_policy(),
-        scenario_input,
-    )
-    selected = select_annual_bonus_tax_method(scenarios, AnnualBonusTaxMethod(fact.tax_method))
-    next_state = None
-    if fact.tax_method == "combined":
-        tax = calculate_cumulative_withholding(
-            wage_policy.fact.calculation_policy(),
-            _month(fact.period),
-            prior_state,
-            replace(
-                regular_input,
-                income_date=date.fromisoformat(fact.income_date),
-                income_fen=regular_input.income_fen + fact.bonus_fen,
-            ),
-        )
-        next_state = _state_values(tax.new_state)
+    _unique_subject(version, context, employee_month(fact.employee_id, fact.period))
+    tax_source = resolve_remuneration_tax(version, context)
+    tax = tax_source.fact.tax_amount_fen
+    net = sum_fen((fact.bonus_fen, -tax))
+    if net < 0:
+        raise KernelError("negative_bonus_net", "已确认的奖金扣税金额超过奖金毛额")
+    basis = tax_basis_values(tax_source)
     return _remuneration_outcome(
         version,
         {"management": "560201", "sales": "560101", "service": "540101"}[fact.expense_class],
         fact.bonus_fen,
-        (
-            ("net", "221101", selected.net_bonus_fen, fact.employee_id),
-            ("tax", "222103", selected.tax_fen, None),
-        ),
+        (("net", "221101", net, fact.employee_id), ("tax", "222103", tax, None)),
         {
             "employee_id": fact.employee_id,
             "gross_fen": fact.bonus_fen,
-            "net_fen": selected.net_bonus_fen,
-            "tax_fen": selected.tax_fen,
-            "tax_method": fact.tax_method,
-            "tax_state": next_state,
-            "rule_versions": [bonus_policy.id, wage_policy.id],
+            "net_fen": net,
+            "tax_fen": tax,
+            "tax_basis": basis,
+            "rule_versions": [],
+            "source_versions": [tax_source.id],
         },
-        _trace(scenarios.trace),
+        ({"step": "confirmed_remuneration_tax", "values": {"tax_basis": basis}},),
     )
 
 
@@ -1484,7 +704,6 @@ def labor_accrual_outcome(
             "gross_fen": gross,
             "net_fen": gross,
             "tax_fen": 0,
-            "theoretical_tax_fen": None,
             "withholding_method": "not_withheld_not_filed",
             "tax_assessed": False,
             "tax_review_required": True,
@@ -1506,40 +725,14 @@ def labor_accrual_outcome(
     )
 
 
-class LaborIncomeTaxPolicy(EffectivePolicy):
-    kind: ClassVar[str] = "labor_income_tax_policy"
-    small_payment_threshold_fen: PositiveFen
-    fixed_expense_deduction_fen: NonNegativeFen
-    large_payment_expense_rate: Rate
-    brackets: Annotated[tuple[TaxBracketFact, ...], Field(min_length=1)]
-
-    @model_validator(mode="after")
-    def valid_brackets(self):
-        if self.brackets[-1].upper_bound_fen is not None:
-            raise ValueError("labor brackets require a final unbounded bracket")
-        previous = 0
-        for item in self.brackets[:-1]:
-            if item.upper_bound_fen is None or item.upper_bound_fen <= previous:
-                raise ValueError("labor tax bracket bounds must increase")
-            previous = item.upper_bound_fen
-        return self
-
-
 class LaborRemuneration(Fact):
     material_amount_aliases: ClassVar[dict[str, str]] = {"fact.fixed_fee_fen": "result.gross_fen"}
     kind: ClassVar[str] = "labor"
     identity_fields: ClassVar[tuple[str, ...]] = ("person_id", "period")
     person_id: Identifier
     income_date: ActualDate
-    policy_id: SubjectId
     expense_class: ExpenseClass
-    recipient_tax_status: Literal["ordinary_resident"]
     remuneration_method: Literal["fixed", "commission"]
-    withholding_method: (
-        Literal["net_after_withholding", "gross_paid_without_withholding"] | None
-    ) = None
-    gross_payment_kind: Literal["payment", "cash_payment"] | None = None
-    gross_payment_id: SubjectId | None = None
     fixed_fee_fen: PositiveFen | None = None
     commission_base_fen: PositiveFen | None = None
     commission_rate_ppm: Annotated[int, Field(gt=0, le=1_000_000)] | None = None
@@ -1556,24 +749,19 @@ class LaborRemuneration(Fact):
             raise ValueError("commission remuneration cannot also contain a fixed fee")
         return self
 
-    def reads(self) -> tuple[Read, ...]:
-        reads = [Read("fact", LaborIncomeTaxPolicy.kind, f"@{self.policy_id}")]
-        if self.gross_payment_kind and self.gross_payment_id:
-            reads.append(Read("fact", self.gross_payment_kind, f"@{self.gross_payment_id}"))
-        return tuple(reads)
+    def scopes(self):
+        return (employee_month(self.person_id, self.period),)
+
+    def reads_for(self, subject_id):
+        return remuneration_tax_reads(self.kind, subject_id)
+
+    def reads_after(self, subject_id, context):
+        return remuneration_tax_reads_after(self.kind, subject_id, context)
 
 
-@_translate_errors
 def calculate_labor(version: FactVersion, context: Context) -> Outcome:
+    require_current_remuneration(version, LaborRemuneration)
     fact = version.fact
-    assert isinstance(fact, LaborRemuneration)
-    if fact.withholding_method is None:
-        raise NeedsInformation(
-            "withholding_method", "需明确本项劳务按净额扣缴，还是有依据的历史毛额未扣税事实"
-        )
-    policy_version = context.one(LaborIncomeTaxPolicy.kind, f"@{fact.policy_id}")
-    policy = policy_version.fact
-    policy.assert_effective(date.fromisoformat(fact.income_date))
     if fact.remuneration_method == "fixed":
         if fact.fixed_fee_fen is None:
             raise NeedsInformation("fixed_fee_fen", "需要已确认的固定劳务报酬金额")
@@ -1593,99 +781,40 @@ def calculate_labor(version: FactVersion, context: Context) -> Outcome:
         )
         if gross <= 0:
             raise KernelError("zero_labor_remuneration", "佣金按分舍入后必须大于零")
-    if gross <= policy.small_payment_threshold_fen:
-        taxable = max(gross - policy.fixed_expense_deduction_fen, 0)
-    else:
-        taxable = int(
-            (Decimal(gross) * (1 - Decimal(policy.large_payment_expense_rate))).quantize(
-                Decimal(1), rounding=ROUND_HALF_UP
-            )
-        )
-    bracket = next(
-        x for x in policy.brackets if x.upper_bound_fen is None or taxable <= x.upper_bound_fen
-    )
-    tax = max(
-        int((Decimal(taxable) * Decimal(bracket.rate)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-        - bracket.quick_deduction_fen,
-        0,
-    )
-    if tax > gross:
-        raise KernelError("negative_labor_net", "适用政策导致税额超过劳务报酬")
-    withheld = tax
-    if fact.withholding_method == "gross_paid_without_withholding":
-        if not fact.gross_payment_kind or not fact.gross_payment_id:
-            raise NeedsInformation("gross_payment_id", "历史毛额未扣税须引用明确的真实付款来源")
-        paid = context.one(fact.gross_payment_kind, f"@{fact.gross_payment_id}")
-        actual = paid.fact
-        matching = [
-            item
-            for item in actual.allocations
-            if item.source_kind == fact.kind
-            and item.source_id == version.subject_id
-            and item.obligation == "net"
-        ]
-        if not paid.evidence:
-            raise NeedsInformation("gross_payment_id", "毛额未扣税的实际付款须有已登记证据")
-        if actual.direction != "outflow" or actual.actual_date != fact.income_date:
-            raise KernelError(
-                "gross_labor_payment_conflict", "历史毛额劳务须核对真实付款日和资金付出方向"
-            )
-        if len(matching) != 1 or matching[0].amount_fen != gross:
-            raise NeedsInformation(
-                "gross_payment_id", "实际付款须完整对应本项劳务毛额，不能推定未扣税差异"
-            )
-        recipient = (
-            matching[0].recipient_id
-            if actual.payment_method == "bank_batch"
-            else actual.counterparty_id
-        )
-        if recipient != fact.person_id:
-            raise KernelError(
-                "gross_labor_recipient_conflict", "毛额实际收款人必须与本项劳务人员一致"
-            )
-        withheld = 0
-    elif fact.gross_payment_id is not None or fact.gross_payment_kind is not None:
-        raise KernelError("unexpected_gross_payment", "净额扣缴处理不能同时声明历史毛额未扣税付款")
+    tax_source = resolve_remuneration_tax(version, context)
+    tax = tax_source.fact.tax_amount_fen
+    net = sum_fen((gross, -tax))
+    if net < 0:
+        raise KernelError("negative_labor_net", "已确认的劳务扣税金额超过劳务毛额")
+    basis = tax_basis_values(tax_source)
     return _remuneration_outcome(
         version,
         {"management": "560204", "sales": "560104", "service": "540104"}[fact.expense_class],
         gross,
-        (("net", "224104", gross - withheld, fact.person_id),)
-        + (
-            (("tax", "222103", withheld, None),)
-            if fact.withholding_method == "net_after_withholding"
-            else ()
-        ),
+        (("net", "224104", net, fact.person_id), ("tax", "222103", tax, None)),
         {
             "person_id": fact.person_id,
             "gross_fen": gross,
-            "net_fen": gross - withheld,
-            "tax_fen": withheld,
-            "theoretical_tax_fen": tax,
-            "unwithheld_tax_fen": tax - withheld,
-            "withholding_method": fact.withholding_method,
-            "taxable_income_fen": taxable,
-            "expense_deduction_fen": gross - taxable,
-            "rule_versions": [policy_version.id],
+            "net_fen": net,
+            "tax_fen": tax,
+            "tax_basis": basis,
+            "rule_versions": [],
+            "source_versions": [tax_source.id],
         },
-        (
-            {
-                "step": "labor_withholding",
-                "method": fact.withholding_method,
-                "rate": bracket.rate,
-                "quick_deduction_fen": bracket.quick_deduction_fen,
-                "rounding": "half_up_to_fen",
-            },
-        ),
+        ({"step": "confirmed_remuneration_tax", "values": {"tax_basis": basis}},),
     )
 
 
 def register(registry: Registry) -> None:
-    for model in (
-        PayrollContributionPolicy,
-        PayrollIncomeTaxPolicy,
+    for model in (PayrollContributionPolicy, PayrollContributionActual):
+        registry.register(model)
+    registry.register(
         PayrollProfile,
-        PayrollContributionActual,
+        table="fact_payroll_profile_confirmed",
+        historical=((HistoricalPayrollProfile, "fact_payroll_profile"),),
+    )
+    for model in (
+        PayrollIncomeTaxPolicy,
         PayrollOpeningState,
         PayrollFirstWageTreatment,
         PayrollWithholdingActual,
@@ -1693,9 +822,20 @@ def register(registry: Registry) -> None:
         AnnualBonusOpeningUsage,
         LaborIncomeTaxPolicy,
     ):
-        registry.register(model)
-    registry.register(Payroll, calculate_payroll)
-    registry.register(PayrollBounded, calculate_payroll)
-    registry.register(AnnualBonus, calculate_annual_bonus)
-    registry.register(LaborRemuneration, calculate_labor)
+        registry.register_history(model)
+    for model, evaluator, historical in (
+        (Payroll, calculate_payroll, HistoricalPayroll),
+        (PayrollBounded, calculate_payroll, HistoricalPayrollBounded),
+        (AnnualBonus, calculate_annual_bonus, HistoricalAnnualBonus),
+        (LaborRemuneration, calculate_labor, HistoricalLaborRemuneration),
+    ):
+        registry.register(
+            model,
+            evaluator,
+            table="fact_" + model.kind + "_confirmed",
+            historical=((historical, "fact_" + model.kind),),
+        )
     registry.register(LaborAccrual, calculate_labor_accrual)
+    from ..remuneration_tax_basis import register as register_tax_basis
+
+    register_tax_basis(registry)

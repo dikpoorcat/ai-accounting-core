@@ -32,8 +32,8 @@ def test_synthetic_history_benchmark_measures_both_dependency_shapes(tmp_path):
         assert final["cash_funding_source_count"] == 4
         assert final["observer_source_count"] == 4
         assert final["formal_cash_account_count"] == 3
-        assert final["calculation_count"] == 8
-        assert final["stored_close_result_references"] == 8
+        assert final["calculation_count"] == 9
+        assert final["stored_close_result_references"] == 9
         assert final["last_close_result_references"] == 4
         assert final["dependency_edges"] == (8 if workload == "cumulative" else 4)
         assert final["manifest_bytes"] > 0

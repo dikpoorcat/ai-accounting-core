@@ -43,7 +43,6 @@ def page_keys(keys, after=None, limit=100, *, total_count=None):
 
 def scalar_facts(snapshot, calculations):
     """Read normalized scalar columns without loading any growing child collection."""
-    from .schema import table_name
     from .storage import decode_fields
 
     by_kind = {}
@@ -51,14 +50,16 @@ def scalar_facts(snapshot, calculations):
         by_kind.setdefault(calc["kind"], set()).add(calc["fact_id"])
     result = {}
     for kind, identifiers in by_kind.items():
-        for row in snapshot.connection.execute(
-            f"SELECT f.* FROM {table_name(kind)} f JOIN json_each(?) ids "
-            "ON f.revision_id=ids.value",
-            (canonical(sorted(identifiers)),),
-        ):
-            result[row["revision_id"]] = decode_fields(
-                snapshot.store.registry.models[kind], dict(row)
-            )
+        for model, table in snapshot.store.registry.fact_bodies(kind):
+            for row in snapshot.connection.execute(
+                f"SELECT f.* FROM {table} f JOIN json_each(?) ids ON f.revision_id=ids.value",
+                (canonical(sorted(identifiers)),),
+            ):
+                if row["revision_id"] in result:
+                    from .contracts import KernelError
+
+                    raise KernelError("content_integrity_failed", "同一事实存在多个正文")
+                result[row["revision_id"]] = decode_fields(model, dict(row))
     return result
 
 
@@ -674,8 +675,6 @@ def payroll_cohort_identities_match(snapshot, heads, employee_by_fact):
     employee role without rewriting that frozen cohort's original creditor.
     The caller has already authenticated these precise facts and role mappings.
     """
-    from .schema import table_name
-
     by_kind = {}
     for head in heads:
         employee = employee_by_fact.get(head["fact_id"])
@@ -683,9 +682,14 @@ def payroll_cohort_identities_match(snapshot, heads, employee_by_fact):
             return False
         by_kind.setdefault(head["kind"], []).append([head["fact_id"], employee])
     for kind, pairs in by_kind.items():
+        bodies = " UNION ALL ".join(
+            f"SELECT revision_id,employee_id FROM {table}"
+            for model, table in snapshot.store.registry.fact_bodies(kind)
+            if "employee_id" in model.model_fields
+        )
         if snapshot.connection.execute(
             "SELECT 1 FROM json_each(?) requested "
-            f"LEFT JOIN {table_name(kind)} f ON f.revision_id=json_extract(requested.value,'$[0]') "
+            f"LEFT JOIN ({bodies}) f ON f.revision_id=json_extract(requested.value,'$[0]') "
             "WHERE f.employee_id IS NOT json_extract(requested.value,'$[1]') LIMIT 1",
             (canonical(pairs),),
         ).fetchone() is not None:

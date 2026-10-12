@@ -10,7 +10,7 @@ from test_dashboard_provenance import profile
 from test_integrity_content import damage
 from test_opening_continuation import _close_without_current_business
 from test_opening_continuation import book as opening_book_fixture
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll
+from test_payroll import contribution_policy, payroll
 from test_payroll import profile as payroll_profile
 from test_payroll_corrections import Company, payment
 
@@ -185,14 +185,14 @@ def test_payroll_social_and_housing_are_two_matters_across_months(
         ),
         "profile",
     )
-    company.save(income_tax_policy(), "income-tax")
-    company.save(opening(), "opening")
     wages = [payroll(), payroll(period="2026-02")]
     if kind == "payroll_bounded":
         wages = [PayrollBounded(**wage.model_dump(mode="json")) for wage in wages]
     company.save(wages[0], "january")
     company.save(wages[1], "february")
     company.confirm_payroll("january", "february")
+    company.tax_basis("january", 12_600)
+    company.tax_basis("february", 12_600)
     company.publish("january")
     net_amount = company.current("january", kind).values["net_fen"]
     with snapshot(company.engine, "2026-01") as snap:

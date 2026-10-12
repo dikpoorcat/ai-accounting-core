@@ -6,6 +6,7 @@ from contextlib import closing
 from unittest.mock import patch
 
 import pytest
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members, frozen_members_many
 from ai_accounting.kernel.contracts import FactVersion, KernelError
@@ -25,6 +26,7 @@ def batch_book(tmp_path):
             tmp_path / "batch.sqlite", production_bundle(), "company", "taxpayer", "database"
         )
     )
+    adopt_empty_opening(engine)
     proof = engine.register_evidence(
         b"synthetic asset confirmation", "text/plain", "source", request_id="evidence"
     )["digest"]

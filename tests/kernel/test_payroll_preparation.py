@@ -1,5 +1,5 @@
 import pytest
-from test_payroll import actual, contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import actual, contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 
 from ai_accounting.kernel import payroll_preparation as preparation
@@ -11,14 +11,29 @@ def company(tmp_path):
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
     ):
         result.save(fact, subject)
     result.confirm_payroll("january")
+    result.tax_basis("january", 12_600)
     result.publish("january")
     return result
+
+
+def publish_with_tax_amount(instance, subject, amount):
+    """The caller explicitly chooses each synthetic final deduction amount."""
+    from ai_accounting.kernel.contracts import Read
+    from ai_accounting.kernel.remuneration_tax_basis import tax_basis_scope
+
+    with instance.engine.store.connection(read_only=True) as connection:
+        source = instance.engine.store.current_fact(connection, subject)
+        existing = instance.engine.store.select(
+            connection,
+            Read("fact", "remuneration_tax_basis", tax_basis_scope(source.fact.kind, subject)),
+        )
+    if not existing:
+        instance.tax_basis(subject, amount)
+    return instance.publish(subject)
 
 
 def confirm_no_change(company):
@@ -43,14 +58,14 @@ def test_previous_payroll_is_not_an_implicit_monthly_salary(tmp_path):
     service = confirm_no_change(instance)
     plan = service.prepare("2026-02")
     assert plan["status"] == "ready"
-    assert plan["tax_import_mapping"]["status"] == "pending_publication"
+    assert plan["tax_import_mapping"]["status"] == "pending_confirmation"
     assert plan["tax_import_mapping"]["blocking_scope"] == "tax_import_file"
     assert plan["candidates"][0]["source"] == "explicit_no_change"
     before = instance.count("voucher")
     saved = service.confirm("2026-02", preview_digest=plan["digest"], request_id=instance.request())
     assert instance.count("voucher") == before
     subject = saved["results"][0]["subject_id"]
-    instance.publish(subject)
+    publish_with_tax_amount(instance, subject, 12_600)
     assert (
         instance.current(subject).values["gross_fen"]
         == instance.current("january").values["gross_fen"]
@@ -62,20 +77,20 @@ def test_previous_payroll_is_not_an_implicit_monthly_salary(tmp_path):
     assert after["tax_import_mapping"]["blocking_scope"] == "tax_import_file"
 
 
-def test_known_deduction_change_invalidates_no_change_and_monthly_plan_resolves_it(tmp_path):
+def test_known_salary_change_invalidates_no_change_and_monthly_plan_resolves_it(tmp_path):
     instance = company(tmp_path)
     service = confirm_no_change(instance)
     instance.save(
         preparation.PayrollChangeNotice(
             period="2026-02",
             employee_id="employee",
-            changed_fields=("special_additional_deduction",),
+            changed_fields=("salary",),
         ),
         "change",
     )
     assert service.prepare("2026-02")["status"] == "needs_information"
     save_monthly_plan(
-        instance, payroll(period="2026-02", special_additional_deduction_fen=120000), "february"
+        instance, payroll(period="2026-02", accounting_gross_salary_fen=1_120_000), "february"
     )
     proposal = service.prepare("2026-02")
     assert proposal["status"] == "ready"
@@ -84,8 +99,8 @@ def test_known_deduction_change_invalidates_no_change_and_monthly_plan_resolves_
         assert (
             instance.engine.store.current_fact(
                 connection, "february"
-            ).fact.special_additional_deduction_fen
-            == 120000
+            ).fact.accounting_gross_salary_fen
+            == 1_120_000
         )
 
 
@@ -95,12 +110,12 @@ def test_employee_profile_revision_prevents_silent_reuse(tmp_path):
     instance.save(profile(social_insurance_base_fen=700000), "profile", revision=1)
     assert service.prepare("2026-02")["status"] == "needs_information"
     with pytest.raises(NeedsInformation):
-        instance.publish("january")
+        publish_with_tax_amount(instance, "january", 12_600)
     instance.save(
         payroll(profile_revision={"subject_id": "profile", "revision": 2}), "january", revision=1
     )
     instance.confirm_payroll("january")
-    instance.publish("january")
+    publish_with_tax_amount(instance, "january", 12_600)
     assert service.prepare("2026-02")["status"] == "needs_information"
 
 
@@ -140,11 +155,11 @@ def test_direct_publication_cannot_hide_a_departed_prior_month_employee(tmp_path
     instance = company(tmp_path)
     service = confirm_no_change(instance)
     instance.save(payroll(period="2026-02"), "february")
+    instance.tax_basis("february", 12_600)
     reviewed = instance.engine.preview(["february"])
 
     # Only A remains effective in February, but January actually paid A and B.
     instance.save(profile(employee_id="departed", effective_to="2026-01"), "departed-profile")
-    instance.save(opening(employee_id="departed"), "departed-opening")
     instance.save(
         payroll(
             employee_id="departed",
@@ -153,7 +168,7 @@ def test_direct_publication_cannot_hide_a_departed_prior_month_employee(tmp_path
         "departed-january",
     )
     instance.confirm_payroll("departed-january")
-    instance.publish("departed-january")
+    publish_with_tax_amount(instance, "departed-january", 12_600)
     assert any(
         issue["field"] == "employee_roster" for issue in service.prepare("2026-02")["fact_issues"]
     )
@@ -187,7 +202,7 @@ def test_no_change_calculation_tracks_empty_full_roster_scope(tmp_path):
         "2026-02", preview_digest=proposal["digest"], request_id=instance.request()
     )
     subject = saved["publish_subjects"][0]
-    instance.publish(subject)
+    publish_with_tax_amount(instance, subject, 12_600)
     instance.save(
         profile(employee_id="later-employee", effective_from="2026-02"),
         "later-profile",
@@ -203,7 +218,7 @@ def test_new_plan_prepares_revision_of_existing_wage_without_publishing(tmp_path
         "2026-02", preview_digest=first["digest"], request_id=instance.request()
     )
     february_subject = saved["publish_subjects"][0]
-    instance.publish(february_subject)
+    publish_with_tax_amount(instance, february_subject, 12_600)
     before = instance.count("voucher")
     save_monthly_plan(
         instance,
@@ -246,40 +261,25 @@ def test_no_change_cannot_hide_changed_wage_input(tmp_path):
     )
 
 
-def test_not_started_wage_needs_no_unadopted_income_tax_policy_for_plan_or_reuse(tmp_path):
-    instance = Company(tmp_path / "not-started.sqlite")
-    future_profile = profile(withholding_start_date="2026-06-01")
-    january = payroll(
-        accounting_gross_salary_fen=80_000,
-        tax_reported_salary_fen=0,
-        income_tax_policy_revision=None,
-    )
-    instance.save(future_profile, "profile")
+def test_confirmed_zero_wage_needs_no_retired_tax_policy_for_plan_or_reuse(tmp_path):
+    instance = Company(tmp_path / "confirmed-zero.sqlite")
+    instance.save(profile(), "profile")
     instance.save(contribution_policy(), "contributions")
-    instance.save(january, "january")
+    instance.save(payroll(accounting_gross_salary_fen=80_000), "january")
     instance.confirm_payroll("january")
-    instance.publish("january")
-    assert instance.current("january").values["tax_status"] == "not_started"
-
-    service = preparation.PayrollPreparation(instance.engine)
-    basis = service.reuse_basis("2026-02")
-    assert not basis["fact_issues"]
-    assert set(basis["employees"][0]) == {"prior_payroll_revision"}
-    instance.save(
-        preparation.PayrollNoChange(
-            period="2026-02",
-            employees=tuple(basis["employees"]),
-            employee_roster_unchanged=True,
-            salary_and_deductions_unchanged=True,
-        ),
-        "february-no-change",
-    )
+    publish_with_tax_amount(instance, "january", 0)
+    assert instance.current("january").values["tax_fen"] == 0
+    service = confirm_no_change(instance)
     proposal = service.prepare("2026-02")
     assert proposal["status"] == "ready"
     saved = service.confirm(
         "2026-02", preview_digest=proposal["digest"], request_id=instance.request()
     )
-    instance.publish(saved["publish_subjects"][0])
+    subject = saved["publish_subjects"][0]
+    with pytest.raises(NeedsInformation) as error:
+        instance.publish(subject)
+    assert error.value.issues[0]["field"] == "remuneration_tax_basis"
+    publish_with_tax_amount(instance, subject, 0)
 
 
 def test_prepare_does_not_turn_undeclared_read_into_owner_question(tmp_path, monkeypatch):
@@ -303,7 +303,7 @@ def test_prior_recalculation_wait_does_not_require_new_no_change_confirmation(tm
         "2026-02", preview_digest=proposal["digest"], request_id=instance.request()
     )
     february_subject = saved["publish_subjects"][0]
-    instance.publish(february_subject)
+    publish_with_tax_amount(instance, february_subject, 12_600)
     with instance.engine.store.connection(read_only=True) as connection:
         original_confirmation = instance.engine.store.current_fact(connection, "no-change")
     instance.save(actual(), "january-actual")
@@ -318,14 +318,14 @@ def test_prior_recalculation_wait_does_not_require_new_no_change_confirmation(tm
         issue["field"].startswith("payroll_no_change") for issue in waiting["fact_issues"]
     )
     with pytest.raises(preparation.KernelError) as blocked:
-        instance.publish(february_subject)
+        publish_with_tax_amount(instance, february_subject, 12_600)
     assert blocked.value.code == "pending_upstream"
 
-    instance.publish("january")
+    publish_with_tax_amount(instance, "january", 12_600)
     ready = service.prepare("2026-02")
     assert ready["status"] == "ready"
     assert ready["existing"][0]["source_fact_id"] == original_confirmation.id
-    instance.publish(february_subject)
+    publish_with_tax_amount(instance, february_subject, 12_600)
     with instance.engine.store.connection(read_only=True) as connection:
         confirmation = instance.engine.store.current_fact(connection, "no-change")
     assert confirmation.id == original_confirmation.id
@@ -342,14 +342,14 @@ def test_program_build_recalculation_keeps_no_change_confirmation(tmp_path, monk
         "2026-02", preview_digest=proposal["digest"], request_id=instance.request()
     )
     february_subject = saved["publish_subjects"][0]
-    instance.publish(february_subject)
+    publish_with_tax_amount(instance, february_subject, 12_600)
     january_before = instance.current("january")
     february_before = instance.current(february_subject)
     with instance.engine.store.connection(read_only=True) as connection:
         confirmation_before = instance.engine.store.current_fact(connection, "no-change")
 
     monkeypatch.setattr(engine_module, "PROGRAM_VERSION", "stage6-build-only-change")
-    instance.publish("january")
+    publish_with_tax_amount(instance, "january", 12_600)
     january_after = instance.current("january")
     assert january_after.id != january_before.id
     assert january_after.result_digest == january_before.result_digest
@@ -357,7 +357,7 @@ def test_program_build_recalculation_keeps_no_change_confirmation(tmp_path, monk
     ready = service.prepare("2026-02")
     assert ready["status"] == "ready"
     assert ready["existing"][0]["source_fact_id"] == confirmation_before.id
-    instance.publish(february_subject)
+    publish_with_tax_amount(instance, february_subject, 12_600)
     february_after = instance.current(february_subject)
     assert february_after.id != february_before.id
     assert february_after.result_digest == february_before.result_digest
@@ -423,7 +423,7 @@ def test_no_change_prior_wage_revision_requires_new_owner_confirmation(tmp_path)
     service = confirm_no_change(instance)
     instance.save(payroll(), "january", revision=1)
     instance.confirm_payroll("january")
-    instance.publish("january")
+    publish_with_tax_amount(instance, "january", 12_600)
     result = service.prepare("2026-02")
     assert result["status"] == "needs_information"
     assert any(
@@ -435,10 +435,9 @@ def test_no_change_prior_wage_revision_requires_new_owner_confirmation(tmp_path)
 def test_no_change_generation_is_atomic_and_retryable(tmp_path, monkeypatch):
     instance = company(tmp_path)
     instance.save(profile(employee_id="other"), "other-profile")
-    instance.save(opening(employee_id="other"), "other-opening")
     instance.save(payroll(employee_id="other", profile_id="other-profile"), "other-january")
     instance.confirm_payroll("other-january")
-    instance.publish("other-january")
+    publish_with_tax_amount(instance, "other-january", 12_600)
     service = confirm_no_change(instance)
     preview = service.prepare("2026-02")
     assert preview["status"] == "ready" and len(preview["candidates"]) == 2

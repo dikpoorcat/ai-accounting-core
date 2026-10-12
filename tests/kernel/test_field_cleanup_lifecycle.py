@@ -5,7 +5,7 @@ from pathlib import Path
 
 from test_dashboard_model_transactions import raw_read
 from test_materials import csv_spec
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile
 from test_payroll_corrections import Company
 
 from ai_accounting.kernel.backup import restore_portable, run_backup_jobs, verify_portable
@@ -105,8 +105,6 @@ def test_cleanup_public_inputs_close_backup_and_independent_restore(tmp_path):
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "tax-opening"),
         (payroll(), "january"),
         (
             BankOpening(period=MONTH, bank_account_id=bank_id, opening_fen=0, basis="new_account"),
@@ -127,6 +125,7 @@ def test_cleanup_public_inputs_close_backup_and_independent_restore(tmp_path):
     ):
         company.save(fact, subject)
     company.confirm_payroll("january")
+    company.tax_basis("january", 12_600)
     company.publish("january", "bank-opening", "bank-statement", "bank-reconciliation")
     wage = company.current("january")
     assert wage.values["payroll_confirmation"]["mode"] == "monthly_plan"

@@ -24,6 +24,99 @@ from .money import SETTLEMENT_PAYMENT_KINDS
 
 PAYROLL_KINDS = ("payroll", "payroll_bounded")
 ACTUAL_KIND = "payroll_withholding_actual"
+TAX_BASIS_KIND = "remuneration_tax_basis"
+
+
+def _confirmed_tax_sections(outcome):
+    values = _mapping(outcome.get("values"), "remuneration_values_missing")
+    if "tax_basis" not in values:
+        return ()
+    basis = _mapping(values["tax_basis"], "remuneration_tax_basis_invalid")
+    traces = [
+        item
+        for item in _sequence(outcome.get("explanation"), "remuneration_trace_missing")
+        if isinstance(item, dict) and item.get("step") == "confirmed_remuneration_tax"
+    ]
+    if len(traces) != 1:
+        _incompatible("remuneration_tax_trace_ambiguous")
+    traced = _mapping(
+        _mapping(traces[0].get("values"), "remuneration_tax_trace_invalid").get("tax_basis"),
+        "remuneration_tax_trace_invalid",
+    )
+    return basis, traced
+
+
+def confirmed_tax_references(version, outcome):
+    sections = _confirmed_tax_sections(outcome)
+    if not sections:
+        return ()
+    pointer = _pointer(sections[0].get("fact_id"), "remuneration_tax_fact_missing")
+    if sections[1].get("fact_id") != pointer:
+        _incompatible("remuneration_tax_trace_mismatch")
+    return (Read("fact", TAX_BASIS_KIND, "#" + pointer),)
+
+
+def project_confirmed_tax(version, outcome, refs):
+    sections = _confirmed_tax_sections(outcome)
+    if not sections:
+        return outcome
+    pointer = _pointer(sections[0].get("fact_id"), "remuneration_tax_fact_missing")
+    source = refs.fact(pointer, TAX_BASIS_KIND)
+    if (
+        not source.evidence
+        or source.fact.source_id != version.subject_id
+        or (
+            source.fact.source_kind != version.fact.kind
+            or source.fact.period != version.fact.period
+        )
+    ):
+        _incompatible("remuneration_tax_identity_mismatch")
+    expected = source.fact.model_dump(mode="json")
+    for section in sections:
+        if (
+            section.get("fact_id") != pointer
+            or tuple(section.get("evidence", ())) != source.evidence
+        ):
+            _incompatible("remuneration_tax_evidence_mismatch")
+        if (
+            section.get("subject_id") != source.subject_id
+            or section.get("revision") != source.revision
+            or section.get("cash_payment_recorded") is not False
+        ):
+            _incompatible("remuneration_tax_provenance_mismatch")
+        if any(section.get(key) != value for key, value in expected.items()):
+            _incompatible("remuneration_tax_payload_mismatch")
+    # The full source remains frozen in the original outcome and dependencies.
+    # Updating its evidence or confirming that withholding subsequently occurred
+    # does not change the monetary adoption or create a redundant voucher.
+    monetary = {
+        key: expected[key]
+        for key in (
+            "source_kind",
+            "source_id",
+            "period",
+            "tax_period",
+            "tax_amount_fen",
+        )
+    }
+    identity = {
+        "kind": TAX_BASIS_KIND,
+        "subject_id": source.fact.source_id,
+        "period": str(source.fact.period),
+        "fact_digest": digest(monetary).hex(),
+    }
+    for section in sections:
+        for key in (*expected, "subject_id", "revision", "evidence", "cash_payment_recorded"):
+            if key not in monetary:
+                section.pop(key, None)
+        section.update(monetary | {"fact_id": dict(identity)})
+    sources = _sequence(outcome["values"].get("source_versions"), "remuneration_sources_missing")
+    if sum(item == pointer for item in sources) != 1:
+        _incompatible("remuneration_tax_source_membership_mismatch")
+    outcome["values"]["source_versions"] = [
+        dict(identity) if item == pointer else item for item in sources
+    ]
+    return outcome
 
 
 def _incompatible(reason):
@@ -75,6 +168,8 @@ def _actual_sections(outcome):
 
 
 def payroll_references(version: FactVersion, outcome: dict) -> tuple[Read, ...]:
+    if "tax_basis" in outcome.get("values", {}):
+        return confirmed_tax_references(version, outcome)
     sections = _actual_sections(outcome)
     if not sections:
         return ()
@@ -116,6 +211,8 @@ def project_payroll(version: FactVersion, outcome: dict, refs) -> dict:
     # Confirmation provenance is an indispensable publication gate and dependency,
     # while changing only that provenance does not change the accounting result.
     values["payroll_confirmation"] = {"confirmed": True}
+    if "tax_basis" in values:
+        return project_confirmed_tax(version, outcome, refs)
     sections = _actual_sections(outcome)
     if not sections:
         return outcome
@@ -277,6 +374,8 @@ def project_payment(version: FactVersion, outcome: dict, refs) -> dict:
 def register(registry):
     for kind in PAYROLL_KINDS:
         registry.register_accounting(kind, project_payroll, payroll_references)
+    for kind in ("annual_bonus", "labor"):
+        registry.register_accounting(kind, project_confirmed_tax, confirmed_tax_references)
     for kind in SETTLEMENT_PAYMENT_KINDS:
         registry.register_accounting(
             kind,

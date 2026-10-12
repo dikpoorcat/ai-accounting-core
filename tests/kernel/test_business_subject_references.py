@@ -2,14 +2,13 @@
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
-from test_payroll import contribution_policy, income_tax_policy, profile
-from test_payroll import opening as wage_opening
+from test_payroll import contribution_policy, profile
 from test_payroll import payroll as wage_fact
 from test_payroll_corrections import Company
 from test_payroll_preparation import company, confirm_no_change
 
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.domains import assets, investments, opening, payroll, taxes, transactions
+from ai_accounting.kernel.domains import assets, investments, opening, taxes, transactions
 from ai_accounting.kernel.domains.banking import (
     BankEntry,
     BankOpening,
@@ -44,6 +43,7 @@ def generated_wage(tmp_path):
     )
     subject = saved["publish_subjects"][0]
     assert subject == "payroll:employee:2026-02"
+    instance.tax_basis(subject, 12_600)
     instance.publish(subject)
     return instance, subject, instance.current(subject)
 
@@ -263,12 +263,11 @@ def test_maximum_generated_payroll_identity_can_be_paid_and_reconciled(tmp_path)
     for fact, subject in (
         (profile(employee_id=employee), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (wage_opening(employee_id=employee), "opening"),
         (wage_fact(employee_id=employee), "january"),
     ):
         instance.save(fact, subject)
     instance.confirm_payroll("january")
+    instance.tax_basis("january", 12_600)
     instance.publish("january")
     service = confirm_no_change(instance)
     proposal = service.prepare("2026-02")
@@ -277,6 +276,7 @@ def test_maximum_generated_payroll_identity_can_be_paid_and_reconciled(tmp_path)
     )
     subject = saved["publish_subjects"][0]
     assert subject == f"payroll:{employee}:2026-02" and len(subject) == 200
+    instance.tax_basis(subject, 12_600)
     instance.publish(subject)
     refs = allocations(subject, instance.current(subject))
     amount = sum(ref.amount_fen for ref in refs)
@@ -306,7 +306,6 @@ def test_maximum_generated_payroll_identity_can_be_paid_and_reconciled(tmp_path)
         (opening.Member, "subject_id"),
         (assets.ReimbursedAsset, "acceptance_id"),
         (assets.LoanInterest, "drawdown_id"),
-        (payroll.AnnualBonus, "regular_payroll_id"),
         (taxes.TaxCreditReturn, "return_id"),
         (taxes.TaxCreditConfirmation, "original_assessment_id"),
     ],

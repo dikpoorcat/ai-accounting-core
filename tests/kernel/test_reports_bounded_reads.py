@@ -25,6 +25,11 @@ from ai_accounting.kernel.types import YearMonth
 opening_book = _opening_book
 
 
+@pytest.fixture
+def previous_year_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period="2025-01")
+
+
 def test_unfrozen_voucher_candidates_seek_only_selected_months_and_keep_old_accounts():
     connection = sqlite3.connect(":memory:")
     try:
@@ -203,7 +208,11 @@ def test_quarter_report_rejects_damage_without_expanding_context(book):
     with QueryReads.snapshot(engine) as reads:
         with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
             Dashboard(engine)._quarterly_report_in_snapshot(
-                2026, 1, connection=reads.connection, reads=reads, as_of="2026-04-10",
+                2026,
+                1,
+                connection=reads.connection,
+                reads=reads,
+                as_of="2026-04-10",
             )
     with pytest.raises(KernelError, match="完整|摘要|一致|损坏"):
         reports.preview_export(2026, 1)
@@ -342,7 +351,10 @@ def test_unselected_classification_references_remain_validated(book, monkeypatch
 
 
 @pytest.mark.parametrize("problem", [None, "period", "line_no", "account", "conflicting"])
-def test_previous_year_classification_validation_uses_scalar_rows(book, monkeypatch, problem):
+def test_previous_year_classification_validation_uses_scalar_rows(
+    previous_year_book, monkeypatch, problem
+):
+    book = previous_year_book
     engine, save, publish, _ = book
     save(
         "report_profile",
@@ -425,7 +437,10 @@ def test_previous_year_classification_validation_uses_scalar_rows(book, monkeypa
     assert calculation_id not in decoded_calculations
 
 
-def test_previous_year_direct_accounts_do_not_decode_unrelated_outcomes(book, monkeypatch):
+def test_previous_year_direct_accounts_do_not_decode_unrelated_outcomes(
+    previous_year_book, monkeypatch
+):
+    book = previous_year_book
     engine, save, publish, _ = book
     save(
         "report_profile",

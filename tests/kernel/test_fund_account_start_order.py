@@ -7,7 +7,11 @@ from test_opening_continuation import _close_without_current_business
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.entities import Entities
 
-bank_book = banking.book
+
+@pytest.fixture
+def bank_book(tmp_path):
+    # Every scenario below explicitly constructs its own formation package.
+    return banking.book.__wrapped__(tmp_path, opening_period=None)
 
 
 def _use_read_path(monkeypatch, raw):

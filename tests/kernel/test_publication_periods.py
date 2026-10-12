@@ -156,12 +156,10 @@ def test_fixed_baseline_repeated_correction_zero_and_key_change(company):
         verify_publication_chain(connection)
 
 
-def test_closed_payroll_correction_keeps_automatic_open_dependants_in_their_months(tmp_path):
+def test_closed_payroll_correction_leaves_independent_months_unchanged(tmp_path):
     from test_payroll import (
         actual,
         contribution_policy,
-        income_tax_policy,
-        opening,
         payroll,
         profile,
     )
@@ -171,25 +169,26 @@ def test_closed_payroll_correction_keeps_automatic_open_dependants_in_their_mont
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
         (payroll(), "january"),
         (payroll(period="2026-02"), "february"),
         (payroll(period="2026-03"), "march"),
     ):
         company.save(fact, subject)
     company.confirm_payroll("january", "february", "march")
+    for subject in ("january", "february", "march"):
+        company.tax_basis(subject, 12_600)
     company.publish("january", "february", "march")
     frozen = company.close("2026-01")
     original_february = company.current("february")
+    original_march = company.current("march")
     company.save(actual(), "actual")
     preview, _ = company.publish("actual", posting_period="2026-04")
     decisions = {item["subject_id"]: item for item in preview["results"]}
     assert decisions["january"]["posting_period"] == "2026-04"
     assert decisions["january"]["mode"] == "closed_correction"
-    assert decisions["february"]["posting_period"] == "2026-02"
-    assert decisions["march"]["posting_period"] == "2026-03"
-    assert company.current("february").values != original_february.values
+    assert set(decisions) == {"january"}
+    assert company.current("february") == original_february
+    assert company.current("march") == original_march
     assert not company.pending()
     assert Periods(company.engine).closed_report("2026-01") == frozen
 

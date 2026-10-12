@@ -147,7 +147,7 @@ def test_header_proof_retains_every_matched_reference_check(owner_book, fault):
 
 
 def test_no_impact_review_binds_original_voucher_not_new_adopted_basis(tmp_path):
-    company = Company(tmp_path / "review-frozen-header.sqlite")
+    company = Company(tmp_path / "review-frozen-header.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     evidence = company.engine.register_evidence(
         b"Additional identical activation evidence", "text/plain", "review",

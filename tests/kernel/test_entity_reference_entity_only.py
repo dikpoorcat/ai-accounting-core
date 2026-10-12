@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
+from scalar_store_fixture import scalar_store
 
 from ai_accounting.kernel import entity_references as references
 from ai_accounting.kernel.contracts import KernelError
@@ -19,20 +20,18 @@ def test_recorded_source_proof_ignores_unconsumed_business_detail_walks(monkeypa
         sources: list[Source]
 
     kind = "reference_scope_test"
-    registry = SimpleNamespace(
-        content_version=2,
-        models={kind: ScopeFact},
-        reference_declarations={
-            kind: [
-                {"path": "employee_id", "role": "employee", "reference_type": "entity"},
-                {
-                    "path": "sources.*.source_id",
-                    "role": "business_source",
-                    "reference_type": "business",
-                },
-            ]
-        },
-    )
+    registry = scalar_store({kind: ScopeFact}).registry
+    registry.content_version = 2
+    registry.reference_declarations = {
+        kind: [
+            {"path": "employee_id", "role": "employee", "reference_type": "entity"},
+            {
+                "path": "sources.*.source_id",
+                "role": "business_source",
+                "reference_type": "business",
+            },
+        ]
+    }
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.executescript(
@@ -99,11 +98,9 @@ def test_entity_only_nested_and_nullable_paths_match_generic_interpreter():
             {"recipient_id": "a", "source_id": "business-a"},
             {"recipient_id": None, "source_id": "business-b"},
             {"recipient_id": "b", "source_id": None},
-        ]
+        ],
     }
-    actual = list(
-        references._entity_reference_fields("payment", data, registry=registry)
-    )
+    actual = list(references._entity_reference_fields("payment", data, registry=registry))
     generic = [
         (item["path"], item["entity_id"], item["role"])
         for item in references.references_from_data("payment", data, registry=registry)

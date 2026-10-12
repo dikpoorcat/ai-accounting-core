@@ -4,6 +4,7 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
+from scalar_store_fixture import scalar_store
 from test_cash import book as book  # noqa: F401
 
 from ai_accounting.kernel.contracts import KernelError
@@ -12,9 +13,12 @@ from ai_accounting.kernel.schema import sequence_model, table_name
 from ai_accounting.kernel.schema_bundle import production_bundle
 
 MODELS = production_bundle().registry.models
-CHILDREN = [(kind, name) for kind, model in MODELS.items()
-            for name, field in model.model_fields.items()
-            if sequence_model(field.annotation) is not None]
+CHILDREN = [
+    (kind, name)
+    for kind, model in MODELS.items()
+    for name, field in model.model_fields.items()
+    if sequence_model(field.annotation) is not None
+]
 
 
 @pytest.fixture
@@ -29,22 +33,23 @@ def coordinates():
             "item_no INTEGER NOT NULL CHECK(item_no>=0),"
             "PRIMARY KEY(revision_id,item_no)) STRICT"
         )
-    yield connection, SimpleNamespace(
-        store=SimpleNamespace(registry=SimpleNamespace(models=MODELS))
-    )
+    yield connection, SimpleNamespace(store=scalar_store(MODELS))
     connection.close()
 
 
 def test_all_current_child_declarations_have_the_unique_integer_coordinate_contract(book):
     with book[0].store.connection(read_only=True) as connection:
-        assert len(CHILDREN) == 42
+        assert len(CHILDREN) == 43
+        assert ("remuneration_tax_basis", "origin_references") in CHILDREN
         assert ("payroll_plan_confirmation", "payroll") not in CHILDREN
         for kind, name in CHILDREN:
             table = f"{table_name(kind)}_{name}"
             info = {row["name"]: row for row in connection.execute(f"PRAGMA table_info({table})")}
             assert info["revision_id"]["pk"] == 1
             assert (info["item_no"]["type"], info["item_no"]["notnull"], info["item_no"]["pk"]) == (
-                "INTEGER", 1, 2,
+                "INTEGER",
+                1,
+                2,
             )
             sql = connection.execute(
                 "SELECT sql FROM sqlite_schema WHERE name=?", (table,)
@@ -58,16 +63,24 @@ def test_every_child_family_keeps_empty_exact_scope_and_detects_coordinate_holes
 ):
     connection, engine = coordinates
     table = f"{table_name(kind)}_{name}"
-    connection.executemany(f"INSERT INTO {table} VALUES(?,?)", [
-        ("selected", 0), ("selected", 1), ("selected", 2), ("unrelated", 7),
-    ])
+    connection.executemany(
+        f"INSERT INTO {table} VALUES(?,?)",
+        [
+            ("selected", 0),
+            ("selected", 1),
+            ("selected", 2),
+            ("unrelated", 7),
+        ],
+    )
     verify_fact_child_order(engine, connection, {kind: set()})
     verify_fact_child_order(engine, connection, {kind: {"selected", "empty"}})
     connection.execute(f"UPDATE {table} SET item_no=3 WHERE revision_id='selected' AND item_no=1")
     with pytest.raises(KernelError) as failure:
         verify_fact_child_order(engine, connection, {kind: {"selected"}})
     assert failure.value.details == {
-        "component": "fact", "record_id": "selected", "reason": "fact_child_order_mismatch",
+        "component": "fact",
+        "record_id": "selected",
+        "reason": "fact_child_order_mismatch",
     }
 
 
@@ -83,9 +96,7 @@ def test_untrusted_coordinate_types_and_bounds_are_explicitly_rejected(position)
     model = SimpleNamespace(
         model_fields={"items": MODELS["bank_statement"].model_fields["entries"]}
     )
-    engine = SimpleNamespace(
-        store=SimpleNamespace(registry=SimpleNamespace(models={"child": model}))
-    )
+    engine = SimpleNamespace(store=scalar_store({"child": model}))
     try:
         connection.executemany(
             "INSERT INTO fact_child_items VALUES('selected',?)", [(0,), (position,)]
@@ -100,9 +111,11 @@ def test_untrusted_coordinate_types_and_bounds_are_explicitly_rejected(position)
 def test_bounded_order_proof_returns_no_child_rows_and_keeps_v1_row_rule(coordinates):
     connection, engine = coordinates
     table = "fact_bank_statement_entries"
-    connection.executemany(f"INSERT INTO {table} VALUES(?,?)", [
-        ("selected", index) for index in range(6000)
-    ] + [("unrelated", index) for index in range(6000)])
+    connection.executemany(
+        f"INSERT INTO {table} VALUES(?,?)",
+        [("selected", index) for index in range(6000)]
+        + [("unrelated", index) for index in range(6000)],
+    )
     queries, returned = [], []
 
     class Observed:
@@ -118,11 +131,10 @@ def test_bounded_order_proof_returns_no_child_rows_and_keeps_v1_row_rule(coordin
     # The old rule still transfers/checks every selected coordinate. It is a
     # separate fixed-version model carrier, never a current success marker.
     original = MODELS["bank_statement"].model_fields["entries"]
-    model = SimpleNamespace(model_fields={"entries": original},
-                            _v1_fields={"entries": {"kind": "sequence"}})
-    historical = SimpleNamespace(
-        store=SimpleNamespace(registry=SimpleNamespace(models={"bank_statement": model}))
+    model = SimpleNamespace(
+        model_fields={"entries": original}, _v1_fields={"entries": {"kind": "sequence"}}
     )
+    historical = SimpleNamespace(store=scalar_store({"bank_statement": model}))
     queries.clear()
     verify_fact_child_order(historical, Observed(), {"bank_statement": {"selected"}})
     assert len(returned) == 6000

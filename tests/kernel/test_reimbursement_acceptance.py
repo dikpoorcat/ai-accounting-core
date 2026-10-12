@@ -9,7 +9,7 @@ from test_banking import entry, funding, match, reconciliation, statement
 from test_banking import opening as bank_opening
 from test_deletion_boundaries import book as book
 from test_exports import template_bytes
-from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
+from test_payroll import contribution_policy, payroll, profile, tax_basis
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.adjustments import ReimbursementAcceptance
@@ -37,28 +37,19 @@ def wage(engine, save, publish, *, kind="payroll"):
             ),
             "profile",
         ),
-        (income_tax_policy(), "income-tax"),
-        (opening(), "opening"),
     ):
         save(fact.kind, subject, fact.model_dump(mode="json"))
     save("payroll_contribution_policy", "contributions", policy)
     data = payroll().model_dump(mode="json")
     if kind == "payroll_bounded":
-        data.update(accounting_gross_salary_fen=300_000, tax_reported_salary_fen=300_000)
-        data.update(
-            dict.fromkeys(
-                (
-                    "tax_exempt_income_fen",
-                    "special_additional_deduction_fen",
-                    "other_legal_deduction_fen",
-                    "tax_relief_fen",
-                )
-            )
-        )
+        data.update(accounting_gross_salary_fen=300_000)
     save(kind, "wage", data)
     with engine.store.connection(read_only=True) as connection:
-        evidence = engine.store.current_fact(connection, "wage").evidence
+        wage = engine.store.current_fact(connection, "wage")
+        evidence = wage.evidence
     confirm_wage_inputs(engine, "wage", evidence=evidence, request_id="confirm-wage")
+    basis = tax_basis(wage, 0 if kind == "payroll_bounded" else 11_100).fact
+    save(basis.kind, "wage-tax", basis.model_dump(mode="json"))
     publish("wage")
 
 

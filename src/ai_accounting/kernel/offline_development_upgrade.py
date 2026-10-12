@@ -18,7 +18,12 @@ from .backup import (
     verify_file,
 )
 from .contracts import KernelError
-from .development_contracts import get_contract_sha
+from .development_contracts import (
+    REMUNERATION_SOURCE_FINGERPRINT,
+    REMUNERATION_TARGET_FINGERPRINT,
+    get_contract_sha,
+    remuneration_source_registry,
+)
 from .migration_contracts import diff_contracts
 from .offline_upgrade import _catalog_retained_digest, _catalog_rows
 from .permissions import create_private_file, ensure_private_directory, reject_reparse_path
@@ -62,8 +67,17 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
         INDEX_SOURCE_FINGERPRINT,
         READ_MODEL_SOURCE_FINGERPRINT,
         FUND_DETAIL_SOURCE_FINGERPRINT,
+        REMUNERATION_SOURCE_FINGERPRINT,
     ):
         raise KernelError("migration_not_declared", "开发升级来源未明确声明")
+    if source_fingerprint == REMUNERATION_SOURCE_FINGERPRINT:
+        return replace(
+            bundle,
+            registry=remuneration_source_registry(bundle.registry),
+            contracts=MappingProxyType(
+                {**bundle.contracts, "company": MappingProxyType({0: source})}
+            ),
+        )
     registry = copy.copy(bundle.registry)
     registry.models = dict(registry.models)
     registry.evaluators = dict(registry.evaluators)
@@ -83,6 +97,8 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
 
 
 def _declared_changes(bundle):
+    if REMUNERATION_SOURCE_FINGERPRINT in bundle.development_contracts.get("company", {}):
+        return _remuneration_changes(bundle)
     source = get_contract_sha(bundle, "company", SOURCE_FINGERPRINT)
     intermediate = get_contract_sha(bundle, "company", INDEX_SOURCE_FINGERPRINT)
     read_model_source = get_contract_sha(bundle, "company", READ_MODEL_SOURCE_FINGERPRINT)
@@ -168,6 +184,65 @@ def _declared_changes(bundle):
         (read_model_source, fund_source, model_differences),
         (fund_source, target, fund_differences),
     )
+
+
+def _remuneration_changes(bundle):
+    """Only new typed body tables and their exact one-body seal declaration."""
+    from .contracts import Registry
+    from .schema import fact_ddl, schema_sql
+    from .versions import contract
+
+    source = get_contract_sha(bundle, "company", REMUNERATION_SOURCE_FINGERPRINT)
+    target = bundle.current("company")
+    transition = (REMUNERATION_SOURCE_FINGERPRINT, target["sha256"])
+    if (
+        bundle.status != "draft" or source is None
+        or target["sha256"] != REMUNERATION_TARGET_FINGERPRINT
+        or bundle.draft_transitions.get("company", ()) != frozenset({transition})
+    ):
+        raise KernelError("migration_not_declared", "实际税额结构调整须有精确来源和目标")
+    changed = {
+        "payroll", "payroll_bounded", "payroll_profile", "annual_bonus", "labor",
+        "tax_import_details_v2",
+    }
+    added = Registry()
+    for kind in sorted(changed | {"remuneration_tax_basis"}):
+        if kind not in bundle.registry.models:
+            raise KernelError("migration_not_declared", "实际税额结构调整缺少当前正文类型")
+        model = bundle.registry.models[kind]
+        table = bundle.registry.current_table(kind)
+        if kind in changed and table != "fact_" + kind + "_confirmed":
+            raise KernelError("migration_not_declared", "当前正文必须使用独立保留表")
+        added.register(model, table=table)
+    expected = {
+        (item["type"], item["name"]): {"type": item["type"], "name": item["name"],
+                                      "old_sql": None, "new_sql": item["sql"]}
+        for item in contract(fact_ddl(added))
+    }
+    old_seal = next(item["sql"] for item in source["objects"] if item["name"] == "fact_seal_shape")
+    new_seal = next(
+        item["sql"] for item in contract(schema_sql(bundle.registry))
+        if item["name"] == "fact_seal_shape"
+    )
+    expected[("trigger", "fact_seal_shape")] = {
+        "type": "trigger", "name": "fact_seal_shape", "old_sql": old_seal, "new_sql": new_seal,
+    }
+    differences = diff_contracts(source, target)
+    if differences != [expected[key] for key in sorted(expected)]:
+        raise KernelError("migration_not_declared", "实际税额结构调整超出新增正文和封存检查")
+    return ((source, target, differences),)
+
+
+def _apply_remuneration_step(connection, differences, *, fault=None):
+    for kind in ("table", "index", "trigger"):
+        for item in differences:
+            if item["type"] != kind:
+                continue
+            if item["name"] == "fact_seal_shape":
+                connection.execute("DROP TRIGGER fact_seal_shape")
+            connection.execute(item["new_sql"])
+            if fault:
+                fault("after_remuneration_object:" + kind + ":" + item["name"])
 
 
 def _all_existing_rows(connection, source_contract):
@@ -370,7 +445,9 @@ def upgrade_company(
             step_rows = (
                 original_rows if step_index == 0 else _all_existing_rows(connection, step_source)
             )
-            if step_source["sha256"] == SOURCE_FINGERPRINT:
+            if step_source["sha256"] == REMUNERATION_SOURCE_FINGERPRINT:
+                _apply_remuneration_step(connection, differences, fault=fault)
+            elif step_source["sha256"] == SOURCE_FINGERPRINT:
                 _apply_first_step(connection, step_target, differences, fault=fault)
             elif step_source["sha256"] == INDEX_SOURCE_FINGERPRINT:
                 connection.execute(differences[0]["new_sql"])
@@ -461,6 +538,7 @@ def _company_bundle(connection, bundle):
         INDEX_SOURCE_FINGERPRINT,
         READ_MODEL_SOURCE_FINGERPRINT,
         FUND_DETAIL_SOURCE_FINGERPRINT,
+        REMUNERATION_SOURCE_FINGERPRINT,
     ):
         previous = source_bundle(bundle, actual)
         verify_schema(connection, bundle=previous)

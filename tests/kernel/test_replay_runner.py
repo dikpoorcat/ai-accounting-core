@@ -534,7 +534,7 @@ def test_safe_plan_preserves_whole_report_and_nested_exact_revision_references()
     service = SimpleNamespace(registry=registry, command_models=command_models(registry))
     ref = {"$replay_ref": "prepared", "field": "results.0.revision"}
     wage = payroll().model_dump(mode="json")
-    for field in ("profile_revision", "contribution_policy_revision", "income_tax_policy_revision"):
+    for field in ("profile_revision", "contribution_policy_revision"):
         wage[field]["revision"] = ref
     facts = [
         {

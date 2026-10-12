@@ -114,7 +114,7 @@ def test_brief_asset_summary_keeps_original_full_reader_fallback(tmp_path, reade
 
 
 def test_open_consumption_owners_keep_typed_proof_without_count_body_expansion(tmp_path):
-    company = Company(tmp_path / "brief-open-count.sqlite")
+    company = Company(tmp_path / "brief-open-count.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     engine = company.engine
     company.save(Expense(
@@ -136,7 +136,7 @@ def test_open_consumption_owners_keep_typed_proof_without_count_body_expansion(t
 
 
 def test_count_scope_does_not_replace_full_owner_consumer_in_same_snapshot(tmp_path):
-    company = Company(tmp_path / "brief-scope-reuse.sqlite")
+    company = Company(tmp_path / "brief-scope-reuse.sqlite", opening_period="2026-02")
     prepare_batch_assets(company)
     engine = company.engine
     month(engine, company.owner_confirmation, "2026-03", "brief-scope-march")
