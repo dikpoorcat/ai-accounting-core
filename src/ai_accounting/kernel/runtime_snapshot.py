@@ -109,6 +109,13 @@ def materialize_runtime_package(root):
             copied,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+        if os.name == "nt":
+            # copy2 can inherit the read-only attribute from an older pinned
+            # package. Private ACLs and content digests guard the snapshot;
+            # Windows read-only flags must not obstruct publication or cleanup.
+            for path in copied.rglob("*"):
+                if path.is_file():
+                    path.chmod(path.stat().st_mode | 0o200)
         copied_source_digest = _tree_digest(
             copied, exclude=("static/dashboard",) if has_dashboard else ()
         )
@@ -122,12 +129,13 @@ def materialize_runtime_package(root):
             if _tree_digest(dashboard_target) != dashboard_digest:
                 raise RuntimeError("captured dashboard assets failed their content check")
         source_digest = _tree_digest(staging)
-        for path in copied.rglob("*"):
-            if path.is_file():
-                try:
-                    path.chmod(0o444)
-                except OSError:
-                    pass
+        if os.name != "nt":
+            for path in copied.rglob("*"):
+                if path.is_file():
+                    try:
+                        path.chmod(0o444)
+                    except OSError:
+                        pass
         destination = snapshots / source_digest
         package_path = destination / "ai_accounting"
         if destination.exists():
@@ -136,7 +144,18 @@ def materialize_runtime_package(root):
                     "captured runtime destination already exists with different contents"
                 )
         else:
-            os.replace(staging, destination)
+            try:
+                os.rename(staging, destination)
+            except OSError:
+                # A concurrent publisher can create the content-addressed
+                # destination after the existence check. Reuse only its exact
+                # bytes; permission errors without a matching target remain errors.
+                if not destination.exists():
+                    raise
+                if not package_path.is_dir() or _tree_digest(destination) != source_digest:
+                    raise RuntimeError(
+                        "captured runtime destination already exists with different contents"
+                    ) from None
     if package_path is None or not package_path.is_dir():
         raise RuntimeError("captured runtime package is missing after publication")
     if _tree_digest(package_path.parent) != source_digest:

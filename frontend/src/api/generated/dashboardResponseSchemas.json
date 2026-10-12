@@ -1,4 +1,391 @@
 {
+  "prepare_fact_registration": {
+    "$defs": {
+      "DuplicateCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Id"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "content_digest": {
+            "title": "Content Digest",
+            "type": "string"
+          },
+          "material_sources": {
+            "items": {
+              "$ref": "#/$defs/DuplicateMaterialSource"
+            },
+            "title": "Material Sources",
+            "type": "array"
+          },
+          "published_current": {
+            "title": "Published Current",
+            "type": "boolean"
+          },
+          "pair_digest": {
+            "title": "Pair Digest",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "subject_id",
+          "fact_id",
+          "kind",
+          "period",
+          "signals"
+        ],
+        "title": "DuplicateCandidate",
+        "type": "object"
+      },
+      "DuplicateMaterialSource": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_fact_id": {
+            "title": "Source Fact Id",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "resolution_fact_id": {
+            "title": "Resolution Fact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_fact_id",
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateMaterialSource",
+        "type": "object"
+      },
+      "DuplicateProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "content_digest": {
+            "title": "Content Digest",
+            "type": "string"
+          },
+          "proposal_digest": {
+            "title": "Proposal Digest",
+            "type": "string"
+          },
+          "material_sources": {
+            "items": {
+              "$ref": "#/$defs/DuplicateMaterialSource"
+            },
+            "title": "Material Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "subject_id",
+          "revision",
+          "kind",
+          "period",
+          "content_digest",
+          "proposal_digest"
+        ],
+        "title": "DuplicateProposal",
+        "type": "object"
+      },
+      "DuplicateReviewBasisResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "distinct_material_location",
+            "title": "Kind",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_fact_id": {
+            "title": "Source Fact Id",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          }
+        },
+        "required": [
+          "kind",
+          "evidence_digest",
+          "source_id",
+          "source_fact_id",
+          "location",
+          "reference"
+        ],
+        "title": "DuplicateReviewBasisResponse",
+        "type": "object"
+      },
+      "DuplicateSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "same_exact_material_location",
+              "same_complete_signature_and_evidence",
+              "same_complete_actual_money",
+              "same_complete_signature",
+              "shared_evidence",
+              "same_material_location_different_signature",
+              "same_actual_money_coordinates"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Fields",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "source_locations": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSourceLocation"
+            },
+            "title": "Source Locations",
+            "type": "array"
+          },
+          "distinct_locations_proven": {
+            "title": "Distinct Locations Proven",
+            "type": "boolean"
+          },
+          "complete_bank_split_proven": {
+            "title": "Complete Bank Split Proven",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "matched_fields"
+        ],
+        "title": "DuplicateSignal",
+        "type": "object"
+      },
+      "DuplicateSourceLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateSourceLocation",
+        "type": "object"
+      },
+      "PreparedDuplicateReview": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_digest": {
+            "title": "Candidate Digest",
+            "type": "string"
+          },
+          "action": {
+            "const": "create_separate",
+            "title": "Action",
+            "type": "string"
+          },
+          "candidate_subject_id": {
+            "title": "Candidate Subject Id",
+            "type": "null"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "review_basis": {
+            "items": {
+              "$ref": "#/$defs/DuplicateReviewBasisResponse"
+            },
+            "minItems": 1,
+            "title": "Review Basis",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_digest",
+          "action",
+          "candidate_subject_id",
+          "explanation",
+          "review_basis"
+        ],
+        "title": "PreparedDuplicateReview",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "candidate_contract": {
+        "title": "Candidate Contract",
+        "type": "string"
+      },
+      "candidate_version": {
+        "title": "Candidate Version",
+        "type": "integer"
+      },
+      "status": {
+        "enum": [
+          "clear",
+          "review_required",
+          "not_applicable"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "proposed": {
+        "$ref": "#/$defs/DuplicateProposal"
+      },
+      "source_locations": {
+        "items": {
+          "$ref": "#/$defs/DuplicateMaterialSource"
+        },
+        "title": "Source Locations",
+        "type": "array"
+      },
+      "strong_candidates": {
+        "items": {
+          "$ref": "#/$defs/DuplicateCandidate"
+        },
+        "title": "Strong Candidates",
+        "type": "array"
+      },
+      "weak_candidates": {
+        "items": {
+          "$ref": "#/$defs/DuplicateCandidate"
+        },
+        "title": "Weak Candidates",
+        "type": "array"
+      },
+      "candidate_digest": {
+        "title": "Candidate Digest",
+        "type": "string"
+      },
+      "review": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PreparedDuplicateReview"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "schema_version",
+      "candidate_contract",
+      "candidate_version",
+      "status",
+      "proposed",
+      "source_locations",
+      "strong_candidates",
+      "weak_candidates",
+      "candidate_digest",
+      "review"
+    ],
+    "title": "FactRegistrationPreparation",
+    "type": "object"
+  },
   "prepare_replay": {
     "$defs": {
       "JsonValue": {}
@@ -442,6 +829,14 @@
       },
       "receipt": {
         "$ref": "#/$defs/ReplayReceipt"
+      },
+      "receipts": {
+        "items": {
+          "$ref": "#/$defs/ReplayReceipt"
+        },
+        "maxItems": 200,
+        "title": "Receipts",
+        "type": "array"
       }
     },
     "required": [
@@ -461,6 +856,50 @@
   "replay_classification_prepare": {
     "$defs": {
       "JsonValue": {},
+      "ReplayCashDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "line_no": {
+            "minimum": 1,
+            "title": "Line No",
+            "type": "integer"
+          },
+          "category": {
+            "enum": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              8,
+              9,
+              10,
+              11,
+              12,
+              14,
+              15,
+              16,
+              17,
+              18
+            ],
+            "title": "Category",
+            "type": "integer"
+          },
+          "amount_fen": {
+            "exclusiveMinimum": 0,
+            "title": "Amount Fen",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line_no",
+          "category",
+          "amount_fen"
+        ],
+        "title": "ReplayCashDetailResponse",
+        "type": "object"
+      },
       "ReplayClassificationItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -502,6 +941,228 @@
         ],
         "title": "ReplayClassificationItemResponse",
         "type": "object"
+      },
+      "ReplayCounterpartyDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "line_no": {
+            "minimum": 1,
+            "title": "Line No",
+            "type": "integer"
+          },
+          "counterparty_id": {
+            "title": "Counterparty Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_no",
+          "counterparty_id"
+        ],
+        "title": "ReplayCounterpartyDetailResponse",
+        "type": "object"
+      },
+      "ReplayProfitDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "line_no": {
+            "minimum": 1,
+            "title": "Line No",
+            "type": "integer"
+          },
+          "detail_code": {
+            "enum": [
+              "management_startup",
+              "management_entertainment",
+              "management_research",
+              "management_other",
+              "sales_merchandise_repair",
+              "sales_advertising_promotion",
+              "sales_other",
+              "finance_interest",
+              "finance_other",
+              "tax_urban",
+              "tax_education",
+              "tax_local_education"
+            ],
+            "title": "Detail Code",
+            "type": "string"
+          },
+          "amount_fen": {
+            "exclusiveMinimum": 0,
+            "title": "Amount Fen",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line_no",
+          "detail_code",
+          "amount_fen"
+        ],
+        "title": "ReplayProfitDetailResponse",
+        "type": "object"
+      },
+      "ReplayReportClassificationData": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "voucher_version_id": {
+            "title": "Voucher Version Id",
+            "type": "string"
+          },
+          "profit_details": {
+            "items": {
+              "$ref": "#/$defs/ReplayProfitDetailResponse"
+            },
+            "title": "Profit Details",
+            "type": "array"
+          },
+          "counterparties": {
+            "items": {
+              "$ref": "#/$defs/ReplayCounterpartyDetailResponse"
+            },
+            "title": "Counterparties",
+            "type": "array"
+          },
+          "cash_details": {
+            "items": {
+              "$ref": "#/$defs/ReplayCashDetailResponse"
+            },
+            "title": "Cash Details",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "voucher_version_id",
+          "profit_details",
+          "counterparties",
+          "cash_details"
+        ],
+        "title": "ReplayReportClassificationData",
+        "type": "object"
+      },
+      "ReplayReportClassificationIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "semantics": {
+            "const": "accounting",
+            "title": "Semantics",
+            "type": "string"
+          },
+          "allowed_precision": {
+            "items": {
+              "const": "exact",
+              "type": "string"
+            },
+            "title": "Allowed Precision",
+            "type": "array"
+          },
+          "reusable_sources": {
+            "items": {
+              "const": "current_published_business_result",
+              "type": "string"
+            },
+            "title": "Reusable Sources",
+            "type": "array"
+          },
+          "candidate_count": {
+            "minimum": 0,
+            "title": "Candidate Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field",
+          "code",
+          "message",
+          "semantics",
+          "allowed_precision",
+          "reusable_sources"
+        ],
+        "title": "ReplayReportClassificationIssue",
+        "type": "object"
+      },
+      "ReplayReportClassificationNeedsInformationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "needs_information",
+            "title": "Status",
+            "type": "string"
+          },
+          "data": {
+            "title": "Data",
+            "type": "null"
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/ReplayReportClassificationIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_id",
+          "status",
+          "data",
+          "fact_issues"
+        ],
+        "title": "ReplayReportClassificationNeedsInformationResponse",
+        "type": "object"
+      },
+      "ReplayReportClassificationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/$defs/ReplayReportClassificationData"
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/ReplayReportClassificationIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_id",
+          "status",
+          "data",
+          "fact_issues"
+        ],
+        "title": "ReplayReportClassificationResponse",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -513,7 +1174,17 @@
       },
       "items": {
         "items": {
-          "$ref": "#/$defs/ReplayClassificationItemResponse"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReplayClassificationItemResponse"
+            },
+            {
+              "$ref": "#/$defs/ReplayReportClassificationResponse"
+            },
+            {
+              "$ref": "#/$defs/ReplayReportClassificationNeedsInformationResponse"
+            }
+          ]
         },
         "title": "Items",
         "type": "array"
@@ -9524,6 +10195,10 @@
           "distinct_locations_proven": {
             "title": "Distinct Locations Proven",
             "type": "boolean"
+          },
+          "complete_bank_split_proven": {
+            "title": "Complete Bank Split Proven",
+            "type": "boolean"
           }
         },
         "required": [
@@ -11193,6 +11868,10 @@
           },
           "distinct_locations_proven": {
             "title": "Distinct Locations Proven",
+            "type": "boolean"
+          },
+          "complete_bank_split_proven": {
+            "title": "Complete Bank Split Proven",
             "type": "boolean"
           }
         },
@@ -23744,6 +24423,10 @@
           },
           "distinct_locations_proven": {
             "title": "Distinct Locations Proven",
+            "type": "boolean"
+          },
+          "complete_bank_split_proven": {
+            "title": "Complete Bank Split Proven",
             "type": "boolean"
           }
         },

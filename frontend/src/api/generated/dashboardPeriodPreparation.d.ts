@@ -110,6 +110,7 @@ export namespace DashboardPeriodPreparationContract {
   export type Location1 = string;
   export type SourceLocations = DuplicateSourceLocation[];
   export type DistinctLocationsProven = boolean;
+  export type CompleteBankSplitProven = boolean;
   export type Signals = DuplicateSignal[];
   export type Issues = ReadinessIssue[];
   export type Knowledge1 = "current_knowledge";
@@ -325,6 +326,7 @@ export namespace DashboardPeriodPreparationContract {
     evidence?: Evidence;
     source_locations?: SourceLocations;
     distinct_locations_proven?: DistinctLocationsProven;
+    complete_bank_split_proven?: CompleteBankSplitProven;
   }
   export interface DuplicateSourceLocation {
     evidence_digest: EvidenceDigest1;

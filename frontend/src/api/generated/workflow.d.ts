@@ -204,6 +204,7 @@ export namespace WorkflowContract {
   export type Location1 = string;
   export type SourceLocations = DuplicateSourceLocation[];
   export type DistinctLocationsProven = boolean;
+  export type CompleteBankSplitProven = boolean;
   export type Signals = DuplicateSignal[];
   export type Code2 = string;
   export type Category2 = "management_fact" | "capability" | "publication";
@@ -465,6 +466,7 @@ export namespace WorkflowContract {
     evidence?: Evidence;
     source_locations?: SourceLocations;
     distinct_locations_proven?: DistinctLocationsProven;
+    complete_bank_split_proven?: CompleteBankSplitProven;
   }
   export interface DuplicateSourceLocation {
     evidence_digest: EvidenceDigest1;

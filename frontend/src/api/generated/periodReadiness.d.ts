@@ -145,6 +145,7 @@ export namespace PeriodReadinessContract {
   export type Location2 = string;
   export type SourceLocations = DuplicateSourceLocation[];
   export type DistinctLocationsProven = boolean;
+  export type CompleteBankSplitProven = boolean;
   export type Signals = DuplicateSignal[];
   export type Issues = ReadinessIssue[];
   export type Period6 = number;
@@ -480,6 +481,7 @@ export namespace PeriodReadinessContract {
     evidence?: Evidence;
     source_locations?: SourceLocations;
     distinct_locations_proven?: DistinctLocationsProven;
+    complete_bank_split_proven?: CompleteBankSplitProven;
   }
   export interface DuplicateSourceLocation {
     evidence_digest: EvidenceDigest1;

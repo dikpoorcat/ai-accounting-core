@@ -27,6 +27,7 @@ from ai_accounting.kernel.permissions import (
     create_private_file,
     ensure_private_directory,
     ensure_private_file,
+    private_temporary_directory,
 )
 from ai_accounting.kernel.schema import initialize
 from ai_accounting.kernel.schema_bundle import production_bundle
@@ -232,3 +233,47 @@ def test_posix_modes_are_exact(tmp_path):
     file = create_private_file(directory / "state")
     assert stat.S_IMODE(directory.stat().st_mode) == PRIVATE_DIRECTORY_MODE
     assert stat.S_IMODE(file.stat().st_mode) == PRIVATE_FILE_MODE
+
+
+def test_private_temporary_directory_cleans_read_only_copy_without_touching_neighbor(tmp_path):
+    parent = ensure_private_directory(tmp_path / "private-temporaries")
+    neighbor = create_private_file(parent / "keep.bin")
+    neighbor.write_bytes(b"preserved")
+    with pytest.raises(RuntimeError, match="original publication failure"):
+        with private_temporary_directory(parent, prefix=".copy-") as staging:
+            nested = staging / "source"
+            nested.mkdir()
+            copied = nested / "accounting.py"
+            copied.write_bytes(b"synthetic source")
+            copied.chmod(0o444)
+            raise RuntimeError("original publication failure")
+    assert not staging.exists()
+    assert neighbor.read_bytes() == b"preserved"
+
+
+def test_private_temporary_prefix_cannot_escape_cleanup_parent(tmp_path):
+    parent = ensure_private_directory(tmp_path / "private-temporaries")
+    with pytest.raises(PrivatePathError):
+        with private_temporary_directory(parent, prefix="../outside-"):
+            pytest.fail("an outside temporary must never be created")
+    assert list(parent.iterdir()) == []
+
+
+def test_private_temporary_collision_never_adopts_or_cleans_existing_directory(
+    tmp_path, monkeypatch
+):
+    from ai_accounting.kernel import permissions
+
+    parent = ensure_private_directory(tmp_path / "private-temporaries")
+    existing = ensure_private_directory(parent / ".copy-fixed")
+    preserved = create_private_file(existing / "keep.bin")
+    preserved.write_bytes(b"preexisting")
+
+    class StableUuid:
+        hex = "fixed"
+
+    monkeypatch.setattr(permissions.uuid, "uuid4", StableUuid)
+    with pytest.raises(FileExistsError):
+        with private_temporary_directory(parent, prefix=".copy-"):
+            pytest.fail("an existing directory must never become this operation's staging")
+    assert preserved.read_bytes() == b"preexisting"

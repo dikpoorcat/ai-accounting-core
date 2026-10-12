@@ -652,6 +652,21 @@ class DuplicateReview(BaseModel):
         return self
 
 
+class TypedDuplicateSeparationIntent(BaseModel):
+    """An explicit distinct-business assertion grounded in exact material rows."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    action: Literal["create_separate"]
+    explanation: str = Field(min_length=1, max_length=4000)
+    review_basis: tuple[ReviewBasis, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def exact_material_basis(self):
+        if any(item.kind != "distinct_material_location" for item in self.review_basis):
+            raise ValueError("separation preparation requires exact distinct material locations")
+        return self
+
+
 def _parse_review(value: DuplicateReview | Mapping[str, Any]) -> DuplicateReview:
     return (
         value
@@ -3089,6 +3104,7 @@ class Duplicates:
         evidence: Sequence[EvidenceDigest],
         expected_revision: int,
         source_locations: Sequence[SourceLocation] = (),
+        separation_intent: TypedDuplicateSeparationIntent | None = None,
     ) -> dict:
         self.engine._require_direct_registration(kind)
         if not subject_id or len(subject_id) > 200:
@@ -3155,7 +3171,34 @@ class Duplicates:
                 evidence=evidence,
                 source_locations=source_locations,
             )
-            return {"schema_version": 1, **prepared}
+            review = None
+            if prepared["strong_candidates"] and separation_intent is not None:
+                if any(not item.get("material_sources") for item in prepared["strong_candidates"]):
+                    raise NeedsInformation(
+                        "separation_intent.review_basis",
+                        "尚有强候选缺少已核验的原件位置，无法证明与全部候选业务独立",
+                    )
+                intent = (
+                    separation_intent
+                    if isinstance(separation_intent, TypedDuplicateSeparationIntent)
+                    else TypedDuplicateSeparationIntent.model_validate_json(
+                        canonical(separation_intent)
+                    )
+                )
+                review = DuplicateReview(
+                    candidate_digest=prepared["candidate_digest"],
+                    action=intent.action,
+                    explanation=intent.explanation,
+                    review_basis=intent.review_basis,
+                )
+                DuplicateCandidates.require_review(prepared, review)
+                DuplicateCandidates._verify_review_evidence(
+                    connection, review, prepared, current=True
+                )
+            return {
+                "schema_version": 1, **prepared,
+                "review": review.model_dump(mode="json") if review else None,
+            }
 
 
 def verify_duplicate_checks(connection) -> None:

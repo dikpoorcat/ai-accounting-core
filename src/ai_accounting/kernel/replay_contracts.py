@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_serializer, model_validator
 
 from .types import EvidenceDigest, YearMonth
 
@@ -34,6 +34,7 @@ REPLAY_COMMANDS = frozenset(
         "resolve_material",
         "resolve_material_group",
         "prepare_obligations",
+        "obligation_basis",
         "confirm_obligations",
         "preview_material_allocation",
         "confirm_material_allocation",
@@ -73,6 +74,35 @@ class ReplaySource(BaseModel):
         return self
 
 
+class ReplayOutputReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    reference: Ref = Field(alias="$replay_ref")
+    field: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.]{0,127}$")]
+
+    @model_serializer
+    def wire(self):
+        return {"$replay_ref": self.reference, "field": self.field}
+
+
+class ReplayOutputSelector(BaseModel):
+    """Select one exact typed identity from an actual response array."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    array_path: Annotated[
+        str,
+        Field(pattern=r"^[a-z][a-z0-9_]*(?:\.(?:[a-z][a-z0-9_]*|0|[1-9][0-9]*))*$", max_length=128),
+    ]
+    match_field: Annotated[
+        str,
+        Field(pattern=r"^[a-z][a-z0-9_]*(?:\.(?:[a-z][a-z0-9_]*|0|[1-9][0-9]*))*$", max_length=128),
+    ]
+    match_value: str | StrictInt | ReplayOutputReference
+    field: Annotated[
+        str,
+        Field(pattern=r"^[a-z][a-z0-9_]*(?:\.(?:[a-z][a-z0-9_]*|0|[1-9][0-9]*))*$", max_length=128),
+    ]
+
+
 class ReplayStep(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     step_id: Ref
@@ -96,6 +126,7 @@ class ReplayStep(BaseModel):
         "resolve_material",
         "resolve_material_group",
         "prepare_obligations",
+        "obligation_basis",
         "confirm_obligations",
         "preview_material_allocation",
         "confirm_material_allocation",
@@ -122,6 +153,7 @@ class ReplayStep(BaseModel):
     output_fields: tuple[
         Annotated[str, Field(strict=True, pattern=r"^[a-z][a-z0-9_.]{0,127}$")], ...
     ] = ()
+    output_selectors: dict[Ref, ReplayOutputSelector] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def unique_edges(self):
@@ -131,6 +163,8 @@ class ReplayStep(BaseModel):
             raise ValueError(
                 "an output reference and at least one output field must be declared together"
             )
+        if not set(self.output_selectors).issubset(self.output_fields):
+            raise ValueError("each output selector alias must be declared in output_fields")
         return self
 
 
@@ -144,6 +178,7 @@ class ReplayPrepare(BaseModel):
     source_manifest_digest: EvidenceDigest
     source_manifest: Annotated[tuple[ReplaySource, ...], Field(min_length=1, max_length=20000)]
     preserved_evidence: tuple[EvidenceDigest, ...] = ()
+    continuation_from: ReplayId | None = None
     steps: Annotated[tuple[ReplayStep, ...], Field(min_length=1, max_length=20000)]
     request_id: ReplayId
 
@@ -198,6 +233,15 @@ class ReplayStatusRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     run_id: ReplayId
     step_id: Ref | None = None
+    step_ids: Annotated[tuple[Ref, ...], Field(max_length=200)] = ()
+
+    @model_validator(mode="after")
+    def bounded_receipts(self):
+        if self.step_id is not None and self.step_ids:
+            raise ValueError("use either step_id or step_ids")
+        if len(set(self.step_ids)) != len(self.step_ids):
+            raise ValueError("receipt step identifiers must be unique")
+        return self
 
 
 class ReplayClassificationItem(BaseModel):

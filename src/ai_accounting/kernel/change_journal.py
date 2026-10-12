@@ -28,6 +28,7 @@ SOURCES = (
     "entity_profile",
     "commentary",
 )
+VERSIONED_SOURCES = frozenset({"company_note", "display_profile", "entity_profile", "commentary"})
 
 
 def _append(source, target, before, after):
@@ -131,7 +132,8 @@ def journal_ddl():
                 "NEW.id",
             )
             + " END;",
-            "CREATE TRIGGER change_display_profile_insert AFTER INSERT ON display_profile_revision BEGIN "
+            "CREATE TRIGGER change_display_profile_insert AFTER INSERT "
+            "ON display_profile_revision BEGIN "
             + _append(
                 "display_profile",
                 "NEW.kind||':'||NEW.entity_id",
@@ -140,7 +142,8 @@ def journal_ddl():
                 "NEW.id",
             )
             + " END;",
-            "CREATE TRIGGER change_entity_profile_insert AFTER INSERT ON entity_profile_revision BEGIN "
+            "CREATE TRIGGER change_entity_profile_insert AFTER INSERT "
+            "ON entity_profile_revision BEGIN "
             + _append(
                 "entity_profile",
                 "NEW.entity_id",
@@ -149,7 +152,8 @@ def journal_ddl():
                 "NEW.id",
             )
             + " END;",
-            "CREATE TRIGGER change_commentary_insert AFTER INSERT ON period_commentary_revision BEGIN "
+            "CREATE TRIGGER change_commentary_insert AFTER INSERT "
+            "ON period_commentary_revision BEGIN "
             + _append(
                 "commentary",
                 "CAST(NEW.period AS TEXT)",
@@ -219,9 +223,10 @@ def changes_since(
             or (before is not None and (not isinstance(before, str) or not before))
             or (next_ref is not None and (not isinstance(next_ref, str) or not next_ref))
             or (
-                source not in {"fact", "calculation", "pending"}
+                source not in {"fact", "calculation", "pending"} | VERSIONED_SOURCES
                 and (before is not None or next_ref is None)
             )
+            or (source in VERSIONED_SOURCES and next_ref is None)
             or (source == "pending" and (before is None) == (next_ref is None))
         ):
             _invalid("journal_entry_invalid")
@@ -295,6 +300,8 @@ def verify_journal(connection) -> int:
     heads = {"fact": {}, "calculation": {}}
     pending = set()
     recorded = {source: set() for source in SOURCES}
+    versioned_heads = {source: {} for source in VERSIONED_SOURCES}
+    versioned_before = {source: {} for source in VERSIONED_SOURCES}
     for event in events:
         if event.source in heads:
             selected = heads[event.source]
@@ -315,6 +322,12 @@ def verify_journal(connection) -> int:
                 pending.remove(key)
         else:
             key = event.target_id, event.after_ref
+            if event.source in VERSIONED_SOURCES:
+                selected = versioned_heads[event.source]
+                if selected.get(event.target_id) != event.before_ref:
+                    _invalid("journal_revision_chain_mismatch")
+                selected[event.target_id] = event.after_ref
+                versioned_before[event.source][key] = event.before_ref
             if key in recorded[event.source]:
                 _invalid("journal_record_duplicated")
             recorded[event.source].add(key)
@@ -341,20 +354,38 @@ def verify_journal(connection) -> int:
         ),
         ("publication", "SELECT subject_id,id FROM calculation_publication"),
         ("evidence", "SELECT lower(hex(digest)),lower(hex(digest)) FROM evidence"),
-        ("company_note", "SELECT 'company',id FROM company_note_revision"),
+        ("company_note", "SELECT 'company',id,revision FROM company_note_revision "
+         "ORDER BY revision"),
         (
             "display_profile",
-            "SELECT kind||':'||entity_id,id FROM display_profile_revision",
+            "SELECT kind||':'||entity_id,id,revision FROM display_profile_revision "
+            "ORDER BY kind,entity_id,revision",
         ),
-        ("entity_profile", "SELECT entity_id,id FROM entity_profile_revision"),
-        ("commentary", "SELECT CAST(period AS TEXT),id FROM period_commentary_revision"),
+        ("entity_profile", "SELECT entity_id,id,revision FROM entity_profile_revision "
+         "ORDER BY entity_id,revision"),
+        ("commentary", "SELECT CAST(period AS TEXT),id,revision FROM period_commentary_revision "
+         "ORDER BY period,revision"),
         (
             "close",
             "SELECT CAST(period AS TEXT),lower(hex(digest)) FROM period_close",
         ),
     )
     for source, query in sources:
-        actual = {tuple(row) for row in connection.execute(query)}
+        if source in VERSIONED_SOURCES:
+            actual, previous = set(), {}
+            for target, ident, revision in connection.execute(query):
+                prior_revision, prior_id = previous.get(target, (0, None))
+                key = target, ident
+                if (
+                    revision != prior_revision + 1
+                    or key not in versioned_before[source]
+                    or versioned_before[source][key] != prior_id
+                ):
+                    _invalid("journal_revision_source_mismatch")
+                actual.add(key)
+                previous[target] = revision, ident
+        else:
+            actual = {tuple(row) for row in connection.execute(query)}
         # Calculations can be preserved batch members before they become a
         # selected head. Every recorded adoption must still identify its source.
         if (source == "calculation" and not recorded[source] <= actual) or (

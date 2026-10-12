@@ -235,9 +235,28 @@ def private_temporary_directory(parent: str | Path, *, prefix: str):
     if not parent_path.is_dir():
         raise PrivatePathError(parent_path)
     directory = parent_path / f"{prefix}{uuid.uuid4().hex}"
-    ensure_private_directory(directory)
+    if directory.parent != parent_path:
+        raise PrivatePathError(directory)
+    _create_directory(directory)
     try:
         yield directory
     finally:
         if directory.exists():
-            shutil.rmtree(directory)
+            # Verify this exact generated staging path before recursive cleanup.
+            # Windows refuses to unlink copied files carrying the read-only bit.
+            _reject_links(directory)
+            if directory.resolve().parent != parent_path.resolve():
+                raise PrivatePathError(directory)
+
+            def retry_owner_writable(operation, failed_path, error):
+                failure = error[1]
+                if os.name != "nt" or not isinstance(failure, PermissionError):
+                    raise failure
+                target = _absolute(failed_path)
+                if target != directory and directory not in target.parents:
+                    raise PrivatePathError(target)
+                _reject_links(target)
+                target.chmod(target.stat().st_mode | stat.S_IWUSR)
+                operation(target)
+
+            shutil.rmtree(directory, onerror=retry_owner_writable)

@@ -50,11 +50,24 @@ class JobRunner:
 
         def run():
             while not self.stop_event.is_set():
+                outcomes = ()
                 try:
-                    self.run_once()
+                    outcomes = self.run_once()
                 except Exception as exc:
                     self.last_error = getattr(exc, "code", type(exc).__name__)
-                self.stop_event.wait(self.interval)
+                replay_progress = any(
+                    isinstance(item, dict)
+                    and item.get("status") == "completed"
+                    and isinstance(item.get("run_id"), str)
+                    and bool(item["run_id"])
+                    and isinstance(item.get("step_id"), str)
+                    and bool(item["step_id"])
+                    for item in outcomes
+                )
+                # A committed replay node makes another dependency ready.
+                # Yield briefly for foreground work, while idle, blocked and
+                # ordinary background jobs retain the configured backoff.
+                self.stop_event.wait(0.01 if replay_progress else self.interval)
 
         self.thread = threading.Thread(target=run, name="accounting-background-jobs", daemon=True)
         self.thread.start()

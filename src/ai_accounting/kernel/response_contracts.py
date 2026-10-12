@@ -29,6 +29,7 @@ from .close_review import (
     CloseReviewSourceReference,
 )
 from .contracts import KernelError
+from .reports import DetailCode
 from .response_types import (
     Version1,
     Version2,
@@ -144,6 +145,7 @@ class ReplayStatusResponse(ResponseObject):
     progress: ReplayProgress
     result: JsonValue | None
     receipt: NotRequired[ReplayReceipt]
+    receipts: NotRequired[Annotated[list[ReplayReceipt], Field(max_length=200)]]
 
 
 class ReplayClassificationItemResponse(ResponseObject):
@@ -153,9 +155,62 @@ class ReplayClassificationItemResponse(ResponseObject):
     issues: list[JsonValue]
 
 
+class ReplayProfitDetailResponse(ResponseObject):
+    line_no: Annotated[int, Field(ge=1)]
+    detail_code: DetailCode
+    amount_fen: Annotated[int, Field(gt=0)]
+
+
+class ReplayCounterpartyDetailResponse(ResponseObject):
+    line_no: Annotated[int, Field(ge=1)]
+    counterparty_id: str
+
+
+class ReplayCashDetailResponse(ResponseObject):
+    line_no: Annotated[int, Field(ge=1)]
+    category: Literal[1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18]
+    amount_fen: Annotated[int, Field(gt=0)]
+
+
+class ReplayReportClassificationData(ResponseObject):
+    period: Month
+    voucher_version_id: str
+    profit_details: list[ReplayProfitDetailResponse]
+    counterparties: list[ReplayCounterpartyDetailResponse]
+    cash_details: list[ReplayCashDetailResponse]
+
+
+class ReplayReportClassificationIssue(ResponseObject):
+    field: str
+    code: str
+    message: str
+    semantics: Literal["accounting"]
+    allowed_precision: list[Literal["exact"]]
+    reusable_sources: list[Literal["current_published_business_result"]]
+    candidate_count: NotRequired[Count]
+
+
+class ReplayReportClassificationResponse(ResponseObject):
+    source_id: str
+    status: Literal["ready"]
+    data: ReplayReportClassificationData
+    fact_issues: list[ReplayReportClassificationIssue]
+
+
+class ReplayReportClassificationNeedsInformationResponse(ResponseObject):
+    source_id: str
+    status: Literal["needs_information"]
+    data: None
+    fact_issues: list[ReplayReportClassificationIssue]
+
+
 class ReplayClassificationResponse(ResponseObject):
     status: Literal["prepared"]
-    items: list[ReplayClassificationItemResponse]
+    items: list[
+        ReplayClassificationItemResponse
+        | ReplayReportClassificationResponse
+        | ReplayReportClassificationNeedsInformationResponse
+    ]
 
 
 class SavedInventoryItem(ResponseObject):
@@ -307,6 +362,7 @@ class DuplicateSignal(ResponseObject):
     evidence: NotRequired[list[str]]
     source_locations: NotRequired[list[DuplicateSourceLocation]]
     distinct_locations_proven: NotRequired[bool]
+    complete_bank_split_proven: NotRequired[bool]
 
 
 class ReadinessIssue(ResponseObject):
@@ -1761,9 +1817,7 @@ class FieldConflict(ResponseObject):
     fields: list[Literal["employment_start", "employment_end"]]
 
 
-WorkforceState = Literal[
-    "regular", "unpaid_leave", "departed", "labor", "labor_ended", "unknown"
-]
+WorkforceState = Literal["regular", "unpaid_leave", "departed", "labor", "labor_ended", "unknown"]
 
 
 class WorkforceRelationshipSegment(ResponseObject):
@@ -2280,6 +2334,46 @@ class DuplicateCandidate(ResponseObject):
     published_current: NotRequired[bool]
     pair_digest: NotRequired[str]
     signals: list[DuplicateSignal]
+
+
+class DuplicateReviewBasisResponse(ResponseObject):
+    kind: Literal["distinct_material_location"]
+    evidence_digest: str
+    source_id: str
+    source_fact_id: str
+    location: str
+    reference: str | None
+
+
+class PreparedDuplicateReview(ResponseObject):
+    candidate_digest: str
+    action: Literal["create_separate"]
+    candidate_subject_id: None
+    explanation: str
+    review_basis: Annotated[list[DuplicateReviewBasisResponse], Field(min_length=1)]
+
+
+class DuplicateProposal(ResponseObject):
+    subject_id: str
+    revision: int
+    kind: str
+    period: Month
+    content_digest: str
+    proposal_digest: str
+    material_sources: NotRequired[list[DuplicateMaterialSource]]
+
+
+class FactRegistrationPreparation(ResponseObject):
+    schema_version: Literal[1]
+    candidate_contract: str
+    candidate_version: int
+    status: Literal["clear", "review_required", "not_applicable"]
+    proposed: DuplicateProposal
+    source_locations: list[DuplicateMaterialSource]
+    strong_candidates: list[DuplicateCandidate]
+    weak_candidates: list[DuplicateCandidate]
+    candidate_digest: str
+    review: PreparedDuplicateReview | None
 
 
 class DuplicateUnresolved(ResponseObject):
@@ -3065,13 +3159,16 @@ class DashboardFailed(DashboardDeliveryBase):
 
 
 def delivery_adapter(response):
-    return TypeAdapter(Annotated[
-        DashboardReady[response] | DashboardPreparing | DashboardFailed,
-        Field(discriminator="state"),
-    ])
+    return TypeAdapter(
+        Annotated[
+            DashboardReady[response] | DashboardPreparing | DashboardFailed,
+            Field(discriminator="state"),
+        ]
+    )
 
 
 RESPONSE_ADAPTERS = {
+    "prepare_fact_registration": TypeAdapter(FactRegistrationPreparation),
     "prepare_replay": TypeAdapter(ReplayPreparedResponse),
     "confirm_replay": TypeAdapter(ReplayQueuedResponse),
     "resume_replay": TypeAdapter(ReplayQueuedResponse),
