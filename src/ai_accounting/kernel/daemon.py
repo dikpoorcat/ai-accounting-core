@@ -64,6 +64,11 @@ def _prepare_static_runtime():
             XLRDError,
         )
         bundle = production_bundle()
+        from .runtime_snapshot import capture_runtime_snapshot
+        from .schema_bundle import SchemaBundle
+
+        if isinstance(bundle, SchemaBundle):
+            capture_runtime_snapshot(bundle=bundle)
         models = command_models(bundle.registry)
         gc.collect(2)
         gc.freeze()
@@ -198,10 +203,8 @@ def ensure_service(root, *, timeout=20):
 
     check_root_current(root)
     state = root / ".service.json"
-    expected = calculator_build_id()
     started = time.monotonic()
     spawned = False
-    stopping = False
     while time.monotonic() - started < timeout:
         if state.exists():
             metadata = _metadata_for_root(root)
@@ -212,17 +215,8 @@ def ensure_service(root, *, timeout=20):
             else:
                 _check_health(metadata, health)
             if health is not None and health.get("status") == "ready":
-                if health.get("build_id") != expected:
-                    if not stopping:
-                        result = _request(metadata, "/api/shutdown", {})
-                        if result.get("status") != "stopping":
-                            raise KernelError(
-                                "service_version_mismatch",
-                                "运行中的本地服务版本已变化，请重新启动服务",
-                            )
-                        stopping = True
-                    time.sleep(0.1)
-                    continue
+                # The resident's code, contracts and assets are fixed at process
+                # startup. A workspace edit alone is not an update instruction.
                 return metadata
         if not spawned:
             with instance_lock(root) as available:
@@ -434,6 +428,17 @@ def run(root, *, port=0, replay_scope_file=None):
                     "此资料目录已有本地服务运行；请先停止服务，再显式启动重放服务",
                 )
             return
+        if isinstance(static_runtime, tuple) and len(static_runtime) == 2:
+            from .runtime_snapshot import (
+                activate_runtime_package,
+                configure_runtime_package,
+                explicit_update_checkpoint,
+            )
+
+            package_path, source_digest = activate_runtime_package(root)
+            # The package search path now points only at the private captured copy;
+            # refresh all code, contract and resource identities from that copy.
+            explicit_update_checkpoint()
         from .offline_upgrade import check_root_current
 
         check_root_current(root)
@@ -473,7 +478,20 @@ def run(root, *, port=0, replay_scope_file=None):
                 "build_id": server.build_id,
             }
             write_protected_json(root / ".service.json", metadata)
-            runner = JobRunner(service.catalog)
+            from .replay_runner import run_ready
+            from .dashboard_async import run_pending
+
+            def run_company_background(engine):
+                replay = run_ready(
+                    service, limit=1, company_id=engine.store.company_id
+                )
+                projections = run_pending(engine, limit=1)
+                return [*replay, *projections]
+
+            runner = JobRunner(
+                service.catalog,
+                callbacks=(run_company_background,),
+            )
             runner.start()
             serving = True
             try:

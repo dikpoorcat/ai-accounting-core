@@ -21,6 +21,12 @@ SOURCES = (
     "inventory",
     "inventory_item",
     "publication",
+    "evidence",
+    "company_note",
+    "display_profile",
+    "close",
+    "entity_profile",
+    "commentary",
 )
 
 
@@ -110,6 +116,53 @@ def journal_ddl():
             + _append(source, target, "NULL", reference)
             + " END;"
         )
+    # Keep metadata and freeze events under source-specific names. Their
+    # identities and invalidation semantics differ from identity corrections.
+    sql.extend(
+        (
+            "CREATE TRIGGER change_evidence_insert AFTER INSERT ON evidence BEGIN "
+            + _append("evidence", "lower(hex(NEW.digest))", "NULL", "lower(hex(NEW.digest))")
+            + " END;",
+            "CREATE TRIGGER change_company_note_insert AFTER INSERT ON company_note_revision BEGIN "
+            + _append(
+                "company_note",
+                "'company'",
+                "(SELECT id FROM company_note_revision WHERE revision=NEW.revision-1)",
+                "NEW.id",
+            )
+            + " END;",
+            "CREATE TRIGGER change_display_profile_insert AFTER INSERT ON display_profile_revision BEGIN "
+            + _append(
+                "display_profile",
+                "NEW.kind||':'||NEW.entity_id",
+                "(SELECT id FROM display_profile_revision WHERE kind=NEW.kind "
+                "AND entity_id=NEW.entity_id AND revision=NEW.revision-1)",
+                "NEW.id",
+            )
+            + " END;",
+            "CREATE TRIGGER change_entity_profile_insert AFTER INSERT ON entity_profile_revision BEGIN "
+            + _append(
+                "entity_profile",
+                "NEW.entity_id",
+                "(SELECT id FROM entity_profile_revision WHERE entity_id=NEW.entity_id "
+                "AND revision=NEW.revision-1)",
+                "NEW.id",
+            )
+            + " END;",
+            "CREATE TRIGGER change_commentary_insert AFTER INSERT ON period_commentary_revision BEGIN "
+            + _append(
+                "commentary",
+                "CAST(NEW.period AS TEXT)",
+                "(SELECT id FROM period_commentary_revision WHERE period=NEW.period "
+                "AND revision=NEW.revision-1)",
+                "NEW.id",
+            )
+            + " END;",
+            "CREATE TRIGGER change_close_insert AFTER INSERT ON period_close BEGIN "
+            + _append("close", "CAST(NEW.period AS TEXT)", "NULL", "lower(hex(NEW.digest))")
+            + " END;",
+        )
+    )
     return "\n".join(sql) + "\n"
 
 
@@ -287,6 +340,18 @@ def verify_journal(connection) -> int:
             "SELECT CAST(inventory_id AS TEXT),lower(hex(evidence_digest)) FROM material_item",
         ),
         ("publication", "SELECT subject_id,id FROM calculation_publication"),
+        ("evidence", "SELECT lower(hex(digest)),lower(hex(digest)) FROM evidence"),
+        ("company_note", "SELECT 'company',id FROM company_note_revision"),
+        (
+            "display_profile",
+            "SELECT kind||':'||entity_id,id FROM display_profile_revision",
+        ),
+        ("entity_profile", "SELECT entity_id,id FROM entity_profile_revision"),
+        ("commentary", "SELECT CAST(period AS TEXT),id FROM period_commentary_revision"),
+        (
+            "close",
+            "SELECT CAST(period AS TEXT),lower(hex(digest)) FROM period_close",
+        ),
     )
     for source, query in sources:
         actual = {tuple(row) for row in connection.execute(query)}

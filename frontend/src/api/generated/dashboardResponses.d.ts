@@ -10,6 +10,11 @@ export type { DashboardEmployeesResponse, DashboardEmployeesContract } from "./d
 export type { DashboardAssetsResponse, DashboardAssetsContract } from "./dashboardAssets";
 export type { DashboardBusinessStatusResponse, DashboardBusinessStatusContract } from "./dashboardBusinessStatus";
 export type { DashboardQuarterlyReportResponse, DashboardQuarterlyReportContract } from "./dashboardQuarterlyReport";
+export type { DashboardBriefDeliveryResponse, DashboardBriefDeliveryContract } from "./dashboardBriefDelivery";
+export type { DashboardFundsDeliveryResponse, DashboardFundsDeliveryContract } from "./dashboardFundsDelivery";
+export type { DashboardEmployeesDeliveryResponse, DashboardEmployeesDeliveryContract } from "./dashboardEmployeesDelivery";
+export type { DashboardAssetsDeliveryResponse, DashboardAssetsDeliveryContract } from "./dashboardAssetsDelivery";
+export type { DashboardQuarterlyReportDeliveryResponse, DashboardQuarterlyReportDeliveryContract } from "./dashboardQuarterlyReportDelivery";
 export type { DashboardPeriodPreparationResponse, DashboardPeriodPreparationContract } from "./dashboardPeriodPreparation";
 export type { DashboardCloseReviewResponse, DashboardCloseReviewContract } from "./dashboardCloseReview";
 export type { ReportExportStatusResponse, ReportExportStatusContract } from "./reportExportStatus";

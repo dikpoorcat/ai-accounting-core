@@ -437,6 +437,9 @@ def _schema_for_models(models) -> str:
         )
     )
     from .change_journal import journal_ddl
+    from .backup_tasks import BACKUP_TASK_DDL
+    from .dashboard_async_schema import PROJECTION_DDL
+    from .replay_schema import REPLAY_DDL
     from .close_storage import CLOSE_STORAGE_DDL
     from .dashboard_read_model import DASHBOARD_READ_MODEL_DDL
     from .discovery_indexes import DISCOVERY_INDEX_DDL
@@ -519,6 +522,9 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + DUPLICATE_FREEZE_DDL
         + MATERIAL_WATCH_DDL
         + DASHBOARD_READ_MODEL_DDL
+        + PROJECTION_DDL
+        + REPLAY_DDL
+        + BACKUP_TASK_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
     )

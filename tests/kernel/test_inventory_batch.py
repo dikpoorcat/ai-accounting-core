@@ -9,7 +9,7 @@ from draft_bundle_fixture import synthetic_draft_bundle
 from test_local_service import service as service_fixture
 from test_replay_close_range import replay_book as replay_book_fixture
 
-from ai_accounting.kernel import dashboard_model_runtime
+from ai_accounting.kernel import dashboard_async
 from ai_accounting.kernel.command_schema import command_models, validate_command
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.engine import Engine
@@ -74,17 +74,17 @@ def epochs(engine):
         return engine.store.epochs(connection)
 
 
-def test_batch_keeps_each_period_category_sources_and_one_epoch_and_production(book, monkeypatch):
+def test_batch_keeps_each_period_category_sources_and_one_epoch_and_queue(book, monkeypatch):
     engine, periods, (owner, first, second) = book
     before = epochs(engine)
     calls = []
-    produce = dashboard_model_runtime.materialize_models
+    produce = dashboard_async.record_write
 
     def observed(*args, **kwargs):
         calls.append(kwargs)
         return produce(*args, **kwargs)
 
-    monkeypatch.setattr(dashboard_model_runtime, "materialize_models", observed)
+    monkeypatch.setattr(dashboard_async, "record_write", observed)
     inputs = [
         declaration(
             owner, category="bank", evidence=[second, first, first], expected=3, no_business=False
@@ -158,13 +158,13 @@ def test_same_key_normalizes_each_evidence_list_without_new_rows_or_production(b
     first_result = periods.inventory_batch([row], request_id="stable-batch")
     before = snapshot(engine)
     calls = []
-    produce = dashboard_model_runtime.materialize_models
+    produce = dashboard_async.record_write
 
     def observed(*args, **kwargs):
         calls.append(kwargs)
         return produce(*args, **kwargs)
 
-    monkeypatch.setattr(dashboard_model_runtime, "materialize_models", observed)
+    monkeypatch.setattr(dashboard_async, "record_write", observed)
     assert (
         periods.inventory_batch([row | {"evidence": [first, second]}], request_id="stable-batch")
         == first_result

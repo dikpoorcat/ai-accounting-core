@@ -8,7 +8,9 @@ from test_new_company_reports import profile
 from test_opening_continuation import book as book  # noqa: F401
 
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.backup import run_backup_jobs
 from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.types import YearMonth
 
 
 def test_formation_months_freeze_exact_sources_and_independent_backups(book, tmp_path):
@@ -28,9 +30,21 @@ def test_formation_months_freeze_exact_sources_and_independent_backups(book, tmp
         )
     ready(engine, proof, last="2026-07")
     periods = Periods(engine)
-    results = close_months(
-        periods, proof, last="2026-07", backup_directory=str(tmp_path / "backups")
-    )
+    results = []
+    for month in range(1, 8):
+        period = f"2026-{month:02d}"
+        preview = periods.preview_close(period, owner_confirmation=proof)
+        result = periods.close(
+            period,
+            owner_confirmation=proof,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            request_id=f"close-month-{period}",
+            backup_directory=str(tmp_path / "backups"),
+        )
+        results.append((preview, result))
+        worker = run_backup_jobs(engine.store.path, _bundle=engine.store.bundle)
+        assert len(worker) == 1 and worker[0]["status"] == "succeeded"
     previous_digest = None
     for preview, result in results:
         frozen = periods.closed_report(result["period"])
@@ -51,8 +65,8 @@ def test_formation_months_freeze_exact_sources_and_independent_backups(book, tmp
                 "SELECT kind,status,payload FROM jobs WHERE id=?", (result["backup_job"],)
             ).fetchone()
         payload = json.loads(job["payload"])
-        assert job["status"] == "pending" and job["kind"] == "portable_backup"
-        assert payload["close_period"] == result["period"]
+        assert job["status"] == "succeeded" and job["kind"] == "portable_backup"
+        assert payload["close_period"] == YearMonth(result["period"]).ordinal
         assert payload["close_digest"] == result["digest"]
         previous_digest = result["digest"]
     assert results[0][0]["manifest"]["adopted_results"]

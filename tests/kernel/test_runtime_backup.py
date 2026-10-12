@@ -814,6 +814,15 @@ def test_crash_after_publication_reuses_same_backup_without_rollover(
     assert job_state(company)["status"] == "running"
     published = output / f"{TAXPAYER}.finance-company.zip"
     original_bytes = published.read_bytes()
+    connection = runtime.connect(company)
+    try:
+        connection.execute(
+            "INSERT INTO backup_attempt_history(job_id,attempt,event,worker_id,event_at) "
+            "VALUES('close-backup',1,'heartbeat','synthetic-expired-lease',"
+            "'2000-01-01T00:00:00.000Z')"
+        )
+    finally:
+        connection.close()
     monkeypatch.setattr(backup, "create_portable", original)
     result = backup.run_backup_jobs(company)[0]
     assert result["status"] == "succeeded"

@@ -16,7 +16,9 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+import threading
 import time
+import uuid
 import zipfile
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
@@ -313,6 +315,22 @@ _RETAINED_HISTORY_ROWS = (
     # reset a failed attempt. Retry/recovery happens outside this comparison.
     ("jobs", "id,kind,payload,status,attempts,last_error,error_code,result", "id"),
     (
+        "backup_snapshot",
+        "snapshot_id,job_id,replay_run_id,close_period,close_digest,snapshot_path,"
+        "snapshot_sha256,status,created_at,captured_at,released_at",
+        "snapshot_id",
+    ),
+    (
+        "backup_seal",
+        "seal_id,snapshot_id,job_id,close_period,close_digest,sealed_at,released_at",
+        "seal_id",
+    ),
+    (
+        "backup_attempt_history",
+        "id,job_id,attempt,event,worker_id,event_at,elapsed_ms,error_code,error_text",
+        "id",
+    ),
+    (
         "security_close_approval",
         "id,catalog_instance_id,company_id,database_id,period,preview_digest,"
         "accounting_epoch,material_epoch,management_epoch,owner_id,session_id,"
@@ -325,8 +343,19 @@ _RETAINED_HISTORY_ROWS = (
 def _retained_history_digest(connection: sqlite3.Connection) -> str:
     """Bind immutable source identities and saved results across a restore migration."""
     hashed = hashlib.sha256()
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
     for table, columns, order in _RETAINED_HISTORY_ROWS:
         hashed.update(table.encode("ascii") + b"\0")
+        # New operational history tables may first appear in a later draft
+        # contract. Treat their earlier absence as empty history, then compare
+        # any rows present in the migrated target.
+        if table not in tables:
+            continue
         for row in connection.execute(f"SELECT {columns} FROM {table} ORDER BY {order}"):
             values = [
                 ["blob", bytes(value).hex()] if isinstance(value, bytes) else ["value", value]
@@ -1129,6 +1158,27 @@ def _unpack_verified(
                 _require_retained_history(source_result, result, retained_digest, connection)
             result["source_database_format"] = source_format
             _sync_file(database)
+        # Projection bytes are derived state. Preserve their historical
+        # publications, but reset the current locator and requeue source-backed
+        # rebuilds before the restored file becomes visible.
+        with closing(connect(database)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            from .backup_tasks import retire_after_restore
+            from .dashboard_async import reset_after_restore
+
+            retire_after_restore(connection)
+            reset_after_restore(connection)
+            connection.commit()
+            checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if checkpoint is None or checkpoint[0] != 0 or checkpoint[1] != checkpoint[2]:
+                raise _error(
+                    "backup_content_invalid",
+                    "Restored projection reset could not be finalized",
+                )
+        result = verify_file(database, _bundle=bundle, **identity_checks)
+        if source_format["version"] != bundle.current_versions["company"]:
+            result["source_database_format"] = source_format
+        _sync_file(database)
         return {**result, "manifest": manifest, "path": str(path)}, database
     except PrivatePathError:
         raise
@@ -1383,6 +1433,173 @@ def _worker_lock(database: Path):
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+_BACKUP_LEASE_SECONDS = 90
+_BACKUP_HEARTBEAT_SECONDS = 15
+
+
+def _backup_connection(path: Path, bundle):
+    def validate(candidate):
+        verify_schema(candidate, bundle=bundle, kind="company")
+
+    return connect(path, validator=validate)
+
+
+def _append_backup_event(
+    path: Path,
+    bundle,
+    *,
+    job_id: str,
+    attempt: int,
+    event: str,
+    worker_id: str,
+    elapsed_ms: int | None = None,
+    error_code: str | None = None,
+    error_text: str | None = None,
+) -> None:
+    from .backup_tasks import append_attempt_event
+
+    connection = _backup_connection(path, bundle)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        append_attempt_event(
+            connection,
+            job_id=job_id,
+            attempt=attempt,
+            event=event,
+            worker_id=worker_id,
+            elapsed_ms=elapsed_ms,
+            error_code=error_code,
+            error_text=error_text,
+        )
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _heartbeat_backup(path: Path, bundle, job_id: str, attempt: int, worker_id: str, stop):
+    while not stop.wait(_BACKUP_HEARTBEAT_SECONDS):
+        try:
+            _append_backup_event(
+                path,
+                bundle,
+                job_id=job_id,
+                attempt=attempt,
+                event="heartbeat",
+                worker_id=worker_id,
+            )
+        except Exception:
+            # The completion transaction reports the real failure. A heartbeat
+            # write failure must not cancel an otherwise recoverable package.
+            return
+
+
+def _snapshot_matches_close(snapshot_path: Path, bundle, period: int, close_digest: bytes) -> bool:
+    connection = None
+    try:
+        def validate(candidate):
+            verify_schema(candidate, bundle=bundle, kind="company")
+
+        connection = connect(snapshot_path, read_only=True, validator=validate)
+        connection.execute("BEGIN")
+        row = connection.execute(
+            "SELECT digest FROM period_close WHERE period=?", (period,)
+        ).fetchone()
+        return row is not None and bytes(row[0]) == close_digest
+    except (KernelError, sqlite3.Error, OSError):
+        return False
+    finally:
+        if connection is not None:
+            connection.rollback()
+            connection.close()
+
+
+def _prepare_fixed_close_snapshot(
+    path: Path,
+    bundle,
+    job_id: str,
+    payload: dict[str, Any],
+    worker_id: str,
+    attempt: int,
+) -> tuple[Path, str] | None:
+    """Capture once while the seal blocks business writes, then release it.
+
+    The SQLite file is published atomically and its path is durable in
+    ``backup_snapshot``. A restarted worker verifies and reuses that same file.
+    Only operational seal state is marked released inside the copied file.
+    """
+    connection = _backup_connection(path, bundle)
+    try:
+        row = connection.execute(
+            "SELECT s.* FROM backup_snapshot s WHERE s.snapshot_id=? AND s.job_id=?",
+            (payload.get("snapshot_id"), job_id),
+        ).fetchone()
+        if row is None:
+            return None
+        snapshot_path = Path(row["snapshot_path"])
+        period = row["close_period"]
+        close_digest = bytes(row["close_digest"])
+        if row["status"] == "queued" and not snapshot_path.exists():
+            # The active seal was committed atomically with the close. No
+            # business writer can cross this boundary before this copy exists.
+            identity = _identity(connection)
+            checks = {f"expected_{key}": identity[key] for key in identity}
+            _capture_portable_snapshot(path, snapshot_path, bundle, **checks)
+        if not snapshot_path.is_file() or not _snapshot_matches_close(
+            snapshot_path, bundle, period, close_digest
+        ):
+            raise _error("backup_content_invalid", "固定月结快照不匹配关账冻结记录")
+        if row["status"] != "queued" and row["snapshot_sha256"] != _digest(snapshot_path):
+            raise _error("backup_content_invalid", "固定月结快照摘要与持久记录不符")
+        if row["status"] != "queued":
+            return snapshot_path, row["snapshot_sha256"]
+
+        # Normalize only operational backup metadata in the copied database;
+        # business sources, projections, and close evidence stay byte-for-byte
+        # as captured at the barrier.
+        copied = _backup_connection(snapshot_path, bundle)
+        try:
+            copied.execute("BEGIN IMMEDIATE")
+            copied.execute(
+                "UPDATE backup_seal SET released_at=coalesce(released_at,"
+                "strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE job_id=?",
+                (job_id,),
+            )
+            copied.commit()
+        except BaseException:
+            copied.rollback()
+            raise
+        finally:
+            copied.close()
+        snapshot_digest = _digest(snapshot_path)
+        _sync_file(snapshot_path)
+
+        # This short transaction releases new business writes only after the
+        # exact snapshot path and digest are durable and verified.
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE backup_snapshot SET status='captured',snapshot_sha256=?,"
+            "captured_at=coalesce(captured_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) "
+            "WHERE snapshot_id=? AND status='queued'",
+            (snapshot_digest, row["snapshot_id"]),
+        )
+        connection.execute(
+            "UPDATE backup_seal SET released_at=coalesce(released_at,"
+            "strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE job_id=? AND released_at IS NULL",
+            (job_id,),
+        )
+        connection.commit()
+        return snapshot_path, snapshot_digest
+    except BaseException:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def run_backup_jobs(database: str | Path, *, limit: int = 1, _bundle=None) -> list[dict[str, Any]]:
     """Run pending/failed jobs and recover interrupted running backup jobs.
 
@@ -1397,91 +1614,193 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1, _bundle=None) -> li
     path = reject_reparse_path(database)
     if not path.is_file():
         raise _error("backup_content_invalid", "Source company database does not exist")
+    from .backup_tasks import append_attempt_event
+
     outcomes: list[dict[str, Any]] = []
     attempted: list[str] = []
-    with _worker_lock(path) as acquired:
-        if not acquired:
-            return outcomes
-
-        def validate(candidate):
-            verify_schema(candidate, bundle=bundle, kind="company")
-
-        connection = connect(path, validator=validate)
-        try:
-            verify_schema(connection, bundle=bundle, kind="company")
-            for _ in range(limit):
+    worker_id = uuid.uuid4().hex
+    connection = _backup_connection(path, bundle)
+    try:
+        verify_schema(connection, bundle=bundle, kind="company")
+        for _ in range(limit):
+            # The OS lock is held only around the short claim transaction.
+            # Lease heartbeats protect the long packaging phase without keeping
+            # SQLite's writer lock or the process-wide claim lock.
+            with _worker_lock(path) as acquired:
+                if not acquired:
+                    break
                 connection.execute("BEGIN IMMEDIATE")
                 try:
+                    now = int(time.time())
+                    lease_before = now - _BACKUP_LEASE_SECONDS
+                    exhausted = connection.execute(
+                        "SELECT j.id,j.attempts FROM jobs j WHERE j.kind='portable_backup' "
+                        "AND j.status='running' AND j.attempts>=3 AND "
+                        "coalesce((SELECT CAST(strftime('%s',h.event_at) AS INTEGER) "
+                        "FROM backup_attempt_history h WHERE h.job_id=j.id "
+                        "AND h.attempt=j.attempts AND h.event IN('claimed','heartbeat') "
+                        "ORDER BY h.id DESC LIMIT 1),0)<?",
+                        (lease_before,),
+                    ).fetchall()
+                    for stale in exhausted:
+                        append_attempt_event(
+                            connection,
+                            job_id=stale["id"],
+                            attempt=stale["attempts"],
+                            event="failed",
+                            worker_id=worker_id,
+                            error_code="interrupted_retry_exhausted",
+                            error_text="backup worker lease expired after retry limit",
+                        )
+                    if exhausted:
+                        connection.execute(
+                            "UPDATE jobs SET status='failed',last_error=?,error_code=? "
+                            "WHERE id IN (" + ",".join("?" for _ in exhausted) + ")",
+                            (
+                                "interrupted_retry_exhausted",
+                                "interrupted_retry_exhausted",
+                                *(row["id"] for row in exhausted),
+                            ),
+                        )
                     exclude = (
-                        f"AND id NOT IN ({','.join('?' for _ in attempted)})" if attempted else ""
+                        f"AND j.id NOT IN ({','.join('?' for _ in attempted)})" if attempted else ""
                     )
                     job = connection.execute(
-                        "SELECT id,payload FROM jobs WHERE kind='portable_backup' "
-                        "AND status IN ('pending','running','failed') AND attempts<3 "
-                        f"{exclude} ORDER BY attempts,id LIMIT 1",
-                        attempted,
+                        "SELECT j.id,j.payload,j.status,j.attempts,s.snapshot_id,s.snapshot_path "
+                        "FROM jobs j LEFT JOIN backup_snapshot s ON s.job_id=j.id "
+                        "WHERE j.kind='portable_backup' AND j.attempts<3 AND "
+                        "(s.snapshot_id IS NULL OR s.status<>'released') AND "
+                        "(j.status IN ('pending','failed') OR (j.status='running' AND "
+                        "coalesce((SELECT CAST(strftime('%s',h.event_at) AS INTEGER) "
+                        "FROM backup_attempt_history h WHERE h.job_id=j.id "
+                        "AND h.attempt=j.attempts AND h.event IN('claimed','heartbeat') "
+                        "ORDER BY h.id DESC LIMIT 1),0)<?)) "
+                        f"{exclude} ORDER BY j.attempts,j.id LIMIT 1",
+                        (lease_before, *attempted),
                     ).fetchone()
                     if job is None:
                         connection.rollback()
-                        break
-                    connection.execute(
-                        "UPDATE jobs SET status='running',attempts=attempts+1,"
-                        "last_error=NULL,error_code=NULL "
-                        "WHERE id=?",
-                        (job["id"],),
-                    )
-                    connection.commit()
+                    else:
+                        connection.execute(
+                            "UPDATE jobs SET status='running',attempts=attempts+1,"
+                            "last_error=NULL,error_code=NULL WHERE id=?",
+                            (job["id"],),
+                        )
+                        if job["attempts"] and job["status"] == "running":
+                            append_attempt_event(
+                                connection,
+                                job_id=job["id"],
+                                attempt=job["attempts"],
+                                event="worker_lost",
+                                worker_id=worker_id,
+                            )
+                        attempt = job["attempts"] + 1
+                        append_attempt_event(
+                            connection,
+                            job_id=job["id"],
+                            attempt=attempt,
+                            event="claimed",
+                            worker_id=worker_id,
+                        )
+                        connection.commit()
                 except BaseException:
                     connection.rollback()
                     raise
-                attempted.append(job["id"])
-                try:
-                    payload = json.loads(job["payload"])
-                    if not isinstance(payload, dict) or not isinstance(
-                        payload.get("directory"), str
-                    ):
-                        raise _error(
-                            "backup_manifest_invalid",
-                            "Backup job requires an output directory",
-                        )
-                    rollover = payload.get("rollover", False)
-                    if type(rollover) is not bool:
-                        raise _error(
-                            "backup_manifest_invalid", "Backup job rollover must be boolean"
-                        )
-                    result = create_portable(
-                        path,
-                        payload["directory"],
-                        rollover=rollover,
-                        request_id=job["id"],
-                        _bundle=bundle,
+            if job is None:
+                break
+            attempted.append(job["id"])
+            started = time.monotonic()
+            heartbeat_stop = threading.Event()
+            heartbeat = threading.Thread(
+                target=_heartbeat_backup,
+                args=(path, bundle, job["id"], attempt, worker_id, heartbeat_stop),
+                daemon=True,
+            )
+            heartbeat.start()
+            payload = {}
+            try:
+                payload = json.loads(job["payload"])
+                if not isinstance(payload, dict) or not isinstance(
+                    payload.get("directory"), str
+                ):
+                    raise _error(
+                        "backup_manifest_invalid", "Backup job requires an output directory"
                     )
-                    status, error, error_code = "succeeded", None, None
-                except Exception as exc:
-                    from .diagnostics import job_error_code
-
-                    result = None
-                    status, error = "failed", f"{type(exc).__name__}: {exc}"[:500]
-                    error_code = job_error_code(exc)
-                connection.execute("BEGIN IMMEDIATE")
-                try:
-                    connection.execute(
-                        "UPDATE jobs SET status=?,last_error=?,error_code=?,result=? WHERE id=?",
-                        (
-                            status,
-                            error,
-                            error_code,
-                            _json(result) if result is not None else None,
-                            job["id"],
-                        ),
+                rollover = payload.get("rollover", False)
+                if type(rollover) is not bool:
+                    raise _error("backup_manifest_invalid", "Backup job rollover must be boolean")
+                fixed = None
+                if payload.get("snapshot_id"):
+                    fixed = _prepare_fixed_close_snapshot(
+                        path, bundle, job["id"], payload, worker_id, attempt
                     )
-                    connection.commit()
-                except BaseException:
-                    connection.rollback()
-                    raise
-                outcomes.append(
-                    {"id": job["id"], "status": status, "result": result, "error_code": error_code}
+                source = fixed[0] if fixed else path
+                result = create_portable(
+                    source,
+                    payload["directory"],
+                    rollover=rollover,
+                    request_id=job["id"],
+                    _bundle=bundle,
                 )
-        finally:
-            connection.close()
+                status, error, error_code = "succeeded", None, None
+            except Exception as exc:
+                from .diagnostics import job_error_code
+
+                result = None
+                status, error = "failed", f"{type(exc).__name__}: {exc}"[:500]
+                error_code = job_error_code(exc)
+            finally:
+                heartbeat_stop.set()
+                heartbeat.join(timeout=1)
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
+                connection.execute(
+                    "UPDATE jobs SET status=?,last_error=?,error_code=?,result=? WHERE id=?",
+                    (
+                        status,
+                        error,
+                        error_code,
+                        _json(result) if result is not None else None,
+                        job["id"],
+                    ),
+                )
+                if status == "succeeded" and payload.get("snapshot_id"):
+                    connection.execute(
+                        "UPDATE backup_snapshot SET status='published' WHERE snapshot_id=?",
+                        (payload["snapshot_id"],),
+                    )
+                append_attempt_event(
+                    connection,
+                    job_id=job["id"],
+                    attempt=attempt,
+                    event=status,
+                    worker_id=worker_id,
+                    elapsed_ms=elapsed_ms,
+                    error_code=error_code,
+                    error_text=error,
+                )
+                connection.commit()
+            except BaseException as exc:
+                connection.rollback()
+                try:
+                    _append_backup_event(
+                        path,
+                        bundle,
+                        job_id=job["id"],
+                        attempt=attempt,
+                        event="heartbeat",
+                        worker_id=worker_id,
+                        elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+                        error_code="backup_result_writeback_failed",
+                        error_text=f"{type(exc).__name__}: {exc}"[:500],
+                    )
+                except Exception:
+                    pass
+                raise
+            outcomes.append(
+                {"id": job["id"], "status": status, "result": result, "error_code": error_code}
+            )
+    finally:
+        connection.close()
     return outcomes

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from .build import calculator_build_id
+from .runtime_snapshot import pinned_build_id
 from .contracts import KernelError
 from .diagnostics import error_response
 from .security.primitives import IdentityError
@@ -501,7 +501,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
             )
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.build_id = calculator_build_id()
+    server.build_id = pinned_build_id()
     server.browser_tickets = {}
     server.browser_sessions = {}
     server.browser_window_flows = {}

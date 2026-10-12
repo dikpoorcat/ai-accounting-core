@@ -27,6 +27,11 @@
     },
     {
       "type": "index",
+      "name": "backup_attempt_job_order",
+      "sql": "CREATE INDEX backup_attempt_job_order ON backup_attempt_history(job_id,attempt,id)"
+    },
+    {
+      "type": "index",
       "name": "bank_reconciliation_reference",
       "sql": "CREATE INDEX bank_reconciliation_reference ON fact_bank_reconciliation_matches(\n revision_id,reference,source_kind,source_id)"
     },
@@ -84,6 +89,11 @@
       "type": "index",
       "name": "close_reference_related",
       "sql": "CREATE INDEX close_reference_related ON close_reference(related_id,close_period)\n WHERE related_id IS NOT NULL"
+    },
+    {
+      "type": "index",
+      "name": "dashboard_projection_publication_period",
+      "sql": "CREATE INDEX dashboard_projection_publication_period\n ON dashboard_projection_publication(period,source_sequence)"
     },
     {
       "type": "index",
@@ -332,6 +342,11 @@
     },
     {
       "type": "index",
+      "name": "one_active_backup_seal",
+      "sql": "CREATE UNIQUE INDEX one_active_backup_seal ON backup_seal((1)) WHERE released_at IS NULL"
+    },
+    {
+      "type": "index",
       "name": "pending_cause",
       "sql": "CREATE INDEX pending_cause ON pending(cause_id,subject_id)"
     },
@@ -364,6 +379,11 @@
       "type": "index",
       "name": "publication_subject",
       "sql": "CREATE INDEX publication_subject ON calculation_publication(subject_id,posting_period,id)"
+    },
+    {
+      "type": "index",
+      "name": "replay_step_ready",
+      "sql": "CREATE INDEX replay_step_ready ON replay_step(run_id,status,position)"
     },
     {
       "type": "index",
@@ -452,6 +472,21 @@
     },
     {
       "type": "table",
+      "name": "backup_attempt_history",
+      "sql": "CREATE TABLE backup_attempt_history(\n id INTEGER PRIMARY KEY,\n job_id TEXT NOT NULL REFERENCES jobs(id),\n attempt INTEGER NOT NULL CHECK(attempt>0),\n event TEXT NOT NULL CHECK(event IN('claimed','heartbeat','worker_lost','succeeded','failed')),\n worker_id TEXT NOT NULL,\n event_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n elapsed_ms INTEGER CHECK(elapsed_ms IS NULL OR elapsed_ms>=0),\n error_code TEXT,\n error_text TEXT\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "backup_seal",
+      "sql": "CREATE TABLE backup_seal(\n seal_id TEXT PRIMARY KEY,\n snapshot_id TEXT NOT NULL UNIQUE REFERENCES backup_snapshot(snapshot_id),\n job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id),\n close_period INTEGER NOT NULL CHECK(close_period BETWEEN 0 AND 119987),\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n sealed_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n released_at TEXT\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "backup_snapshot",
+      "sql": "CREATE TABLE backup_snapshot(\n snapshot_id TEXT PRIMARY KEY,\n job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id),\n replay_run_id TEXT UNIQUE,\n close_period INTEGER NOT NULL CHECK(close_period BETWEEN 0 AND 119987),\n close_digest BLOB NOT NULL CHECK(length(close_digest)=32),\n snapshot_path TEXT NOT NULL,\n snapshot_sha256 TEXT,\n status TEXT NOT NULL CHECK(status IN('queued','captured','published','released')),\n created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n captured_at TEXT,\n released_at TEXT,\n CHECK((status='queued' AND snapshot_sha256 IS NULL AND captured_at IS NULL\n AND released_at IS NULL)\n OR(status='released' AND released_at IS NOT NULL)\n OR(status IN('captured','published') AND snapshot_sha256 IS NOT NULL\n AND captured_at IS NOT NULL AND released_at IS NULL))\n) STRICT"
+    },
+    {
+      "type": "table",
       "name": "balance",
       "sql": "CREATE TABLE balance(category TEXT NOT NULL,balance_key TEXT NOT NULL,amount INTEGER NOT NULL,\n PRIMARY KEY(category,balance_key)) STRICT"
     },
@@ -514,6 +549,26 @@
       "type": "table",
       "name": "company_note_revision",
       "sql": "CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE\n CHECK(revision>0), text TEXT NOT NULL, digest BLOB NOT NULL CHECK(length(digest)=32),\n evidence_digest BLOB REFERENCES evidence(digest)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_projection_current",
+      "sql": "CREATE TABLE dashboard_projection_current(\n period TEXT PRIMARY KEY,\n publication_id TEXT NOT NULL REFERENCES dashboard_projection_publication(id),\n validated_sequence INTEGER NOT NULL CHECK(validated_sequence>=0)\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_projection_publication",
+      "sql": "CREATE TABLE dashboard_projection_publication(\n id TEXT PRIMARY KEY CHECK(length(id)=64), period TEXT NOT NULL,\n store_id TEXT NOT NULL, model_id BLOB NOT NULL CHECK(length(model_id)=32),\n root_digest BLOB NOT NULL CHECK(length(root_digest)=32),\n source_sequence INTEGER NOT NULL CHECK(source_sequence>=0),\n basis TEXT NOT NULL CHECK(json_valid(basis)),\n dependencies TEXT NOT NULL CHECK(json_valid(dependencies)),\n input_digest BLOB NOT NULL CHECK(length(input_digest)=32),\n created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_projection_request",
+      "sql": "CREATE TABLE dashboard_projection_request(\n period TEXT PRIMARY KEY, target_sequence INTEGER NOT NULL CHECK(target_sequence>=0),\n status TEXT NOT NULL CHECK(status IN('pending','running','ready','failed')),\n priority INTEGER NOT NULL DEFAULT 0 CHECK(priority>=0),\n worker_id TEXT, lease_until_ms INTEGER NOT NULL DEFAULT 0 CHECK(lease_until_ms>=0),\n attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts>=0), error_code TEXT,\n updated_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "dashboard_projection_reset",
+      "sql": "CREATE TABLE dashboard_projection_reset(\n sequence INTEGER PRIMARY KEY CHECK(sequence>0),\n publication_through INTEGER NOT NULL CHECK(publication_through>=0),\n reason TEXT NOT NULL CHECK(reason IN('restore','verified_repair')),\n created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n) STRICT"
     },
     {
       "type": "table",
@@ -1492,6 +1547,11 @@
     },
     {
       "type": "table",
+      "name": "operation_timing",
+      "sql": "CREATE TABLE operation_timing(\n request_id TEXT NOT NULL REFERENCES request(id),\n stage TEXT NOT NULL CHECK(stage IN('queue','calculation','write','authorization','commit','projection')),\n elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms>=0),\n created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n PRIMARY KEY(request_id,stage)\n) STRICT"
+    },
+    {
+      "type": "table",
       "name": "payee_revision",
       "sql": "CREATE TABLE payee_revision(id TEXT PRIMARY KEY,party_id TEXT NOT NULL,\n revision INTEGER NOT NULL CHECK(revision>0),name TEXT NOT NULL,account TEXT NOT NULL,\n evidence_digest BLOB NOT NULL REFERENCES evidence(digest),UNIQUE(party_id,revision)) STRICT"
     },
@@ -1544,6 +1604,26 @@
       "type": "table",
       "name": "read_index_source",
       "sql": "CREATE TABLE read_index_source(source_kind TEXT NOT NULL\n CHECK(source_kind IN ('close','job','audit')),source_id TEXT NOT NULL,\n source_digest BLOB NOT NULL CHECK(length(source_digest)=32),\n PRIMARY KEY(source_kind,source_id)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "replay_binding",
+      "sql": "CREATE TABLE replay_binding(\n run_id TEXT NOT NULL REFERENCES replay_run(id),reference TEXT NOT NULL,field TEXT NOT NULL,\n value TEXT NOT NULL CHECK(json_valid(value)),source_step TEXT NOT NULL,\n PRIMARY KEY(run_id,reference,field),\n FOREIGN KEY(run_id,source_step) REFERENCES replay_step(run_id,step_id)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "replay_plan",
+      "sql": "CREATE TABLE replay_plan(\n id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,payload TEXT NOT NULL CHECK(json_valid(payload)),\n plan_digest BLOB NOT NULL UNIQUE CHECK(length(plan_digest)=32),\n catalog_id TEXT NOT NULL,company_id TEXT NOT NULL,database_id TEXT NOT NULL,\n first_period INTEGER NOT NULL CHECK(first_period BETWEEN 0 AND 119987),\n last_period INTEGER NOT NULL CHECK(last_period BETWEEN first_period AND 119987),\n source_manifest_digest BLOB NOT NULL CHECK(length(source_manifest_digest)=32),\n owner_confirmation BLOB NOT NULL REFERENCES evidence(digest),\n scope_digest BLOB NOT NULL CHECK(length(scope_digest)=32),\n schema_fingerprint TEXT NOT NULL,build_id TEXT NOT NULL,\n authority TEXT NOT NULL CHECK(json_valid(authority)),status TEXT NOT NULL\n CHECK(status IN('prepared','confirmed','stale','completed','blocked')),\n created_at TEXT NOT NULL) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "replay_run",
+      "sql": "CREATE TABLE replay_run(\n id TEXT PRIMARY KEY,plan_id TEXT NOT NULL UNIQUE REFERENCES replay_plan(id),\n request_id TEXT NOT NULL UNIQUE,payload TEXT NOT NULL CHECK(json_valid(payload)),\n status TEXT NOT NULL CHECK(status IN('pending','running','completed','partial','blocked','failed')),\n checkpoint TEXT NOT NULL CHECK(json_valid(checkpoint)),\n current_step TEXT,started_at TEXT,finished_at TEXT,last_error TEXT,error_code TEXT,\n result TEXT CHECK(result IS NULL OR json_valid(result))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "replay_step",
+      "sql": "CREATE TABLE replay_step(\n run_id TEXT NOT NULL REFERENCES replay_run(id),position INTEGER NOT NULL CHECK(position>=0),\n step_id TEXT NOT NULL,command TEXT NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),\n request_id TEXT NOT NULL UNIQUE,request_digest BLOB CHECK(request_digest IS NULL OR length(request_digest)=32),\n dependencies TEXT NOT NULL CHECK(json_valid(dependencies)),output_ref TEXT,\n output_fields TEXT NOT NULL CHECK(json_valid(output_fields)),\n status TEXT NOT NULL CHECK(status IN('pending','running','completed','blocked','failed')),\n response TEXT CHECK(response IS NULL OR json_valid(response)),error_code TEXT,last_error TEXT,\n PRIMARY KEY(run_id,step_id),UNIQUE(run_id,position)) STRICT"
     },
     {
       "type": "table",
@@ -1668,7 +1748,7 @@
     {
       "type": "table",
       "name": "source_change",
-      "sql": "CREATE TABLE source_change(sequence INTEGER PRIMARY KEY CHECK(sequence>0),source TEXT NOT NULL CHECK(source IN('fact','calculation','pending','identity','duplicate','inventory','inventory_item','publication')),target_id TEXT NOT NULL,before_ref TEXT,after_ref TEXT,CHECK(before_ref IS NOT after_ref)) STRICT"
+      "sql": "CREATE TABLE source_change(sequence INTEGER PRIMARY KEY CHECK(sequence>0),source TEXT NOT NULL CHECK(source IN('fact','calculation','pending','identity','duplicate','inventory','inventory_item','publication','evidence','company_note','display_profile','close','entity_profile','commentary')),target_id TEXT NOT NULL,before_ref TEXT,after_ref TEXT,CHECK(before_ref IS NOT after_ref)) STRICT"
     },
     {
       "type": "table",
@@ -1732,6 +1812,16 @@
     },
     {
       "type": "trigger",
+      "name": "backup_attempt_immutable_delete",
+      "sql": "CREATE TRIGGER backup_attempt_immutable_delete BEFORE DELETE ON backup_attempt_history\n BEGIN SELECT RAISE(ABORT,'immutable backup attempt history'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "backup_attempt_immutable_update",
+      "sql": "CREATE TRIGGER backup_attempt_immutable_update BEFORE UPDATE ON backup_attempt_history\n BEGIN SELECT RAISE(ABORT,'immutable backup attempt history'); END"
+    },
+    {
+      "type": "trigger",
       "name": "business_duplicate_check_no_delete",
       "sql": "CREATE TRIGGER business_duplicate_check_no_delete BEFORE DELETE ON business_duplicate_check\n BEGIN SELECT RAISE(ABORT,'immutable duplicate check'); END"
     },
@@ -1777,8 +1867,38 @@
     },
     {
       "type": "trigger",
+      "name": "change_close_insert",
+      "sql": "CREATE TRIGGER change_close_insert AFTER INSERT ON period_close BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'close',CAST(NEW.period AS TEXT),NULL,lower(hex(NEW.digest)) FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_commentary_insert",
+      "sql": "CREATE TRIGGER change_commentary_insert AFTER INSERT ON period_commentary_revision BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'commentary',CAST(NEW.period AS TEXT),(SELECT id FROM period_commentary_revision WHERE period=NEW.period AND revision=NEW.revision-1),NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_company_note_insert",
+      "sql": "CREATE TRIGGER change_company_note_insert AFTER INSERT ON company_note_revision BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'company_note','company',(SELECT id FROM company_note_revision WHERE revision=NEW.revision-1),NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_display_profile_insert",
+      "sql": "CREATE TRIGGER change_display_profile_insert AFTER INSERT ON display_profile_revision BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'display_profile',NEW.kind||':'||NEW.entity_id,(SELECT id FROM display_profile_revision WHERE kind=NEW.kind AND entity_id=NEW.entity_id AND revision=NEW.revision-1),NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
       "name": "change_duplicate_insert",
       "sql": "CREATE TRIGGER change_duplicate_insert AFTER INSERT ON business_duplicate_check BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'duplicate',NEW.proposed_subject_id,NULL,NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_entity_profile_insert",
+      "sql": "CREATE TRIGGER change_entity_profile_insert AFTER INSERT ON entity_profile_revision BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'entity_profile',NEW.entity_id,(SELECT id FROM entity_profile_revision WHERE entity_id=NEW.entity_id AND revision=NEW.revision-1),NEW.id FROM source_change_head WHERE id=1; END"
+    },
+    {
+      "type": "trigger",
+      "name": "change_evidence_insert",
+      "sql": "CREATE TRIGGER change_evidence_insert AFTER INSERT ON evidence BEGIN INSERT INTO source_change(sequence,source,target_id,before_ref,after_ref) SELECT sequence+1,'evidence',lower(hex(NEW.digest)),NULL,lower(hex(NEW.digest)) FROM source_change_head WHERE id=1; END"
     },
     {
       "type": "trigger",
@@ -2044,6 +2164,26 @@
       "type": "trigger",
       "name": "immutable_company_note_revision_UPDATE",
       "sql": "CREATE TRIGGER immutable_company_note_revision_UPDATE BEFORE UPDATE ON company_note_revision BEGIN SELECT RAISE(ABORT,'immutable company_note_revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_dashboard_projection_publication_delete",
+      "sql": "CREATE TRIGGER immutable_dashboard_projection_publication_delete\n BEFORE DELETE ON dashboard_projection_publication\n BEGIN SELECT RAISE(ABORT,'immutable projection publication'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_dashboard_projection_publication_update",
+      "sql": "CREATE TRIGGER immutable_dashboard_projection_publication_update\n BEFORE UPDATE ON dashboard_projection_publication\n BEGIN SELECT RAISE(ABORT,'immutable projection publication'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_dashboard_projection_reset_delete",
+      "sql": "CREATE TRIGGER immutable_dashboard_projection_reset_delete BEFORE DELETE ON dashboard_projection_reset\n BEGIN SELECT RAISE(ABORT,'immutable projection reset'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_dashboard_projection_reset_update",
+      "sql": "CREATE TRIGGER immutable_dashboard_projection_reset_update BEFORE UPDATE ON dashboard_projection_reset\n BEGIN SELECT RAISE(ABORT,'immutable projection reset'); END"
     },
     {
       "type": "trigger",
@@ -3807,6 +3947,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_operation_timing_delete",
+      "sql": "CREATE TRIGGER immutable_operation_timing_delete BEFORE DELETE ON operation_timing\n BEGIN SELECT RAISE(ABORT,'immutable operation timing'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_operation_timing_update",
+      "sql": "CREATE TRIGGER immutable_operation_timing_update BEFORE UPDATE ON operation_timing\n BEGIN SELECT RAISE(ABORT,'immutable operation timing'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_payee_revision_DELETE",
       "sql": "CREATE TRIGGER immutable_payee_revision_DELETE BEFORE DELETE ON payee_revision BEGIN SELECT RAISE(ABORT,'immutable payee_revision'); END"
     },
@@ -5356,5 +5506,5 @@
       "sql": "CREATE TRIGGER source_change_retained BEFORE DELETE ON source_change BEGIN SELECT RAISE(ABORT,'retained source change'); END"
     }
   ],
-  "sha256": "20fcdaa7409a9483c8e79cf2c66d168727424a47f011a0bd8bcbc62fcc5d57a2"
+  "sha256": "3ead9f3bcf5ec7507d31f9ef4b36f5aeb24b91251bab184db3a59b77a39ef3a8"
 }

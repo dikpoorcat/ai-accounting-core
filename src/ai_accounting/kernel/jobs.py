@@ -11,8 +11,9 @@ from .tax_import import run_tax_import_jobs
 
 
 class JobRunner:
-    def __init__(self, catalog, *, interval=5.0):
+    def __init__(self, catalog, *, interval=5.0, callbacks=()):
         self.catalog, self.interval = catalog, interval
+        self.callbacks = tuple(callbacks)
         self.stop_event = threading.Event()
         self.thread = None
         self.last_error = None
@@ -25,18 +26,17 @@ class JobRunner:
                 with _worker_lock(store.path) as acquired:
                     if not acquired:
                         continue
-                    with store.connection() as connection:
-                        connection.execute(
-                            "UPDATE jobs SET status='failed',"
-                            "last_error='interrupted_retry_exhausted',"
-                            "error_code='interrupted_retry_exhausted' "
-                            "WHERE status='running' AND attempts>=3"
-                        )
                 engine = Engine(store)
                 outcomes.extend(run_backup_jobs(store.path, limit=1, _bundle=store.bundle))
                 outcomes.extend(run_export_jobs(engine, limit=1))
                 outcomes.extend(run_report_jobs(engine, limit=1))
                 outcomes.extend(run_tax_import_jobs(engine, limit=1))
+                for callback in self.callbacks:
+                    result = callback(engine)
+                    if isinstance(result, list):
+                        outcomes.extend(result)
+                    elif result is not None:
+                        outcomes.append(result)
             except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"[:500]
                 outcomes.append(

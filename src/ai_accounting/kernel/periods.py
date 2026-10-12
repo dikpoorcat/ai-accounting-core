@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,7 +11,6 @@ from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInfo
 from .types import (
     EvidenceDigest,
     YearMonth,
-    canonical,
     digest,
     evidence_digest_bytes,
     validate_evidence_digests,
@@ -797,8 +795,33 @@ class Periods:
         request_id: str,
         backup_directory: str | None = None,
     ):
+        from .backup_tasks import (
+            CloseBackupPolicy,
+            current_close_backup_policy,
+        )
+
+        backup_policy = current_close_backup_policy(self.engine.store)
+        if backup_policy is None and backup_directory:
+            backup_policy = CloseBackupPolicy.normal(backup_directory)
+        if (
+            backup_policy is not None
+            and backup_policy.mode == "replay"
+            and backup_directory is not None
+            and str(backup_directory) != backup_policy.directory
+        ):
+            raise KernelError("replay_scope_mismatch", "重放月结备份目录与批次策略不一致")
+        policy_identity = (
+            None
+            if backup_policy is None
+            else {
+                "mode": backup_policy.mode,
+                "directory": str(backup_policy.directory),
+                "replay_run_id": backup_policy.replay_run_id,
+                "final": backup_policy.final,
+            }
+        )
         hashed = digest(
-            ["close", period, owner_confirmation, preview_digest, epochs, backup_directory]
+            ["close", period, owner_confirmation, preview_digest, epochs, policy_identity]
         )
         cached = self.engine._cached(request_id, hashed)
         if cached:
@@ -905,24 +928,11 @@ class Periods:
             persist_report_flow(connection, prepared_flow)
             persist_classification_directory(connection, prepared_classifications)
             persist_balance_freeze(connection, prepared_balances)
-            job_id = None
-            if backup_directory:
-                job_id = uuid.uuid4().hex
-                connection.execute(
-                    "INSERT INTO jobs(id,kind,payload,status) VALUES(?,?,?,'pending')",
-                    (
-                        job_id,
-                        "portable_backup",
-                        canonical(
-                            {
-                                "directory": backup_directory,
-                                "rollover": True,
-                                "close_period": period,
-                                "close_digest": close_digest.hex(),
-                            }
-                        ),
-                    ),
-                )
+            from .backup_tasks import enqueue_close_backup
+
+            job_id = enqueue_close_backup(
+                connection, month, close_digest, backup_policy
+            )
             return {
                 "status": "closed",
                 "period": period,

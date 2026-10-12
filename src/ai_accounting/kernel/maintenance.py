@@ -32,6 +32,33 @@ class Maintenance:
         from .integrity import verify_integrity
 
         period = str(YearMonth(period))
+        from .dashboard_async import (
+            _queue,
+            delivery_state,
+            reset_after_restore,
+            sequence,
+            supported,
+        )
+        with self.store.connection(read_only=True) as connection:
+            asynchronous = supported(connection)
+        if asynchronous:
+            state = delivery_state(self.engine, period)
+
+            def schedule(connection):
+                reset = state["state"] == "failed" and state["reason"] == "corrupt"
+                if reset:
+                    reset_after_restore(connection, reason="verified_repair")
+                    revision = advance_repair_revision(connection)
+                else:
+                    revision = repair_revision(connection)
+                _queue(connection, period, sequence(connection), priority=100)
+                return {"status": "pending", "period": period, "changed": reset,
+                        "read_repair_revision": revision}
+
+            return self.engine._write(
+                request_id, digest(["rebuild_dashboard_read_model", period]), None, (),
+                "dashboard_projection_repair", schedule,
+            )
 
         def operation(connection):
             if not supports_model(connection):

@@ -423,6 +423,8 @@ class _Snapshot:
 
     def release(self):
         """Drop helper views and their back-references at the read boundary."""
+        for manager in self.__dict__.get("semantic_cache", {}).get("derived_resources", ()):
+            manager.__exit__(None, None, None)
         self.__dict__.clear()
 
     @cached_property

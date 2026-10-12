@@ -268,6 +268,14 @@ class _Authority:
             "inventory",
             "inventory_item",
             "publication",
+            # These typed metadata/freeze sources do not alter duplicate
+            # authority, but they are retained in the same ordered journal.
+            "evidence",
+            "company_note",
+            "display_profile",
+            "entity_profile",
+            "commentary",
+            "close",
         }:
             raise ValueError("unknown authority change source")
 

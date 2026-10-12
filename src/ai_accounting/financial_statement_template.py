@@ -8,7 +8,6 @@ import re
 import zipfile
 from datetime import date
 from decimal import Decimal
-from importlib import resources
 from typing import Any
 from xml.sax.saxutils import escape, quoteattr
 
@@ -138,12 +137,9 @@ CASH_FLOW_NAMES = {
 
 
 def _template_bytes() -> bytes:
-    data = (
-        resources.files("ai_accounting")
-        .joinpath("templates/financial_reports")
-        .joinpath(TEMPLATE_FILE_NAME)
-        .read_bytes()
-    )
+    from .kernel.runtime_snapshot import static_resource_bytes
+
+    data = static_resource_bytes(f"templates/financial_reports/{TEMPLATE_FILE_NAME}")
     if hashlib.sha256(data).hexdigest().upper() != TEMPLATE_SHA256:
         raise ValueError("FINANCIAL_STATEMENT_TEMPLATE_VERSION_MISMATCH")
     return data

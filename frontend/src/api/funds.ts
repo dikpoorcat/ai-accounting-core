@@ -1,7 +1,9 @@
-import { requestGeneratedJson } from "./client";
+import { requestGeneratedDashboard, requestGeneratedJson, type DashboardDeliveryAttempt } from "./client";
 import { validDashboardCollections } from "./dashboardContracts";
 import type { DashboardFundsContract, DashboardFundsResponse } from "./generated/dashboardFunds";
+import type { DashboardFundsDeliveryResponse } from "./generated/dashboardFundsDelivery";
 import { validateDashboardFundsResponse } from "./generated/dashboardFunds.js";
+import { validateDashboardFundsDeliveryResponse } from "./generated/dashboardFundsDelivery.js";
 
 export type FundsDashboardResponse = DashboardFundsResponse;
 export type FundsData = DashboardFundsContract.FundsData;
@@ -49,17 +51,40 @@ function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolea
     && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
 }
 
-export function requestDashboardFunds(path: string, options: { signal?: AbortSignal } = {}): Promise<DashboardFundsResponse> {
-  return requestGeneratedJson(path, "/api/dashboard/funds", validateDashboardFundsResponse, fundsMatchesRequest, options);
+function inspectDelivery(delivery: DashboardFundsDeliveryResponse): DashboardDeliveryAttempt<DashboardFundsResponse> {
+  if (delivery.state === "ready") {
+    return { state: "ready", response: delivery.response, modelVersion: delivery.model_version };
+  }
+  if (delivery.state === "preparing") return { state: "preparing", retryAfterMs: delivery.retry_after_ms };
+  return { state: "failed", reason: delivery.reason };
 }
 
-export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}) {
+function matchesDeliveryRequest(url: URL, delivery: DashboardFundsDeliveryResponse): boolean {
+  const companyId = url.searchParams.get("company_id");
+  const period = url.searchParams.get("period");
+  if ((companyId !== null && delivery.company_id !== companyId) || (period !== null && delivery.period !== period)) return false;
+  return delivery.state !== "ready"
+    || (delivery.model_version === delivery.response.snapshot_version
+      && delivery.response.read_context.company_id === delivery.company_id
+      && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
+}
+
+export function requestDashboardFunds(path: string, options: { signal?: AbortSignal; onPreparing?: () => void } = {}): Promise<DashboardFundsResponse> {
+  return requestGeneratedDashboard(
+    path, "/api/dashboard/funds", validateDashboardFundsDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
+    validateDashboardFundsResponse, fundsMatchesRequest, options,
+  );
+}
+
+export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}, onPreparing?: () => void) {
   const { limit = 20, ...filters } = options;
   const query = new URLSearchParams({ limit: String(limit), ...(periodKey ? { period: periodKey } : {}), ...filters });
   query.set("preparation", "deferred");
-  return requestDashboardFunds(`/api/dashboard/funds?${query}`, {
-    signal,
-  });
+  const path = `/api/dashboard/funds?${query}`;
+  if (filters.section || filters.expected_version) {
+    return requestGeneratedJson(path, "/api/dashboard/funds", validateDashboardFundsResponse, fundsMatchesRequest, { signal });
+  }
+  return requestDashboardFunds(path, { signal, onPreparing });
 }
 
 // Keep selector labels across source navigation without adding cached rows to a page.

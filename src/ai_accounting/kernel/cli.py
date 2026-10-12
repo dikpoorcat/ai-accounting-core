@@ -7,10 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-from .daemon import ServiceClient, default_root
-from .diagnostics import error_response
-
-
 def main():
     parser = argparse.ArgumentParser(description="本地 SQLite 确定性会计内核")
     parser.add_argument("--root", type=Path)
@@ -45,8 +41,28 @@ def main():
     )
     security.add_argument("--input", type=Path)
     args = parser.parse_args()
+    from .diagnostics import error_response
+
     try:
-        args.root = args.root if args.root is not None else default_root()
+        if args.root is None:
+            import os
+
+            configured_root = os.environ.get("FINANCE_DATA_ROOT")
+            if not configured_root:
+                from .contracts import KernelError
+
+                raise KernelError(
+                    "data_root_required", "请使用启动器，或明确指定 --root / FINANCE_DATA_ROOT"
+                )
+            args.root = Path(configured_root)
+        if args.mode == "daemon":
+            from .runtime_snapshot import bootstrap_runtime
+
+            bootstrap_runtime(args.root)
+        from .daemon import ServiceClient, default_root
+
+        if args.root is None:
+            args.root = default_root()
     except Exception as exc:
         print(json.dumps(error_response(exc), ensure_ascii=False))
         raise SystemExit(1) from None

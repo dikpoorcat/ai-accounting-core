@@ -73,6 +73,7 @@ const updateNotice = ref("");
 const loading = ref(false);
 const initializing = ref(true);
 const requestError = ref("");
+const preparing = ref(false);
 let activeRequest: AbortController | null = null;
 let mounted = true;
 let requestGeneration = 0;
@@ -220,7 +221,7 @@ function invalidateRequests(keepContent = false) {
   activeRequest?.abort(); cancelPages();
   activeRequest = null;
   if (!keepContent) { openedMovementIds.value.clear(); snapshotVersion.value = ""; funds.value = null; responsePeriod.value = ""; }
-  loading.value = keepContent;
+  loading.value = keepContent; preparing.value = false;
 }
 
 function selectMovementAccount(value: string) {
@@ -425,10 +426,15 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
   const shouldRestoreSection = funds.value !== null;
   if (!contextGate) { openedMovementIds.value.clear(); snapshotVersion.value = ""; funds.value = null; }
   activeRequest = controller;
-  loading.value = true;
+  loading.value = true; preparing.value = false;
   requestError.value = "";
   try {
-    const request = fetchFundsDashboard(periodKey, controller.signal, filters);
+    const request = fetchFundsDashboard(periodKey, controller.signal, filters, () => {
+      if (!isCurrent(generation, selection) || activeRequest !== controller) return;
+      preparing.value = true; funds.value = null; snapshotVersion.value = "";
+      responsePeriod.value = ""; selectedPeriodLabel.value = "";
+      cancelPages();
+    });
     const response = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
     const selected = response.data?.selected_movement_account;
@@ -438,6 +444,7 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
       requestedFilters = JSON.stringify(queryFilters());
     }
     const data = response.data;
+    preparing.value = false;
     prepareDashboardCollections(data);
     funds.value = data;
     if (data) rememberFundAccounts(queryText("company_id"), periodKey, data.collections.accounts?.items ?? []);
@@ -462,6 +469,7 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
   } catch (error: unknown) {
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
     funds.value = null; snapshotVersion.value = "";
+    preparing.value = false;
     requestError.value = dashboardErrorMessage(error);
   } finally {
     if (isCurrent(generation, selection) && activeRequest === controller) {
@@ -578,6 +586,7 @@ async function refreshCurrent(keepContent: boolean) {
   } catch (caught) {
     if (isCurrent(generation, selection)) {
       funds.value = null; snapshotVersion.value = ""; loading.value = false;
+      preparing.value = false;
       requestError.value = dashboardErrorMessage(caught);
       if (updateNotice.value === "资料已更新，正在重新读取。") updateNotice.value = "资料已更新，请重新读取当前筛选。";
     }
@@ -935,8 +944,8 @@ onBeforeUnmount(() => {
         class="state-panel loading-state"
         aria-live="polite"
       >
-        <strong>正在读取资金数据…</strong>
-        <span>正在读取所选月份的账户余额与收付款。</span>
+        <strong>{{ preparing ? "资金看板正在更新" : "正在读取资金数据…" }}</strong>
+        <span>{{ preparing ? "正在准备所选月份的最新数据，请稍候…" : "正在读取所选月份的账户余额与收付款。" }}</span>
       </section>
 
       <section v-else-if="!periods.length" class="state-panel">

@@ -76,6 +76,88 @@ class ResponseObject(TypedDict):
     __pydantic_config__ = ConfigDict(strict=True, extra="forbid")
 
 
+class ReplayPreparedResponse(ResponseObject):
+    status: Literal["prepared"]
+    plan_id: str
+    plan_digest: str
+    source_summary: JsonValue
+    steps: list[str]
+    scope_digest: str
+    build_id: str
+    schema_fingerprint: str
+    boundary: JsonValue
+
+
+class ReplayQueuedResponse(ResponseObject):
+    status: Literal["pending"]
+    run_id: str
+
+
+class ReplayStepStatus(ResponseObject):
+    step_id: str
+    command: str
+    status: Literal["pending", "running", "completed", "blocked", "failed"]
+    error_code: str | None
+    last_error: str | None
+
+
+class ReplayClosedPrefix(ResponseObject):
+    period: Month
+    digest: str
+
+
+class ReplayBackupTask(ResponseObject):
+    id: str
+    status: Literal["pending", "running", "succeeded", "failed"]
+    error_code: str | None
+    result: JsonValue | None
+
+
+class ReplayProgress(ResponseObject):
+    completed_steps: Count
+    total_steps: Count
+    current_phase: str | None
+    closed_through: Month | None
+    closed_prefix: ReplayClosedPrefix | None
+    backup_task: ReplayBackupTask | None
+    step_timings_ms: dict[str, dict[str, Count]]
+
+
+class ReplayReceipt(ResponseObject):
+    step_id: str
+    command: str
+    request_id: str
+    status: Literal["pending", "running", "completed", "blocked", "failed"]
+    response: JsonValue | None
+    error_code: str | None
+    last_error: str | None
+
+
+class ReplayStatusResponse(ResponseObject):
+    status: Literal["pending", "running", "completed", "partial", "blocked", "failed"]
+    run_id: str
+    current_step: str | None
+    context_valid: bool
+    context_issues: list[str]
+    steps: list[ReplayStepStatus]
+    steps_truncated: bool
+    progress: ReplayProgress
+    result: JsonValue | None
+    receipt: NotRequired[ReplayReceipt]
+
+
+class ReplayClassificationItemResponse(ResponseObject):
+    source_id: str
+    status: Literal["prepared", "needs_information"]
+    line: JsonValue | None
+    issues: list[JsonValue]
+
+
+class ReplayClassificationResponse(ResponseObject):
+    status: Literal["prepared"]
+    items: list[ReplayClassificationItemResponse]
+
+
 class SavedInventoryItem(ResponseObject):
     period: Month
     category: WorkArea
@@ -2960,7 +3042,47 @@ class WorkDraftListResponse(ResponseObject):
     next_cursor: str | None
 
 
+class DashboardDeliveryBase(ResponseObject):
+    schema_version: Literal[6]
+    company_id: str
+    period: str | None
+    model_version: str | None
+
+
+class DashboardReady(DashboardDeliveryBase, Generic[T]):  # noqa: UP046
+    state: Literal["ready"]
+    response: T
+
+
+class DashboardPreparing(DashboardDeliveryBase):
+    state: Literal["preparing"]
+    retry_after_ms: Annotated[int, Field(ge=100, le=30000)]
+
+
+class DashboardFailed(DashboardDeliveryBase):
+    state: Literal["failed"]
+    reason: Literal["corrupt", "production_failed"]
+
+
+def delivery_adapter(response):
+    return TypeAdapter(Annotated[
+        DashboardReady[response] | DashboardPreparing | DashboardFailed,
+        Field(discriminator="state"),
+    ])
+
+
 RESPONSE_ADAPTERS = {
+    "prepare_replay": TypeAdapter(ReplayPreparedResponse),
+    "confirm_replay": TypeAdapter(ReplayQueuedResponse),
+    "resume_replay": TypeAdapter(ReplayQueuedResponse),
+    "replay_status": TypeAdapter(ReplayStatusResponse),
+    "replay_classification_prepare": TypeAdapter(ReplayClassificationResponse),
+    "confirm_replay_close_range": TypeAdapter(ReplayQueuedResponse),
+    "dashboard_brief_delivery": delivery_adapter(DashboardBriefResponse),
+    "dashboard_funds_delivery": delivery_adapter(FundsDashboardResponse),
+    "dashboard_employees_delivery": delivery_adapter(DashboardEmployeesResponse),
+    "dashboard_assets_delivery": delivery_adapter(DashboardAssetsResponse),
+    "dashboard_quarterly_report_delivery": delivery_adapter(DashboardQuarterlyReportResponse),
     "inventory_batch": TypeAdapter(SavedInventoryBatch),
     "workflow": TypeAdapter(Annotated[WorkflowResponse, AfterValidator(_workflow_issue_targets)]),
     "period_readiness": TypeAdapter(PeriodReadinessResponse),

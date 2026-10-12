@@ -397,6 +397,30 @@ class MixedBook:
             self.item("payroll_income_tax_policy", "income-tax", tax),
             self.item("vat_policy", "vat", {"period": month_at(0), "policy": vat}),
             self.item("surtax_policy", "surtax", {"period": month_at(0), "policy": surtax}),
+            # A zero-opening declaration is still a formally adopted package.
+            # Do not rely on the report-profile shortcut: production adoption
+            # requires the owner to state every opening category explicitly.
+            self.item(
+                "opening_package",
+                "opening",
+                {
+                    "period": month_at(0),
+                    "package_id": "opening",
+                    "counts": {
+                        "bank": 0,
+                        "cash": 0,
+                        "counterparties": 0,
+                        "assets": 0,
+                        "loans": 0,
+                        "taxes": 0,
+                        "payroll_payables": 0,
+                        "payroll_cumulative": 0,
+                        "equity": 0,
+                    },
+                    "members": [],
+                    "completeness_confirmed": True,
+                },
+            ),
         ]
         for i, employee in enumerate(self.employees):
             data = profile(
@@ -419,6 +443,7 @@ class MixedBook:
             )
         )
         self.save(items)
+        self.publish(["opening"])
         self.publish(["bank-start"])
 
     def report_basis(self, period):

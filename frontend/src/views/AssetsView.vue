@@ -50,6 +50,7 @@ const { context, load: loadContext, refresh: refreshContext } = useDashboardCont
 const selectedPeriod = ref("");
 const response = shallowRef<AssetsDashboardResponse | null>(null);
 const loading = ref(false);
+const preparing = ref(false);
 const errorMessage = ref("");
 const displayMode = ref<"cards" | "list">("cards");
 const listInitialized = ref(false);
@@ -171,15 +172,18 @@ async function loadAssets(period: string, contextGate?: Promise<void>) {
   selectedPeriod.value = period;
   if (!contextGate) response.value = null;
   errorMessage.value = "";
-  loading.value = true;
+  loading.value = true; preparing.value = false;
   try {
     const request = fetchAssetsDashboard(period, controller.signal, {
       asset_filter: focusedAssetId.value ? "all" : filter.value,
       asset_id: focusedAssetId.value || undefined,
       project_id: focusedProjectId.value || undefined,
+    }, () => {
+      if (!isCurrent(generation, selection) || activeController !== controller) return;
+      preparing.value = true; response.value = null; clearPageRequests();
     });
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
-    if (isCurrent(generation, selection) && activeController === controller) { prepareDashboardCollections(result.data); response.value = result; updateNotice.value = ""; loading.value = false; }
+    if (isCurrent(generation, selection) && activeController === controller) { prepareDashboardCollections(result.data); response.value = result; preparing.value = false; updateNotice.value = ""; loading.value = false; }
     await nextTick();
     if (isCurrent(generation, selection) && activeController === controller && route.hash === "#assets-attention-title") {
       const heading = document.getElementById(route.hash.slice(1));
@@ -197,7 +201,7 @@ async function loadAssets(period: string, contextGate?: Promise<void>) {
       if (card) { positionSection(card); card.focus({ preventScroll: true }); }
     }
   } catch (error: unknown) {
-    if (isCurrent(generation, selection) && activeController === controller) { response.value = null; errorMessage.value = dashboardErrorMessage(error); }
+    if (isCurrent(generation, selection) && activeController === controller) { response.value = null; preparing.value = false; errorMessage.value = dashboardErrorMessage(error); }
   } finally {
     if (isCurrent(generation, selection) && activeController === controller) {
       loading.value = false;
@@ -234,7 +238,7 @@ async function refreshCurrent(keepContent: boolean) {
       if (isCurrent(generation, selection)) await synchronizePeriod(true);
     }
   } catch (error: unknown) {
-    if (isCurrent(generation, selection)) { response.value = null; loading.value = false; errorMessage.value = dashboardErrorMessage(error); }
+    if (isCurrent(generation, selection)) { response.value = null; preparing.value = false; loading.value = false; errorMessage.value = dashboardErrorMessage(error); }
   }
 }
 
@@ -245,7 +249,7 @@ function invalidateRequests(keepContent = false) {
   activeController?.abort(); activeController = null;
   clearPageRequests();
   if (!keepContent) response.value = null;
-  loading.value = keepContent;
+  loading.value = keepContent; preparing.value = false;
 }
 
 async function reloadCollection(section: "assets" | "projects") {
@@ -546,8 +550,8 @@ onBeforeUnmount(() => {
 
       <p v-if="updateNotice" class="note" role="status">{{ updateNotice }}</p>
       <section v-if="loading" class="state-panel" aria-live="polite">
-        <strong>正在加载资产数据…</strong>
-        <span>正在读取所选月份的资产明细。</span>
+        <strong>{{ preparing ? "资产看板正在更新" : "正在加载资产数据…" }}</strong>
+        <span>{{ preparing ? "正在准备所选月份的最新数据，请稍候…" : "正在读取所选月份的资产明细。" }}</span>
       </section>
 
       <section v-else-if="errorMessage" class="state-panel error" role="alert">

@@ -58,11 +58,15 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
     assert brief["voucher_count"] == brief["activity_count"]
     for voucher in vouchers["items"]:
         assert {
-            "number", "voucher_version_id", "subject_id", "amount_fen", "lines"
+            "number",
+            "voucher_version_id",
+            "subject_id",
+            "amount_fen",
+            "lines",
         } <= voucher.keys()
-        assert not {
-            "field_sources", "evidence", "components", "funds", "settlements"
-        } & voucher.keys()
+        assert (
+            not {"field_sources", "evidence", "components", "funds", "settlements"} & voucher.keys()
+        )
         assert type(voucher["has_business_progress"]) is bool
     assert brief["collections"]["activity"]["page"]["returned_count"] == len(
         brief["collections"]["activity"]["items"]
@@ -72,7 +76,10 @@ def test_live_shapes_preserve_native_types_omission_and_null(samples):
 def test_brief_four_scopes_are_strict_and_discriminated(samples):
     schema = response_schemas()["dashboard_brief"]
     assert set(schema["discriminator"]["mapping"]) == {
-        "overview", "activity", "open_items", "vouchers"
+        "overview",
+        "activity",
+        "open_items",
+        "vouchers",
     }
     assert len(schema["oneOf"]) == 4
     for scope in ("overview", "activity", "open_items", "vouchers"):
@@ -114,9 +121,9 @@ def test_brief_voucher_progress_is_required_strict_boolean(samples, value):
         validate_response("dashboard_brief", response)
 
 
-@pytest.mark.parametrize("field", [
-    "contribution_group_key", "contribution_component", "payroll_period"
-])
+@pytest.mark.parametrize(
+    "field", ["contribution_group_key", "contribution_component", "payroll_period"]
+)
 def test_brief_contribution_metadata_is_required_and_nullable(samples, field):
     response = copy.deepcopy(samples["brief_payroll_members"]["response"])
     item = response["data"]["collections"]["members"]["items"][0]
@@ -127,12 +134,15 @@ def test_brief_contribution_metadata_is_required_and_nullable(samples, field):
         validate_response("dashboard_brief_group", response)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("contribution_component", "net"),
-    ("contribution_component", "social"),
-    ("payroll_period", "2026-13"),
-    ("payroll_period", "2026-01-01"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("contribution_component", "net"),
+        ("contribution_component", "social"),
+        ("payroll_period", "2026-13"),
+        ("payroll_period", "2026-01-01"),
+    ],
+)
 def test_brief_rejects_invalid_contribution_metadata(samples, field, value):
     response = copy.deepcopy(samples["brief_payroll_members"]["response"])
     response["data"]["collections"]["members"]["items"][0][field] = value
@@ -140,15 +150,18 @@ def test_brief_rejects_invalid_contribution_metadata(samples, field, value):
         validate_response("dashboard_brief_group", response)
 
 
-@pytest.mark.parametrize("path", [
-    ("financial_position", "assets_fen"),
-    ("financial_position", "bank_calculation", "opening_fen"),
-    ("financial_position", "liability_calculation", "current_fen"),
-    ("workforce_cost", "total_fen"),
-    ("workforce_cost", "capitalized_labor_fen"),
-    ("workforce_cost", "employee", "gross_salary_fen"),
-    ("workforce_cost", "personal_labor", "total_fen"),
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("financial_position", "assets_fen"),
+        ("financial_position", "bank_calculation", "opening_fen"),
+        ("financial_position", "liability_calculation", "current_fen"),
+        ("workforce_cost", "total_fen"),
+        ("workforce_cost", "capitalized_labor_fen"),
+        ("workforce_cost", "employee", "gross_salary_fen"),
+        ("workforce_cost", "personal_labor", "total_fen"),
+    ],
+)
 def test_restored_summary_amounts_use_exact_int64_contract(samples, path):
     response = copy.deepcopy(samples["brief"]["response"])
     target = response["data"]
@@ -177,9 +190,14 @@ def test_long_term_asset_summary_uses_exact_fen_and_nonnegative_integer_counts(s
         assert http_response("dashboard_brief", response)["data"]["long_term_assets"][
             "net_fen"
         ] == str(amount)
-    for field, invalid in (("net_fen", None), ("net_fen", 1.0), ("net_fen", 2**63),
-                           ("fixed_active_count", -1), ("fixed_active_count", True),
-                           ("intangible_active_count", 1.0)):
+    for field, invalid in (
+        ("net_fen", None),
+        ("net_fen", 1.0),
+        ("net_fen", 2**63),
+        ("fixed_active_count", -1),
+        ("fixed_active_count", True),
+        ("intangible_active_count", 1.0),
+    ):
         changed = copy.deepcopy(response)
         changed["data"]["long_term_assets"][field] = invalid
         with pytest.raises(KernelError):
@@ -508,7 +526,7 @@ def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
     native = service.dispatch("dashboard_funds", {"company_id": company}, session_token=token)
     assert type(native["schema_version"]) is int
     checked.clear()
-    adapter = RESPONSE_ADAPTERS["dashboard_funds"]
+    adapter = RESPONSE_ADAPTERS["dashboard_funds_delivery"]
     original_json = type(adapter).dump_json
     original_python = type(adapter).dump_python
     serialized = {"json": 0, "python": 0}
@@ -532,7 +550,8 @@ def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
     assert status == 200
     assert checked == ["dashboard_funds"]
     assert serialized == {"json": 1, "python": 0}
-    assert response["data"] is None
+    assert response["state"] == "ready"
+    assert response["response"]["data"] is None
     with pytest.raises(KernelError) as failure:
         service.dispatch(
             "workflow", {"company_id": company}, session_token=token, response_format="http"
@@ -557,8 +576,8 @@ def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
             response_format="http_json",
         )
         assert json.loads(wire_json) == wire
-        assert native["data"]["total_fen"] == amount
-        assert wire["data"]["total_fen"] == (None if amount is None else str(amount))
+        assert native["response"]["data"]["total_fen"] == amount
+        assert wire["response"]["data"]["total_fen"] == (None if amount is None else str(amount))
 
 
 @pytest.mark.parametrize(
@@ -741,9 +760,13 @@ def test_today_backend_samples_pass_generated_browser_validators(samples, tmp_pa
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("sample_name, command", [
-    ("first_account_funds", "dashboard_funds"), ("asset_payment_summary", "dashboard_assets"),
-])
+@pytest.mark.parametrize(
+    "sample_name, command",
+    [
+        ("first_account_funds", "dashboard_funds"),
+        ("asset_payment_summary", "dashboard_assets"),
+    ],
+)
 def test_new_page_versions_require_native_integers(samples, sample_name, command):
     value = copy.deepcopy(samples[sample_name]["response"])
     value["schema_version"] = 9.0

@@ -33,6 +33,28 @@ def read_quarterly_report(dashboard, connection, year, quarter, *, as_of):
     if producing_model() or not supports_model(connection):
         return None
     start, end = f"{year:04d}-{quarter * 3 - 2:02d}", f"{year:04d}-{quarter * 3:02d}"
+    from .dashboard_async import supported, load_for_snapshot
+    if supported(connection):
+        from .dashboard import _Snapshot
+        from .storage import _active_fact_reads
+        registered = connection.execute(
+            "SELECT period FROM dashboard_projection_request WHERE period BETWEEN ? AND ? "
+            "ORDER BY period DESC LIMIT 1", (start, end),
+        ).fetchone()
+        if registered is None:
+            return None
+        snap = _Snapshot(dashboard.engine, connection, registered[0], _active_fact_reads.get())
+        try:
+            model = load_for_snapshot(dashboard.engine, snap)
+            if model is None:
+                return None
+            block = model.read_page_block("quarterly_report/default/overview/0")
+            if block.sources or block.fact_sources or block.voucher_version_ids:
+                raise _invalid()
+            return {**block.payload, "checked_at": datetime.now(UTC).isoformat(),
+                    "read_context": dashboard._read_context(connection, as_of)}
+        finally:
+            snap.release()
     # Registration belongs to immutable production receipts. A missing latest
     # locator must reach load_model's corruption checks, not select an earlier
     # month or disguise the damage as an unregistered-quarter native fallback.
@@ -291,6 +313,8 @@ def read_page(
     default_key = f"{page}/{variant}/overview/0"
     if not model.has_block(default_key):
         return None
+    if model.descriptor.content_version >= 5 and (section is not None or cursor is not None):
+        return None  # bounded native continuation/detail, produced only on demand
     if page == "brief" and section is not None:
         # Native brief continuations return only this collection. Its complete
         # authenticated directory supplies counts and cursor context; decoding
@@ -339,6 +363,8 @@ def read_page(
     elif page == "assets":
         same_selection = all(data[field] == value for field, value in filters.items())
     use_default = section is None and limit == 20 and same_selection
+    if model.descriptor.content_version >= 5 and not use_default:
+        return None
     if (
         page in {"funds", "employees", "assets"}
         and model.root.date_basis is not None

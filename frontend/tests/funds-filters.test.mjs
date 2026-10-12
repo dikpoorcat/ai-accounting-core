@@ -22,7 +22,7 @@ async function fundsApi(requestDashboardFunds = async () => ({})) {
   const key = `fundsApiHarness${++harnessNumber}`;
   globalThis[key] = requestDashboardFunds;
   const source = readFileSync(new URL("../src/api/funds.ts", import.meta.url), "utf8").replace(/import[^;]+;/g, "");
-  const { outputText } = ts.transpileModule(`const validateDashboardFundsResponse = () => true;\nconst requestGeneratedJson = (url, _endpoint, _validator, _matches, options) => globalThis.${key}(url, options);\n` + source, {
+  const { outputText } = ts.transpileModule(`const validateDashboardFundsResponse = () => true;\nconst validateDashboardFundsDeliveryResponse = () => true;\nconst requestGeneratedJson = (url, _endpoint, _validator, _matches, options) => globalThis.${key}(url, options);\nconst requestGeneratedDashboard = (url, _endpoint, _deliveryValidator, _inspect, _matchesDelivery, _responseValidator, _matchesResponse, options) => globalThis.${key}(url, options);\n` + source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);

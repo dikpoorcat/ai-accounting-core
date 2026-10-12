@@ -1,7 +1,9 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
-import { requestGeneratedJson } from "./client";
+import { requestGeneratedDashboard, requestGeneratedJson, type DashboardDeliveryAttempt } from "./client";
 import type { DashboardAssetsContract, DashboardAssetsResponse } from "./generated/dashboardAssets";
+import type { DashboardAssetsDeliveryResponse } from "./generated/dashboardAssetsDelivery";
 import { validateDashboardAssetsResponse } from "./generated/dashboardAssets.js";
+import { validateDashboardAssetsDeliveryResponse } from "./generated/dashboardAssetsDelivery.js";
 
 export type AssetsDashboardResponse = DashboardAssetsResponse;
 export type AssetsDashboardData = DashboardAssetsContract.AssetsData;
@@ -35,11 +37,36 @@ function matchesRequest(url: URL, response: DashboardAssetsResponse) {
     && (section === null || (response.data !== null && section in response.data.collections));
 }
 
-export function fetchAssetsDashboard(period: string, signal?: AbortSignal, options: AssetsQuery = {}) {
+function inspectDelivery(delivery: DashboardAssetsDeliveryResponse): DashboardDeliveryAttempt<DashboardAssetsResponse> {
+  if (delivery.state === "ready") {
+    return { state: "ready", response: delivery.response, modelVersion: delivery.model_version };
+  }
+  if (delivery.state === "preparing") return { state: "preparing", retryAfterMs: delivery.retry_after_ms };
+  return { state: "failed", reason: delivery.reason };
+}
+
+function matchesDeliveryRequest(url: URL, delivery: DashboardAssetsDeliveryResponse): boolean {
+  const companyId = url.searchParams.get("company_id");
+  const period = url.searchParams.get("period");
+  if ((companyId !== null && delivery.company_id !== companyId) || period !== delivery.period) return false;
+  return delivery.state !== "ready"
+    || (delivery.model_version === delivery.response.snapshot_version
+      && delivery.response.read_context.company_id === delivery.company_id
+      && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
+}
+
+export function fetchAssetsDashboard(period: string, signal?: AbortSignal, options: AssetsQuery = {}, onPreparing?: () => void) {
   const query = new URLSearchParams({ period, preparation: "deferred" });
   pageQuery(query, options);
   if (options.asset_filter) query.set("asset_filter", options.asset_filter);
   if (options.asset_id) query.set("asset_id", options.asset_id);
   if (options.project_id) query.set("project_id", options.project_id);
-  return requestGeneratedJson(`/api/dashboard/assets?${query}`, "/api/dashboard/assets", validateDashboardAssetsResponse, matchesRequest, { signal });
+  const path = `/api/dashboard/assets?${query}`;
+  if (options.section || options.expected_version) {
+    return requestGeneratedJson(path, "/api/dashboard/assets", validateDashboardAssetsResponse, matchesRequest, { signal });
+  }
+  return requestGeneratedDashboard(
+    path, "/api/dashboard/assets", validateDashboardAssetsDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
+    validateDashboardAssetsResponse, matchesRequest, { signal, onPreparing },
+  );
 }

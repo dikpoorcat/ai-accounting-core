@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -37,6 +38,15 @@ from .types import (
 )
 
 PROGRAM_VERSION = calculator_build_id()
+_writer_locks = {}
+_writer_locks_guard = threading.Lock()
+
+
+def company_write_lock(store):
+    """One writer per actual company file; unrelated companies never share it."""
+    identity = str(store.path.resolve()).casefold()
+    with _writer_locks_guard:
+        return _writer_locks.setdefault(identity, threading.RLock())
 
 
 def _reject_binary_numbers(value):
@@ -175,12 +185,13 @@ class Engine:
         self, key, request_hash, expected, lanes, action, operation,
         *, checked_lanes=None, _dashboard_periods=(),
     ):
+        from .backup_tasks import check_write_allowed
         from .dashboard_model_runtime import (
             INTERNAL_REQUEST_PREFIX,
             changed_periods,
-            materialize_models,
             supports_native_production,
         )
+        from .replay_runner import after_replay_write, before_replay_write
 
         if not isinstance(key, str) or not key or len(key) > 200:
             raise KernelError(
@@ -188,7 +199,10 @@ class Engine:
             )
         if key.startswith(INTERNAL_REQUEST_PREFIX):
             raise KernelError("invalid_request_id", "请求编号使用了内核保留前缀")
-        with self.commit_guard(), self.store.connection() as connection:
+        queued = time.perf_counter()
+        calculation_seconds = getattr(self, "_calculation_seconds", 0)
+        self._calculation_seconds = 0
+        with company_write_lock(self.store), self.store.connection() as connection:
             count = 0
 
             def trace(sql):
@@ -204,6 +218,13 @@ class Engine:
                 if replay is not None:
                     connection.rollback()
                     return replay
+                check_write_allowed(connection, action, lanes=lanes)
+                before_replay_write(
+                    self, connection, request_id=key, action=action, request_hash=request_hash,
+                )
+                from .dashboard_async import record_write, sequence
+
+                before_sequence = sequence(connection)
                 current = self.store.epochs(connection)
                 check_lanes = lanes if checked_lanes is None else checked_lanes
                 if expected is not None and any(current[k] != expected.get(k) for k in check_lanes):
@@ -218,14 +239,16 @@ class Engine:
                 self.fault("published", connection)
                 for lane in lanes:
                     connection.execute(f"UPDATE state SET {lane}={lane}+1 WHERE id=1")
+                from .replay_runner import replay_audit_actor
+                actor = replay_audit_actor(self.audit_actor)
                 audit = connection.execute(
                     "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
                     (
                         key,
                         action,
                         canonical(
-                            {"result": result, "actor": self.audit_actor}
-                            if self.audit_actor is not None
+                            {"result": result, "actor": actor}
+                            if actor is not None
                             else result
                         ),
                     ),
@@ -236,17 +259,56 @@ class Engine:
                 connection.execute(
                     "INSERT INTO request VALUES(?,?,?)", (key, request_hash, canonical(result))
                 )
-                materialize_models(
+                after_replay_write(
+                    self, connection, request_id=key, action=action,
+                    request_hash=request_hash, result=result,
+                )
+                record_write(
                     self, connection, periods=(*_dashboard_periods, *sorted(changed_months)),
-                    evidence_registration=(action == "evidence" and tuple(lanes) == ("material",)),
+                    before_sequence=before_sequence, action=action, lanes=lanes,
                 )
                 self.fault("commit", connection)
-                connection.commit()
+                authorization_started = time.perf_counter()
+                if supports_native_production(self):
+                    connection.executemany(
+                        "INSERT INTO operation_timing(request_id,stage,elapsed_ms) VALUES(?,?,?)",
+                            [(key, stage, max(0, int(seconds * 1000)))
+                             for stage, seconds in (
+                            ("queue", started - queued),
+                            ("write", authorization_started - locked),
+                            ("calculation", calculation_seconds),
+                        )],
+                    )
+                authorization_started = time.perf_counter()
+                with self.commit_guard():
+                    authorized = time.perf_counter()
+                    connection.commit()
+                committed = time.perf_counter()
                 self.last_metrics = {
                     "sql_statements": count,
                     "lock_seconds": time.perf_counter() - locked,
                     "write_seconds": time.perf_counter() - started,
+                    "queue_seconds": started - queued,
+                    "authorization_seconds": authorized - authorization_started,
+                    "commit_seconds": committed - authorized,
                 }
+                # Timing failure after a successful business COMMIT must never
+                # turn that original result into a safely-repeatable failure.
+                if supports_native_production(self):
+                    try:
+                        connection.execute("BEGIN IMMEDIATE")
+                        connection.executemany(
+                            "INSERT INTO operation_timing(request_id,stage,elapsed_ms) "
+                            "VALUES(?,?,?)",
+                            [(key, stage, max(0, int(seconds * 1000)))
+                             for stage, seconds in (
+                                ("authorization", authorized - authorization_started),
+                                ("commit", committed - authorized),
+                            )],
+                        )
+                        connection.commit()
+                    except sqlite3.Error:
+                        connection.rollback()
                 return result
             except BaseException:
                 # A deferred FK or I/O failure at COMMIT leaves SQLite in a transaction.
@@ -1092,7 +1154,9 @@ class Engine:
         cached = self._cached(request_id, request_hash)
         if cached is not None:
             return cached
+        calculation_started = time.perf_counter()
         public, prepared = self._prepare(subjects, posting_period)
+        self._calculation_seconds = time.perf_counter() - calculation_started
         if public["digest"] != preview_digest or public["epochs"]["accounting"] != epochs.get(
             "accounting"
         ):
@@ -1204,6 +1268,19 @@ class Engine:
         from .publication import append, head, route
 
         version, cid, outcome = prepared.version, prepared.calculation_id, prepared.outcome
+        if (version.fact.lane == "accounting"
+            and not version.fact.kind.startswith("opening_")
+            and "opening_package" in self.store.registry.models
+            and not connection.execute(
+                "SELECT 1 FROM calculation_current h JOIN calculation c ON c.id=h.calculation_id "
+                "JOIN calculation_publication p ON p.calculation_id=c.id "
+                "WHERE c.kind='opening_package' AND NOT EXISTS("
+                "SELECT 1 FROM pending WHERE subject_id=c.subject_id) LIMIT 1"
+            ).fetchone()):
+            raise NeedsInformation([
+                {"field": "opening_adoption", "message": "普通业务发布前必须正式采用有来源的期初包",
+                 "semantics": "accounting", "reusable_sources": [], "allowed_precision": []},
+            ], "期初尚未正式采用")
         old = connection.execute(
             "SELECT c.* FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
             "WHERE a.subject_id=?",

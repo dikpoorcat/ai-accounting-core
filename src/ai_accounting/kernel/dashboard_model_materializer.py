@@ -442,7 +442,7 @@ def _native_frame(dashboard, snap, page, data, *, section=None, filters=None):
     return value
 
 
-def build_model(dashboard, period, *, block_size=100):
+def build_model(dashboard, period, *, block_size=100, default_only=False):
     """Build five default pages and every continuation in one fresh snapshot.
 
     The caller supplies the trusted write transaction's snapshot provider and
@@ -535,6 +535,12 @@ def build_model(dashboard, period, *, block_size=100):
                 quarterly,
             )
         )
+
+        if default_only:
+            return MaterializedModel(
+                period, str(snap.as_of), snap.snapshot_version, tuple(blocks), (),
+                unmaterialized=("filters", "continuations", "details"),
+            )
 
         def collect(page, section, filters, fetch: Callable, *, variant="default"):
             cursor, ordinal, all_keys = None, 0, []

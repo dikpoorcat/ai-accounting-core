@@ -41,14 +41,27 @@ test("generated validators accept all current synthetic backend response branche
 
 test("the explicit generated manifest covers every browser-visible response contract", () => {
   assert.deepEqual(Object.keys(schemas).sort(), [
-    "browser_security_status", "dashboard_assets", "dashboard_brief", "dashboard_brief_group",
-    "dashboard_business_status", "dashboard_close_review", "dashboard_context",
-    "dashboard_employees", "dashboard_funds", "dashboard_period_preparation",
-    "dashboard_quarterly_report", "delete_work_draft", "inventory_batch", "list_work_drafts", "period_readiness",
-    "read_work_draft", "report_export_receipt", "report_export_status", "save_work_draft", "workflow",
+    "browser_security_status", "confirm_replay", "confirm_replay_close_range", "dashboard_assets", "dashboard_assets_delivery", "dashboard_brief", "dashboard_brief_delivery",
+    "dashboard_brief_group", "dashboard_business_status", "dashboard_close_review", "dashboard_context",
+    "dashboard_employees", "dashboard_employees_delivery", "dashboard_funds", "dashboard_funds_delivery",
+    "dashboard_period_preparation", "dashboard_quarterly_report", "dashboard_quarterly_report_delivery",
+    "delete_work_draft", "inventory_batch", "list_work_drafts", "period_readiness", "prepare_replay",
+    "read_work_draft", "replay_classification_prepare", "replay_status", "report_export_receipt", "report_export_status", "resume_replay", "save_work_draft", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
-  const serviceOnly = new Set(["delete_work_draft", "inventory_batch", "list_work_drafts", "read_work_draft", "save_work_draft"]);
+  const serviceOnly = new Set([
+    "confirm_replay",
+    "confirm_replay_close_range",
+    "delete_work_draft",
+    "inventory_batch",
+    "list_work_drafts",
+    "prepare_replay",
+    "read_work_draft",
+    "replay_classification_prepare",
+    "replay_status",
+    "resume_replay",
+    "save_work_draft",
+  ]);
   for (const key of Object.keys(schemas)) {
     if (!serviceOnly.has(key)) assert(source.includes(`["${key}"`), key);
   }

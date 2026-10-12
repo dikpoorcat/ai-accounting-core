@@ -28,6 +28,7 @@ from .operating_protocol import OPERATING_PROTOCOL
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
 from .replay_close import ReplayClose, ReplayCloseScope, ReplayScopeConfig
+from .replay_runner import ReplayCommands
 from .reports import Reports, run_report_jobs
 from .security import SecurityService, consume_close_approval
 from .tax_import import TaxImport
@@ -325,6 +326,17 @@ class LocalService:
             with self.security.authorization_gate:
                 self.security.validate_authority(authority)
                 return self._dispatch(command, payload, authority=authority)
+        delivery_command = command + "_delivery"
+        delivery = (delivery_command in RESPONSE_ADAPTERS
+                    and payload.get("section") is None and payload.get("expected_version") is None)
+        if delivery:
+            from .dashboard_delivery import deliver
+            result = deliver(self, command, payload, authority)
+            if response_format == "http_json":
+                return RESPONSE_ADAPTERS[delivery_command].dump_json(result)
+            if response_format == "http":
+                return RESPONSE_ADAPTERS[delivery_command].dump_python(result, mode="json")
+            return result
         result = self._dispatch(command, payload, authority=authority)
         try:
             if command == "work_context":
@@ -502,6 +514,15 @@ class LocalService:
                     "maximum_months": 120,
                     "normal_close_password_required": True,
                 },
+                "persistent_replay_contract": {
+                    "commands": [
+                        "prepare_replay", "confirm_replay", "replay_status", "resume_replay"
+                    ],
+                    "typed_step_allowlist": True,
+                    "stable_request_ids": True,
+                    "asynchronous_confirmation": True,
+                    "steps_per_worker_call": 1,
+                },
                 "agent_operating_protocol": OPERATING_PROTOCOL,
                 "format": 1,
                 "fact_semantics": "核算字段决定计算；管理说明单独版本化；实际收付日不得由月份代替",
@@ -583,6 +604,13 @@ class LocalService:
                 return replay.preview(**data)
             with self.replay_close_lock:
                 return replay.confirm(**data)
+        if command in {
+            "prepare_replay", "confirm_replay", "replay_status", "resume_replay",
+            "replay_classification_prepare",
+        }:
+            return getattr(ReplayCommands(self, engine, authority), command)(
+                company_id=company_id, **data
+            )
         if command == "close" and data.get("backup_directory") is None:
             setting = self.catalog.company_settings(company_id)
             data["backup_directory"] = setting["backup_directory"] or str(
@@ -718,10 +746,15 @@ class LocalService:
         if command == "backup":
             return engine.queue_backup(**data)
         if command == "run_jobs":
+            from .dashboard_async import run_pending
+            from .replay_runner import run_ready
+            worker_limit = data.get("limit") or 1
             return {
                 "backups": run_backup_jobs(engine.store.path, _bundle=engine.store.bundle, **data),
                 "exports": run_export_jobs(engine, **data),
                 "reports": run_report_jobs(engine, **data),
+                "dashboard": run_pending(engine, limit=worker_limit),
+                "replay": run_ready(self, company_id=company_id, limit=worker_limit),
             }
         if command == "run_export_jobs":
             return run_export_jobs(engine, **data)

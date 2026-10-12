@@ -24,6 +24,7 @@ const { context, load: loadContext, refresh: refreshContext } = useDashboardCont
 const response = shallowRef<BriefOverviewResponse | null>(null);
 const voucherPreviewIndex = shallowRef(shallowReactive(new Map<string, BriefVoucher>()));
 const vouchersReady = ref(false);
+const preparing = ref(false);
 const focusedVoucherSelection = ref(0);
 const loading = ref(false), error = ref(""), updateNotice = ref("");
 type BriefSection = NonNullable<BriefQuery["section"]>;
@@ -78,7 +79,7 @@ function invalidateRequests(keepContent = false) {
   voucherPreviewIndex.value = shallowReactive(new Map());
   if (!keepContent) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
   if (!keepContent) { response.value = null }
-  showMonthlyReview.value = false; loading.value = keepContent;
+  showMonthlyReview.value = false; loading.value = keepContent; preparing.value = false;
 }
 async function loadData(period: string | null, contextGate?: Promise<void>) {
   refreshGeneration.value++;
@@ -95,14 +96,18 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
   voucherPreviewIndex.value = shallowReactive(new Map());
   if (!contextGate) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
   const request = new AbortController(); controller = request;
-  loading.value = true;
+  loading.value = true; preparing.value = false;
   if (!contextGate) { response.value = null }
   showMonthlyReview.value = false; error.value = "";
   try {
     if (typeof companyId !== "string") throw new Error("请先选择公司。");
     const target = typeof route.query.voucher === "string" ? route.query.voucher : undefined;
     const options = target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {};
-    const mainRequest = fetchDeferredBrief(companyId, period, request.signal, undefined, options);
+    const mainRequest = fetchDeferredBrief(companyId, period, request.signal, undefined, options, () => {
+      if (!isCurrent(generation, selection) || controller !== request) return;
+      preparing.value = true; response.value = null; vouchersReady.value = false;
+      voucherPreviewIndex.value = shallowReactive(new Map());
+    });
     const result = contextGate ? (await Promise.all([mainRequest, contextGate]))[0] : await mainRequest;
     if (!isCurrent(generation, selection) || controller !== request) return;
     if (result.scope !== "overview") throw new Error("经营简报范围不一致，请重新读取。");
@@ -127,12 +132,13 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
     }
     vouchersReady.value = sameVoucherScope && !!retainedVouchers?.collection;
     response.value = result;
+    preparing.value = false;
     if (!result.data) request.abort();
     if (target) focusSection("activity");
   } catch (caught) {
     request.abort();
     if (!isCurrent(generation, selection) || (caught instanceof DOMException && caught.name === "AbortError")) return;
-    response.value = null; vouchersReady.value = false; error.value = dashboardErrorMessage(caught);
+    response.value = null; vouchersReady.value = false; preparing.value = false; error.value = dashboardErrorMessage(caught);
   } finally { if (isCurrent(generation, selection) && controller === request) loading.value = false; }
 }
 async function initializeVouchers() {
@@ -290,7 +296,7 @@ async function refreshCurrent(keepContent: boolean) {
       await refreshContext();
       if (isCurrent(generation, selection)) await loadData(queryPeriod());
     }
-  } catch (caught) { if (isCurrent(generation, selection)) { response.value = null; vouchersReady.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); } }
+  } catch (caught) { if (isCurrent(generation, selection)) { response.value = null; vouchersReady.value = false; preparing.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); } }
 }
 async function initialize() {
   initialized = true;
@@ -301,7 +307,7 @@ async function initialize() {
     const requested = queryPeriod(), target = requested || loadedContext.default_period;
     if (!requested && target) { await router.replace({ query: { ...route.query, period: target } }); return; }
     await loadData(target);
-  } catch (caught) { if (isCurrent(generation, selection)) { error.value = dashboardErrorMessage(caught); loading.value = false; } }
+  } catch (caught) { if (isCurrent(generation, selection)) { preparing.value = false; error.value = dashboardErrorMessage(caught); loading.value = false; } }
 }
 function changePeriod(value: string) { void router.push({ query: { company_id: route.query.company_id, period: value }, hash: "" }); }
 watch(() => [route.query.company_id, route.query.period, route.query.voucher], (value, previous) => {
@@ -320,7 +326,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       <template #navigation><DashboardSectionNav v-if="data" v-show="!loading" :items="sectionLinks" :active="activeSection" label="经营简报区段" @select="focusSection" /></template>
     </DashboardModuleHeader>
     <div v-if="error" class="state-panel error" role="alert"><h2>经营简报加载失败</h2><p>{{ error }}</p><button type="button" @click="loadData(queryPeriod())">重新加载</button></div>
-    <div v-else-if="loading" class="state-panel" role="status">正在读取经营简报…</div>
+    <div v-else-if="loading" class="state-panel" role="status">{{ preparing ? "经营简报正在更新，请稍候…" : "正在读取经营简报…" }}</div>
     <div v-else-if="!data" class="state-panel"><h2>还没有可查看的月份</h2><p>录入公司业务后，即可按月份查看经营情况。</p></div>
     <div v-if="data" v-show="!loading && !error" class="brief-content" :data-month-state="data.month_state" :data-owner-review-required="needsMonthlyReview">
       <p v-if="updateNotice" role="status">{{ updateNotice }}</p>

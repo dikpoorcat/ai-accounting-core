@@ -50,6 +50,7 @@ const { context, load: loadContext, refresh: refreshContext } = useDashboardCont
 const response = shallowRef<EmployeesDashboardResponse | null>(null);
 const loading = ref(false);
 const error = ref("");
+const preparing = ref(false);
 const displayMode = ref<"cards" | "list">("cards");
 const filter = computed<EmployeeFilter>({
   get: () => employeeFilterOptions.find(option => option.value === route.query.employee_filter)?.value ?? "employment_active",
@@ -181,14 +182,18 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
   if (!contextGate) response.value = null;
   controller = new AbortController();
   const activeController = controller;
-  loading.value = true;
+  loading.value = true; preparing.value = false;
   error.value = "";
   try {
-    const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: focusedEmployeeId.value ? "all" : filter.value, employee_id: focusedEmployeeId.value || undefined });
+    const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: focusedEmployeeId.value ? "all" : filter.value, employee_id: focusedEmployeeId.value || undefined }, () => {
+      if (!isCurrent(generation, selection) || controller !== activeController) return;
+      preparing.value = true; response.value = null; clearPageRequests();
+    });
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || controller !== activeController) return;
     prepareDashboardCollections(result.data);
     response.value = result;
+    preparing.value = false;
     loading.value = false;
     await nextTick();
     if (isCurrent(generation, selection) && focusedEmployeeId.value) {
@@ -203,6 +208,7 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
   } catch (caught: unknown) {
     if (!isCurrent(generation, selection) || controller !== activeController) return;
     response.value = null;
+    preparing.value = false;
     const message = dashboardErrorMessage(caught);
     if (message) error.value = message;
   } finally {
@@ -253,7 +259,7 @@ async function refreshCurrent(keepContent: boolean) {
       if (isCurrent(generation, selection)) await loadPeriod(routePeriod());
     }
   } catch (caught: unknown) {
-    if (isCurrent(generation, selection)) { response.value = null; loading.value = false; error.value = dashboardErrorMessage(caught); }
+    if (isCurrent(generation, selection)) { response.value = null; preparing.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); }
   }
 }
 
@@ -264,7 +270,7 @@ function invalidateRequests(keepContent = false) {
   controller?.abort(); controller = null;
   clearPageRequests();
   if (!keepContent) response.value = null;
-  loading.value = keepContent;
+  loading.value = keepContent; preparing.value = false;
 }
 
 async function loadMore(section: EmployeesQuery["section"] = "employees") {
@@ -385,7 +391,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
     </DashboardModuleHeader>
     <div class="employees-content">
       <p v-if="updateNotice" class="muted" role="status">{{ updateNotice }}</p>
-      <div v-if="loading" class="state-panel" role="status">正在加载员工与薪酬数据…</div>
+      <div v-if="loading" class="state-panel" role="status">{{ preparing ? "员工与薪酬看板正在更新，请稍候…" : "正在加载员工与薪酬数据…" }}</div>
       <div v-else-if="error" class="state-panel" role="alert"><strong>员工数据加载失败</strong><p>{{ error }}</p><button class="control" type="button" @click="refresh">重试</button></div>
       <div v-else-if="response && !response.data" class="state-panel">还没有可查看的员工月份</div>
       <div v-if="employees && response?.selected_period" v-show="!loading && !error" class="employee-result">

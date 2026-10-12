@@ -1,8 +1,10 @@
 import { pageQuery, validDashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
-import { requestGeneratedJson } from "./client";
+import { requestGeneratedDashboard, requestGeneratedJson, type DashboardDeliveryAttempt } from "./client";
 import type { DashboardBriefContract, DashboardBriefResponse } from "./generated/dashboardBrief";
+import type { DashboardBriefDeliveryResponse } from "./generated/dashboardBriefDelivery";
 import type { DashboardBriefGroupContract } from "./generated/dashboardBriefGroup";
 import { validateDashboardBriefResponse } from "./generated/dashboardBrief.js";
+import { validateDashboardBriefDeliveryResponse } from "./generated/dashboardBriefDelivery.js";
 
 export type BriefResponse = DashboardBriefResponse;
 export type BriefOverviewResponse = Extract<BriefResponse, { scope: "overview" }>;
@@ -42,10 +44,35 @@ function matchesRequest(url: URL, response: DashboardBriefResponse) {
     && (voucherNumber === null || (overview && (response.data === null || response.data.focused_voucher?.number === voucherNumber)));
 }
 
-export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
+function inspectDelivery(delivery: DashboardBriefDeliveryResponse): DashboardDeliveryAttempt<DashboardBriefResponse> {
+  if (delivery.state === "ready") {
+    return { state: "ready", response: delivery.response, modelVersion: delivery.model_version };
+  }
+  if (delivery.state === "preparing") return { state: "preparing", retryAfterMs: delivery.retry_after_ms };
+  return { state: "failed", reason: delivery.reason };
+}
+
+function matchesDeliveryRequest(url: URL, delivery: DashboardBriefDeliveryResponse): boolean {
+  const companyId = url.searchParams.get("company_id");
+  const period = url.searchParams.get("period");
+  if (companyId !== delivery.company_id || (period !== null && period !== delivery.period)) return false;
+  return delivery.state !== "ready"
+    || (delivery.model_version === delivery.response.snapshot_version
+      && delivery.response.read_context.company_id === delivery.company_id
+      && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
+}
+
+export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}, onPreparing?: () => void) {
   const query = new URLSearchParams({ company_id: companyId, ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
   pageQuery(query, { ...options, limit: options.limit ?? 20 });
   if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
   if (options.voucher_number !== undefined) query.set("voucher_number", String(options.voucher_number));
-  return requestGeneratedJson(`/api/dashboard/brief?${query}`, "/api/dashboard/brief", validateDashboardBriefResponse, matchesRequest, { signal });
+  const path = `/api/dashboard/brief?${query}`;
+  if (options.section || expectedVersion) {
+    return requestGeneratedJson(path, "/api/dashboard/brief", validateDashboardBriefResponse, matchesRequest, { signal });
+  }
+  return requestGeneratedDashboard(
+    path, "/api/dashboard/brief", validateDashboardBriefDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
+    validateDashboardBriefResponse, matchesRequest, { signal, onPreparing },
+  );
 }

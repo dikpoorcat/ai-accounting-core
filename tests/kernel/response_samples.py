@@ -21,15 +21,17 @@ from test_dashboard_empty_replay import (
 from test_dashboard_matters import formal_payment_samples
 from test_dashboard_provenance import profile as display_profile
 from test_opening_continuation import book as opening_book
-from test_payroll import payroll
+from test_payroll import contribution_policy, income_tax_policy, payroll
+from test_payroll import opening as payroll_opening
 from test_payroll import profile as payroll_profile
 from test_payroll_corrections import Company
 from test_payroll_corrections import company as correction_company
-from test_payroll_preparation import company as payroll_company
 from test_tax_import import contribution_rule, replace_contribution_policy
 
 from ai_accounting.kernel.business_queries import BusinessQueries
+from ai_accounting.kernel.command_schema import validate_command
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.domains.payroll import LaborAccrual
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.periods import Periods
@@ -69,6 +71,14 @@ def public_bank_book(path):
             evidence_digest=proof,
             request_id="bank-b",
         )["entity_id"],
+        "cash": entities.register_entity(
+            "fund_account",
+            {"display_name": "合成现金账户"},
+            account_type="cash",
+            source="合成响应合同资料",
+            evidence_digest=proof,
+            request_id="cash-account",
+        )["entity_id"],
     }
 
     def mapped_save(kind, subject, data, revision=0):
@@ -81,6 +91,59 @@ def public_bank_book(path):
     return (engine, mapped_save, publish, proof), identifiers
 
 
+def adopt_zero_opening_package(save, publish, bank_account_id, period, package_id):
+    detail_id = package_id + "-cash"
+    counts = dict.fromkeys(CATEGORIES.values(), 0)
+    counts[CATEGORIES["opening_cash"]] = 1
+    save(
+        "opening_cash",
+        detail_id,
+        {
+            "period": period,
+            "package_id": package_id,
+            "cash_account_id": bank_account_id,
+            "balance_fen": 0,
+        },
+    )
+    save(
+        "opening_package",
+        package_id,
+        {
+            "period": period,
+            "package_id": package_id,
+            "counts": counts,
+            "members": [{"kind": "opening_cash", "subject_id": detail_id}],
+            "completeness_confirmed": True,
+        },
+    )
+    publish(package_id, detail_id)
+
+
+def publish_empty_opening_package(engine, evidence, period, subject):
+    package = {
+        "period": period,
+        "package_id": subject,
+        "counts": dict.fromkeys(CATEGORIES.values(), 0),
+        "members": [],
+        "completeness_confirmed": True,
+    }
+    engine.save_fact(
+        "opening_package",
+        subject,
+        package,
+        evidence=(evidence,),
+        expected_revision=0,
+        request_id=subject + ":save",
+    )
+    preview = engine.preview([subject])
+    engine.confirm(
+        [subject],
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=subject + ":publish",
+    )
+
+
 def native_samples(root):
     samples = {}
 
@@ -88,7 +151,19 @@ def native_samples(root):
         validate_response(command, response)
         samples[name] = {"command": command, "response": response}
 
-    service, dispatch = authenticated(root / "replay")
+    service, public_dispatch = authenticated(root / "replay")
+
+    def dispatch(command, payload):
+        """Collect native typed frames before the public delivery wrapper."""
+        validated = validate_command(
+            service.command_models, command, payload, registry=service.registry
+        )
+        authority = service.security.authorize(
+            public_dispatch.keywords["session_token"],
+            request_id=validated.get("request_id"),
+        )
+        return service._dispatch(command, validated, authority=authority)
+
     add("empty_context", "dashboard_context", dispatch("dashboard_context", {}))
     company = service.catalog.create_company("91310000123456789A", "合成合同测试公司")["id"]
     call = company_call(dispatch, company)
@@ -106,6 +181,43 @@ def native_samples(root):
         call("dashboard_funds", movement_account_selection="first"),
     )
     references, evidence, _ = replay_sources(call, "contract")
+    opening_counts = dict.fromkeys(CATEGORIES.values(), 0)
+    opening_counts[CATEGORIES["opening_cash"]] = 1
+    call(
+        "save_facts",
+        facts=[
+            {
+                "kind": "opening_cash",
+                "subject_id": "opening-cash",
+                "data": {
+                    "period": "2026-01",
+                    "package_id": "opening",
+                    "cash_account_id": references["cash"],
+                    "balance_fen": 0,
+                },
+                "evidence": [evidence],
+                "expected_revision": 0,
+            },
+            {
+                "kind": "opening_package",
+                "subject_id": "opening",
+                "data": {
+                    "period": "2026-01",
+                    "package_id": "opening",
+                    "counts": opening_counts,
+                    "members": [{"kind": "opening_cash", "subject_id": "opening-cash"}],
+                    "completeness_confirmed": True,
+                },
+                "evidence": [evidence],
+                "expected_revision": 0,
+            },
+        ],
+        request_id="opening:snapshot:v1",
+    )
+    call(
+        "confirm",
+        **reviewed_confirmation(call, ["opening", "opening-cash"], "publish:opening:v1"),
+    )
     call(
         "confirm",
         **reviewed_confirmation(
@@ -228,8 +340,9 @@ def native_samples(root):
 
     bank_path = root / "banks"
     bank_path.mkdir()
-    book, _ = public_bank_book(bank_path)
+    book, bank_ids = public_bank_book(bank_path)
     engine, save, publish, _ = book
+    adopt_zero_opening_package(save, publish, bank_ids["cash"], "2026-09", "bank-opening-package")
     banking.opening(save, publish)
     banking.funding(save, publish)
     banking.statement(save, publish, [banking.entry("row")])
@@ -261,7 +374,14 @@ def native_samples(root):
 
     closed_path = root / "closed"
     closed_path.mkdir()
-    closed_book, _ = public_bank_book(closed_path)
+    closed_book, closed_bank_ids = public_bank_book(closed_path)
+    adopt_zero_opening_package(
+        closed_book[1],
+        closed_book[2],
+        closed_bank_ids["cash"],
+        "2026-09",
+        "closed-bank-opening-package",
+    )
     engine, _, _ = closed_banks(closed_book)
     add("frozen_funds", "dashboard_funds", Dashboard(engine).funds("2026-09"))
     add(
@@ -277,7 +397,20 @@ def native_samples(root):
 
     wage_path = root / "wages"
     wage_path.mkdir()
-    wage_book = payroll_company(wage_path)
+    wage_book = Company(wage_path / "wages.sqlite")
+    publish_empty_opening_package(
+        wage_book.engine, wage_book.owner_confirmation, "2026-01", "opening-package"
+    )
+    for fact, subject in (
+        (payroll_profile(), "profile"),
+        (contribution_policy(), "contributions"),
+        (income_tax_policy(), "income-tax"),
+        (payroll_opening(), "opening"),
+        (payroll(), "january"),
+    ):
+        wage_book.save(fact, subject)
+    wage_book.confirm_payroll("january")
+    wage_book.publish("january")
     add("wage_mapping_missing", "dashboard_funds", Dashboard(wage_book.engine).funds("2026-01"))
     replace_contribution_policy(
         wage_book,
@@ -311,6 +444,9 @@ def native_samples(root):
     personnel_path = root / "personnel"
     personnel_path.mkdir()
     personnel = correction_company.__wrapped__(personnel_path)
+    publish_empty_opening_package(
+        personnel.engine, personnel.owner_confirmation, "2026-01", "opening-package"
+    )
     personnel.save(payroll_profile(withholding_start_date="2026-01"), "profile", revision=1)
     for subject in ("january", "february"):
         with personnel.engine.store.connection(read_only=True) as connection:
@@ -362,7 +498,6 @@ def native_samples(root):
             employee_filter="all",
         ),
     )
-    personnel.close("2026-01")
     departure_profile = display_profile(
         personnel.engine,
         "employee",
@@ -421,6 +556,9 @@ def native_samples(root):
         ),
         "labor",
     )
+    publish_empty_opening_package(
+        labor.engine, labor.owner_confirmation, "2026-01", "opening-package"
+    )
     labor.publish("labor")
     display_profile(labor.engine, "employee", "person", display_name="合成劳务人员")
     Entities(labor.engine).register_worker(
@@ -459,6 +597,9 @@ def native_samples(root):
     external_path = root / "external"
     external_path.mkdir()
     external_book = setup_company(external_path)
+    publish_empty_opening_package(
+        external_book.engine, external_book.owner_confirmation, "2026-01", "opening-package"
+    )
     external_book.save(obligation("quarterly_tax"), "obligation")
     workflow = Workflow(external_book.engine)
     completion = completion_from_basis(
@@ -487,6 +628,15 @@ def native_samples(root):
     asset_path = root / "asset-payment-summary"
     asset_path.mkdir()
     asset_engine, asset_save, asset_publish = asset_book.__wrapped__(asset_path)
+    asset_owner_confirmation = asset_engine.register_evidence(
+        b"Synthetic owner confirmation: no opening balances in this sample",
+        "text/plain",
+        "opening confirmation",
+        request_id="opening-confirmation",
+    )["digest"]
+    publish_empty_opening_package(
+        asset_engine, asset_owner_confirmation, "2026-01", "opening-package"
+    )
     asset_save("reimbursed_asset", "computer", asset())
     asset_publish("computer")
     add("asset_payment_summary", "dashboard_assets", Dashboard(asset_engine).assets("2026-02"))

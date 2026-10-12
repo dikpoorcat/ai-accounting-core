@@ -144,9 +144,13 @@ def authenticated_model(dashboard, snap):
         return snap.semantic_cache[key]
     if not supports_model(snap.connection):
         return None
-    model = load_model(snap.connection, model_scope(
-        dashboard.engine, snap.connection, snap.period, as_of=snap.as_of,
-    ))
+    from .dashboard_async import supported, load_for_snapshot
+    if supported(snap.connection):
+        model = load_for_snapshot(dashboard.engine, snap)
+    else:
+        model = load_model(snap.connection, model_scope(
+            dashboard.engine, snap.connection, snap.period, as_of=snap.as_of,
+        ))
     # Failure and absence are not successful proofs. An unmanaged transaction
     # may consume the same bytes but cannot retain a proof for later calls.
     if model is not None and owned:

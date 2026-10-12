@@ -49,7 +49,14 @@ test("quarterly export follows the same company and exact preview without an int
       const query = new URL(url, window.location.origin).searchParams;
       assert.equal(query.get("company_id"), "company-a");
       assert.equal(query.has("carry_forward_fact_id"), false);
-      return new Response(JSON.stringify(report));
+      return new Response(JSON.stringify({
+        schema_version: 6,
+        company_id: "company-a",
+        period: `${report.period.year}-Q${report.period.quarter}`,
+        model_version: report.read_context.read_version,
+        state: "ready",
+        response: report,
+      }));
     }
     assert.equal(url, "/api/local/report-export");
     assert.deepEqual(JSON.parse(options.body), {

@@ -436,13 +436,14 @@ OPERATING_PROTOCOL = {
                     "先由本机daemon --replay-scope加载明确私有范围文件，"
                     "核对schema的replay_close_contract.enabled。范围限定目录、开发测试公司库、"
                     "数据库身份、起止月份及已登记负责人原确认；普通服务明确拒绝。"
-                    "有效登录后调用preview_replay_close_range，再携带同一first_period、"
-                    "last_period、owner_confirmation、preview_digest、"
-                    "epochs及稳定request_id调用confirm_replay_close_range。"
-                    "内核按实际前序关账逐月重新预览、检查、冻结和生成备份；"
-                    "范围不代替逐月资料或业务事实。部分完成停于首个阻断月；"
-                    "原样重试校验持久子请求与冻结链，不能跳月或重复已关账。来源版本、读取修复、"
-                    "程序、会话或凭据变化停止旧批量并重新核对剩余范围。冻结approval为null，"
+                    "有效登录后用prepare_replay编译有类型的计划，confirm_replay持久化后立即返回run_id；"
+                    "replay_status只读进度，resume_replay接续原运行。"
+                    "实体与账户、材料接收、期初正式采用先于普通发布，后续业务、对账、资料处置和清单"
+                    "按依赖完成，再逐月重新核对并保存冻结；重放末月仅创建该轮唯一完整公司备份，"
+                    "中间月backup_job为空。旧close_range命令只适配正式执行器，不另做同步循环。"
+                    "范围不代替逐月事实。提交前撤权必须回滚；提交后回复丢失先找原回执，原键重试"
+                    "取回原plan/run，不能重记。输入改变另准备接续计划，保留已完成历史。"
+                    "运行使用固定私有代码、规则、合同和页面资源，更新在明确检查点进行。冻结approval为null，"
                     "审计标明replay_scope，不冒充密码批准。开发交付本身不授权真实重放；"
                     "已有明确继续授权时保留当前库、核对同版状态并沿原范围接续，"
                     "不重复请求同一授权，不自行新建空目标或负责人身份。"
@@ -592,8 +593,15 @@ TOPIC_SELECTORS = {
         "responses": ["close_", "period_close"],
     },
     "replay": {
-        "commands": ["preview_replay_close_range", "confirm_replay_close_range"],
-        "responses": ["replay_"],
+        "commands": [
+            "prepare_replay", "confirm_replay", "replay_status", "resume_replay",
+            "replay_classification_prepare", "preview_replay_close_range",
+            "confirm_replay_close_range",
+        ],
+        "responses": [
+            "prepare_replay", "confirm_replay", "resume_replay", "replay_",
+            "confirm_replay_close_range",
+        ],
     },
     "external_actions": {
         "commands": ["prepare_obligations", "confirm_obligations", "obligation_basis"],

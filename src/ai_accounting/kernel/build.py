@@ -16,8 +16,8 @@ SHARED_SOURCE_FILES = (
 )
 
 
-def calculator_build_id():
-    package = Path(__file__).resolve().parents[1]
+def calculator_build_id(package_root=None):
+    package = Path(package_root).resolve() if package_root is not None else Path(__file__).resolve().parents[1]
     roots = (package / "kernel", package / "payroll")
     files = [path for root in roots for path in root.rglob("*.py")]
     files = [

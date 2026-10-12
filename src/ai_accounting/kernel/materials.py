@@ -38,6 +38,7 @@ from pydantic import (
 )
 
 from .build import calculator_build_id
+from .runtime_snapshot import pinned_build_id
 from .contracts import Fact, FactVersion, KernelError, NeedsInformation
 from .inspection_cache import InspectionCache
 from .storage import Store
@@ -3623,7 +3624,7 @@ class Materials:
             "status": "needs_information" if issues else "ready",
         }
         result["digest"] = digest(
-            [result, fact.model_dump(mode="json"), evidence, calculator_build_id()]
+            [result, fact.model_dump(mode="json"), evidence, pinned_build_id()]
         ).hex()
         return result, fact, evidence
 

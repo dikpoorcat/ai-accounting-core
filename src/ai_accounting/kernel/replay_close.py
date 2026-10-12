@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -187,203 +186,99 @@ class ReplayClose:
         epochs: dict,
         request_id: str,
     ):
+        """Compatibility facade that queues the durable typed replay runner."""
+        from .replay_runner import confirm_replay, prepare_replay
+
         evidence_digest_bytes(owner_confirmation, "owner_confirmation")
         first_period, last_period = YearMonth(first_period), YearMonth(last_period)
         self._require(first_period, last_period, owner_confirmation)
-        arguments = [
-            first_period,
-            last_period,
-            owner_confirmation,
-            preview_digest,
-            epochs,
-            self.scope.scope_digest,
-        ]
-        request_hash = digest(["replay_close_range", arguments])
-        cached = self.engine._cached(request_id, request_hash)
-        if cached is not None:
-            self.engine.request_result(request_id)
-        plan_key = _key(request_id, "plan")
-        plan_hash = digest(["replay_close_plan", arguments])
-        plan = self.engine._cached(plan_key, plan_hash)
-        if plan is None:
-            if cached is not None:
-                raise KernelError("request_content_invalid", "重放完成记录缺少实际计划")
-            intent = self.service.replay_close_previews.get(
-                (self.engine.store.company_id, preview_digest)
-            )
-            if (
-                intent is None
-                or any(
-                    intent[field] != value
-                    for field, value in (
-                        ("first_period", first_period),
-                        ("last_period", last_period),
-                        ("owner_confirmation", owner_confirmation),
-                        ("scope_digest", self.scope.scope_digest),
-                    )
+        intent = self.service.replay_close_previews.get(
+            (self.engine.store.company_id, preview_digest)
+        )
+        with self.engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            live_boundary = _boundary(self.engine, connection)
+        if (
+            intent is None
+            or any(
+                intent[field] != value
+                for field, value in (
+                    ("first_period", first_period),
+                    ("last_period", last_period),
+                    ("owner_confirmation", owner_confirmation),
+                    ("scope_digest", self.scope.scope_digest),
                 )
-                or intent["boundary"]["epochs"] != epochs
-            ):
-                raise KernelError("preview_expired", "重放批量预览已失效，请重新核对")
+            )
+            or intent["boundary"]["epochs"] != epochs
+            or intent["boundary"] != live_boundary
+        ):
+            raise KernelError("preview_expired", "重放批量预览已失效，请重新核对")
 
-            def start(connection):
-                if _boundary(self.engine, connection) != intent["boundary"]:
-                    raise KernelError("preview_expired", "重放来源版本或已关账前缀已变化")
-                return {
-                    "status": "replay_started",
-                    "intent": intent,
-                    "authority": dict(self.engine.audit_actor),
-                    "batch_request_id": request_id,
+        source_manifest = [
+            {
+                "source_id": "owner-confirmation",
+                "kind": "confirmation",
+                "period": None,
+                "evidence_digest": owner_confirmation,
+                "disposition": "reference",
+                "depends_on": [],
+            }
+        ]
+        steps = []
+        previous_close = None
+        for ordinal in range(first_period.ordinal, last_period.ordinal + 1):
+            period = str(YearMonth.from_ordinal(ordinal))
+            suffix = period.replace("-", "")
+            review_ref = f"review-{suffix}"
+            steps.append(
+                {
+                    "step_id": f"preview-{suffix}",
+                    "command": "preview_close",
+                    "payload": {"period": period, "owner_confirmation": owner_confirmation},
+                    "depends_on": [previous_close] if previous_close else [],
+                    "output_ref": review_ref,
+                    "output_fields": ["digest", "epochs", "manifest.opening_calculation_id"],
                 }
-
-            plan = self.engine._write(
-                plan_key,
-                plan_hash,
-                epochs,
-                (),
-                "replay_close_batch_start",
-                start,
-                checked_lanes=("accounting", "material", "management"),
             )
-        else:
-            self.engine.request_result(plan_key)
-        if cached is None and plan["authority"] != self.engine.audit_actor:
-            raise KernelError(
-                "replay_authority_changed", "重放会话或负责人凭据已变化，请重新核对剩余月份"
-            )
-        intent = plan["intent"]
-        if cached is None and intent["build_id"] != PROGRAM_VERSION:
-            raise KernelError("preview_expired", "重放程序版本已变化，请重新核对剩余月份")
-        baseline = intent["boundary"]
-        results = []
-        previous = baseline["prefix"]
-        actor = dict(self.engine.audit_actor)
-        self.engine.audit_actor = {
-            **plan["authority"],
-            "authorization_method": "replay_scope",
-            "replay_scope_digest": self.scope.scope_digest,
-            "replay_batch_request_id": request_id,
-        }
-        try:
-            for ordinal in range(first_period.ordinal, last_period.ordinal + 1):
-                period = str(YearMonth.from_ordinal(ordinal))
-                child_key = _key(request_id, period)
-                expected = {
-                    **baseline["epochs"],
-                    "accounting": baseline["epochs"]["accounting"] + len(results),
-                    "material": baseline["epochs"]["material"] + len(results),
+            steps.append(
+                {
+                    "step_id": f"close-{suffix}",
+                    "command": "close",
+                    "payload": {
+                        "period": period,
+                        "owner_confirmation": owner_confirmation,
+                        "preview_digest": {"$replay_ref": review_ref, "field": "digest"},
+                        "epochs": {"$replay_ref": review_ref, "field": "epochs"},
+                    },
+                    "depends_on": [f"preview-{suffix}"],
                 }
-                committed = self.engine.request_result(child_key)
-                if committed["status"] == "committed":
-                    result = committed["result"]
-                    if (
-                        committed["action"] != "close"
-                        or result.get("period") != period
-                        or result.get("status") != "closed"
-                    ):
-                        raise KernelError("request_content_invalid", "重放子请求与月份不一致")
-                    with self.engine.store.connection(read_only=True) as connection:
-                        connection.execute("BEGIN")
-                        row = connection.execute(
-                            "SELECT * FROM period_close WHERE period=?", (ordinal,)
-                        ).fetchone()
-                        header = verified_header(connection, row) if row else None
-                        audit = connection.execute(
-                            "SELECT payload FROM audit WHERE request_id=?", (child_key,)
-                        ).fetchone()
-                        small = header.root["small"] if header else None
-                        if (
-                            header is None
-                            or header.logical_digest.hex() != result["digest"]
-                            or audit is None
-                            or json.loads(audit[0]).get("actor") != self.engine.audit_actor
-                            or small["approval"] is not None
-                            or small["owner_confirmation"] != owner_confirmation
-                            or small["previous_close_digest"]
-                            != (previous["digest"] if previous else None)
-                            or small["read_version"]
-                            != {
-                                **expected,
-                                "read_repair_revision": baseline["read_repair_revision"],
-                            }
-                        ):
-                            raise KernelError(
-                                "request_content_invalid", "重放子请求与实际冻结不一致"
-                            )
-                    results.append({**result, "request_id": child_key})
-                    previous = {"period": period, "digest": result["digest"]}
-                    continue
-
-                if cached is not None:
-                    raise KernelError("request_content_invalid", "重放完成记录缺少实际逐月提交")
-
-                def check(connection, *_, _expected=expected, _previous=previous):
-                    self.service.security.validate_authority(self.authority)
-                    current = _boundary(self.engine, connection)
-                    if current != {
-                        "epochs": _expected,
-                        "read_repair_revision": baseline["read_repair_revision"],
-                        "prefix": _previous,
-                    }:
-                        raise KernelError("preview_expired", "重放期间来源版本或冻结前缀发生变化")
-                    return None
-
-                try:
-                    with self.engine.store.connection(read_only=True) as connection:
-                        connection.execute("BEGIN")
-                        check(connection)
-                    periods = Periods(self.engine, authorize_close=check)
-                    preview = periods.preview_close(period, owner_confirmation=owner_confirmation)
-                    if not results and preview["digest"] != intent["first_preview_digest"]:
-                        raise KernelError("preview_expired", "重放首月核对内容已变化")
-                    setting = self.service.catalog.company_settings(self.engine.store.company_id)
-                    directory = setting["backup_directory"] or str(
-                        self.service.catalog.root / "backups" / self.engine.store.path.parent.name
-                    )
-                    result = periods.close(
-                        period,
-                        owner_confirmation=owner_confirmation,
-                        preview_digest=preview["digest"],
-                        epochs=preview["epochs"],
-                        request_id=child_key,
-                        backup_directory=directory,
-                    )
-                except KernelError as exc:
-                    return self._result(
-                        request_id, first_period, last_period, results, period, exc.response()
-                    )
-                results.append({**result, "request_id": child_key})
-                previous = {"period": period, "digest": result["digest"]}
-            result = self._result(request_id, first_period, last_period, results, None, None)
-            if cached is not None:
-                if result != cached:
-                    raise KernelError("request_content_invalid", "重放完成记录与实际逐月提交不一致")
-                return cached
-            return self.engine._write(
-                request_id,
-                request_hash,
-                None,
-                (),
-                "replay_close_batch_complete",
-                lambda connection: result,
             )
-        finally:
-            self.engine.audit_actor = actor
-
-    def _result(self, request_id, first_period, last_period, results, blocked_period, issue):
-        return {
-            "status": "completed"
-            if blocked_period is None
-            else ("partial" if results else "blocked"),
+            previous_close = f"close-{suffix}"
+        plan_request_id = "legacy-replay-plan-" + digest([request_id, preview_digest]).hex()
+        prepare_payload = {
             "company_id": self.engine.store.company_id,
             "database_id": self.engine.store.database_id,
-            "request_id": request_id,
-            "scope_digest": self.scope.scope_digest,
-            "first_period": first_period,
-            "last_period": last_period,
-            "closed_through": results[-1]["period"] if results else None,
-            "blocked_period": blocked_period,
-            "issue": issue,
-            "results": results,
-            "authorization_method": "replay_scope",
+            "first_period": str(first_period),
+            "last_period": str(last_period),
+            "owner_confirmation": owner_confirmation,
+            "source_manifest_digest": digest(source_manifest).hex(),
+            "source_manifest": source_manifest,
+            "preserved_evidence": [owner_confirmation],
+            "steps": steps,
+            "request_id": plan_request_id,
         }
+        with self.service._commit_authority(self.authority):
+            plan = prepare_replay(self.service, self.engine, self.authority, prepare_payload)
+            confirm_request_id = (
+                "legacy-replay-confirm-" + digest([request_id, preview_digest]).hex()
+            )
+            return confirm_replay(
+                self.service,
+                self.engine,
+                self.authority,
+                {
+                    "plan_id": plan["plan_id"],
+                    "plan_digest": plan["plan_digest"],
+                    "request_id": confirm_request_id,
+                },
+            )

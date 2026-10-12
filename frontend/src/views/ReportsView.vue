@@ -74,6 +74,7 @@ const { context, load: loadContext, refresh: refreshContext } = useDashboardCont
 const selectedQuarter = ref("");
 const report = ref<DeferredQuarterlyReport | null>(null);
 const loading = ref(false);
+const preparing = ref(false);
 const exporting = ref(false);
 const needsRegeneration = ref(false);
 let exportAttempt: { digest: string; requestId: string; jobId?: string } | null = null;
@@ -95,7 +96,7 @@ function invalidateRequests(keepContent = false) {
   previewController?.abort(); exportController?.abort();
   previewController = null; exportController = null;
   if (!keepContent) report.value = null;
-  loading.value = keepContent; exporting.value = false;
+  loading.value = keepContent; preparing.value = false; exporting.value = false;
   exportNotice.value = ""; errorMessage.value = "";
 }
 
@@ -314,6 +315,7 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
   exportNotice.value = "";
   needsRegeneration.value = false;
   loading.value = true;
+  preparing.value = false;
   try {
     if (typeof companyId !== "string") throw new Error("No selected company");
     const request = fetchDeferredQuarterlyReport(
@@ -321,10 +323,15 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
       Number(match[1]),
       Number(match[2]),
       controller.signal,
+      () => {
+        if (!isCurrent(generation, selection) || previewController !== controller) return;
+        preparing.value = true; report.value = null; statementsExpanded.value = false; activeStatementKey.value = "";
+      },
     );
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || previewController !== controller) return;
     report.value = result;
+    preparing.value = false;
     loading.value = false;
     if (!result.statements.some((item) => item.key === activeStatementKey.value)) {
       activeStatementKey.value = "";
@@ -334,6 +341,7 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
   } catch (error: unknown) {
     if (isCurrent(generation, selection) && previewController === controller) {
       report.value = null;
+      preparing.value = false;
       const message = dashboardErrorMessage(error);
       if (message) errorMessage.value = message;
     }
@@ -586,8 +594,8 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-else-if="loading" class="state-panel" aria-live="polite">
-        <strong>正在整理本季度报表</strong>
-        <span>正在读取账务和核对资料，请稍候…</span>
+        <strong>{{ preparing ? "季度报表正在更新" : "正在整理本季度报表" }}</strong>
+        <span>{{ preparing ? "正在准备所选季度的最新数据，请稍候…" : "正在读取账务和核对资料，请稍候…" }}</span>
       </section>
 
       <section v-else-if="errorMessage && !report" class="state-panel error" role="alert">

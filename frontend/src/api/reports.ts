@@ -1,8 +1,10 @@
-import { DashboardApiError, requestGeneratedJson } from "./client";
+import { DashboardApiError, requestGeneratedDashboard, type DashboardDeliveryAttempt } from "./client";
 import { requestLocalJson, LocalApiError } from "./localKernel";
 import type { DashboardQuarterlyReportContract, DashboardQuarterlyReportResponse } from "./generated/dashboardQuarterlyReport";
+import type { DashboardQuarterlyReportDeliveryResponse } from "./generated/dashboardQuarterlyReportDelivery";
 import type { ReportExportStatusResponse } from "./generated/reportExportStatus";
 import { validateDashboardQuarterlyReportResponse } from "./generated/dashboardQuarterlyReport.js";
+import { validateDashboardQuarterlyReportDeliveryResponse } from "./generated/dashboardQuarterlyReportDelivery.js";
 
 export type QuarterlyReport = DashboardQuarterlyReportResponse;
 export type DeferredQuarterlyReport = DashboardQuarterlyReportResponse;
@@ -18,9 +20,32 @@ function matchesRequest(url: URL, response: DashboardQuarterlyReportResponse) {
     && response.period.quarter === quarter;
 }
 
-export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal) {
+function inspectDelivery(delivery: DashboardQuarterlyReportDeliveryResponse): DashboardDeliveryAttempt<DashboardQuarterlyReportResponse> {
+  if (delivery.state === "ready") {
+    return { state: "ready", response: delivery.response, modelVersion: delivery.model_version };
+  }
+  if (delivery.state === "preparing") return { state: "preparing", retryAfterMs: delivery.retry_after_ms };
+  return { state: "failed", reason: delivery.reason };
+}
+
+function matchesDeliveryRequest(url: URL, delivery: DashboardQuarterlyReportDeliveryResponse): boolean {
+  const companyId = url.searchParams.get("company_id");
+  const year = Number(url.searchParams.get("year"));
+  const quarter = Number(url.searchParams.get("quarter"));
+  const period = `${year}-Q${quarter}`;
+  if (companyId !== delivery.company_id || delivery.period !== period) return false;
+  return delivery.state !== "ready"
+    || (delivery.model_version === delivery.response.read_context.read_version
+      && delivery.response.read_context.company_id === delivery.company_id
+      && `${delivery.response.period.year}-Q${delivery.response.period.quarter}` === delivery.period);
+}
+
+export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal, onPreparing?: () => void) {
   const query = new URLSearchParams({ company_id: companyId, year: String(year), quarter: String(quarter), preparation: "deferred" });
-  return requestGeneratedJson(`/api/dashboard/quarterly-report?${query}`, "/api/dashboard/quarterly-report", validateDashboardQuarterlyReportResponse, matchesRequest, { signal });
+  return requestGeneratedDashboard(
+    `/api/dashboard/quarterly-report?${query}`, "/api/dashboard/quarterly-report", validateDashboardQuarterlyReportDeliveryResponse,
+    inspectDelivery, matchesDeliveryRequest, validateDashboardQuarterlyReportResponse, matchesRequest, { signal, onPreparing },
+  );
 }
 
 export async function requestQuarterlyExport(companyId: string, report: QuarterlyReport, requestId: string, signal?: AbortSignal) {

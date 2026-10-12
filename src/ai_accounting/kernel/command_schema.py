@@ -32,6 +32,7 @@ from .materials import (
 from .payroll_preparation import PayrollPreparation
 from .periods import Periods
 from .replay_close import ReplayClose
+from .replay_runner import ReplayCommands
 from .reports import Reports
 from .schema_discovery import SchemaQuery
 from .tax_import import TaxImport
@@ -112,6 +113,11 @@ def command_models(registry):
         "close": Periods.close,
         "preview_replay_close_range": ReplayClose.preview,
         "confirm_replay_close_range": ReplayClose.confirm,
+        "prepare_replay": ReplayCommands.prepare_replay,
+        "confirm_replay": ReplayCommands.confirm_replay,
+        "replay_status": ReplayCommands.replay_status,
+        "resume_replay": ReplayCommands.resume_replay,
+        "replay_classification_prepare": ReplayCommands.replay_classification_prepare,
         "closed_report": Periods.closed_report,
         "preview_delete": Engine.preview_delete,
         "delete": Engine.delete,
