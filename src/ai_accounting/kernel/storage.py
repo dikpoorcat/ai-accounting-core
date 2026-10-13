@@ -27,6 +27,22 @@ from .versions import verify_schema
 _active_fact_reads: ContextVar[object | None] = ContextVar("active_fact_reads", default=None)
 
 
+def _owned_read_snapshot_cache(connection):
+    """Use only the current private, guarded read transaction's memo storage."""
+    from .query_reads import _owns_current_selector_snapshot
+    from .runtime import _OwnedReadConnection
+
+    reads = _active_fact_reads.get()
+    if (
+        type(connection) is _OwnedReadConnection
+        and connection._owned_read_guard is not None
+        and _owns_current_selector_snapshot(reads, connection)
+        and connection.total_changes == reads._snapshot_changes
+    ):
+        return reads._report_snapshot_cache
+    return None
+
+
 def _snapshot_fact_raws(store, connection, identifiers):
     """Decode exact pre-validation JSON, never a normalized model dump or proof."""
     reads = _active_fact_reads.get()

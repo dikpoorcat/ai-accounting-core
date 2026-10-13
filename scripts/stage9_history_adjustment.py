@@ -7,12 +7,12 @@ import json
 from dataclasses import replace
 from types import MappingProxyType
 
-from .backup import _retained_history_digest, _verify_connection
-from .contracts import KernelError
-from .development_contracts import get_contract_sha
-from .schema_bundle import production_bundle
-from .types import canonical, digest
-from .versions import fingerprint, objects, verify_schema
+from ai_accounting.kernel.backup import _retained_history_digest, _verify_connection
+from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.development_contracts import get_contract_sha
+from ai_accounting.kernel.schema_bundle import production_bundle
+from ai_accounting.kernel.types import canonical, digest
+from ai_accounting.kernel.versions import fingerprint, objects, verify_schema
 
 COMPANY_SOURCE = "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
 CATALOG_SOURCE = "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
@@ -85,7 +85,7 @@ def _contracts(kind):
 
 def source_bundle():
     """Use the exact package-owned source grammar for independent source proof."""
-    from .source24_history import source_registry
+    from ai_accounting.kernel.source24_history import source_registry
 
     bundle = production_bundle()
     company = get_contract_sha(bundle, "company", COMPANY_SOURCE)
@@ -129,7 +129,7 @@ def _fund_setting_evidence(connection, accounts, first_period):
         "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
         (key, "evidence", canonical(result)),
     )
-    from .read_indexes import sync_audit
+    from ai_accounting.kernel.read_indexes import sync_audit
 
     sync_audit(connection, audit.lastrowid)
     connection.execute(
@@ -215,10 +215,12 @@ def adjust_connection(
     bundle, source, target = _contracts(kind)
     old = {(o["type"], o["name"]): o["sql"] for o in source["objects"]}
     new = {(o["type"], o["name"]): o["sql"] for o in target["objects"]}
-    try:
-        connection.execute("PRAGMA foreign_keys=OFF")
-        _require(connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0, "无法关闭迁移外键")
-        connection.execute("BEGIN IMMEDIATE")
+    from ai_accounting.kernel.runtime import migration_write
+
+    with migration_write(
+        connection, foreign_keys_off=True,
+        before_restore=(lambda: fault("before_restore_foreign_keys")) if fault else None,
+    ) as transaction:
         _require(objects(connection) == source["objects"], "锁定后历史结构发生变化")
         # Recheck guards after acquiring the write lock.
         plan_connection(connection, kind=kind)
@@ -235,7 +237,7 @@ def adjust_connection(
         )
         coverage = None
         if kind == "company":
-            from .change_journal import capture_retained_coverage
+            from ai_accounting.kernel.change_journal import capture_retained_coverage
 
             coverage = capture_retained_coverage(
                 connection,
@@ -302,7 +304,7 @@ def adjust_connection(
             )
         if kind == "company":
             _require(_retained_history_digest(connection) == retained, "冻结、凭证或审计历史改变")
-            from .change_journal import install_retained_coverage
+            from ai_accounting.kernel.change_journal import install_retained_coverage
 
             install_retained_coverage(connection, coverage)
         sequence = connection.execute(
@@ -322,7 +324,7 @@ def adjust_connection(
         metadata_evidence = None
         metadata_state_delta = None
         if kind == "company":
-            from .offline_development_upgrade import _initialize_fund_details
+            from ai_accounting.kernel.offline_development_upgrade import _initialize_fund_details
 
             state_before = dict(connection.execute("SELECT * FROM state WHERE id=1").fetchone())
             initialized_accounts, metadata_evidence = _fund_setting_evidence(
@@ -404,8 +406,7 @@ def adjust_connection(
             )
         if fault:
             fault("before_commit")
-        connection.commit()
-        return {
+        transaction["result"] = {
             **plan,
             "status": "adjusted",
             "retained_history_digest": retained,
@@ -414,18 +415,4 @@ def adjust_connection(
             "new_synthetic_metadata_evidence": metadata_evidence,
             "synthetic_metadata_state_delta": metadata_state_delta,
         }
-    except BaseException:
-        connection.rollback()
-        raise
-    finally:
-        try:
-            if fault:
-                fault("before_restore_foreign_keys")
-            connection.execute("PRAGMA foreign_keys=ON")
-            _require(
-                connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1,
-                "历史调整后无法恢复外键检查",
-            )
-        except BaseException:
-            connection.close()
-            raise
+        return transaction["result"]

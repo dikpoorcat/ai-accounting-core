@@ -121,16 +121,23 @@ def install_retained_coverage(connection, value):
 def _retained_coverage(connection):
     """A migration-bound original set; later records still require actual events."""
     from .development_contracts import SOURCE24_FINGERPRINT
+    from .storage import _owned_read_snapshot_cache
     from .types import digest
 
+    cache = _owned_read_snapshot_cache(connection)
+    key = ("verified_retained_coverage",)
+    if cache is not None and key in cache:
+        return cache[key]
     boundaries = connection.execute("SELECT * FROM source_change_retained_boundary").fetchall()
-    rows = [tuple(row) for row in connection.execute(
+    rows = tuple(tuple(row) for row in connection.execute(
         "SELECT source,target_id,after_ref,revision FROM source_change_retained_record "
         "ORDER BY source,target_id,after_ref",
-    )]
+    ))
     if not boundaries:
         if rows:
             _invalid("journal_retained_boundary_missing")
+        if cache is not None:
+            cache[key] = (0, ())
         return 0, ()
     if len(boundaries) != 1:
         _invalid("journal_retained_boundary_invalid")
@@ -146,7 +153,10 @@ def _retained_coverage(connection):
                 "AND retained_history_digest=?", (source, retained),
             ).fetchone()[0] != 1):
         _invalid("journal_retained_boundary_mismatch")
-    return through, rows
+    result = through, rows
+    if cache is not None:
+        cache[key] = result
+    return result
 
 
 def _append(source, target, before, after):

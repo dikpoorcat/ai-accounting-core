@@ -136,6 +136,12 @@ def test_build_identity_includes_the_selected_content_contract(tmp_path, monkeyp
     content.write_text('{"version":1}', encoding="utf-8")
     monkeypatch.setattr(build, "__file__", str(package / "kernel/build.py"))
     original = build.calculator_build_id()
+    development_tool = package.parent / "scripts/stage9_history_adjustment.py"
+    development_tool.parent.mkdir(exist_ok=True)
+    development_tool.write_text("# development-only sample adjustment\n", encoding="utf-8")
+    assert build.calculator_build_id() == original
+    development_tool.write_text("# independent tool revision\n", encoding="utf-8")
+    assert build.calculator_build_id() == original
     content.write_text('{"version":1,"changed":true}', encoding="utf-8")
     assert build.calculator_build_id() != original
 

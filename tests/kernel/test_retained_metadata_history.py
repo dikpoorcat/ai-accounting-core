@@ -11,15 +11,15 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities, WorkerRegistration
 from ai_accounting.kernel.entity_profile_history import PreEventProfile
-from ai_accounting.kernel.offline_history_adjustment import adjust_connection
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import digest
+from scripts.stage9_history_adjustment import adjust_connection
 
 
 @pytest.fixture
-def original_metadata(tmp_path):
+def original_metadata(tmp_path, request):
     path = tmp_path / "source.sqlite"
     source = original_file(path, "company")
     engine = Engine(Store(path, source, "synthetic-company", "synthetic-database"))
@@ -43,6 +43,11 @@ def original_metadata(tmp_path):
     saved = engine._write(
         "original-profile", digest(data), None, ("management",), "register_entity", insert,
     )
+    for index in range(getattr(request, "param", 0)):
+        engine.register_evidence(
+            f"unrelated original evidence {index}".encode(), "text/plain", "original",
+            request_id=f"unrelated-original-{index}",
+        )
     assert verify_file(path, _bundle=source)["verification"]["status"] == "verified"
     with closing(connect(path)) as connection:
         before = dict(connection.execute("SELECT * FROM entity_profile_revision").fetchone())

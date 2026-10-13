@@ -29,10 +29,10 @@ def original_owner_fixture(tmp_path, monkeypatch, *, mismatch=False):
     from ai_accounting.kernel.backup import verify_file
     from ai_accounting.kernel.engine import Engine
     from ai_accounting.kernel.entity_profile_history import PreEventProfile
-    from ai_accounting.kernel.offline_history_adjustment import adjust_connection
     from ai_accounting.kernel.schema_bundle import production_bundle
     from ai_accounting.kernel.source24_history import PayrollPlanPreRevision
     from ai_accounting.kernel.storage import Store
+    from scripts.stage9_history_adjustment import adjust_connection
 
     path = tmp_path / "original-owner.sqlite"
     source = original_file(path, "company")

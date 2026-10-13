@@ -15,11 +15,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import Context, Fact, FactVersion, KernelError, NeedsInformation, Read, Registry
 from .domains.money import ACTUAL_PAYMENT_KINDS
-from .materials import Detail, MaterialResolution
 from .payroll_confirmation import FactRevisionReference, revision_reference
 from .payroll_history import (
     PAYROLL_KINDS,
@@ -188,7 +187,9 @@ class PayrollPlanPreRevision(Fact):
             raise ValueError("monthly plan change-notice references must be unique and sorted")
         return self
 
-class MaterialLinkPreReference(Detail):
+class MaterialLinkPreReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
     subject_id: Identifier
     fact_kind: Identifier
     fact_id: Identifier
@@ -197,7 +198,7 @@ class MaterialLinkPreReference(Detail):
     amount_fen: Fen
     recognition_period: YearMonth
 
-class MaterialResolutionPreReference(MaterialResolution):
+class MaterialResolutionPreReference(Fact):
     kind: ClassVar[str] = "material_resolution_v2"
     lane: ClassVar[str] = "material"
     identity_fields: ClassVar[tuple[str, ...]] = ("source_id", "location")

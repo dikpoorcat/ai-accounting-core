@@ -15,11 +15,11 @@ from test_adjust_stage9_samples import original_file
 from ai_accounting.kernel import backup, backup_tasks, dashboard_async
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.offline_history_adjustment import source_bundle
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import objects
+from scripts.stage9_history_adjustment import source_bundle
 
 
 @pytest.mark.parametrize("original_source", [False, True], ids=["current", "source0c"])

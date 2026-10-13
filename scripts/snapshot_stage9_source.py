@@ -34,6 +34,7 @@ def _selected(source: Path) -> tuple[Path, ...]:
         source / "tests/kernel/stage9_independent_book.py",
         source / "scripts/benchmark_stage9.py",
         source / "scripts/benchmark_stage9_browser.py",
+        source / "scripts/stage9_history_adjustment.py",
         source / "src/ai_accounting/static/dashboard/index.html",
         source / "frontend/tests/browser-stage9-hot-refresh.cjs",
         source / "frontend/package.json",
@@ -47,6 +48,8 @@ def _selected(source: Path) -> tuple[Path, ...]:
     )
     if any(not item.is_file() for item in required) or any(not root.is_dir() for root in roots):
         raise ValueError("Stage 9 snapshot source is missing code, fixtures, or built frontend")
+    if (source / "src/ai_accounting/kernel/offline_history_adjustment.py").exists():
+        raise ValueError("Stage 9 sample adjustment belongs in scripts, not the runtime kernel")
     diagnostic_dist = source / "frontend/dist"
     if diagnostic_dist.is_dir():
         roots += (diagnostic_dist,)

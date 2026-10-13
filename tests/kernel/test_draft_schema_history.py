@@ -1,6 +1,8 @@
 """Exact synthetic draft ancestry, without upgrading or rewriting released history."""
 
+import json
 import sqlite3
+from copy import deepcopy
 from dataclasses import replace
 
 import pytest
@@ -23,6 +25,137 @@ IDENTITY = """CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1),
  company_id TEXT NOT NULL,taxpayer_id TEXT NOT NULL,database_id TEXT NOT NULL) STRICT;"""
 SOURCE = META_DDL + HISTORY_DDL + IDENTITY
 TARGET = SOURCE + DRAFT_HISTORY_DDL
+
+
+@pytest.fixture
+def incremental_drafts(tmp_path):
+    old = full_contract(
+        "CREATE TABLE a(id INTEGER); CREATE INDEX obsolete ON a(id);", kind="company"
+    )
+    new = full_contract("CREATE TABLE a(id TEXT); CREATE TABLE b(id INTEGER);", kind="company")
+    last = full_contract(
+        "CREATE TABLE a(id TEXT); CREATE TABLE b(id INTEGER); CREATE TABLE c(id TEXT);",
+        kind="company",
+    )
+    delta = {key: value for key, value in new.items() if key != "objects"}
+    delta.update(
+        base_sha256=old["sha256"],
+        add=[row for row in new["objects"] if row["name"] == "b"],
+        remove=[{"type": "index", "name": "obsolete"}],
+        replace=[row for row in new["objects"] if row["name"] == "a"],
+    )
+    tail = {key: value for key, value in last.items() if key != "objects"}
+    tail.update(
+        base_sha256=new["sha256"],
+        add=[row for row in last["objects"] if row["name"] == "c"],
+        remove=[],
+        replace=[],
+    )
+    return tmp_path, old, new, last, delta, tail
+
+
+def load_incremental_drafts(directory, values):
+    for fingerprint, value in values.items():
+        (directory / (fingerprint + ".json")).write_text(
+            json.dumps(value, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    return load_development_contracts(
+        directory, tuple(values), family=TEST_FAMILY, application_id=APPLICATION_ID
+    )["company"]
+
+
+def test_development_parent_chain_expands_to_independent_sql_contracts(incremental_drafts):
+    directory, old, new, last, delta, tail = incremental_drafts
+    values = {last["sha256"]: tail, new["sha256"]: delta, old["sha256"]: old}
+    expanded = load_incremental_drafts(directory, values)
+    assert expanded == {item["sha256"]: item for item in (old, new, last)}
+    assert json.loads((directory / (new["sha256"] + ".json")).read_text()) == delta
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_parent",
+        "undeclared_parent",
+        "self_parent",
+        "cycle",
+        "parent_kind",
+        "parent_family",
+        "parent_application",
+        "parent_version",
+        "unknown_field",
+        "duplicate_add",
+        "duplicate_remove",
+        "duplicate_replace",
+        "overlap",
+        "add_existing",
+        "remove_missing",
+        "replace_missing",
+        "changed_sql",
+        "identity",
+        "invalid_parent_type",
+        "invalid_object",
+    ],
+)
+def test_development_increment_rejects_forged_or_ambiguous_contracts(incremental_drafts, damage):
+    directory, old, new, _, delta, _ = deepcopy(incremental_drafts)
+    values = {old["sha256"]: old, new["sha256"]: delta}
+    if damage in {"missing_parent", "undeclared_parent"}:
+        values.pop(old["sha256"])
+        if damage == "undeclared_parent":
+            (directory / (old["sha256"] + ".json")).write_text(json.dumps(old), encoding="utf-8")
+    elif damage == "self_parent":
+        delta["base_sha256"] = new["sha256"]
+    elif damage == "cycle":
+        values[old["sha256"]] = {key: value for key, value in old.items() if key != "objects"}
+        values[old["sha256"]].update(base_sha256=new["sha256"], add=[], remove=[], replace=[])
+    elif damage.startswith("parent_"):
+        field, value = {
+            "parent_kind": ("kind", "catalog"),
+            "parent_family": ("family", "other"),
+            "parent_application": ("application_id", False),
+            "parent_version": ("version", 1),
+        }[damage]
+        old[field] = value
+    elif damage == "unknown_field":
+        delta["base_version"] = 0
+    elif damage.startswith("duplicate_"):
+        operation = damage.removeprefix("duplicate_")
+        delta[operation].append(deepcopy(delta[operation][0]))
+    elif damage == "overlap":
+        delta["replace"].append(deepcopy(delta["add"][0]))
+    elif damage == "add_existing":
+        delta["add"].append(deepcopy(delta["replace"][0]))
+    elif damage == "remove_missing":
+        delta["remove"][0]["name"] = "missing"
+    elif damage == "replace_missing":
+        delta["replace"][0]["name"] = "missing"
+    elif damage == "changed_sql":
+        delta["replace"][0]["sql"] += " "
+    elif damage == "identity":
+        delta["sha256"] = "0" * 64
+    elif damage == "invalid_parent_type":
+        delta["base_sha256"] = []
+    elif damage == "invalid_object":
+        delta["add"][0]["type"] = "unknown"
+    with pytest.raises((ValueError, RuntimeError)):
+        load_incremental_drafts(directory, values)
+
+
+@pytest.mark.parametrize("duplicate", ["header", "nested"])
+def test_development_decoder_rejects_duplicate_json_members(incremental_drafts, duplicate):
+    directory, old, _, _, _, _ = incremental_drafts
+    raw = json.dumps(old)
+    if duplicate == "header":
+        raw = '{"sh\\u0061256": "forged",' + raw[1:]
+    else:
+        raw = raw.replace('"sql":', '"sql": "forged", "sql":', 1)
+    (directory / (old["sha256"] + ".json")).write_text(raw, encoding="utf-8")
+    with pytest.raises(ValueError, match="damaged"):
+        load_development_contracts(
+            directory, (old["sha256"],), family=TEST_FAMILY, application_id=APPLICATION_ID
+        )
 
 
 @pytest.fixture

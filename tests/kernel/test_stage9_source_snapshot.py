@@ -19,6 +19,7 @@ def _source(path, *, diagnostic_dist=True):
         "tests/conftest.py": "# conftest\n",
         "scripts/benchmark_stage9.py": "# builder\n",
         "scripts/benchmark_stage9_browser.py": "# browser harness\n",
+        "scripts/stage9_history_adjustment.py": "# sample-only adjustment\n",
         "frontend/src/App.vue": "<template>老板看板</template>\n",
         "frontend/src/main.ts": "// application entry\n",
         "frontend/tests/browser-stage9-hot-refresh.cjs": "// fixed browser harness\n",
@@ -67,6 +68,8 @@ def test_snapshot_records_equal_before_after_and_copied_bytes(tmp_path):
     assert not any("node_modules" in name or name.endswith(".tmp") for name in saved["files"])
     assert "frontend/src/App.vue" in saved["files"]
     assert "frontend/src/main.ts" in saved["files"]
+    assert "scripts/stage9_history_adjustment.py" in saved["files"]
+    assert "src/ai_accounting/kernel/offline_history_adjustment.py" not in saved["files"]
     assert "src/ai_accounting/static/dashboard/assets/main.js" in saved["files"]
     assert "frontend/dist/index.html" in saved["files"]
     with pytest.raises(ValueError, match="must not exist"):
@@ -113,6 +116,15 @@ def test_snapshot_requires_formal_static_build_even_with_diagnostic_dist(tmp_pat
     with pytest.raises(ValueError, match="built frontend"):
         snapshot_stage9_source.snapshot_source(source, target, workspace=workspace)
     assert not target.exists()
+
+
+def test_snapshot_rejects_sample_tool_left_in_runtime_kernel(tmp_path):
+    source = _source(tmp_path / "source")
+    (source / "src/ai_accounting/kernel/offline_history_adjustment.py").write_text(
+        "# obsolete runtime copy\n", encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="belongs in scripts"):
+        snapshot_stage9_source._selected(source)
 
 
 def test_snapshot_without_diagnostic_dist_fixes_frontend_source_and_release(tmp_path):

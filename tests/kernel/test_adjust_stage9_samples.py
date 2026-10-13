@@ -5,12 +5,12 @@ from contextlib import closing
 
 import pytest
 
-from ai_accounting.kernel import offline_history_adjustment as adjustment
 from ai_accounting.kernel.backup import verify_file
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.runtime import connect, initialize_file
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.versions import install_metadata, objects, verify_schema
+from scripts import stage9_history_adjustment as adjustment
 
 
 @pytest.mark.parametrize("extra_accounting", [0, 1])
@@ -125,8 +125,12 @@ def test_failed_foreign_key_restore_closes_connection(tmp_path):
         if at in {"after_drop", "before_restore_foreign_keys"}:
             raise RuntimeError(at)
 
-    with pytest.raises(RuntimeError, match="before_restore_foreign_keys"):
+    with pytest.raises(RuntimeError, match="after_drop") as failure:
         adjustment.adjust_connection(connection, kind="company", fault=fault)
+    assert failure.value.migration_state["outcome"] == "rolled_back"
+    assert failure.value.migration_state["cleanup_errors"] == [
+        {"phase": "foreign_keys_restore", "error_type": "RuntimeError"}
+    ]
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
     with closing(connect(path)) as reopened:

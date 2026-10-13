@@ -35,9 +35,9 @@ def book(tmp_path, monkeypatch):
 
     from ai_accounting.kernel.entity_profile_history import PreEventProfile
     from ai_accounting.kernel.materials import Materials
-    from ai_accounting.kernel.offline_history_adjustment import source_bundle
     from ai_accounting.kernel.runtime import initialize_file
     from ai_accounting.kernel.versions import install_metadata, verify_schema
+    from scripts.stage9_history_adjustment import source_bundle
 
     bundle = source_bundle()
 

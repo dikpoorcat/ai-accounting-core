@@ -196,14 +196,12 @@ def _metadata(connection, bundle, kind):
 
 
 def verify_schema(connection, *, bundle, kind="company", allow_previous=False):
-    owned_snapshot = not connection.in_transaction
-    if owned_snapshot:
-        connection.execute("BEGIN")
-    try:
+    from .runtime import verification_snapshot
+
+    if connection.in_transaction:
         return _verify_schema(connection, bundle=bundle, kind=kind, allow_previous=allow_previous)
-    finally:
-        if owned_snapshot:
-            connection.rollback()
+    with verification_snapshot(connection):
+        return _verify_schema(connection, bundle=bundle, kind=kind, allow_previous=allow_previous)
 
 
 def _verify_schema(connection, *, bundle, kind, allow_previous):
@@ -315,18 +313,13 @@ def _execute_steps(
             )
         ):
             raise KernelError("migration_not_declared", "迁移步骤未形成同系统连续合同")
-    from .runtime import verification_snapshot
+    from .runtime import migration_write, verification_snapshot
 
     # Keep the entire source callback, including its retained-history baseline,
     # in one read snapshot. End only this owned read before FK changes/write lock.
     with verification_snapshot(connection):
         verify_source(connection)
-    try:
-        if any(step.requires_fk_off for step in steps):
-            connection.execute("PRAGMA foreign_keys=OFF")
-            if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
-                raise KernelError("migration_integrity_failed", "无法关闭迁移外键检查")
-        connection.execute("BEGIN IMMEDIATE")
+    with migration_write(connection, foreign_keys_off=any(step.requires_fk_off for step in steps)):
         verify_source(connection)
         for step in steps:
             _assert_step_contract(
@@ -348,19 +341,7 @@ def _execute_steps(
             verify_target(connection)
         if fault:
             fault("before_commit")
-        connection.commit()
         return True
-    except BaseException:
-        connection.rollback()
-        raise
-    finally:
-        try:
-            connection.execute("PRAGMA foreign_keys=ON")
-            if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                raise KernelError("migration_integrity_failed", "升级后无法恢复外键检查")
-        except BaseException:
-            connection.close()
-            raise
 
 
 def _migration_plan(bundle, kind, source, target):

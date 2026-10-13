@@ -9,7 +9,16 @@ _OLD_BINDING = frozenset({"subject_id", "fact_kind", "fact_id", "recognition_per
 
 
 def _columns(connection, table):
-    return tuple(row[1] for row in connection.execute(f'PRAGMA table_info("{table}")'))
+    from .storage import _owned_read_snapshot_cache
+
+    cache = _owned_read_snapshot_cache(connection)
+    key = ("material_table_columns", table)
+    if cache is not None and key in cache:
+        return cache[key]
+    columns = tuple(row[1] for row in connection.execute(f'PRAGMA table_info("{table}")'))
+    if cache is not None:
+        cache[key] = columns
+    return columns
 
 
 def material_relation(connection, table):

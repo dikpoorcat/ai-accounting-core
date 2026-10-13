@@ -115,6 +115,25 @@ def unpublished_copy_sidecars(connection):
 
 
 OWNED_READ_CACHED_STATEMENTS = 512
+_OWNED_READ_WRITE_ACTIONS = frozenset({
+    sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
+    sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_CREATE_TABLE,
+    sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_CREATE_VIEW,
+    sqlite3.SQLITE_CREATE_TEMP_INDEX, sqlite3.SQLITE_CREATE_TEMP_TABLE,
+    sqlite3.SQLITE_CREATE_TEMP_TRIGGER, sqlite3.SQLITE_CREATE_TEMP_VIEW,
+    sqlite3.SQLITE_DROP_INDEX, sqlite3.SQLITE_DROP_TABLE,
+    sqlite3.SQLITE_DROP_TRIGGER, sqlite3.SQLITE_DROP_VIEW,
+    sqlite3.SQLITE_DROP_TEMP_INDEX, sqlite3.SQLITE_DROP_TEMP_TABLE,
+    sqlite3.SQLITE_DROP_TEMP_TRIGGER, sqlite3.SQLITE_DROP_TEMP_VIEW,
+    sqlite3.SQLITE_ALTER_TABLE, sqlite3.SQLITE_REINDEX, sqlite3.SQLITE_ANALYZE,
+    sqlite3.SQLITE_CREATE_VTABLE, sqlite3.SQLITE_DROP_VTABLE,
+    sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH,
+})
+# These arguments select a table/index/check scope; they never set configuration.
+_OWNED_READ_PARAMETER_PRAGMAS = frozenset({
+    "table_info", "table_xinfo", "table_list", "index_info", "index_xinfo", "index_list",
+    "foreign_key_list", "foreign_key_check", "integrity_check", "quick_check",
+})
 
 
 class _OwnedReadGuard:
@@ -125,8 +144,11 @@ class _OwnedReadGuard:
     def __init__(self):
         self.permit = None
 
-    def authorize(self, action, operation, *_):
-        if action == sqlite3.SQLITE_SAVEPOINT:
+    def authorize(self, action, operation, argument, *_):
+        if action in _OWNED_READ_WRITE_ACTIONS or action == sqlite3.SQLITE_SAVEPOINT:
+            return sqlite3.SQLITE_DENY
+        if (action == sqlite3.SQLITE_PRAGMA and argument is not None
+            and operation.casefold() not in _OWNED_READ_PARAMETER_PRAGMAS):
             return sqlite3.SQLITE_DENY
         if action != sqlite3.SQLITE_TRANSACTION:
             return sqlite3.SQLITE_OK
@@ -391,16 +413,147 @@ def initialize_file(path: str | Path, initializer, validator) -> Path:
 
 
 @contextmanager
+def migration_write(connection, *, foreign_keys_off=False, before_begin=None, before_restore=None):
+    """Own one supplied connection's write transaction, never its domain checks.
+
+    Package-owned callers recheck their source and verify all target data in the
+    body. They must not commit or rollback it. A result may be stored in the
+    yielded state so a post-commit cleanup error can report actual progress.
+    """
+    from .contracts import KernelError
+
+    if connection.in_transaction:
+        raise KernelError("migration_transaction_active", "升级必须从无事务连接开始")
+    state = {"outcome": "not_started", "committed": False, "connection_discarded": False,
+             "cleanup_errors": []}
+    primary = traceback = None
+    phase = "foreign_keys_disable"
+    discard = False
+
+    def cleanup_error(phase, error):
+        nonlocal primary, traceback
+        if primary is None:
+            primary, traceback = error, error.__traceback__
+            state["failure_phase"] = phase
+        else:
+            state["cleanup_errors"].append({"phase": phase, "error_type": type(error).__name__})
+            primary.add_note(f"Migration cleanup failed at {phase}: {type(error).__name__}")
+
+    try:
+        if foreign_keys_off:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                raise KernelError("migration_integrity_failed", "无法关闭迁移外键检查")
+        if before_begin is not None:
+            phase = "before_begin"
+            before_begin()
+        phase = "begin"
+        connection.execute("BEGIN IMMEDIATE")
+        state["outcome"] = "active"
+        phase = "body"
+        yield state
+        if not connection.in_transaction:
+            raise KernelError("migration_transaction_lost", "迁移回调改变了所属事务")
+        phase = "commit"
+        connection.commit()
+        state.update(outcome="committed", committed=True)
+    except BaseException as error:
+        primary, traceback = error, error.__traceback__
+        state["failure_phase"] = phase
+        try:
+            if connection.in_transaction:
+                connection.rollback()
+                if connection.in_transaction:
+                    raise RuntimeConfigurationError("Migration rollback left an active transaction")
+                state["outcome"] = "rolled_back"
+            elif state["outcome"] == "active":
+                state["outcome"] = "unknown"
+                discard = True
+        except BaseException as rollback_error:
+            state["outcome"] = "unknown"
+            discard = True
+            cleanup_error("rollback", rollback_error)
+    finally:
+        phase = "foreign_keys_restore"
+        try:
+            if before_restore is not None:
+                before_restore()
+            connection.execute("PRAGMA foreign_keys=ON")
+            if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                raise KernelError("migration_integrity_failed", "升级后无法恢复外键检查")
+        except BaseException as restore_error:
+            discard = True
+            cleanup_error("foreign_keys_restore", restore_error)
+        if discard:
+            state["connection_discarded"] = True
+            try:
+                connection.close()
+            except BaseException as close_error:
+                cleanup_error("close", close_error)
+    if primary is not None:
+        result = state.pop("result", None)
+        primary.migration_state = state
+        if state["committed"] and result is not None:
+            primary.migration_result = result
+        if isinstance(primary, KernelError):
+            primary.details["migration_state"] = state
+        raise primary.with_traceback(traceback)
+
+
+@contextmanager
+def migration_connection(connection):
+    """Close an already supplied root-upgrade connection without hiding failure."""
+    try:
+        yield connection
+    except BaseException as primary:
+        if not (
+            getattr(primary, "migration_state", {}).get("connection_discarded")
+            or getattr(primary, "verification_connection_discarded", False)
+        ):
+            try:
+                connection.close()
+            except BaseException as close_error:
+                primary.add_note(f"Migration connection close failed: {type(close_error).__name__}")
+                primary.migration_connection_close_error = type(close_error).__name__
+        raise
+    else:
+        connection.close()
+
+
+@contextmanager
 def verification_snapshot(connection):
     """Own a normal read snapshot only when verification has no caller transaction."""
     owned = not connection.in_transaction
     if owned:
         connection.execute("BEGIN")
+    primary = traceback = None
     try:
         yield connection
-    finally:
-        if owned:
+    except BaseException as error:
+        primary, traceback = error, error.__traceback__
+    if owned:
+        try:
             connection.rollback()
+            if connection.in_transaction:
+                raise RuntimeConfigurationError("Verification rollback left an active transaction")
+        except BaseException as rollback_error:
+            if primary is None:
+                primary, traceback = rollback_error, rollback_error.__traceback__
+            else:
+                primary.add_note(f"Verification rollback failed: {type(rollback_error).__name__}")
+            primary.verification_connection_discarded = True
+            primary.verification_snapshot_cleanup_errors = [
+                {"phase": "rollback", "error_type": type(rollback_error).__name__}
+            ]
+            try:
+                connection.close()
+            except BaseException as close_error:
+                primary.add_note(f"Verification close failed: {type(close_error).__name__}")
+                primary.verification_snapshot_cleanup_errors.append(
+                    {"phase": "close", "error_type": type(close_error).__name__}
+                )
+    if primary is not None:
+        raise primary.with_traceback(traceback)
 
 
 @contextmanager

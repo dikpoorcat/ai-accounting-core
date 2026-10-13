@@ -20,7 +20,10 @@ from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import install_metadata, objects, verify_schema
 
 
-def create_archived_company(path, source, *, taxpayer_id="synthetic-tax"):
+def create_archived_company(
+    path, source, *, taxpayer_id="synthetic-tax",
+    company_id="synthetic-co", database_id="synthetic-db",
+):
     """Create an isolated database using the exact declared original contract."""
     contract = source.current("company")
 
@@ -33,8 +36,8 @@ def create_archived_company(path, source, *, taxpayer_id="synthetic-tax"):
         connection.execute("INSERT INTO state VALUES(1,0,0,0,1,0)")
         connection.execute("INSERT INTO source_change_head VALUES(1,0)")
         connection.execute(
-            "INSERT INTO identity VALUES(1,'synthetic-co',?,'synthetic-db')",
-            (taxpayer_id,),
+            "INSERT INTO identity VALUES(1,?,?,?)",
+            (company_id, taxpayer_id, database_id),
         )
         install_metadata(connection, source, "company")
         connection.commit()

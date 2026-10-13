@@ -48,19 +48,13 @@ def retained_profile_ids(connection, histories):
     """Authenticate the old-format membership once for this selected read scope."""
     from .change_journal import _retained_coverage
     from .development_contracts import SOURCE24_FINGERPRINT
-    from .runtime import _OwnedReadConnection
-    from .storage import _active_fact_reads
+    from .storage import _owned_read_snapshot_cache
     from .versions import fingerprint, objects
 
     profiles = [profile for history in histories for profile in history]
     if not profiles:
         return frozenset()
-    active = _active_fact_reads.get()
-    cache = (active._report_snapshot_cache
-             if active is not None and active._snapshot_active
-             and active.connection is connection
-             and type(connection) is _OwnedReadConnection
-             and connection._owned_read_guard is not None and connection.in_transaction else None)
+    cache = _owned_read_snapshot_cache(connection)
     key = ("retained_entity_profile_membership",)
     if cache is not None and key in cache:
         return cache[key]

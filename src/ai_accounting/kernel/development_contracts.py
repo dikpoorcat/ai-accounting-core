@@ -1,9 +1,9 @@
 """Package-owned exact draft source snapshots, separate from released contracts."""
 
-import json
 from pathlib import Path
 
-from .migration_contracts import HEADERS, _digest, _object_map
+from .migration_contracts import HEADERS, _apply_operations, _digest, _object_map
+from .stored_json import loads_finite_unique
 
 # The exact last installed draft before confirmed remuneration tax facts.  It
 # remains a readable package source; older undeclared drafts are not upgraded.
@@ -70,10 +70,10 @@ def remuneration_source_registry(registry):
     return result
 
 
-def validate_draft_contract(value, *, family, application_id, kind="company"):
+def _validate_header(value, *, family, application_id, kind):
     if (
         not isinstance(value, dict)
-        or set(value) != HEADERS | {"objects", "sha256"}
+        or not HEADERS <= value.keys()
         or value["family"] != family
         or value["kind"] != kind
         or value["status"] != "draft"
@@ -83,6 +83,12 @@ def validate_draft_contract(value, *, family, application_id, kind="company"):
         or value["application_id"] != application_id
     ):
         raise ValueError("invalid packaged development contract")
+
+
+def validate_draft_contract(value, *, family, application_id, kind="company"):
+    _validate_header(value, family=family, application_id=application_id, kind=kind)
+    if set(value) != HEADERS | {"objects", "sha256"}:
+        raise ValueError("invalid packaged development contract")
     objects = _object_map(value["objects"], sql=True)
     ordered = [objects[key] for key in sorted(objects)]
     if value["objects"] != ordered or _digest(ordered) != value["sha256"]:
@@ -91,21 +97,57 @@ def validate_draft_contract(value, *, family, application_id, kind="company"):
 
 
 def load_development_contracts(directory, fingerprints, *, family, application_id, kind="company"):
-    """Read explicitly declared exact snapshots; never discover loose files."""
-    result = {}
+    """Expand only declared fingerprint parents; preserve exact SQL and identity."""
+    raw, result, visiting = {}, {}, set()
     for fingerprint in fingerprints:
         if not isinstance(fingerprint, str) or len(fingerprint) != 64:
             raise ValueError("invalid development source fingerprint")
         try:
             if bytes.fromhex(fingerprint).hex() != fingerprint:
                 raise ValueError("invalid development source fingerprint")
-            value = json.loads((Path(directory) / (fingerprint + ".json")).read_text("utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            value = loads_finite_unique(
+                (Path(directory) / (fingerprint + ".json")).read_text("utf-8")
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
             raise ValueError("missing or damaged packaged development source") from exc
-        validate_draft_contract(value, family=family, application_id=application_id, kind=kind)
-        if value["sha256"] != fingerprint or fingerprint in result:
+        _validate_header(value, family=family, application_id=application_id, kind=kind)
+        if value.get("sha256") != fingerprint or fingerprint in raw:
             raise ValueError("development source identity mismatch")
-        result[fingerprint] = value
+        raw[fingerprint] = value
+
+    def expand(fingerprint):
+        if not isinstance(fingerprint, str) or fingerprint not in raw:
+            raise ValueError("missing declared development parent")
+        if fingerprint in result:
+            return result[fingerprint]
+        if fingerprint in visiting:
+            raise ValueError("cyclic development contract parents")
+        visiting.add(fingerprint)
+        value = raw[fingerprint]
+        if "objects" in value:
+            expanded = validate_draft_contract(
+                value, family=family, application_id=application_id, kind=kind,
+            )
+        else:
+            if set(value) != HEADERS | {"base_sha256", "add", "remove", "replace", "sha256"}:
+                raise ValueError("invalid incremental development contract")
+            parent = expand(value["base_sha256"])
+            try:
+                items = _apply_operations(parent["objects"], add=value["add"],
+                                          remove=value["remove"], replace=value["replace"])
+            except RuntimeError as exc:
+                raise ValueError("invalid incremental development operations") from exc
+            expanded = validate_draft_contract(
+                {**{key: value[key] for key in HEADERS}, "sha256": fingerprint,
+                 "objects": [items[key] for key in sorted(items)]},
+                family=family, application_id=application_id, kind=kind,
+            )
+        visiting.remove(fingerprint)
+        result[fingerprint] = expanded
+        return expanded
+
+    for fingerprint in raw:
+        expand(fingerprint)
     return {kind: result}
 
 

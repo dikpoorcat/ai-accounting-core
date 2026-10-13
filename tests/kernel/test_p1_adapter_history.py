@@ -1,21 +1,11 @@
-"""Real current adapters and a preserved, explicitly supplied historical book.
-
-The external integration case is skipped in ordinary CI. Set
-P1_ADAPTER_HISTORY_INPUT to the retained stage9-builder.json of the qualified
-SOURCE24 micro fixture to run it. Its original SQLite file is opened read-only;
-only a consistent copy in pytest's temporary directory is closed/restored.
-No historical calculators, replacement confirmation or freeze writers are used.
-"""
+"""Real adapters and self-contained immutable history close/backup/restore."""
 
 import asyncio
-import hashlib
 import importlib
 import json
 import os
-import sqlite3
 import subprocess
 import sys
-from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 
@@ -32,13 +22,12 @@ from test_resident_service import PASSWORD
 from test_resident_service import resident as resident_fixture
 
 from ai_accounting.kernel import backup, dashboard_model_reads
-from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.contracts import KernelError, Read
 from ai_accounting.kernel.dashboard_async import _produce, delivery_state
 from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.maintenance import Maintenance
 from ai_accounting.kernel.periods import Periods
-from ai_accounting.kernel.permissions import create_private_file
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security.credentials import WindowsCredentialStore
 from ai_accounting.kernel.security.service import credential_target
@@ -63,57 +52,28 @@ MODULES = (
     "maintenance",
 )
 PAGES = ("brief", "funds", "employees", "assets", "quarterly_report")
-HISTORY_INPUT = os.environ.get("P1_ADAPTER_HISTORY_INPUT")
 
 
-def source_manifest():
+def source_origins():
     source = Path(backup.__file__).resolve().parents[2]
-    modules = {}
+    origins = {}
     for name in MODULES:
-        module = importlib.import_module("ai_accounting.kernel." + name)
-        path = Path(module.__file__).resolve()
+        path = Path(importlib.import_module("ai_accounting.kernel." + name).__file__).resolve()
         assert path.is_relative_to(source)
-        modules[name] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-    return source, modules
+        origins[name] = str(path)
+    return source, origins
 
 
-# Pin both actual subprocess packages before entering their real CLI/MCP code.
-# Writing a separate provenance file leaves their stdout/stdio protocol intact.
 CHILD = """
-import hashlib, importlib, importlib.abc, importlib.machinery, json, os, pathlib, sys
+import importlib, json, os, pathlib, sys
 source = pathlib.Path(os.environ['P1_ADAPTER_SRC']).resolve()
-expected = json.loads(os.environ['P1_ADAPTER_MODULES'])
-manifest_path = source.parent / 'source-manifest.json'
-manifest = json.loads(manifest_path.read_bytes())['files'] if manifest_path.is_file() else None
-class ExactLoader(importlib.machinery.SourceFileLoader):
-    def get_code(self, fullname):
-        return compile(pathlib.Path(self.path).read_bytes(), self.path, 'exec')
-class Pin(importlib.abc.MetaPathFinder):
-    def find_spec(self, name, path=None, target=None):
-        if name != 'ai_accounting' and not name.startswith('ai_accounting.'):
-            return None
-        search = [str(source)] if name == 'ai_accounting' else path
-        spec = importlib.machinery.PathFinder.find_spec(name, search)
-        assert spec is not None, name
-        paths = [spec.origin] if spec.origin else list(spec.submodule_search_locations or ())
-        assert paths and all(
-            pathlib.Path(p).resolve().is_relative_to(source / 'ai_accounting') for p in paths
-        ), (name, paths)
-        if spec.origin:
-            origin = pathlib.Path(spec.origin).resolve()
-            if manifest is not None:
-                key = origin.relative_to(source.parent).as_posix()
-                assert hashlib.sha256(origin.read_bytes()).hexdigest() == manifest[key]
-            spec.loader = ExactLoader(name, str(origin))
-        return spec
-sys.meta_path.insert(0, Pin())
+expected = json.loads(os.environ['P1_ADAPTER_ORIGINS'])
 actual = {}
-for name, record in expected.items():
-    module = importlib.import_module('ai_accounting.kernel.' + name)
-    path = pathlib.Path(module.__file__).resolve()
-    assert path.is_relative_to(source), (name, path, source)
-    actual[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-assert actual == expected, (actual, expected)
+for name in expected:
+    path = pathlib.Path(importlib.import_module('ai_accounting.kernel.' + name).__file__).resolve()
+    assert path.is_relative_to(source), (name, path)
+    actual[name] = str(path)
+assert actual == expected
 pathlib.Path(sys.argv[1]).write_text(json.dumps(actual), encoding='utf-8')
 from ai_accounting.kernel import cli
 sys.argv = [cli.__file__, *sys.argv[2:]]
@@ -122,13 +82,13 @@ cli.main()
 
 
 def child_environment():
-    source, modules = source_manifest()
+    source, origins = source_origins()
     return {
         **os.environ,
         "PYTHONPATH": str(source),
         "PYTHONUTF8": "1",
         "P1_ADAPTER_SRC": str(source),
-        "P1_ADAPTER_MODULES": json.dumps(modules),
+        "P1_ADAPTER_ORIGINS": json.dumps(origins),
     }
 
 
@@ -159,7 +119,7 @@ def cli_call(book, directory, command, payload):
         check=False,
     )
     assert result.returncode in (0, 1), result.stderr
-    assert json.loads(provenance.read_text(encoding="utf-8")) == source_manifest()[1]
+    assert json.loads(provenance.read_text(encoding="utf-8")) == source_origins()[1]
     value = json.loads(result.stdout)
     assert result.returncode == int(value.get("status") == "rejected"), result.stderr
     return value
@@ -289,7 +249,7 @@ def p1_transport_book(resident, tmp_path, monkeypatch, record_property):
         )
     )
     assert credentials.load_session_token() is None  # a fresh temporary catalogue key only
-    record_property("p1_adapter_source", json.dumps(source_manifest()[1]))
+    record_property("p1_adapter_source", json.dumps(source_origins()[1]))
     record_property("p1_actual_model_publication", json.dumps(publication))
     try:
         credentials.save_session_token(token)
@@ -386,7 +346,7 @@ def test_p1_real_cli_and_stdio_mcp_ready_five_pages(p1_transport_book, tmp_path)
                     assert actual["status"] == "rejected" and actual["code"] == "invalid_command"
         assert (
             json.loads((tmp_path / "p1-adapter-mcp-provenance.json").read_text())
-            == source_manifest()[1]
+            == source_origins()[1]
         )
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=240))
@@ -456,7 +416,7 @@ def test_p1_real_adapters_native_continuation_and_bad_source_are_independent(
                 assert state(engine) == damaged  # no reset/queue/audit/repair mutation on refusal
         assert (
             json.loads((tmp_path / "p1-adapter-mcp-provenance.json").read_text())
-            == source_manifest()[1]
+            == source_origins()[1]
         )
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=240))
@@ -476,42 +436,20 @@ def rows(connection, table, *, period=None):
     )
 
 
-@pytest.mark.skipif(not HISTORY_INPUT, reason="Explicit preserved SOURCE24 micro input is required")
 def test_p1_current_close_backup_restore_preserves_four_historical_bodies_and_v4(
     tmp_path,
+    monkeypatch,
     record_property,
 ):
-    receipt_path = Path(HISTORY_INPUT).resolve()
-    receipt_bytes = receipt_path.read_bytes()
-    receipt = json.loads(receipt_bytes)
-    assert receipt["employees_count"] == 2 and receipt["businesses"] == 40
-    assert receipt["snapshots"]["2016-01"]["closed"] is True
-    assert receipt["snapshots"]["2016-02"]["closed"] is False
-    source = Path(receipt["company"]["path"]).resolve()
-    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
-    copied = tmp_path / "p1-adapter-history-copy.sqlite"
-    create_private_file(copied)
-    # The supplied database is only input: never edit, rename or attach its root.
-    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)) as original:
-        original.execute("BEGIN")
-        with closing(sqlite3.connect(copied)) as target:
-            original.backup(target)
+    from historical_book_fixture import HISTORY_TABLES, MONTHS, historical_book
+
+    company, january = historical_book(tmp_path, monkeypatch)
+    engine = company.engine
+    copied = engine.store.path
     bundle = production_bundle()
-    assert bundle.database_format()["fingerprint"] == COMPANY_FP
-    engine = Engine(
-        Store(copied, bundle, receipt["company"]["id"], receipt["company"]["database_id"])
-    )
     assert backup.verify_file(copied)["verification"]["status"] == "verified"
-    periods = Periods(engine)
-    january = periods.closed_report("2016-01")
     assert january["format_version"] == 4 and "fund_details" not in january
-    history_tables = (
-        "fact_payroll_pre_revision",
-        "fact_payroll_plan_v2_pre_revision",
-        "fact_material_resolution_v2_pre_reference",
-        "fact_material_resolution_v2_pre_reference_links",
-        "fact_loan_interest_pre_reference",
-    )
+    history_tables = HISTORY_TABLES
     frozen_tables = (
         "period_close",
         "close_storage_root",
@@ -522,7 +460,7 @@ def test_p1_current_close_backup_restore_preserves_four_historical_bodies_and_v4
     with engine.store.connection(read_only=True) as connection:
         preserved = {table: rows(connection, table) for table in history_tables}
         assert all(preserved.values()), "The input must exercise all four real original fact bodies"
-        frozen = {table: rows(connection, table, period="2016-01") for table in frozen_tables}
+        frozen = {table: rows(connection, table, period="2026-01") for table in frozen_tables}
         financial = {
             table: rows(connection, table)
             for table in ("calculation", "voucher_version", "voucher_line")
@@ -533,18 +471,7 @@ def test_p1_current_close_backup_restore_preserves_four_historical_bodies_and_v4
                 continue
             for (fact_id,) in connection.execute(f"SELECT revision_id FROM {table}"):
                 assert engine.store.fact(connection, fact_id).id == fact_id
-    preview = periods.preview_close(
-        "2016-02", owner_confirmation=receipt["snapshots"]["2016-02"]["owner_confirmation"]
-    )
-    closed = periods.close(
-        "2016-02",
-        owner_confirmation=receipt["snapshots"]["2016-02"]["owner_confirmation"],
-        preview_digest=preview["digest"],
-        epochs=preview["epochs"],
-        request_id="p1-history-integration-close",
-    )
-    assert closed["status"] == "closed"
-    february = periods.closed_report("2016-02")
+    february = company.close(MONTHS[1])
     assert february["format_version"] == 5 and "fund_details" in february
     package = Path(backup.create_portable(copied, tmp_path / "p1-history-packages")["path"])
     original_zip = package.read_bytes()
@@ -554,33 +481,66 @@ def test_p1_current_close_backup_restore_preserves_four_historical_bodies_and_v4
     restored_engine = Engine(
         Store(restored, bundle, engine.store.company_id, engine.store.database_id)
     )
-    assert Periods(restored_engine).closed_report("2016-01") == january
-    assert Periods(restored_engine).closed_report("2016-02") == february
+    assert Periods(restored_engine).closed_report("2026-01") == january
+    assert Periods(restored_engine).closed_report("2026-02") == february
     for active in (engine, restored_engine):
         with active.store.connection(read_only=True) as connection:
             assert {table: rows(connection, table) for table in history_tables} == preserved
             assert {
-                table: rows(connection, table, period="2016-01") for table in frozen_tables
+                table: rows(connection, table, period="2026-01") for table in frozen_tables
             } == frozen
             for table, original_rows in financial.items():
                 assert set(original_rows) <= set(rows(connection, table))
     assert package.read_bytes() == original_zip
-    assert hashlib.sha256(source.read_bytes()).hexdigest() == source_sha
-    assert receipt_path.read_bytes() == receipt_bytes
+    for active in (engine, restored_engine):
+        with active.store.connection(read_only=True) as connection:
+            for month, amount in (("2026-01", 5_167), ("2026-02", 4_667)):
+                wage = active.store.select(
+                    connection, Read("calculation", "payroll", "@wage-" + month)
+                )[0]
+                interest = active.store.select(
+                    connection, Read("calculation", "loan_interest", "@interest-" + month)
+                )[0]
+                assert (
+                    wage.values["gross_fen"],
+                    wage.values["net_fen"],
+                    wage.values["tax_fen"],
+                ) == (600_000, 597_000, 3_000)
+                assert interest.values["interest_fen"] == amount
+            assert (
+                connection.execute("SELECT count(*) FROM fact_payroll_confirmed").fetchone()[0] == 0
+            )
+            assert (
+                connection.execute("SELECT count(*) FROM fact_remuneration_tax_basis").fetchone()[0]
+                == 0
+            )
     record_property(
         "p1_adapter_history_input",
         json.dumps(
             {
-                "receipt": str(receipt_path),
-                "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
-                "source": str(source),
-                "source_sha256": source_sha,
-                "source_unchanged": True,
-                "company_fingerprint": COMPANY_FP,
+                "origin": "self-contained exact 0c8abb synthetic source SQL",
+                "company_fingerprint": bundle.database_format()["fingerprint"],
                 "historical_bodies": {key: len(value) for key, value in preserved.items()},
+                "sqlite_bytes": copied.stat().st_size,
+                "zip_bytes": len(original_zip),
                 "frozen_original_version": 4,
                 "new_close_version": 5,
             }
         ),
     )
-    record_property("p1_adapter_source", json.dumps(source_manifest()[1]))
+    record_property("p1_adapter_source", json.dumps(source_origins()[1]))
+    damage(
+        engine,
+        "fact_payroll_pre_revision",
+        "UPDATE fact_payroll_pre_revision SET "
+        "accounting_gross_salary_fen=accounting_gross_salary_fen+1",
+    )
+    damaged = state(engine)
+    with pytest.raises(KernelError) as full:
+        Maintenance(engine).verify_integrity()
+    assert full.value.code == "content_integrity_failed"
+    with pytest.raises(backup.BackupError) as invalid:
+        backup.create_portable(copied, tmp_path / "bad-history-packages")
+    assert invalid.value.code == "backup_content_invalid"
+    assert state(engine) == damaged
+    assert package.read_bytes() == original_zip

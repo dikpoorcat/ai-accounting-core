@@ -22,7 +22,10 @@ COMPANY_RELATIVE = Path("91310000123456789S/company.sqlite")
 
 def _runtime():
     sys.path.insert(0, str(WORKSPACE / "src"))
-    from ai_accounting.kernel import offline_history_adjustment as adjustment
+    if __package__:
+        from . import stage9_history_adjustment as adjustment
+    else:
+        import stage9_history_adjustment as adjustment
     from ai_accounting.kernel.backup import create_portable, verify_file
     from ai_accounting.kernel.permissions import (
         create_private_file,

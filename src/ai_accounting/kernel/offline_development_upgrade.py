@@ -29,7 +29,13 @@ from .development_contracts import (
 from .migration_contracts import diff_contracts
 from .offline_upgrade import _catalog_retained_digest, _catalog_rows
 from .permissions import create_private_file, ensure_private_directory, reject_reparse_path
-from .runtime import connect, private_file_lock, verification_snapshot
+from .runtime import (
+    connect,
+    migration_connection,
+    migration_write,
+    private_file_lock,
+    verification_snapshot,
+)
 from .schema_bundle import production_bundle
 from .versions import fingerprint, objects, verify_schema
 
@@ -512,14 +518,10 @@ def upgrade_company(
         steps.append(step)
         path_fingerprint = step[1]["sha256"]
     replace_tables = source["sha256"] == SOURCE_FINGERPRINT
-    try:
-        if replace_tables:
-            connection.execute("PRAGMA foreign_keys=OFF")
-            if connection.execute("PRAGMA foreign_keys").fetchone()[0]:
-                raise KernelError("migration_integrity_failed", "无法关闭迁移外键检查")
-        if fault:
-            fault("before_begin")
-        connection.execute("BEGIN IMMEDIATE")
+    with migration_write(
+        connection, foreign_keys_off=replace_tables,
+        before_begin=(lambda: fault("before_begin")) if fault else None,
+    ) as transaction:
         verify_schema(connection, bundle=previous)
         _verify_connection(connection, previous, allow_previous=False, **identity_checks)
         original_rows = _all_existing_rows(connection, source)
@@ -594,8 +596,7 @@ def upgrade_company(
             raise KernelError("migration_integrity_failed", "开发升级目标内容未完整核验")
         if fault:
             fault("before_commit")
-        connection.commit()
-        return {
+        transaction["result"] = {
             "status": "upgraded",
             "source_fingerprint": source["sha256"],
             "target_fingerprint": target["sha256"],
@@ -605,17 +606,7 @@ def upgrade_company(
             "steps": applied,
             "verification": result["verification"],
         }
-    except BaseException:
-        connection.rollback()
-        raise
-    finally:
-        try:
-            connection.execute("PRAGMA foreign_keys=ON")
-            if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                raise KernelError("migration_integrity_failed", "开发升级后无法恢复外键检查")
-        except BaseException:
-            connection.close()
-            raise
+        return transaction["result"]
 
 
 def _company_bundle(connection, bundle):
@@ -672,8 +663,7 @@ def _upgrade_catalog(connection, bundle, *, fault=None):
     if (differences != expected
         or (source["sha256"], target["sha256"]) not in bundle.draft_transitions["catalog"]):
         raise KernelError("migration_not_declared", "目录调整超出精确追加履历声明")
-    try:
-        connection.execute("BEGIN IMMEDIATE")
+    with migration_write(connection) as transaction:
         verify_schema(connection, bundle=previous, kind="catalog")
         rows = _all_existing_rows(connection, source)
         retained = _catalog_retained_digest(connection)
@@ -689,11 +679,45 @@ def _upgrade_catalog(connection, bundle, *, fault=None):
         verify_schema(connection, bundle=bundle, kind="catalog")
         if fault:
             fault("before_catalog_commit")
-        connection.commit()
+        transaction["result"] = "upgraded"
         return "upgraded"
-    except BaseException:
-        connection.rollback()
-        raise
+
+def _root_upgrade_failure(exc, *, backup, catalog_result, results, row=None, backups=None):
+    """Report only the actually committed prefix; never infer cross-file rollback."""
+    from .diagnostics import error_response
+
+    state = getattr(exc, "migration_state", {})
+    completed = list(results)
+    if state.get("committed"):
+        if row is None:
+            catalog_result = "committed_cleanup_failed"
+        elif not any(item["company_id"] == row["id"] for item in completed):
+            completed.append({
+                "company_id": row["id"], "backup": (backups or {}).get(row["id"]),
+                **getattr(exc, "migration_result", {}),
+                "status": "committed_cleanup_failed", "migration_state": state,
+            })
+    committed_companies = [
+        item for item in completed if item["status"] in {"upgraded", "committed_cleanup_failed"}
+    ]
+    committed_current = state.get("committed") or (
+        row is not None and any(item["company_id"] == row["id"] for item in committed_companies)
+    ) or (row is None and catalog_result == "upgraded")
+    partial = bool(committed_companies) or catalog_result in {
+        "upgraded", "committed_cleanup_failed",
+    }
+    message = (
+        "当前数据库已提交，但后续检查或清理失败；须按实际已提交范围核对，不能视作回滚"
+        if committed_current else
+        "开发升级未全部完成；各数据库分别提交，须按备份及实际已提交范围核对"
+    )
+    return KernelError(
+        "development_upgrade_partial" if partial else "development_upgrade_failed",
+        message, backup_directory=str(backup), catalog=catalog_result,
+        completed_companies=completed, failed_company_id=row["id"] if row else None,
+        migration_state=state, cause_code=error_response(exc)["code"],
+    )
+
 
 def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
     """Stop is explicit; verified backups precede any registered company upgrade."""
@@ -743,12 +767,18 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
                 row["path"], backup, request_id=operation, _bundle=sources[row["id"]]
             )
             backups[row["id"]] = result["path"]
-        with closing(connect(root / "catalog.sqlite")) as catalog:
-            catalog_result = _upgrade_catalog(catalog, bundle, fault=fault)
+        catalog_result = None
+        try:
+            with migration_connection(connect(root / "catalog.sqlite")) as catalog:
+                catalog_result = _upgrade_catalog(catalog, bundle, fault=fault)
+        except Exception as exc:
+            raise _root_upgrade_failure(
+                exc, backup=backup, catalog_result=catalog_result, results=[],
+            ) from exc
         results = []
         for row in rows:
             try:
-                with closing(connect(row["path"])) as connection:
+                with migration_connection(connect(row["path"])) as connection:
                     result = upgrade_company(
                         connection,
                         bundle,
@@ -764,22 +794,25 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
                         .get(row["id"], {})
                         .get("first_period"),
                     )
+                    results.append(
+                        {"company_id": row["id"], "backup": backups[row["id"]], **result}
+                    )
             except Exception as exc:
-                from .diagnostics import error_response
-
-                raise KernelError(
-                    "development_upgrade_partial" if results else "development_upgrade_failed",
-                    "开发升级未全部完成；失败公司事务已回滚，可按备份和实际前缀接续",
-                    backup_directory=str(backup),
-                    completed_companies=results,
-                    failed_company_id=row["id"],
-                    cause_code=error_response(exc)["code"],
+                raise _root_upgrade_failure(
+                    exc, backup=backup, catalog_result=catalog_result, results=results,
+                    row=row, backups=backups,
                 ) from exc
-            results.append({"company_id": row["id"], "backup": backups[row["id"]], **result})
-        with closing(connect(root / "catalog.sqlite", read_only=True)) as catalog:
-            verify_schema(catalog, bundle=bundle, kind="catalog")
-            if _catalog_retained_digest(catalog) != catalog_digest:
-                raise KernelError("migration_integrity_failed", "开发升级改变了目录或负责人身份")
+        try:
+            with closing(connect(root / "catalog.sqlite", read_only=True)) as catalog:
+                verify_schema(catalog, bundle=bundle, kind="catalog")
+                if _catalog_retained_digest(catalog) != catalog_digest:
+                    raise KernelError(
+                        "migration_integrity_failed", "开发升级改变了目录或负责人身份"
+                    )
+        except Exception as exc:
+            raise _root_upgrade_failure(
+                exc, backup=backup, catalog_result=catalog_result, results=results,
+            ) from exc
         return {
             "status": "upgraded",
             "catalog": catalog_result,

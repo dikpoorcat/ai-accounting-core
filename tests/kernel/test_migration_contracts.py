@@ -84,6 +84,21 @@ def test_parent_chain_expands_to_independently_compiled_full_contract(tmp_path):
     assert {path.name: path.read_bytes() for path in (tmp_path / "company").iterdir()} == before
 
 
+@pytest.mark.parametrize("duplicate", ["header", "nested"])
+def test_released_decoder_rejects_duplicate_json_members(tmp_path, duplicate):
+    first, *_ = contracts()
+    write(tmp_path, 1, first)
+    path = tmp_path / "company/v1.json"
+    raw = path.read_text(encoding="utf-8")
+    if duplicate == "header":
+        raw = '{"ver\\u0073ion": 1,' + raw[1:]
+    else:
+        raw = raw.replace('"sql":', '"sql": "forged", "sql":', 1)
+    path.write_text(raw, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="invalid database contract"):
+        load(tmp_path)
+
+
 @pytest.mark.parametrize(
     "damage",
     [

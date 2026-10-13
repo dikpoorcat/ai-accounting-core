@@ -372,8 +372,14 @@ def test_failed_fk_restoration_closes_connection(restore_failure):
             connection.restoring = True
             raise RuntimeError("rollback first")
 
-    with pytest.raises((sqlite3.OperationalError, KernelError)):
+    with pytest.raises(RuntimeError, match="rollback first") as failure:
         run(connection, declarations(), fault=fault)
+    assert failure.value.migration_state["outcome"] == "rolled_back"
+    assert failure.value.migration_state["connection_discarded"] is True
+    assert failure.value.migration_state["cleanup_errors"] == [{
+        "phase": "foreign_keys_restore",
+        "error_type": "OperationalError" if restore_failure == "execute" else "KernelError",
+    }]
     assert connection.was_closed
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")

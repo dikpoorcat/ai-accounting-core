@@ -11,6 +11,19 @@ from .runtime import RuntimeConfigurationError
 from .security.primitives import IdentityError
 
 
+def _migration_response(code, state):
+    if state.get("committed") is True:
+        message = "数据库升级已提交，但后续检查或清理失败，请核对升级结果后重新打开"
+    elif state.get("outcome") == "rolled_back":
+        message = "数据库升级未完成，本次事务已回滚"
+    elif state.get("outcome") == "not_started":
+        message = "数据库升级尚未开始，请检查本机运行状态"
+    else:
+        message = "数据库升级结果尚未确认，请核对后再继续"
+    return {"status": "rejected", "code": code, "message": message,
+            "migration_state": state}
+
+
 def error_response(exc):
     if isinstance(exc, KernelError):
         return exc.response()
@@ -55,6 +68,9 @@ def error_response(exc):
             sqlite3.SQLITE_NOTADB: "database_corrupt",
             sqlite3.SQLITE_CONSTRAINT: "accounting_constraint",
         }.get(number, "database_error")
+        state = getattr(exc, "migration_state", None)
+        if isinstance(state, dict):
+            return _migration_response(code, state)
         return {"status": "rejected", "code": code, "message": "数据库操作未完成，账务事务已回滚"}
     if isinstance(exc, PermissionError):
         code = "storage_not_writable"
@@ -66,6 +82,9 @@ def error_response(exc):
         code = "internal_error"
     else:
         code = "internal_error"
+    state = getattr(exc, "migration_state", None)
+    if isinstance(state, dict):
+        return _migration_response(code, state)
     return {"status": "rejected", "code": code, "message": "请求未完成，请检查输入或本机运行状态"}
 
 

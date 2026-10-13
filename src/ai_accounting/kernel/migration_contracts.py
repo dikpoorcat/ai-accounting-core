@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
+from .stored_json import loads_finite_unique
 from .types import canonical
 
 KINDS = frozenset({"company", "catalog"})
@@ -36,6 +36,23 @@ def _object_map(items, *, sql):
     return result
 
 
+def _apply_operations(parent_objects, *, add, remove, replace):
+    """Apply exact object operations shared by released and development contracts."""
+    items = _object_map(parent_objects, sql=True)
+    add = _object_map(add, sql=True)
+    remove = _object_map(remove, sql=False)
+    replace = _object_map(replace, sql=True)
+    if add.keys() & remove.keys() or add.keys() & replace.keys() or remove.keys() & replace.keys():
+        raise RuntimeError("overlapping database contract operations")
+    if add.keys() & items.keys() or (remove.keys() | replace.keys()) - items.keys():
+        raise RuntimeError("invalid database contract operation target")
+    for key in remove:
+        del items[key]
+    items.update(replace)
+    items.update(add)
+    return items
+
+
 def load_contracts(directory: Path, kind: str, *, family: str, application_id: int):
     """Read one kind directory; draft is independent of every released parent chain."""
     if kind not in KINDS:
@@ -43,7 +60,7 @@ def load_contracts(directory: Path, kind: str, *, family: str, application_id: i
     raw = {}
     for path in sorted(directory.glob("*.json")):
         try:
-            data = json.loads(path.read_text("utf-8"))
+            data = loads_finite_unique(path.read_text("utf-8"))
         except (ValueError, UnicodeError) as exc:
             raise RuntimeError("invalid database contract") from exc
         if not isinstance(data, dict) or not HEADERS <= data.keys():
@@ -100,22 +117,8 @@ def load_contracts(directory: Path, kind: str, *, family: str, application_id: i
             parent = expand(base)
             if parent["sha256"] != data["base_sha256"]:
                 raise RuntimeError("database parent fingerprint mismatch")
-            items = _object_map(parent["objects"], sql=True)
-            add = _object_map(data["add"], sql=True)
-            remove = _object_map(data["remove"], sql=False)
-            replace = _object_map(data["replace"], sql=True)
-            if (
-                add.keys() & remove.keys()
-                or add.keys() & replace.keys()
-                or (remove.keys() & replace.keys())
-            ):
-                raise RuntimeError("overlapping database contract operations")
-            if add.keys() & items.keys() or (remove.keys() | replace.keys()) - items.keys():
-                raise RuntimeError("invalid database contract operation target")
-            for key in remove:
-                del items[key]
-            items.update(replace)
-            items.update(add)
+            items = _apply_operations(parent["objects"], add=data["add"],
+                                      remove=data["remove"], replace=data["replace"])
         result = [items[key] for key in sorted(items)]
         if _digest(result) != data["sha256"]:
             raise RuntimeError("packaged database contract is damaged")

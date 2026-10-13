@@ -8,18 +8,22 @@ from pathlib import Path
 import pytest
 from test_engine import engine as engine_fixture
 from test_engine import publish, save
+from test_reports import book as book_fixture
+from test_reports import scenario
 from test_resident_read_guard_work import _widen_file_permission
 
 from ai_accounting.kernel import runtime
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import Read
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.permissions import PrivatePathError, ensure_private_file
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.resident_reads import READ_PAGE_CACHE_KIB, ResidentReadPool
 from ai_accounting.kernel.runtime import RuntimeConfigurationError
 
 engine = engine_fixture
+book = book_fixture
 
 
 def test_attached_snapshot_keeps_callers_transaction_and_resets_its_verification_cache(engine):
@@ -130,6 +134,90 @@ def test_generic_cached_transactions_do_not_enter_owned_snapshot(resident_engine
         reused.execute("BEGIN")
         reused.commit()
     assert pool._total == 2
+
+
+def test_owned_snapshot_rejects_query_only_disable_and_temp_shadow(resident_engine):
+    engine, _ = resident_engine
+    with QueryReads.snapshot(engine) as reads:
+        connection = reads.connection
+        before = connection.total_changes
+        with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+            connection.execute("PRAGMA query_only=OFF")
+        with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+            connection.execute("CREATE TEMP TABLE identity AS SELECT * FROM main.identity LIMIT 0")
+        assert connection.total_changes == before
+        assert connection.execute("PRAGMA query_only").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM identity").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM temp.sqlite_schema").fetchone()[0] == 0
+
+
+def test_owned_snapshot_blocks_sql_writes_and_preserves_parameterized_read_pragmas(resident_engine):
+    engine, _ = resident_engine
+    with QueryReads.snapshot(engine) as reads:
+        connection = reads.connection
+        before = connection.total_changes
+        for sql in (
+            "CREATE TEMP VIEW identity_shadow AS SELECT * FROM identity",
+            "CREATE TABLE forbidden_owned_write(id INTEGER)",
+            "DROP TABLE identity",
+            "ALTER TABLE identity ADD COLUMN forbidden_owned_column INTEGER",
+            "INSERT INTO identity SELECT * FROM identity",
+            "UPDATE identity SET company_id='forbidden'",
+            "DELETE FROM identity",
+            "PRAGMA writable_schema=ON",
+            "PRAGMA foreign_keys=OFF",
+            "PRAGMA temp_store=MEMORY",
+            "ATTACH ':memory:' AS forbidden",
+        ):
+            with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+                connection.cursor().execute(sql)
+        assert connection.total_changes == before
+        assert connection.execute("PRAGMA table_info(identity)").fetchall()
+        assert connection.execute("PRAGMA table_xinfo(identity)").fetchall()
+        assert connection.execute("PRAGMA table_list(identity)").fetchall()
+        assert connection.execute("PRAGMA index_list(fact_revision)").fetchall()
+        assert connection.execute("PRAGMA index_info(fact_period)").fetchall()
+        assert connection.execute("PRAGMA index_xinfo(fact_period)").fetchall()
+        assert connection.execute("PRAGMA foreign_key_check(identity)").fetchall() == []
+        assert connection.execute("PRAGMA integrity_check(identity)").fetchone()[0] == "ok"
+        assert connection.in_transaction
+
+
+def test_real_five_pages_keep_native_values_on_guarded_resident_connection(book):
+    engine = book[0]
+    scenario(book)
+    dashboard = Dashboard(engine)
+
+    def pages():
+        results = {
+            "brief": dashboard.brief("2026-03", limit=20),
+            "funds": dashboard.funds(
+                "2026-03", movement_account_type="cash", movement_account_id="cash", limit=20,
+            ),
+            "employees": dashboard.employees("2026-03", limit=20, employee_filter="all"),
+            "assets": dashboard.assets("2026-03", limit=20),
+            "quarterly_report": dashboard.quarterly_report(2026, 1, preparation="deferred"),
+        }
+        # These are fresh wall-clock labels, independent of preserved source values.
+        results["brief"]["data"].pop("generated_at")
+        results["quarterly_report"].pop("checked_at")
+        return results
+
+    expected = pages()
+    pool = ResidentReadPool(maximum=1)
+    engine.store.read_pool = pool
+    try:
+        with QueryReads.snapshot(engine) as reads:
+            connection = reads.connection
+            assert type(connection) is runtime._OwnedReadConnection
+        assert pages() == expected
+        assert pool._total == 1
+        with QueryReads.snapshot(engine) as reads:
+            assert reads.connection is connection
+            assert not connection.execute("SELECT * FROM temp.sqlite_schema").fetchall()
+    finally:
+        pool.close()
+        engine.store.read_pool = None
 
 
 def test_generic_and_owned_share_one_pool_budget(resident_engine):

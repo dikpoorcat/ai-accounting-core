@@ -70,6 +70,54 @@ def wage():
     )
 
 
+def test_retained_material_body_is_independent_of_future_active_material_rules():
+    """Reload against a changed active grammar in a separate interpreter."""
+    import subprocess
+    import sys
+
+    program = """
+import importlib
+import json
+from pydantic import ValidationError, create_model
+from ai_accounting.kernel import materials, source24_history as history
+raw = {'period': '2026-01', 'source_id': 'source', 'source_fact_id': 'source:v1',
+       'location': 'row:1', 'treatment': 'recognize', 'amount_fen': 100,
+       'recognition_period': '2026-01', 'links': [
+           {'subject_id': 'business', 'fact_kind': 'funding', 'fact_id': 'business:v1',
+            'calculation_id': 'calculation', 'amount_field': 'result.amount_fen',
+            'amount_fen': 100, 'recognition_period': '2026-01'}]}
+before = history.MaterialResolutionPreReference.model_validate_json(json.dumps(raw))
+expected, scopes = before.model_dump(mode='json'), before.scopes()
+future = create_model('FutureMaterialResolution', future_required=(str, ...),
+                      __base__=materials.MaterialResolution)
+materials.MaterialResolution = future
+materials.Detail = create_model('FutureDetail', future_detail=(str, ...),
+                                __base__=materials.Detail)
+history = importlib.reload(history)
+retained = history.MaterialResolutionPreReference.model_validate_json(json.dumps(raw))
+assert retained.model_dump(mode='json') == expected
+assert retained.scopes() == scopes
+try:
+    future.model_validate({'period': '2026-01', 'source_id': 'source',
+                          'source_fact_id': 'source:v1', 'location': 'row:1',
+                          'treatment': 'supporting'})
+except ValidationError as error:
+    assert any(item['loc'] == ('future_required',) for item in error.errors())
+else:
+    raise AssertionError('Future active registration must enforce its new field')
+try:
+    history.MaterialResolutionPreReference.model_validate_json(
+        json.dumps({**raw, 'future_required': 'value'}))
+except ValidationError:
+    pass
+else:
+    raise AssertionError('Retained input must not accept new active fields')
+"""
+    result = subprocess.run([sys.executable, "-B", "-X", "utf8", "-c", program],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def sources():
     from test_payroll import contribution_policy, income_tax_policy, version
     profile = HistoricalPayrollProfile(
