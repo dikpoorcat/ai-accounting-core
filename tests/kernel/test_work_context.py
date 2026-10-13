@@ -4,6 +4,7 @@ from collections import Counter
 from contextlib import contextmanager
 
 import pytest
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.discovery import Discovery
@@ -22,6 +23,7 @@ def company(tmp_path):
             tmp_path / "company.sqlite", production_bundle(), "company", "911100000000000001", "db"
         )
     )
+    adopt_empty_opening(engine, period="2026-01")
     engine.proof = engine.register_evidence(
         b"owner confirmation", "text/plain", "confirmation.txt", request_id="proof"
     )["digest"]

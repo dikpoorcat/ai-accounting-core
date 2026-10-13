@@ -6,7 +6,10 @@ evaluated by the independent agent through staged_accounting_agent_harness.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 import staged_accounting_agent_harness as harness
@@ -36,6 +39,20 @@ def recovery_seeded(tmp_path):
     info = harness.seed(app, token, tmp_path, scenario="stage4_recovery")
     yield app, token, info, tmp_path
     app.close()
+
+
+@pytest.fixture
+def cross_month_seeded(tmp_path):
+    if shutil.which("pwsh") is None:
+        pytest.skip("PowerShell 7 is required for isolated desktop delivery")
+    app = LocalService(tmp_path / "data")
+    app.security.provision(harness.reading.OWNER, harness.reading.PASSWORD)
+    token = app.security.login(harness.reading.OWNER, harness.reading.PASSWORD).session_token
+    try:
+        info = harness.seed(app, token, tmp_path, scenario="cross_month_payment")
+        yield app, token, info, tmp_path
+    finally:
+        app.close()
 
 
 def dispatch(app, token, command, **payload):
@@ -293,3 +310,102 @@ def test_recovery_scenario_option_is_forwarded_to_isolated_mcp_process(tmp_path)
     params = harness.parameters(tmp_path, scenario="stage4_recovery", resume=True)
     assert params.args[-2:] == ["--scenario", "stage4_recovery"]
     assert "--resume" in params.args
+
+
+def test_cross_month_recovery_has_complete_verified_delivery_and_no_assumed_payment(
+    cross_month_seeded,
+):
+    from openpyxl import load_workbook
+
+    app, token, info, directory = cross_month_seeded
+    assert info["period"] == "2026-09" and info["as_of"] == "2026-10-14"
+    context = dispatch(app, token, "work_context", **info["work_context_payload"])
+    draft = context["work_draft"]["draft"]
+    assert "登记付款后再进入九月第五步" in draft["next_step"]
+    questions = {question["id"]: question for question in draft["questions"]}
+    assert questions["labor-net"]["status"] == "resolved"
+    assert questions["payment-success"]["answer"] == "已全部支付成功"
+    for key in ("payment-date", "payment-bank"):
+        assert questions[key]["status"] == "pending"
+        assert questions[key]["target"].get("period") is None
+    assert questions["stage5-office"]["target"]["period"] == "2026-09"
+    assert questions["october-office"]["target"]["period"] == "2026-10"
+    completed = info["completed_export"]
+    assert completed["status"] == "succeeded"
+    assert completed["result"]["row_count"] == 2
+    assert completed["result"]["total_fen"] == 979_400
+    assert {item["subject_id"] for row in info["export_preview"]["rows"]
+            for item in row["sources"]} == {info["payroll_subject_id"], "recovery-gross-labor"}
+    delivered = Path(info["desktop_delivery"]["file_path"])
+    assert delivered.parent == directory / "test-desktop"
+    assert hashlib.sha256(delivered.read_bytes()).hexdigest() == completed["result"]["sha256"]
+    assert delivered.read_bytes() == Path(completed["result"]["path"]).read_bytes()
+    book = load_workbook(delivered)
+    try:
+        assert {tuple(cell.value for cell in row) for row in book.active.iter_rows(min_row=2)} == {
+            ("合成员工甲", "001234567890", "8874.00", "2026-09 工资"),
+            ("合成劳务甲", "001234567891", "920.00", "2026-09 劳务"),
+        }
+    finally:
+        book.close()
+    engine = app.engine(info["company_id"])
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM subject WHERE kind='payment'"
+        ).fetchone()[0] == 0
+        pending_net = connection.execute(
+            "SELECT sum(amount) FROM balance WHERE category='payable' AND balance_key LIKE '%:net'"
+        ).fetchone()[0]
+        assert pending_net == 979_400
+        declaration = engine.store.current_fact(connection, "month-october-september-declaration")
+        assert str(declaration.fact.period) == "2026-10"
+        assert str(declaration.fact.tax_period) == "2026-09"
+        assert str(declaration.fact.declaration_date) == "2026-10-10"
+        assert declaration.fact.declared_tax_fen == 12_600
+        assert declaration.evidence == (info["declaration_evidence"],)
+        source = engine.store.current_fact(connection, "month-october-office-source")
+        assert str(source.fact.period) == "2026-10"
+    public = json.loads((directory / "seed.json").read_text(encoding="utf-8"))
+    driver = json.loads((directory / "evaluator-owner-turns.json").read_text(encoding="utf-8"))
+    assert public == info and "acceptance" not in public
+    assert "expected_question_ids" not in json.dumps(public)
+    assert driver["acceptance"]["expected_question_ids"] == ["stage5-office"]
+
+
+def test_cross_month_checkpoint_restarts_with_identity_and_files_preserved(cross_month_seeded):
+    app, token, info, directory = cross_month_seeded
+    before = business_state(app, info["company_id"])
+    original = dispatch(app, token, "work_context", **info["work_context_payload"])["work_draft"]
+    app.close()
+    restarted = LocalService(directory / "data")
+    try:
+        new_token = restarted.security.login(
+            harness.reading.OWNER, harness.reading.PASSWORD,
+        ).session_token
+        recovered = dispatch(
+            restarted, new_token, "work_context", **info["work_context_payload"],
+        )["work_draft"]
+        assert restarted.security.catalog_instance_id == info["catalog_id"]
+        assert {(item["id"], item["database_id"]) for item in restarted.catalog.companies()} == {
+            (item["id"], item["database_id"]) for item in info["companies"]
+        }
+        assert recovered["revision"] == info["stale_draft_revision"]
+        assert recovered["draft"] == original["draft"]
+        assert business_state(restarted, info["company_id"]) == before
+        delivery_bytes = Path(info["desktop_delivery"]["file_path"]).read_bytes()
+        assert hashlib.sha256(delivery_bytes).hexdigest() == (
+            info["completed_export"]["result"]["sha256"]
+        )
+    finally:
+        restarted.close()
+
+
+def test_cross_month_scenario_option_is_forwarded_to_isolated_mcp_process(tmp_path):
+    params = harness.parameters(tmp_path, scenario="cross_month_payment", resume=True)
+    assert params.args[-2:] == ["--scenario", "cross_month_payment"]
+    assert "--resume" in params.args
+
+
+def test_unknown_staged_scenario_is_rejected(tmp_path):
+    with pytest.raises(KeyError, match="unknown"):
+        harness.seed(None, None, tmp_path, scenario="unknown")

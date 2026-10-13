@@ -48,7 +48,7 @@ for module in modules:
 
 @pytest.mark.parametrize("module,scenario", [
     (reading, None), (work_draft, None), (staged, None), (question, None),
-    (staged, "dependency"), (staged, "stage4_recovery"),
+    (staged, "dependency"), (staged, "stage4_recovery"), (staged, "cross_month_payment"),
 ])
 @pytest.mark.parametrize("mode", ("mcp", "host"))
 def test_cli_dispatch_passes_variant_factories_and_options(

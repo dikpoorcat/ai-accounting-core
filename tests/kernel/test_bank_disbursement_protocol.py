@@ -22,7 +22,7 @@ def test_fourth_step_covers_bank_files_without_later_stage_backfill():
     assert "第4步银行代发的必要资料和核算均在本步完成" in work_entry["sequence"]
     assert "不设置等待后续核算再回补代发的安排" in work_entry["sequence"]
     rules = OPERATING_PROTOCOL["topics"]["payroll"]["rules"]
-    assert "本次付款必要资料与核算均在第4步处理" in rules["payment_file"]
+    assert "本次代发文件所需资料与核算均在第4步处理" in rules["payment_file"]
     assert "不等待后续核算再回补代发" in rules["payment_file"]
     assert "已核实的真实后阶段结果依赖按通用顺序规则记录并回补" not in rules["payment_file"]
 
