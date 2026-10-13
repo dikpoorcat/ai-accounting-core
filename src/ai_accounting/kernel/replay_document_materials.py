@@ -41,6 +41,98 @@ def _references(value):
             yield from _references(child)
 
 
+def material_amount_field_issues(document, *, registry=None):
+    """Check fact amount dimensions without evaluating business or inventing results.
+
+    Result values remain the runtime's responsibility: the registry does not
+    declare a general schema for evaluator outputs. An alias never revives an
+    absent fact field; its source must exist in the current input model.
+    """
+    if registry is None:
+        from .service import default_registry
+
+        registry = default_registry()
+    input_models = registry.input_models
+    kinds = {}
+    for item in document.get("facts", ()):
+        kinds.setdefault(item.get("key"), set()).add(item.get("kind"))
+    for step in document.get("steps", ()):
+        for output in step.get("outputs", ()):
+            kinds.setdefault(output.get("key"), set()).add(output.get("kind"))
+    allowed_by_kind = {}
+
+    def integer_schema(schema, definitions, seen=()):
+        reference = schema.get("$ref")
+        if reference:
+            if not reference.startswith("#/$defs/") or reference in seen:
+                return False
+            return integer_schema(
+                definitions.get(reference.removeprefix("#/$defs/"), {}),
+                definitions,
+                (*seen, reference),
+            )
+        alternatives = schema.get("anyOf")
+        if alternatives:
+            non_null = [item for item in alternatives if item.get("type") != "null"]
+            return bool(non_null) and all(
+                integer_schema(item, definitions, seen) for item in non_null
+            )
+        return schema.get("type") == "integer"
+
+    def links(value, path):
+        if isinstance(value, dict):
+            if "calculation_id" in value and "amount_field" in value:
+                yield value, path
+            for key, child in value.items():
+                yield from links(child, path + "/" + key)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                yield from links(child, path + f"/{index}")
+
+    issues = []
+    for item in document.get("materials", ()):
+        for link, path in links(item.get("data", {}), item.get("key", "materials") + "/data"):
+            amount_field = link["amount_field"]
+            if not isinstance(amount_field, str) or not amount_field.startswith("fact."):
+                continue
+            reference = _reference(link["calculation_id"])
+            if not reference or reference[1] != "calculation_id":
+                continue  # The identity validator reports old or malformed references.
+            candidates = kinds.get(reference[0], set())
+            kind = next(iter(candidates)) if len(candidates) == 1 else None
+            model = input_models.get(kind)
+            allowed = []
+            code = "material_amount_target_kind_unknown"
+            if model is not None:
+                if kind not in allowed_by_kind:
+                    schema = model.model_json_schema()
+                    allowed_by_kind[kind] = sorted(
+                        "fact." + name
+                        for name, field in schema.get("properties", {}).items()
+                        if name.endswith("_fen")
+                        and integer_schema(field, schema.get("$defs", {}))
+                    )
+                allowed = allowed_by_kind[kind]
+                if amount_field in allowed:
+                    continue
+                code = "material_amount_field_invalid"
+            issues.append(
+                {
+                    "path": path + "/amount_field",
+                    "code": code,
+                    "message": (
+                        f"{reference[0]} ({kind}): {amount_field}; "
+                        f"current integer fact amount fields: {allowed}"
+                    ),
+                    "target_key": reference[0],
+                    "target_kind": kind,
+                    "amount_field": amount_field,
+                    "allowed_fields": allowed,
+                }
+            )
+    return issues
+
+
 def _step_id(step):
     return step["step_id"] if isinstance(step, dict) else step.step_id
 
@@ -320,6 +412,17 @@ def _merge_declared_allocations(builder, document, materials):
 
 def compile_materials_and_closes(builder, document):
     """Append material receipts, complete inventories and chronological closes."""
+    for issue in material_amount_field_issues(document):
+        builder.issue(
+            issue["path"],
+            issue["code"],
+            issue["message"],
+            **{
+                key: value
+                for key, value in issue.items()
+                if key not in {"path", "code", "message"}
+            },
+        )
     material_models = {
         model.kind: model
         for model in (

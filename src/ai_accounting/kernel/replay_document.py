@@ -60,8 +60,8 @@ class ReplayDocumentBuilder:
     def reference_id(key):
         return "r_" + hashlib.sha256(key.encode("utf-8")).hexdigest()
 
-    def issue(self, path, code, message):
-        issue = {"path": path, "code": code, "message": message}
+    def issue(self, path, code, message, **details):
+        issue = {"path": path, "code": code, "message": message, **details}
         if issue not in self.issues:
             self.issues.append(issue)
 
@@ -569,19 +569,99 @@ def _compile_publication(builder, key, *, prerequisites=()):
     return confirm
 
 
+def _compile_remuneration_tax_dependencies(builder, facts):
+    """Tax confirmation consumes a saved revision before remuneration adoption."""
+    from .remuneration_tax_basis import REMUNERATION_KINDS
+
+    def target(value, binding):
+        if isinstance(value, str) and value.startswith("$ref:"):
+            parts = value[5:].rsplit(":", 1)
+            if len(parts) == 2 and parts[1] == binding:
+                return parts[0]
+        return None
+
+    bases = {}
+    for fact in facts:
+        if fact["kind"] != "remuneration_tax_basis":
+            continue
+        key, data = fact["key"], fact["data"]
+        source_key = target(data.get("source_id"), "subject_id")
+        source = builder.fact_documents.get(source_key, {})
+        if (
+            not source
+            or source.get("kind") not in REMUNERATION_KINDS
+            or source.get("kind") != data.get("source_kind")
+            or source.get("data", {}).get("period") != data.get("period")
+            or target(data.get("source_fact_id"), "fact_id") != source_key
+        ):
+            builder.issue(
+                key,
+                "remuneration_tax_source_conflict",
+                "tax basis must bind one remuneration subject, saved fact and accounting period",
+            )
+            continue
+        bases.setdefault(source_key, []).append(key)
+        save = builder.save_steps.get(key)
+        if save:
+            builder.defer_dependencies(save, [source_key])
+            pool = data.get("pooled_tax_proof") or {}
+            for allocation in pool.get("allocations", []):
+                peer_key = target(allocation.get("source_id"), "subject_id")
+                peer = builder.fact_documents.get(peer_key, {})
+                if (
+                    not peer
+                    or peer.get("kind") not in REMUNERATION_KINDS
+                    or peer.get("kind") != allocation.get("source_kind")
+                    or peer.get("data", {}).get("period") != allocation.get("period")
+                ):
+                    builder.issue(
+                        key,
+                        "remuneration_tax_pool_source_conflict",
+                        "pooled allocation must identify remuneration of the same kind and period",
+                    )
+                else:
+                    builder.defer_dependencies(save, [peer_key])
+
+    for fact in facts:
+        if fact["kind"] not in REMUNERATION_KINDS:
+            continue
+        key = fact["key"]
+        sources = bases.get(key, [])
+        if len(sources) != 1:
+            builder.issue(
+                key,
+                "remuneration_tax_basis_missing"
+                if not sources
+                else "ambiguous_remuneration_tax_basis",
+                "each remuneration requires exactly one declared source-confirmed tax basis",
+            )
+        preview = builder._steps_by_key.get("publication-preview:" + key)
+        if preview:
+            builder.defer_dependencies(preview["step_id"], sources)
+    return bases
+
+
 def _compile_business(builder, document):
+    from .remuneration_tax_basis import REMUNERATION_KINDS
     from .service import default_registry
 
     registry = default_registry()
+    input_models = registry.input_models
     facts = document.get("facts", [])
     if len(builder.fact_documents) != len(facts):
         builder.issue("facts", "duplicate_fact_key", "business keys must be unique")
     # Allocate direct inputs only. Domain-produced identities come from their
     # dedicated preparation/confirmation responses, including asset members.
     for fact in facts:
-        model = registry.models.get(fact["kind"])
+        model = input_models.get(fact["kind"])
         if model is None:
-            builder.issue(fact["key"], "unsupported_fact_kind", fact["kind"])
+            builder.issue(
+                fact["key"],
+                "fact_kind_not_registerable"
+                if fact["kind"] in registry.historical_only
+                else "unsupported_fact_kind",
+                fact["kind"],
+            )
         elif not model.registration_command:
             builder.allocate_subject(fact["key"])
         if model is not None:
@@ -597,7 +677,7 @@ def _compile_business(builder, document):
         )
     for fact in facts:
         key, kind = fact["key"], fact["kind"]
-        model = registry.models.get(kind)
+        model = input_models.get(kind)
         if model is None or model.registration_command:
             continue
         if kind == "report_classification":
@@ -625,7 +705,8 @@ def _compile_business(builder, document):
             dep_fact = builder.fact_documents.get(dependency, {})
             dep_kind = dep_fact.get("kind")
             published = dep_kind in registry.evaluators and not (
-                kind == "payroll_plan_v2" and dep_kind in {"payroll_bounded", "payroll"}
+                (kind == "payroll_plan_v2" and dep_kind in {"payroll_bounded", "payroll"})
+                or (kind == "remuneration_tax_basis" and dep_kind in REMUNERATION_KINDS)
             )
             builder.defer_dependencies(save, [dependency], published=published)
         if kind not in registry.evaluators:
@@ -638,7 +719,8 @@ def _compile_business(builder, document):
         else:
             preview = builder._steps_by_key["publication-preview:" + key]
             builder.defer_dependencies(preview["step_id"], opening_keys, published=True)
-    # All wages and exact monthly plans are saved before a read-only preparation.
+    tax_basis_by_source = _compile_remuneration_tax_dependencies(builder, facts)
+    # All wages, tax bases and exact monthly plans precede read-only preparation.
     # The runner validates ready/no-issues/no-candidates before allowing adoption.
     for period, keys in sorted(payroll_periods.items()):
         prepare_key = "payroll-prepare:" + period
@@ -654,6 +736,9 @@ def _compile_business(builder, document):
             )
         ]
         builder.defer_dependencies(prepare, prepared_inputs)
+        builder.defer_dependencies(
+            prepare, [basis for key in keys for basis in tax_basis_by_source.get(key, [])]
+        )
         for key in keys:
             builder._steps_by_key["publication-preview:" + key]["depends_on"].append(prepare)
     _compile_asset_business(builder, document, registry)

@@ -87,6 +87,46 @@ def test_uses_synthetic_target_bindings_and_verifies_original_bytes(verifier, te
     assert json.loads(template[1].read_text(encoding="utf-8")) == template[0]
 
 
+def test_retained_history_model_is_rejected_as_a_new_input(verifier, template):
+    template[0]["facts"].append(
+        {
+            "key": "historical-only",
+            "kind": "payroll_opening_state",
+            "data": {},
+            "source_keys": ["source"],
+            "depends_on": [],
+            "references": [],
+        }
+    )
+    with pytest.raises(verifier.TemplateError, match="kind is not registerable"):
+        run(verifier, template)
+
+
+def test_offline_template_rejects_retired_material_amount_before_source_access(verifier, template):
+    document, _, root = template
+    document["facts"].append({"key": "wage", "kind": "payroll_bounded", "data": {}})
+    document["materials"].append(
+        {
+            "key": "wage-original",
+            "kind": "material_resolution_v2",
+            "data": {
+                "links": [
+                    {
+                        "calculation_id": "$ref:wage:calculation_id",
+                        "amount_field": "fact.tax_reported_salary_fen",
+                        "amount_fen": 100_000,
+                    }
+                ]
+            },
+        }
+    )
+    (root / "source.txt").unlink()
+    with pytest.raises(verifier.TemplateError, match="material_amount_field_invalid") as error:
+        run(verifier, template)
+    assert "wage-original/data/links/0/amount_field" in str(error.value)
+    assert "fact.accounting_gross_salary_fen" in str(error.value)
+
+
 @pytest.mark.parametrize(
     "mutation,expected",
     [

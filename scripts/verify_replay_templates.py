@@ -19,6 +19,7 @@ from ai_accounting.kernel.command_schema import command_models
 from ai_accounting.kernel.entities import entity_profile_models
 from ai_accounting.kernel.entity_references import references_from_data
 from ai_accounting.kernel.fund_accounts import fund_profile_models
+from ai_accounting.kernel.replay_document_materials import material_amount_field_issues
 from ai_accounting.kernel.service import default_registry
 
 
@@ -120,6 +121,11 @@ def bind(value):
 def check_document(path: Path, root: Path):
     document = json.loads(path.read_text(encoding="utf-8"))
     registry = default_registry()
+    amount_issues = material_amount_field_issues(document, registry=registry)
+    if amount_issues:
+        raise TemplateError(
+            "material amount fields: " + json.dumps(amount_issues, ensure_ascii=False)
+        )
     commands = command_models(registry)
     sections = ("sources", "entities", "facts", "materials", "steps")
     entries = [item for section in sections for item in document.get(section, [])]
@@ -282,9 +288,9 @@ def check_document(path: Path, root: Path):
                 else entity_profile_models()[item["kind"]]
             )
         elif key in fact_keys:
-            model = registry.models.get(item["kind"])
+            model = registry.input_models.get(item["kind"])
             if model is None:
-                errors.append((key, "unregistered kind: " + item["kind"]))
+                errors.append((key, "kind is not registerable: " + item["kind"]))
                 continue
         else:
             command = item.get("command")

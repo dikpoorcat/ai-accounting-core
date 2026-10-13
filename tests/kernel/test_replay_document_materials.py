@@ -27,7 +27,7 @@ class Builder:
     def node_id(self, key):
         return "s_" + sha256(key.encode()).hexdigest()
 
-    def issue(self, path, code, message):
+    def issue(self, path, code, message, **details):
         self.issues.append((path, code, message))
 
     def dependency(self, key, published=False):
@@ -103,6 +103,7 @@ def document(materials=None):
             )
     return {
         "scope": {"first_period": "2026-01", "last_period": "2026-02"},
+        "facts": [{"key": "later", "kind": "expense"}],
         "materials": materials if materials is not None else [source()],
         "inventory_replay_plan": {"rows": rows},
     }

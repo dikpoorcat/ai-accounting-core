@@ -299,7 +299,10 @@ def test_company_note_selects_declared_acceptance_instead_of_source_list_positio
     )
 
 
-def test_compiled_synthetic_document_executes_opening_inventory_and_close(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tax_fen", [None, 0, 500])
+def test_compiled_synthetic_document_executes_opening_and_declared_business(
+    tmp_path, monkeypatch, tax_fen
+):
     from draft_bundle_fixture import synthetic_draft_bundle
     from test_new_company_reports import profile, zero_tax
 
@@ -321,7 +324,7 @@ def test_compiled_synthetic_document_executes_opening_inventory_and_close(tmp_pa
     )["id"]
     engine = bootstrap.engine(company)
     proof = engine.register_evidence(
-        b"Owner explicitly confirms empty formation and no January activity",
+        b"Synthetic owner confirms formation and all declared January facts and deduction sources",
         "text/plain",
         "synthetic owner proof",
         request_id="synthetic-evidence",
@@ -342,11 +345,17 @@ def test_compiled_synthetic_document_executes_opening_inventory_and_close(tmp_pa
     }
     bootstrap.close()
     value = document()
+    if tax_fen is not None:
+        from test_replay_document_remuneration import remuneration_document
+
+        value = remuneration_document("payroll_bounded", tax_fen)
     value["sources"][0]["sha256"] = proof
     for row in value["inventory_replay_plan"]["rows"]:
         row["basis"]["confirmation_sha256"] = proof
 
     def collect(kind, key, data):
+        if kind == "report_profile":
+            key = "company-report-profile"
         value["facts"].append(
             {
                 "key": key,
@@ -388,6 +397,13 @@ def test_compiled_synthetic_document_executes_opening_inventory_and_close(tmp_pa
         for _ in range(len(compiled["request"]["steps"]) + 1):
             result = run_ready(app, limit=1, company_id=company)
             assert not result or result[0]["status"] == "completed", result
+            if (
+                tax_fen is not None
+                and result
+                and result[0].get("step_id")
+                == ReplayDocumentBuilder.node_id("publication-confirm:wage")
+            ):
+                break
         status = app.dispatch(
             "replay_status",
             {
@@ -396,10 +412,38 @@ def test_compiled_synthetic_document_executes_opening_inventory_and_close(tmp_pa
             },
             session_token=token,
         )
-        assert status["status"] == "completed", status
-        assert status["progress"]["closed_through"] == "2026-01"
+        if tax_fen is None:
+            assert status["status"] == "completed", status
+            assert status["progress"]["closed_through"] == "2026-01"
         with app.engine(company).store.connection(read_only=True) as connection:
-            assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
+            assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == (
+                tax_fen is None
+            )
             assert connection.execute("SELECT count(*) FROM replay_binding").fetchone()[0] > 0
+        if tax_fen is not None:
+            wage_subject = next(
+                item["value"]
+                for item in compiled["mapping"]["identities"]
+                if item["key"] == "wage" and item["binding"] == "subject_id"
+            )
+            with app.engine(company).store.connection(read_only=True) as connection:
+                store = app.engine(company).store
+                wage = store.current_fact(connection, wage_subject)
+                basis_subject = next(
+                    item["value"]
+                    for item in compiled["mapping"]["identities"]
+                    if item["key"] == "tax" and item["binding"] == "subject_id"
+                )
+                basis = store.current_fact(connection, basis_subject)
+                assert basis.fact.source_fact_id == wage.id
+                result = connection.execute(
+                    "SELECT outcome FROM calculation WHERE subject_id=? "
+                    "ORDER BY rowid DESC LIMIT 1",
+                    (wage_subject,),
+                ).fetchone()
+                import json
+
+                assert json.loads(result[0])["values"]["tax_fen"] == tax_fen
+                assert json.loads(result[0])["values"]["net_fen"] == 100_000 - tax_fen
     finally:
         app.close()

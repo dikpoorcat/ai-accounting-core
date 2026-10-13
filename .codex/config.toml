@@ -1,6 +1,6 @@
 [mcp_servers.ai_accounting]
 command = "D:/GitHub/ai-accounting-core/.tmp-kernel-venv/Scripts/python.exe"
-args = ["-m", "ai_accounting.kernel.cli", "--root", "D:/GitHub/ai-accounting-core/data/kernel-released", "mcp"]
+args = ["-I", "-B", "-X", "utf8", "-c", "import sys; from pathlib import Path; from ai_accounting.kernel.runtime_snapshot import bootstrap_runtime; selected = bootstrap_runtime(Path(sys.argv[sys.argv.index('--root') + 1])); selected is not None or sys.exit('active_runtime_required'); from ai_accounting.kernel.cli import main; main()", "--root", "D:/GitHub/ai-accounting-core/data/kernel-released", "mcp"]
 cwd = "D:/GitHub/ai-accounting-core"
 startup_timeout_sec = 20
 tool_timeout_sec = 300
