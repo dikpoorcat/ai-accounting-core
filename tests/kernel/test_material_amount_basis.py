@@ -4,6 +4,7 @@ from typing import ClassVar
 
 import pytest
 from entity_fixture import seed_fact_entities
+from opening_fixture import adopt_empty_opening
 from schema_fixture import test_bundle
 from test_materials import Company, codes
 
@@ -29,6 +30,7 @@ def company_with_evaluator(tmp_path, evaluator):
     company.engine = Engine(
         Store.create(tmp_path / "company.sqlite", test_bundle(registry), "company", "tax", "db")
     )
+    adopt_empty_opening(company.engine, period="2026-01")
     company.materials = Materials(company.engine)
     company.sequence = 0
     company.proof = company.evidence(b"Synthetic declared original facts")

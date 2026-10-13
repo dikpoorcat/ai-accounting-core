@@ -290,7 +290,7 @@ def test_identity_correction_contract_is_discovered_and_dispatched_by_cli_and_mc
     if transport == "cli":
         request = tmp_path / "identity-request.json"
         request.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        monkeypatch.setattr(cli, "ServiceClient", InProcessServiceClient)
+        monkeypatch.setattr("ai_accounting.kernel.daemon.ServiceClient", InProcessServiceClient)
         monkeypatch.setattr(
             sys,
             "argv",

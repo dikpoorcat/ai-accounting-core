@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 
 import pytest
+from opening_fixture import adopt_empty_opening
 from openpyxl import Workbook
 from test_deletion_boundaries import book as book
 from test_local_service import service as service
@@ -518,6 +519,7 @@ def test_unknown_member_cannot_weaken_another_members_known_month(
 def test_authenticated_public_command_validates_group_and_blocks_generic_fact_injection(service):
     app, company_id = service
     engine = app.engine(company_id)
+    adopt_empty_opening(engine, period="2026-01")
     party = app.dispatch(
         "register_entity",
         dict(

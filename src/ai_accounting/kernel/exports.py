@@ -4,7 +4,8 @@ The requested period is the management payment month. An explicitly saved
 payment_period groups a source there; otherwise its accounting month is used.
 An omitted source_ids means every eligible unpaid salary, bonus, labor and
 employee reimbursement in that scope. Explicit source_ids request a subset.
-Both modes use the same material and unresolved-accounting checks as month close.
+Explicit remuneration selections check their related originals and accounting
+dependencies. Complete or reimbursement selections retain month-close checks.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from pathlib import Path
 from ai_accounting.mybank_export import render_import, validate_template, yuan
 
 from .backup import _worker_lock
-from .contracts import KernelError, NeedsInformation
+from .contracts import KernelError, NeedsInformation, Read
 from .domains.payroll import PAYROLL_KINDS
 from .payroll_tax_declarations import PayrollDisbursementBasis, export_disbursement
 from .periods import Periods
@@ -56,6 +57,9 @@ DEFAULT_CATEGORIES = {
     "employee_advance": "报销",
     **dict.fromkeys(REIMBURSEMENT_KINDS, "报销"),
 }
+REMUNERATION_KINDS = frozenset(
+    {*PAYROLL_KINDS, "annual_bonus", "labor", "labor_accrual", "labor_project_cost"}
+)
 
 
 def _export_obligations(kind, values):
@@ -190,6 +194,141 @@ class Exports:
             period, template_evidence_digest=template_evidence_digest, source_ids=source_ids
         )
         return plan
+
+    def _remuneration_scope(self, connection, calculations, disbursements, periods):
+        """Discover authoritative sources; no source scope changes row checks."""
+        from .duplicates import _source_locations_from_checks
+        from .integrity import verify_sources
+        from .materials import (
+            MaterialGroupResolution,
+            MaterialPeriodAllocation,
+            MaterialResolution,
+            MaterialSource,
+        )
+        from .query_semantics import SETTLEMENT_SOURCE_SLOTS
+
+        fact_ids = {row["fact_id"] for row in calculations}
+        calculation_ids = {row["id"] for row in calculations}
+        selected_subjects = {row["subject_id"] for row in calculations}
+        remuneration_months = {YearMonth(period).ordinal for period in periods}
+        for value in disbursements:
+            fact_ids.update(value[key] for key in ("basis_fact_id", "declaration_fact_id")
+                            if value.get(key))
+            calculation_ids.update(value[key] for key in ("basis_calculation_id",)
+                                   if value.get(key))
+        # A real payment is a reverse dependency of its salary. Unpublished
+        # payments have no calculation dependency rows, so inspect current facts.
+        settlement_kinds = (*SETTLEMENT_SOURCE_SLOTS, "settlement", "overpayment")
+        for kind in settlement_kinds:
+            for version in self.store.select(connection, Read("fact", kind, "*")):
+                slots = SETTLEMENT_SOURCE_SLOTS.get(kind)
+                allocations = getattr(version.fact, slots[0], ()) if slots else ()
+                if kind == "settlement":
+                    allocations = (version.fact.first, version.fact.second)
+                if kind == "overpayment":
+                    allocations = (version.fact,)
+                if any(getattr(item, "source_id", None) in selected_subjects
+                       and getattr(item, "source_kind", None) in REMUNERATION_KINDS
+                       for item in allocations):
+                    fact_ids.add(version.id)
+                    periods.add(str(version.fact.period))
+                    calculation_ids.update(item.id for item in self.store.select(
+                        connection, Read("calculation", kind, "@" + version.subject_id)
+                    ))
+        checked = set()
+        while calculation_ids - checked:
+            batch = calculation_ids - checked
+            checked.update(batch)
+            encoded = canonical(sorted(batch))
+            fact_ids.update(row[0] for row in connection.execute(
+                "SELECT c.fact_id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+                "UNION SELECT d.fact_id FROM json_each(?) ids "
+                "JOIN dependency_fact d ON d.calculation_id=ids.value", (encoded, encoded),
+            ))
+            calculation_ids.update(row[0] for row in connection.execute(
+                "SELECT d.upstream_id FROM json_each(?) ids "
+                "JOIN dependency_calculation d ON d.calculation_id=ids.value", (encoded,),
+            ))
+            # Adopted versions and current scope matches are both needed: a
+            # newly arrived fact may invalidate a previously complete result.
+            for row in connection.execute(
+                "SELECT DISTINCT d.source,d.kind,d.scope_key,d.before_period "
+                "FROM json_each(?) ids JOIN dependency_scope d ON d.calculation_id=ids.value",
+                (encoded,),
+            ):
+                # Exact persisted sentinel, as in QueryReads' saved-input
+                # verifier. Other out-of-range ordinals must not become None.
+                read = Read(row["source"], row["kind"], row["scope_key"],
+                            None if row["before_period"] == 119988
+                            else YearMonth.from_ordinal(row["before_period"]))
+                values = self.store.select(connection, read)
+                if read.source == "fact":
+                    fact_ids.update(item.id for item in values)
+                else:
+                    calculation_ids.update(item.id for item in values)
+        verify_sources(self.engine, connection, calculation_ids=calculation_ids)
+        versions = self.store.facts(connection, fact_ids)
+        actual_kinds = {*settlement_kinds, "payroll_contribution_actual",
+                        "payroll_tax_declaration_actual"}
+        periods.update(str(version.fact.period) for version in versions.values()
+                       if version.fact.kind in actual_kinds)
+        periods.update(str(version.fact.tax_period) for version in versions.values()
+                       if version.fact.kind == "payroll_tax_declaration_actual")
+        subject_ids = {version.subject_id for version in versions.values()}
+        issues = []
+        for row in connection.execute(
+            "SELECT DISTINCT p.subject_id FROM json_each(?) ids "
+            "JOIN pending p ON p.subject_id=ids.value", (canonical(sorted(subject_ids)),),
+        ):
+            issues.append({"field": row[0], "message": "本次薪资范围存在尚未完成的会计更正"})
+        for version in versions.values():
+            if version.fact.kind not in self.store.registry.evaluators:
+                continue
+            current = connection.execute(
+                "SELECT c.fact_id,a.calculation_id FROM fact_current c "
+                "LEFT JOIN calculation_current a ON a.subject_id=c.subject_id "
+                "WHERE c.subject_id=?", (version.subject_id,),
+            ).fetchone()
+            if current and current["fact_id"] == version.id and current["calculation_id"] is None:
+                issues.append({"field": version.subject_id,
+                               "message": "本次薪资关联业务事实尚未正式核算"})
+        evidence = {proof for version in versions.values() for proof in version.evidence}
+        evidence.update(proof for value in disbursements
+                        for key in ("basis_evidence", "declaration_evidence")
+                        for proof in value.get(key, ()))
+        source_ids = {item["source_id"]
+                      for values in _source_locations_from_checks(connection, fact_ids).values()
+                      for item in values}
+        material_sources = self.store.select(connection, Read("fact", MaterialSource.kind, "*"))
+        active_source_ids = {source.subject_id for source in material_sources}
+        for kind in (MaterialResolution.kind, MaterialGroupResolution.kind):
+            for version in self.store.select(connection, Read("fact", kind, "*")):
+                if version.fact.source_id in active_source_ids and any(
+                    link.calculation_id in calculation_ids for link in version.fact.links
+                ):
+                    source_ids.add(version.fact.source_id)
+        allocations = {}
+        for version in self.store.select(
+            connection, Read("fact", MaterialPeriodAllocation.kind, "*")
+        ):
+            allocations.setdefault(version.fact.source_id, []).append(version)
+        for source in material_sources:
+            if source.fact.evidence_digest in evidence:
+                source_ids.add(source.subject_id)
+            if source.fact.category != "payroll":
+                continue
+            mapped = allocations.get(source.subject_id, ())
+            # Include unlinked salary originals, unknown attribution and all
+            # salary rows in the selected source months; choosing fewer wages
+            # cannot hide an unfinished row in a shared salary original.
+            if source.fact.period.ordinal in remuneration_months or len(mapped) != 1 or (
+                mapped[0].fact.source_fact_id != source.id
+                or any(entry.recognition_period is None
+                       or entry.recognition_period.ordinal in remuneration_months
+                       for entry in mapped[0].fact.entries)
+            ):
+                source_ids.add(source.subject_id)
+        return source_ids, evidence, remuneration_months, issues
 
     def _prepare(self, period, *, template_evidence_digest, source_ids=None):
         from .read_state import repair_revision
@@ -340,28 +479,42 @@ class Exports:
             from .materials import check_completeness_many
 
             inventory_versions, material_coverage_versions = {}, {}
+            remuneration_scope = requested is not None and all(
+                row["kind"] in REMUNERATION_KINDS for row in calculations
+            )
+            related_sources, related_evidence, inventory_months, related_issues = (
+                self._remuneration_scope(connection, calculations, disbursements, periods)
+                if remuneration_scope else (None, (), None, [])
+            )
             coverage_by_month = check_completeness_many(
                 connection,
                 (YearMonth(source_period).ordinal for source_period in periods),
                 self.store.registry,
+                _source_ids=related_sources,
+                _evidence_digests=related_evidence,
+                _inventory_months=inventory_months,
             )
             for source_period in sorted(periods):
                 source_month = YearMonth(source_period).ordinal
                 coverage = coverage_by_month[source_month]
-                inventories, issues, unpublished = Periods.completeness(
-                    connection,
-                    source_month,
-                    self.store.registry,
-                    material_coverage=coverage,
-                )
+                if remuneration_scope:
+                    inventories, issues, unpublished = {}, coverage["issues"], ()
+                else:
+                    inventories, issues, unpublished = Periods.completeness(
+                        connection,
+                        source_month,
+                        self.store.registry,
+                        material_coverage=coverage,
+                    )
                 issues = list(issues)
+                issues.extend(related_issues)
                 issues.extend(
                     {"field": row["id"], "message": "业务事实尚未正式核算"}
                     for row in unpublished
                     if row["kind"] in self.store.registry.evaluators
                     and row["kind"] != PayrollDisbursementBasis.kind
                 )
-                pending = connection.execute(
+                pending = None if remuneration_scope else connection.execute(
                     "SELECT p.subject_id FROM pending p CROSS JOIN fact_current c "
                     "CROSS JOIN fact_revision f CROSS JOIN subject s "
                     "WHERE c.subject_id=p.subject_id AND s.id=c.subject_id "

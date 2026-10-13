@@ -677,7 +677,10 @@ def test_cli_and_mcp_use_shared_safe_dispatch_errors(service, monkeypatch, capsy
     before = database_snapshot(app.engine(company))
     from ai_accounting.kernel import cli, mcp
 
-    monkeypatch.setattr(cli, "ServiceClient", lambda root: SimpleNamespace(dispatch=app.dispatch))
+    monkeypatch.setattr(
+        "ai_accounting.kernel.daemon.ServiceClient",
+        lambda root: SimpleNamespace(dispatch=app.dispatch),
+    )
     request = tmp_path / "request.json"
     request.write_text(canonical(payload), encoding="utf-8")
     monkeypatch.setattr(

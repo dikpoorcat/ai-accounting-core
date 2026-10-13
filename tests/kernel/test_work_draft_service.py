@@ -337,7 +337,7 @@ def test_http_local_capability_auth_scope_conflict_and_cli_use_public_entry(
             },
             credential_store=credentials,
         )
-        monkeypatch.setattr(cli, "ServiceClient", lambda root: client)
+        monkeypatch.setattr("ai_accounting.kernel.daemon.ServiceClient", lambda root: client)
         input_file = tmp_path / "synthetic-cli-input.json"
         input_file.write_text(json.dumps(scope), encoding="utf-8")
         monkeypatch.setattr(

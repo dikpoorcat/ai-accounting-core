@@ -159,6 +159,8 @@ def test_receive_source_and_partition_are_one_transaction(company):
     raw = b"name,amount,period\na,10,2026-01\n"
     evidence = company.evidence(raw)
     before = company.materials.check("2026-01")
+    with company.engine.store.connection(read_only=True) as connection:
+        before_subjects = connection.execute("SELECT count(*) FROM subject").fetchone()[0]
     company.engine.fault = lambda stage, connection: (
         (_ for _ in ()).throw(RuntimeError("synthetic commit failure"))
         if stage == "commit"
@@ -181,7 +183,7 @@ def test_receive_source_and_partition_are_one_transaction(company):
     company.engine.fault = lambda *_: None
     assert company.materials.check("2026-01")["coverage_digest"] == before["coverage_digest"]
     with company.engine.store.connection(read_only=True) as connection:
-        assert connection.execute("SELECT count(*) FROM subject").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM subject").fetchone()[0] == before_subjects
 
 
 def test_generic_allocation_registration_is_closed_and_stored_partition_is_rechecked(company):

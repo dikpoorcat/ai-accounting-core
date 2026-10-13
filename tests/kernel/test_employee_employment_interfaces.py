@@ -83,7 +83,10 @@ def test_cli_labor_registration_and_atomic_transfer_use_discovered_contracts(
 
     app, _, scope, _ = service
     company = scope["company_id"]
-    monkeypatch.setattr(cli, "ServiceClient", lambda root: SimpleNamespace(dispatch=app.dispatch))
+    monkeypatch.setattr(
+        "ai_accounting.kernel.daemon.ServiceClient",
+        lambda root: SimpleNamespace(dispatch=app.dispatch),
+    )
     input_file = tmp_path / "worker-input.json"
 
     def call(command, payload):

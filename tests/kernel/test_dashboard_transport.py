@@ -201,12 +201,15 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
 def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(
     resident, tmp_path, monkeypatch, capsys
 ):
+    from opening_fixture import adopt_empty_opening
+
     from ai_accounting.kernel import cli, mcp
 
     service, _, capability, http, _ = resident
     _, token = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "组命令传输测试企业")["id"]
     engine = service.engine(company)
+    adopt_empty_opening(engine, period="2026-09")
     amount = 9007199254740993
     _publish_expense(engine, "expense", amount)
     summary = Dashboard(engine).brief("2026-09")["data"]["collections"]["activity"]["items"][0]
@@ -230,7 +233,7 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(
         return response
 
     client = SimpleNamespace(dispatch=dispatch)
-    monkeypatch.setattr(cli, "ServiceClient", lambda _: client)
+    monkeypatch.setattr("ai_accounting.kernel.daemon.ServiceClient", lambda _: client)
     request = tmp_path / "group.json"
     request.write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setattr(
