@@ -1,6 +1,5 @@
 """Payment exports consume published reimbursement debts, including multi-party batches."""
 
-from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
@@ -11,7 +10,7 @@ from test_reimbursement_assets import accepted_batch, asset, batch_card, pay
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.assets import ReimbursedAsset, ReimbursedAssetBatch
 from ai_accounting.kernel.domains.transactions import Payment, ReimbursedDeposit
-from ai_accounting.kernel.exports import WORKBOOK_NAME, Exports, run_export_jobs
+from ai_accounting.kernel.exports import Exports, run_export_jobs
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.types import canonical
 
@@ -95,8 +94,9 @@ def test_multi_employee_and_same_person_cross_sources_have_distinct_obligations(
     assert {source["category"] for source in sources(plan)} == {"报销"}
     assert not any(source["obligation"].endswith(":refund") for source in sources(plan))
     assert export.confirm("2026-02", **options) == job
-    assert run_export_jobs(company.engine)[0]["status"] == "succeeded"
-    book = load_workbook(Path(options["output_directory"]) / WORKBOOK_NAME, data_only=True)
+    completed = run_export_jobs(company.engine)[0]
+    assert completed["status"] == "succeeded"
+    book = load_workbook(completed["result"]["path"], data_only=True)
     try:
         rows = list(book.active.iter_rows(values_only=True))
         assert len(rows) == 3  # header + the two original party/category grouping keys
@@ -203,10 +203,11 @@ def test_missing_payee_only_blocks_affected_export_and_complete_material_gate_st
         confirmation_evidence=company.owner_confirmation,
         request_id=company.request(),
     )
-    for selected in (None, ["deposit"]):
-        with pytest.raises(KernelError) as incomplete:
-            export.preview("2026-02", template_evidence_digest=template, source_ids=selected)
-        assert incomplete.value.code == "materials_incomplete"
+    assert export.preview("2026-02", template_evidence_digest=template,
+                          source_ids=["deposit"])["total_fen"] == 50000
+    with pytest.raises(KernelError) as incomplete:
+        export.preview("2026-02", template_evidence_digest=template)
+    assert incomplete.value.code == "materials_incomplete"
 
 
 def test_batch_card_cannot_duplicate_parent_debt_and_repeated_selection_is_idempotent(

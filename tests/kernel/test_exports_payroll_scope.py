@@ -214,6 +214,7 @@ def test_selected_salary_can_deliver_file_while_complete_export_and_close_keep_m
     assert not directory.exists()
     completed = run_export_jobs(company.engine)
     assert completed[0]["job_id"] == queued["job_id"] and completed[0]["status"] == "succeeded"
+    directory = directory / queued["job_id"]
     book = load_workbook(directory / WORKBOOK_NAME, data_only=False)
     try:
         assert [cell.value for cell in book.active[2]] == [
@@ -424,7 +425,7 @@ def test_hidden_related_salary_row_is_read_and_blocks_selected_export(setup):
     assert any(issue.get("location") == "工资!B3" for issue in issues)
 
 
-def test_selected_remuneration_kind_gate_keeps_settled_reimbursement_in_month_scope(setup):
+def test_selected_mixed_scope_keeps_settled_reimbursement_related_checks_only(setup):
     company, export, template = setup
     company.save(Expense(period="2026-01", counterparty_id="employee", amount_fen=1000,
                          expense_class="administration", creditor_kind="employee"), "reimbursement")
@@ -441,7 +442,16 @@ def test_selected_remuneration_kind_gate_keeps_settled_reimbursement_in_month_sc
         "2026-01", "assets", evidence=[], expected=1, no_business=False,
         confirmation_evidence=company.owner_confirmation, request_id=company.request(),
     )
-    assert_incomplete(export, template, sources=["january", "reimbursement"])
+    preview = selected(export, template, ["january", "reimbursement"])
+    assert preview["total_fen"] == 907400
+    assert {source["subject_id"] for row in preview["rows"] for source in row["sources"]} == {
+        "january",
+    }
+    company.save(Expense(period="2026-01", counterparty_id="employee", amount_fen=1001,
+                         expense_class="administration", creditor_kind="employee"),
+                 "reimbursement", revision=1)
+    issues = assert_incomplete(export, template, sources=["january", "reimbursement"])
+    assert any(issue["field"] == "reimbursement" for issue in issues)
 
 
 @pytest.mark.parametrize("obligation", ["net", "employer_social"])

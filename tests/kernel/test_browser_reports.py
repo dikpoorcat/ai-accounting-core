@@ -1,8 +1,10 @@
 """Browser exports use frozen jobs and never expose arbitrary local file reads."""
 
+import hashlib
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import test_reports as report_cases
@@ -11,6 +13,7 @@ from test_reports import close_quarter, scenario
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.reports import run_report_jobs
+from ai_accounting.kernel.types import digest
 
 book = report_cases.book
 
@@ -38,6 +41,11 @@ def test_browser_export_job_is_idempotent_scoped_and_verified(book):
         report.download_browser_report(task["job_id"])
     result = run_report_jobs(book[0])[0]
     assert result["status"] == "succeeded"
+    target = Path(result["result"]["directory"])
+    assert target == (
+        book[0].store.path.parent / "exports" / "browser-reports"
+        / hashlib.sha256(b"browser-download").hexdigest() / task["job_id"]
+    )
     name, content = report.download_browser_report(task["job_id"])
     assert report.browser_export_status(task["job_id"])["status"] == "succeeded"
     assert name.endswith("2026Q1.xlsx")
@@ -51,6 +59,34 @@ def test_browser_export_job_is_idempotent_scoped_and_verified(book):
     with pytest.raises(KernelError) as error:
         report.download_browser_report(task["job_id"])
     assert error.value.code == "report_download_invalid"
+
+
+def test_pre_change_browser_job_keeps_its_original_path_and_request_cache(book):
+    from test_export_directories import seed_pre_change_task
+
+    report = scenario(book)
+    close_quarter(book)
+    plan = report.preview_export(2026, 1)
+    request_id = "previous-browser-export"
+    target = (
+        book[0].store.path.parent / "exports" / "browser-reports"
+        / hashlib.sha256(request_id.encode()).hexdigest()
+    )
+    case = SimpleNamespace(
+        kind="report", engine=book[0], plan=plan, action="report_export",
+        old_hash=lambda parent: digest([
+            "report_export", 2026, 1, plan["digest"], plan["epochs"], str(parent), None,
+        ]),
+    )
+    task = seed_pre_change_task(case, target, request_id)
+    assert queue(report, request_id) == task
+    result = run_report_jobs(book[0])[0]
+    assert result["status"] == "succeeded"
+    assert Path(result["result"]["directory"]) == target
+    name, content = report.download_browser_report(task["job_id"])
+    assert name.endswith("2026Q1.xlsx") and content == Path(result["result"]["path"]).read_bytes()
+    assert queue(report, request_id) == task
+    assert len(book[0].jobs()) == 1
 
 
 def test_browser_download_rejects_unknown_job_and_nonbrowser_target(book, tmp_path):

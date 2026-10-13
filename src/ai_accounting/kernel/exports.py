@@ -2,10 +2,9 @@
 
 The requested period is the management payment month. An explicitly saved
 payment_period groups a source there; otherwise its accounting month is used.
-An omitted source_ids means every eligible unpaid salary, bonus, labor and
-employee reimbursement in that scope. Explicit source_ids request a subset.
-Explicit remuneration selections check their related originals and accounting
-dependencies. Complete or reimbursement selections retain month-close checks.
+An omitted source_ids means every eligible unpaid payment in that scope.
+Explicit source_ids check their related originals and accounting dependencies.
+Complete selections retain month-close checks.
 """
 
 from __future__ import annotations
@@ -24,6 +23,12 @@ from ai_accounting.mybank_export import render_import, validate_template, yuan
 from .backup import _worker_lock
 from .contracts import KernelError, NeedsInformation, Read
 from .domains.payroll import PAYROLL_KINDS
+from .export_directories import (
+    ExportParentDirectory,
+    publish_export_directory,
+    resolve_export_parent,
+    validate_export_parent,
+)
 from .payroll_tax_declarations import PayrollDisbursementBasis, export_disbursement
 from .periods import Periods
 from .text_sort import pinyin_key
@@ -46,6 +51,10 @@ EXPORT_KINDS = (
     "expense",
     "employee_advance",
     *REIMBURSEMENT_KINDS,
+    "pass_through",
+    "pass_through_return",
+    "opening_obligation",
+    "opening_payroll_payable",
 )
 DEFAULT_CATEGORIES = {
     **dict.fromkeys(PAYROLL_KINDS, "工资"),
@@ -56,17 +65,39 @@ DEFAULT_CATEGORIES = {
     "expense": "报销",
     "employee_advance": "报销",
     **dict.fromkeys(REIMBURSEMENT_KINDS, "报销"),
+    "pass_through": "代付款",
+    "pass_through_return": "代收款退回",
+    "opening_obligation": "报销",
+    "opening_payroll_payable": "工资",
 }
 REMUNERATION_KINDS = frozenset(
-    {*PAYROLL_KINDS, "annual_bonus", "labor", "labor_accrual", "labor_project_cost"}
+    {*PAYROLL_KINDS, "annual_bonus", "labor", "labor_accrual", "labor_project_cost",
+     "opening_payroll_payable"}
 )
 
 
-def _export_obligations(kind, values):
+def _source_field(fact, name):
+    return fact.get(name) if isinstance(fact, dict) else getattr(fact, name, None)
+
+
+def _export_eligible(kind, fact):
+    """Recognize typed payment sources without inventing an amount or debt."""
+    if kind not in EXPORT_KINDS:
+        return False
+    if kind == "expense":
+        return _source_field(fact, "creditor_kind") in {"employee", "individual"}
+    if kind == "employee_advance":
+        return _source_field(fact, "payer_kind") in {"employee", "owner"}
+    if kind == "opening_obligation":
+        return _source_field(fact, "nature") in {"employee_reimbursement", "owner_reimbursement"}
+    if kind == "opening_payroll_payable":
+        return _source_field(fact, "component") == "net"
+    return True
+
+
+def _export_obligations(kind, values, fact=None):
     """Select published payment rights, never reconstruct domain amounts or claims."""
-    if kind == "expense" and values.get("creditor_kind") not in {"employee", "individual"}:
-        return ()
-    if kind == "employee_advance" and values.get("payer_kind") != "employee":
+    if not _export_eligible(kind, values if fact is None else fact):
         return ()
     payables = tuple(
         item
@@ -74,7 +105,12 @@ def _export_obligations(kind, values):
         if item["normal"] == "credit" and item["category"] == "payable"
     )
     if kind not in REIMBURSEMENT_KINDS:
-        name = "primary" if kind in {"expense", "employee_advance"} else "net"
+        if kind == "pass_through":
+            name = "remittance"
+        elif kind in REMUNERATION_KINDS - {"opening_payroll_payable"}:
+            name = "net"
+        else:
+            name = "primary"
         payables = tuple(item for item in payables if item["name"] == name)
         if len(payables) != 1:
             raise KernelError("invalid_export_obligation", "代发来源没有唯一明确的应付款")
@@ -118,6 +154,66 @@ def _safe_text(value: str, field: str, *, maximum: int) -> str:
     ):
         raise ValueError(f"invalid {field}")
     return value
+
+
+def resolve_export_values(engine, connection, calculations):
+    """Use current evidenced opening identities without rewriting frozen sources."""
+    from .identity_corrections import current_opening_bindings, opening_binding_reads
+    from .integrity import verify_sources
+    from .stored_json import load_outcome
+
+    calculations = tuple(calculations)
+    values = {row["id"]: load_outcome(row["outcome"])["values"] for row in calculations}
+    opening = {row["id"]: row for row in calculations if row["kind"].startswith("opening_")}
+    if not opening:
+        return values, {}
+    reads = {
+        read
+        for row in opening.values()
+        for read in opening_binding_reads("opening-binding:" + row["subject_id"])
+    }
+    selections = engine.store.select_many(connection, sorted(reads, key=repr))
+    verify_sources(
+        engine, connection,
+        fact_ids={item.id for read, items in selections.items() if read.source == "fact"
+                  for item in items},
+        calculation_ids={item.id for read, items in selections.items()
+                         if read.source == "calculation" for item in items},
+    )
+    adopted = current_opening_bindings(connection, set(opening))
+    bindings = {}
+    for ident, row in opening.items():
+        facts = selections[Read("fact", "opening_identity_binding",
+                                "opening-binding:" + row["subject_id"])]
+        if len(facts) > 1:
+            raise KernelError("opening_identity_conflict", "期初义务存在不唯一的当前身份采用绑定")
+        binding = adopted.get(ident)
+        if not facts and binding is None:
+            continue
+        if binding is not None and (
+            binding.get("source_subject_id") != row["subject_id"]
+            or binding.get("source_kind") != row["kind"]
+            or binding.get("source_fact_id") != row["fact_id"]
+        ):
+            raise KernelError("opening_binding_source", "期初付款身份绑定与正式来源不一致")
+        current = facts[0] if facts else None
+        pending = bool(
+            binding is None or current is None or current.id != binding["fact_id"]
+            or connection.execute(
+                "SELECT 1 FROM pending WHERE subject_id=?", (current.subject_id,),
+            ).fetchone()
+        )
+        superseded = binding is not None and binding.get("superseded") is True
+        bindings[ident] = {
+            "calculation_id": binding["calculation_id"] if binding is not None else None,
+            "fact_id": binding["fact_id"] if binding is not None else None,
+            "current_fact_id": current.id if current is not None else None,
+            "pending": pending,
+            "superseded": superseded,
+        }
+        if binding is not None:
+            values[ident] = {"obligations": []} if superseded else binding["basis_values"]
+    return values, bindings
 
 
 class Exports:
@@ -195,7 +291,7 @@ class Exports:
         )
         return plan
 
-    def _remuneration_scope(self, connection, calculations, disbursements, periods):
+    def _payment_scope(self, connection, calculations, disbursements, periods):
         """Discover authoritative sources; no source scope changes row checks."""
         from .duplicates import _source_locations_from_checks
         from .integrity import verify_sources
@@ -205,73 +301,84 @@ class Exports:
             MaterialResolution,
             MaterialSource,
         )
-        from .query_semantics import SETTLEMENT_SOURCE_SLOTS
-
         fact_ids = {row["fact_id"] for row in calculations}
         calculation_ids = {row["id"] for row in calculations}
-        selected_subjects = {row["subject_id"] for row in calculations}
-        remuneration_months = {YearMonth(period).ordinal for period in periods}
+        remuneration_months = {
+            month
+            for row in calculations
+            if row["kind"] in REMUNERATION_KINDS
+            for month in (row["period"], row["payment_period"] or row["period"])
+        }
         for value in disbursements:
             fact_ids.update(value[key] for key in ("basis_fact_id", "declaration_fact_id")
                             if value.get(key))
             calculation_ids.update(value[key] for key in ("basis_calculation_id",)
                                    if value.get(key))
-        # A real payment is a reverse dependency of its salary. Unpublished
-        # payments have no calculation dependency rows, so inspect current facts.
-        settlement_kinds = (*SETTLEMENT_SOURCE_SLOTS, "settlement", "overpayment")
-        for kind in settlement_kinds:
-            for version in self.store.select(connection, Read("fact", kind, "*")):
-                slots = SETTLEMENT_SOURCE_SLOTS.get(kind)
-                allocations = getattr(version.fact, slots[0], ()) if slots else ()
-                if kind == "settlement":
-                    allocations = (version.fact.first, version.fact.second)
-                if kind == "overpayment":
-                    allocations = (version.fact,)
-                if any(getattr(item, "source_id", None) in selected_subjects
-                       and getattr(item, "source_kind", None) in REMUNERATION_KINDS
-                       for item in allocations):
-                    fact_ids.add(version.id)
-                    periods.add(str(version.fact.period))
-                    calculation_ids.update(item.id for item in self.store.select(
-                        connection, Read("calculation", kind, "@" + version.subject_id)
-                    ))
-        checked = set()
-        while calculation_ids - checked:
-            batch = calculation_ids - checked
-            checked.update(batch)
-            encoded = canonical(sorted(batch))
-            fact_ids.update(row[0] for row in connection.execute(
-                "SELECT c.fact_id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
-                "UNION SELECT d.fact_id FROM json_each(?) ids "
-                "JOIN dependency_fact d ON d.calculation_id=ids.value", (encoded, encoded),
-            ))
-            calculation_ids.update(row[0] for row in connection.execute(
-                "SELECT d.upstream_id FROM json_each(?) ids "
-                "JOIN dependency_calculation d ON d.calculation_id=ids.value", (encoded,),
-            ))
-            # Adopted versions and current scope matches are both needed: a
-            # newly arrived fact may invalidate a previously complete result.
-            for row in connection.execute(
-                "SELECT DISTINCT d.source,d.kind,d.scope_key,d.before_period "
-                "FROM json_each(?) ids JOIN dependency_scope d ON d.calculation_id=ids.value",
-                (encoded,),
-            ):
-                # Exact persisted sentinel, as in QueryReads' saved-input
-                # verifier. Other out-of-range ordinals must not become None.
-                read = Read(row["source"], row["kind"], row["scope_key"],
-                            None if row["before_period"] == 119988
-                            else YearMonth.from_ordinal(row["before_period"]))
-                values = self.store.select(connection, read)
+        checked_calculations, checked_facts, checked_reads = set(), set(), set()
+        while calculation_ids - checked_calculations or fact_ids - checked_facts:
+            reads = set()
+            batch = calculation_ids - checked_calculations
+            if batch:
+                checked_calculations.update(batch)
+                encoded = canonical(sorted(batch))
+                fact_ids.update(row[0] for row in connection.execute(
+                    "SELECT c.fact_id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+                    "UNION SELECT d.fact_id FROM json_each(?) ids "
+                    "JOIN dependency_fact d ON d.calculation_id=ids.value", (encoded, encoded),
+                ))
+                calculation_ids.update(row[0] for row in connection.execute(
+                    "SELECT d.upstream_id FROM json_each(?) ids "
+                    "JOIN dependency_calculation d ON d.calculation_id=ids.value", (encoded,),
+                ))
+                # Saved adoption and current matches both matter. An arriving
+                # fact can invalidate a result without becoming its dependency.
+                reads.update(
+                    Read(row["source"], row["kind"], row["scope_key"],
+                         None if row["before_period"] == 119988
+                         else YearMonth.from_ordinal(row["before_period"]))
+                    for row in connection.execute(
+                        "SELECT DISTINCT d.source,d.kind,d.scope_key,d.before_period "
+                        "FROM json_each(?) ids JOIN dependency_scope d "
+                        "ON d.calculation_id=ids.value", (encoded,),
+                    )
+                )
+                exact_reads = [Read("calculation", "*", "#" + ident) for ident in sorted(batch)]
+                for values in self.store.select_many(connection, exact_reads).values():
+                    for calculation in values:
+                        if calculation.kind.startswith("opening_"):
+                            from .identity_corrections import opening_binding_reads
+
+                            reads.update(opening_binding_reads(
+                                "opening-binding:" + calculation.subject_id,
+                            ))
+                        # Check every obligation, including settled and non-net
+                        # rights of a selected salary. Fact claim scopes expose
+                        # unpublished payments, advances, offsets and returns;
+                        # overpayment uses the same exact scope without a claim.
+                        reads.update(
+                            Read("fact", "*", "payment:" + item["key"])
+                            for item in calculation.values.get("obligations", ())
+                        )
+            batch_facts = fact_ids - checked_facts
+            if batch_facts:
+                checked_facts.update(batch_facts)
+                versions = self.store.facts(connection, batch_facts)
+                reads.update(
+                    Read(source, "*", "@" + version.subject_id)
+                    for version in versions.values()
+                    for source in ("fact", "calculation")
+                )
+            reads -= checked_reads
+            checked_reads.update(reads)
+            for read, values in self.store.select_many(connection, sorted(reads, key=repr)).items():
                 if read.source == "fact":
                     fact_ids.update(item.id for item in values)
                 else:
                     calculation_ids.update(item.id for item in values)
-        verify_sources(self.engine, connection, calculation_ids=calculation_ids)
+        verify_sources(self.engine, connection, calculation_ids=calculation_ids, fact_ids=fact_ids)
         versions = self.store.facts(connection, fact_ids)
-        actual_kinds = {*settlement_kinds, "payroll_contribution_actual",
-                        "payroll_tax_declaration_actual"}
         periods.update(str(version.fact.period) for version in versions.values()
-                       if version.fact.kind in actual_kinds)
+                       if version.fact.kind in self.store.registry.evaluators)
         periods.update(str(version.fact.tax_period) for version in versions.values()
                        if version.fact.kind == "payroll_tax_declaration_actual")
         subject_ids = {version.subject_id for version in versions.values()}
@@ -280,7 +387,7 @@ class Exports:
             "SELECT DISTINCT p.subject_id FROM json_each(?) ids "
             "JOIN pending p ON p.subject_id=ids.value", (canonical(sorted(subject_ids)),),
         ):
-            issues.append({"field": row[0], "message": "本次薪资范围存在尚未完成的会计更正"})
+            issues.append({"field": row[0], "message": "本次付款范围存在尚未完成的会计更正"})
         for version in versions.values():
             if version.fact.kind not in self.store.registry.evaluators:
                 continue
@@ -291,7 +398,7 @@ class Exports:
             ).fetchone()
             if current and current["fact_id"] == version.id and current["calculation_id"] is None:
                 issues.append({"field": version.subject_id,
-                               "message": "本次薪资关联业务事实尚未正式核算"})
+                               "message": "本次付款关联业务事实尚未正式核算"})
         evidence = {proof for version in versions.values() for proof in version.evidence}
         evidence.update(proof for value in disbursements
                         for key in ("basis_evidence", "declaration_evidence")
@@ -315,7 +422,7 @@ class Exports:
         for source in material_sources:
             if source.fact.evidence_digest in evidence:
                 source_ids.add(source.subject_id)
-            if source.fact.category != "payroll":
+            if source.fact.category != "payroll" or not remuneration_months:
                 continue
             mapped = allocations.get(source.subject_id, ())
             # Include unlinked salary originals, unknown attribution and all
@@ -331,6 +438,7 @@ class Exports:
         return source_ids, evidence, remuneration_months, issues
 
     def _prepare(self, period, *, template_evidence_digest, source_ids=None):
+        from .discovery import Discovery
         from .read_state import repair_revision
 
         month = YearMonth(period)
@@ -355,15 +463,19 @@ class Exports:
             if template is None:
                 raise NeedsInformation("template_evidence_digest", "需要留存银行四列原始模板")
             template_content = template[0]
+            superseded = Discovery(self.engine)._superseded_subject("a")
             calculations = connection.execute(
-                "SELECT c.*,m.id management_id,m.payment_period,m.payment_category "
+                "SELECT c.*,a.subject_id head_subject_id,s.kind head_kind,"
+                "m.id management_id,m.payment_period,m.payment_category "
                 "FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
+                "JOIN subject s ON s.id=a.subject_id "
+                "JOIN fact_current f ON f.subject_id=a.subject_id "
                 "LEFT JOIN management_revision m ON m.id=(SELECT n.id FROM management_revision n "
-                "WHERE n.subject_id=c.subject_id ORDER BY n.revision DESC LIMIT 1) "
-                "WHERE c.kind IN (SELECT value FROM json_each(?)) "
+                "WHERE n.subject_id=a.subject_id ORDER BY n.revision DESC LIMIT 1) "
+                "WHERE s.kind IN (SELECT value FROM json_each(?)) "
                 "AND coalesce(m.payment_period,c.period)=? "
-                "AND (? IS NULL OR c.subject_id IN (SELECT value FROM json_each(?))) "
-                "ORDER BY c.subject_id",
+                "AND (? IS NULL OR a.subject_id IN (SELECT value FROM json_each(?))) "
+                "AND NOT " + superseded + " ORDER BY a.subject_id",
                 (
                     canonical(EXPORT_KINDS),
                     month.ordinal,
@@ -372,17 +484,25 @@ class Exports:
                 ),
             ).fetchall()
             from .integrity import verify_sources
-            from .stored_json import load_outcome
 
+            if any(row["head_subject_id"] != row["subject_id"] or row["head_kind"] != row["kind"]
+                   for row in calculations):
+                raise KernelError("content_integrity_failed", "银行代发来源的当前核算身份不一致")
             verify_sources(
                 self.engine,
                 connection,
                 calculation_ids={row["id"] for row in calculations},
             )
-            outcomes = {row["id"]: load_outcome(row["outcome"]) for row in calculations}
+            values_by_calculation, opening_bindings = resolve_export_values(
+                self.engine, connection, calculations,
+            )
+            source_facts = self.store.facts(connection, {row["fact_id"] for row in calculations})
             selected_obligations = {
-                row["id"]: _export_obligations(row["kind"], outcomes[row["id"]]["values"])
+                row["id"]: _export_obligations(
+                    row["kind"], values_by_calculation[row["id"]], source_facts[row["fact_id"]].fact
+                )
                 for row in calculations
+                if not opening_bindings.get(row["id"], {}).get("superseded")
             }
             obligations = [item for selected in selected_obligations.values() for item in selected]
             party_ids = sorted(
@@ -410,7 +530,7 @@ class Exports:
             disbursements = []
             for calculation in calculations:
                 subject = calculation["subject_id"]
-                selected = selected_obligations[calculation["id"]]
+                selected = selected_obligations.get(calculation["id"], ())
                 if not selected:
                     continue
                 eligible.add(subject)
@@ -425,7 +545,7 @@ class Exports:
                     remaining = balances.get(key, 0)
                     if remaining < 0 or remaining > item["amount_fen"]:
                         raise KernelError("invalid_payable_balance", "应付款余额与已确认来源不一致")
-                    values = outcomes[calculation["id"]]["values"]
+                    values = values_by_calculation[calculation["id"]]
                     _require_labor_net_tax(calculation["kind"], values, remaining, subject)
                     amount, disbursement = export_disbursement(
                         self.store,
@@ -468,6 +588,9 @@ class Exports:
                             "account": payee["account"],
                             "category": category,
                             "management_revision_id": calculation["management_id"],
+                            **({"opening_binding_calculation_id": binding["calculation_id"]}
+                               if (binding := opening_bindings.get(calculation["id"]))
+                               and binding["calculation_id"] is not None else {}),
                         }
                     )
             if requested is not None and set(requested) != eligible:
@@ -479,12 +602,16 @@ class Exports:
             from .materials import check_completeness_many
 
             inventory_versions, material_coverage_versions = {}, {}
-            remuneration_scope = requested is not None and all(
-                row["kind"] in REMUNERATION_KINDS for row in calculations
-            )
+            selected_scope = requested is not None
             related_sources, related_evidence, inventory_months, related_issues = (
-                self._remuneration_scope(connection, calculations, disbursements, periods)
-                if remuneration_scope else (None, (), None, [])
+                self._payment_scope(connection, calculations, disbursements, periods)
+                if selected_scope else (None, (), None, [])
+            )
+            related_issues.extend(
+                {"field": "opening-identity:" + row["subject_id"],
+                 "message": "本次付款的期初收款身份更正尚未完成正式核算"}
+                for row in calculations
+                if opening_bindings.get(row["id"], {}).get("pending")
             )
             coverage_by_month = check_completeness_many(
                 connection,
@@ -497,7 +624,7 @@ class Exports:
             for source_period in sorted(periods):
                 source_month = YearMonth(source_period).ordinal
                 coverage = coverage_by_month[source_month]
-                if remuneration_scope:
+                if selected_scope:
                     inventories, issues, unpublished = {}, coverage["issues"], ()
                 else:
                     inventories, issues, unpublished = Periods.completeness(
@@ -514,7 +641,7 @@ class Exports:
                     if row["kind"] in self.store.registry.evaluators
                     and row["kind"] != PayrollDisbursementBasis.kind
                 )
-                pending = None if remuneration_scope else connection.execute(
+                pending = None if selected_scope else connection.execute(
                     "SELECT p.subject_id FROM pending p CROSS JOIN fact_current c "
                     "CROSS JOIN fact_revision f CROSS JOIN subject s "
                     "WHERE c.subject_id=p.subject_id AND s.id=c.subject_id "
@@ -592,11 +719,12 @@ class Exports:
         template_evidence_digest: EvidenceDigest,
         preview_digest: str,
         epochs: dict,
-        output_directory: str,
+        output_directory: ExportParentDirectory | None = None,
         request_id: str,
         source_ids: list[str] | None = None,
     ):
-        directory = str(Path(output_directory).resolve())
+        parent = resolve_export_parent(output_directory, self.store.path)
+        directory = str(parent)
         requested = None if source_ids is None else sorted(set(source_ids))
         request_hash = digest(
             [
@@ -612,6 +740,7 @@ class Exports:
         cached = self.engine._cached(request_id, request_hash)
         if cached is not None:
             return cached
+        validate_export_parent(parent, output_directory)
         preview, prepared_revision = self._prepare(
             period, template_evidence_digest=template_evidence_digest, source_ids=requested
         )
@@ -622,7 +751,6 @@ class Exports:
             raise KernelError("preview_expired", "代发金额、资料或收款信息已变化，请重新预览")
         payload = {
             "plan": preview,
-            "output_directory": directory,
             "template_evidence_digest": template_evidence_digest,
         }
 
@@ -631,10 +759,11 @@ class Exports:
 
             check_repair_revision(connection, prepared_revision)
             job_id = uuid.uuid4().hex
+            task_payload = {**payload, "output_directory": str(parent / job_id)}
             connection.execute(
                 "INSERT INTO jobs(id,kind,payload,status) "
                 "VALUES(?, 'payment_export', ?, 'pending')",
-                (job_id, canonical(payload)),
+                (job_id, canonical(task_payload)),
             )
             from .read_indexes import sync_job
 
@@ -700,7 +829,8 @@ def _published_result(target: Path, job_id: str, plan: dict) -> dict:
         raise KernelError("export_target_conflict", "目标目录已经存在且不属于此代发任务") from exc
     checksum = hashlib.sha256(content).hexdigest()
     if (
-        manifest.get("job_id") != job_id
+        not isinstance(manifest, dict)
+        or manifest.get("job_id") != job_id
         or manifest.get("preview_digest") != plan["digest"]
         or manifest.get("sha256") != checksum
         or manifest.get("plan") != plan
@@ -717,7 +847,7 @@ def _published_result(target: Path, job_id: str, plan: dict) -> dict:
 
 
 def _render_job(target: Path, job_id: str, plan: dict, template: bytes) -> dict:
-    if target.exists():
+    if os.path.lexists(target):
         return _published_result(target, job_id, plan)
     content = render_import(template, plan["rows"], plan["period"])
     _verify_workbook(content, plan)
@@ -740,9 +870,14 @@ def _render_job(target: Path, job_id: str, plan: dict, template: bytes) -> dict:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
-        if target.exists():
+        if os.path.lexists(target):
             return _published_result(target, job_id, plan)
-        staging.rename(target)
+        try:
+            publish_export_directory(staging, target)
+        except OSError:
+            if not os.path.lexists(target):
+                raise
+            return _published_result(target, job_id, plan)
     return _published_result(target, job_id, plan)
 
 

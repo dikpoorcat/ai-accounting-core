@@ -680,7 +680,7 @@ def test_unknown_declared_amount_is_not_saved_as_zero_or_current_calculation(set
     assert company.count("fact_revision") == before
 
 
-def test_adopted_disbursement_does_not_bypass_material_completeness(setup):
+def test_adopted_disbursement_selected_scope_keeps_complete_month_gate(setup):
     company, export, template = setup
     _, declaration = declare(company)
     adopt(company, declaration)
@@ -693,8 +693,9 @@ def test_adopted_disbursement_does_not_bypass_material_completeness(setup):
         confirmation_evidence=company.owner_confirmation,
         request_id=company.request(),
     )
+    assert preview(export, template, ["january"])["scope"] == "selected"
     with pytest.raises(KernelError) as error:
-        preview(export, template, ["january"])
+        preview(export, template)
     assert error.value.code == "materials_incomplete"
 
 

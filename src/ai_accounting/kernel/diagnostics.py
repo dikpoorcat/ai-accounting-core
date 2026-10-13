@@ -102,6 +102,9 @@ _JOB_MESSAGES = {
     "backup_manifest_invalid": "备份说明文件格式不符合要求",
     "backup_format_unsupported": "备份格式不受当前系统支持",
     "backup_schema_unsupported": "备份数据库结构不受当前系统支持",
+    "export_parent_invalid": "导出父目录无效，请使用目录路径",
+    "export_target_conflict": "导出任务目录已有其他内容，请保留原件并生成新的任务",
+    "report_target_conflict": "报表任务目录已有其他内容，请保留原件并生成新的任务",
 }
 
 

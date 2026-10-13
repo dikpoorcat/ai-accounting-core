@@ -27,6 +27,15 @@ def test_job_error_classification_has_stable_safe_text():
     assert error_response(KernelError("invalid_command", "无效命令"))["code"] == "invalid_command"
 
 
+@pytest.mark.parametrize("code", [
+    "export_parent_invalid", "export_target_conflict", "report_target_conflict",
+])
+def test_export_directory_failures_keep_safe_actionable_codes(code):
+    failure = KernelError(code, "private submitted path C:/private/owner")
+    assert job_error_code(failure) == code
+    assert "private" not in job_error_message(code)
+
+
 def test_disk_full_keeps_its_actionable_code_without_exposing_the_path():
     failure = OSError(errno.ENOSPC, "private file contents", "C:/private/owner")
     assert error_response(failure)["code"] == "storage_full"

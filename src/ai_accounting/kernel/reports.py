@@ -39,6 +39,12 @@ from .account_definitions import (
 from .backup import _worker_lock
 from .contracts import Fact, KernelError, Read
 from .dashboard_reads import posted_account_totals
+from .export_directories import (
+    ExportParentDirectory,
+    publish_export_directory,
+    resolve_export_parent,
+    validate_export_parent,
+)
 from .query_semantics import (
     classify_financial_position,
     report_party_splits,
@@ -1943,11 +1949,12 @@ class Reports:
         *,
         preview_digest: str,
         epochs: dict,
-        output_directory: str,
+        output_directory: ExportParentDirectory | None = None,
         request_id: str,
         carry_forward_fact_id: str | None = None,
     ):
-        directory = str(Path(output_directory).resolve())
+        parent = resolve_export_parent(output_directory, self.store.path)
+        directory = str(parent)
         hashed = digest(
             [
                 "report_export",
@@ -1962,6 +1969,7 @@ class Reports:
         cached = self.engine._cached(request_id, hashed)
         if cached is not None:
             return cached
+        validate_export_parent(parent, output_directory)
         plan, prepared_revision = self._prepare_export(
             year, quarter, carry_forward_fact_id=carry_forward_fact_id
         )
@@ -1977,7 +1985,7 @@ class Reports:
             ident = uuid.uuid4().hex
             connection.execute(
                 "INSERT INTO jobs(id,kind,payload,status) VALUES(?,'report_export',?,'pending')",
-                (ident, canonical({"plan": plan, "output_directory": directory})),
+                (ident, canonical({"plan": plan, "output_directory": str(parent / ident)})),
             )
             from .read_indexes import sync_job
 
@@ -2613,7 +2621,7 @@ def _publish_report(target, job_id, plan):
     expected = render_quarterly_template(plan)
     checksum = hashlib.sha256(expected).hexdigest()
     manifest = {"job_id": job_id, "report_digest": plan["digest"], "sha256": checksum, "plan": plan}
-    if not target.exists():
+    if not os.path.lexists(target):
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".report-export-", dir=target.parent) as temporary:
             stage = Path(temporary) / "report"
@@ -2626,7 +2634,11 @@ def _publish_report(target, job_id, plan):
                     handle.write(content)
                     handle.flush()
                     os.fsync(handle.fileno())
-            stage.rename(target)
+            try:
+                publish_export_directory(stage, target)
+            except OSError:
+                if not os.path.lexists(target):
+                    raise
     try:
         if (
             json.loads((target / "manifest.json").read_text(encoding="utf-8")) != manifest

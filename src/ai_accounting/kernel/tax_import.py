@@ -27,6 +27,12 @@ from .domains.payroll import (
     payroll_contribution_reads,
     prepare_payroll_contributions,
 )
+from .export_directories import (
+    ExportParentDirectory,
+    publish_export_directory,
+    resolve_export_parent,
+    validate_export_parent,
+)
 from .payroll_confirmation import FactRevisionReference, revision_reference
 from .types import NonNegativeFen, YearMonth, canonical, digest, sum_fen
 from .workflow import _payroll_population_issues
@@ -562,12 +568,21 @@ class TaxImport:
                 "digest": digest(plan).hex(),
             }
 
-    def confirm(self, period: str, *, preview_digest: str, output_directory: str, request_id: str):
-        directory = str(Path(output_directory).resolve())
+    def confirm(
+        self,
+        period: str,
+        *,
+        preview_digest: str,
+        output_directory: ExportParentDirectory | None = None,
+        request_id: str,
+    ):
+        parent = resolve_export_parent(output_directory, self.store.path)
+        directory = str(parent)
         request_hash = digest(["tax_import", period, preview_digest, directory])
         cached = self.engine._cached(request_id, request_hash)
         if cached is not None:
             return cached
+        validate_export_parent(parent, output_directory)
         plan = self.preview(period)
         if plan["digest"] != preview_digest:
             raise KernelError("preview_expired", "工资或导入资料已有变化，请重新预览")
@@ -586,7 +601,7 @@ class TaxImport:
             job = uuid.uuid4().hex
             connection.execute(
                 "INSERT INTO jobs(id,kind,payload,status) VALUES(?,'tax_import',?,'pending')",
-                (job, canonical({"plan": plan, "output_directory": directory})),
+                (job, canonical({"plan": plan, "output_directory": str(parent / job)})),
             )
             from .read_indexes import sync_job
 
@@ -651,7 +666,7 @@ def _render_tax_plan(target, job, plan):
             "notice": "文件用于个税客户端导入；生成文件不代表实际申报或税款支付。",
         }
 
-    if target.exists():
+    if os.path.lexists(target):
         return existing()
     rows = [
         [
@@ -675,9 +690,14 @@ def _render_tax_plan(target, job, plan):
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
-        if target.exists():
+        if os.path.lexists(target):
             return existing()
-        staging.rename(target)
+        try:
+            publish_export_directory(staging, target)
+        except OSError:
+            if not os.path.lexists(target):
+                raise
+            return existing()
     return existing()
 
 

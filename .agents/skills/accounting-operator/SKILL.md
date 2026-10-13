@@ -11,4 +11,4 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 详细执行要求以当前内核运行协议为唯一来源，本 Skill 不重复维护。通过 `finance_local_command(command=..., payload=...)` 执行业务；接口选择、来源核对、负责人提问、工作稿、发布、恢复及关账均按已读取的规则执行。
 
-需要交付已核验的支付文件到桌面时，可使用 [复制脚本](scripts/copy-export-to-desktop.ps1)，具体条件遵守 `deliveries` 专项规则。
+支付、财报和个税文件任务成功并核验后，使用 [复制脚本](scripts/copy-export-to-desktop.ps1) 交付到桌面；相同内容复用，不同内容自动另名保留。导出父目录的省略、任务恢复和交付条件遵守 `deliveries` 专项规则。

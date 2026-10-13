@@ -3206,6 +3206,45 @@ def delivery_adapter(response):
     )
 
 
+class ExportSourceObligation(ResponseObject):
+    name: str
+    key: str
+    party_id: str | None
+    amount_fen: WireFen
+    remaining_fen: WireFen
+
+
+class ExportSource(ResponseObject):
+    subject_id: str
+    kind: str
+    fact_id: str
+    revision: Count
+    accounting_period: Month
+    current_accounting_period: Month
+    payment_period: Month
+    payment_category: str
+    management_revision_id: int | None
+    calculation_id: str | None
+    adopted_fact_id: str | None
+    opening_binding_calculation_id: str | None
+    opening_binding_fact_id: str | None
+    current_opening_binding_fact_id: str | None
+    status: Literal["published", "pending", "unpublished"]
+    obligations: list[ExportSourceObligation] | None
+
+
+class ExportSourcesResponse(ResponseObject):
+    schema_version: Version1
+    company_id: str
+    database_id: str
+    period: Month
+    epochs: ReportEpochs
+    read_repair_revision: Count
+    sort: Literal["subject_id_asc"]
+    items: list[ExportSource]
+    next_cursor: str | None
+
+
 RESPONSE_ADAPTERS = {
     "prepare_fact_registration": TypeAdapter(FactRegistrationPreparation),
     "prepare_replay": TypeAdapter(ReplayPreparedResponse),
@@ -3222,6 +3261,7 @@ RESPONSE_ADAPTERS = {
     "inventory_batch": TypeAdapter(SavedInventoryBatch),
     "workflow": TypeAdapter(Annotated[WorkflowResponse, AfterValidator(_workflow_issue_targets)]),
     "period_readiness": TypeAdapter(PeriodReadinessResponse),
+    "export_sources": TypeAdapter(ExportSourcesResponse),
     "dashboard_context": TypeAdapter(DashboardContextResponse),
     "dashboard_brief": TypeAdapter(DashboardBriefResponse),
     "dashboard_brief_group": TypeAdapter(DashboardBriefGroupResponse),

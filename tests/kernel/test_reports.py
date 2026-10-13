@@ -657,7 +657,8 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
     assert failed["status"] == "failed" and failed["error_code"] == "job_failed"
     projected("failed")
     assert book[0].jobs(job_id=failed["job_id"])[0]["error_code"] == "job_failed"
-    manifest_before = (tmp_path / "export" / "manifest.json").read_bytes()
+    target = tmp_path / "export" / failed["job_id"]
+    manifest_before = (target / "manifest.json").read_bytes()
     assert run_report_jobs(book[0])[0]["status"] == "succeeded"
     projected("succeeded")
     core_job = book[0].jobs(job_id=failed["job_id"])[0]
@@ -669,16 +670,16 @@ def test_report_job_crash_retry_and_tamper_rejection(book, tmp_path):
     assert len(workbook.worksheets) == 3
     workbook.close()
     assert report.browser_export_status(core_job["id"])["status"] == "succeeded"
-    assert (tmp_path / "export" / "manifest.json").read_bytes() == manifest_before
+    assert (target / "manifest.json").read_bytes() == manifest_before
     assert run_report_jobs(book[0]) == []
     with book[0].store.connection() as connection:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute('UPDATE jobs SET payload="{}"')
         connection.execute('UPDATE jobs SET status="failed"')
         connection.commit()
-    next((tmp_path / "export").glob("*.xlsx")).write_bytes(b"corruption")
+    next(target.glob("*.xlsx")).write_bytes(b"corruption")
     result = run_report_jobs(book[0])[0]
-    assert result["status"] == "failed" and result["error_code"] == "job_failed"
+    assert result["status"] == "failed" and result["error_code"] == "report_target_conflict"
 
 
 def test_export_preview_epoch_expiration_is_atomic(book, tmp_path):

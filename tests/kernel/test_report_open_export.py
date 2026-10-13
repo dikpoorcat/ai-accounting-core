@@ -72,7 +72,9 @@ def test_open_export_checks_all_covered_months_and_allows_unfinished_external_wo
     queued = confirm(report, plan, tmp_path)
     result = run_report_jobs(book[0])[0]
     assert result["job_id"] == queued["job_id"] and result["status"] == "succeeded"
-    manifest = json.loads((tmp_path / "export" / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (Path(result["result"]["directory"]) / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["plan"] == plan
     with book[0].store.connection(read_only=True) as connection:
         assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 0

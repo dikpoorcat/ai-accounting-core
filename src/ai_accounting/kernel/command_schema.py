@@ -18,6 +18,7 @@ from .display import Display
 from .duplicates import DuplicateReview, Duplicates, SourceLocation
 from .engine import Engine
 from .entities import Entities, entity_input_models
+from .export_sources import ExportSources
 from .exports import Exports
 from .fund_accounts import fund_profile_models, require_fund_source, validate_fund_profile
 from .identity_corrections import IdentityCorrections
@@ -122,6 +123,7 @@ def command_models(registry):
         "preview_delete": Engine.preview_delete,
         "delete": Engine.delete,
         "save_payee": Exports.save_payee,
+        "export_sources": ExportSources.query,
         "preview_export": Exports.preview,
         "confirm_export": Exports.confirm,
         "report": Reports.report,

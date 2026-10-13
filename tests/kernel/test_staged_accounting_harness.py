@@ -28,6 +28,16 @@ def seeded(tmp_path):
     app.close()
 
 
+@pytest.fixture
+def recovery_seeded(tmp_path):
+    app = LocalService(tmp_path / "data")
+    app.security.provision(harness.reading.OWNER, harness.reading.PASSWORD)
+    token = app.security.login(harness.reading.OWNER, harness.reading.PASSWORD).session_token
+    info = harness.seed(app, token, tmp_path, scenario="stage4_recovery")
+    yield app, token, info, tmp_path
+    app.close()
+
+
 def dispatch(app, token, command, **payload):
     return app.dispatch(command, payload, session_token=token)
 
@@ -167,3 +177,119 @@ def test_eight_stage_checkpoint_restarts_with_company_and_period_isolation(seede
         assert business_state(restarted, scope["company_id"]) == before
     finally:
         restarted.close()
+
+
+def test_recovery_keeps_stage4_block_and_stale_stage5_draft(recovery_seeded):
+    app, token, info, directory = recovery_seeded
+    scope = info["work_context_payload"]
+    context = dispatch(app, token, "work_context", **scope)
+    draft = context["work_draft"]["draft"]
+    assert "进入第5步" in draft["next_step"]
+    assert "旧接口不支持" in draft["resume_note"]
+    questions = {question["id"]: question for question in draft["questions"]}
+    assert questions["prior-stages"]["status"] == "resolved"
+    assert "实际养老金个人1000元" in questions["prior-stages"]["answer"]
+    pending = {questions[key]["status"] for key in ("labor-net", "stage5-tax", "stage5-office")}
+    assert pending == {"pending"}
+    template_ref = next(
+        ref for ref in draft["source_refs"]
+        if ref.get("evidence_digest") == info["template_evidence_digest"]
+    )
+    assert template_ref["location"] == "Sheet!A1:D1"
+    assert "第4步" in template_ref["note"] and "银行四列代发模板" in template_ref["note"]
+    assert "preview_export.template_evidence_digest" in template_ref["note"]
+    tax_ref = next(ref for ref in draft["source_refs"] if "第5步" in ref.get("note", ""))
+    assert "印花税与附加税来源" in tax_ref["note"]
+    assert tax_ref["evidence_digest"] != template_ref["evidence_digest"]
+    engine = app.engine(info["company_id"])
+    with engine.store.connection(read_only=True) as connection:
+        opening = engine.store.current_fact(connection, "recovery-opening-bank")
+        statement = engine.store.current_fact(connection, "stage-bank-statement")
+        template_type = connection.execute(
+            "SELECT media_type FROM evidence WHERE digest=?",
+            (bytes.fromhex(template_ref["evidence_digest"]),),
+        ).fetchone()[0]
+        payees = connection.execute(
+            "SELECT p.name,p.account,e.digest,e.content FROM payee_revision p "
+            "JOIN evidence e ON p.evidence_digest=e.digest ORDER BY p.name",
+        ).fetchall()
+    assert opening.fact.balance_fen == statement.fact.opening_fen == 1_000_000
+    assert template_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert {(row["name"], row["account"]) for row in payees} == {
+        ("合成员工甲", "001234567890"), ("合成劳务甲", "001234567891"),
+    }
+    assert any(ref.get("evidence_digest") == info["payee_evidence_digest"]
+               for ref in draft["source_refs"])
+    for row in payees:
+        assert row["digest"].hex() == info["payee_evidence_digest"]
+        assert f"收款人：{row['name']}，账号：{row['account']}。" in row["content"].decode("utf-8")
+    before = business_state(app, info["company_id"])
+    with pytest.raises(NeedsInformation) as missing:
+        dispatch(app, token, "preview_export", company_id=info["company_id"], period="2026-01",
+                 template_evidence_digest=info["template_evidence_digest"],
+                 source_ids=["stage-january-wage", "recovery-gross-labor"])
+    issue = missing.value.response()["fact_issues"][0]
+    assert issue["field"] == "net_disbursement_tax"
+    assert "recovery-gross-labor" in issue["reusable_sources"]
+    assert business_state(app, info["company_id"]) == before
+    driver = json.loads((directory / "evaluator-owner-turns.json").read_text(encoding="utf-8"))
+    assert driver["acceptance"]["expected_question_ids"] == ["labor-net"]
+    assert driver["acceptance"]["deferred_question_ids"] == ["stage5-tax", "stage5-office"]
+    assert "acceptance" not in json.loads((directory / "seed.json").read_text(encoding="utf-8"))
+
+
+def test_recovery_supports_labor_tax_without_stage5_writes(recovery_seeded):
+    from ai_accounting.kernel.remuneration_tax_basis import RemunerationTaxBasis
+
+    app, token, info, _ = recovery_seeded
+    engine = app.engine(info["company_id"])
+    basis = RemunerationTaxBasis(
+        period="2026-01", source_kind="labor_accrual", source_id="recovery-gross-labor",
+        source_fact_id=info["labor_fact"]["fact_id"], tax_period="2026-01", tax_amount_fen=8_000,
+        basis_type="final_statement", confirmed=True,
+    )
+    # A later explicit synthetic owner answer is available only to this kernel
+    # capability test. The independent recovery agent must still ask for it.
+    proof = engine.register_evidence(
+        "合成负责人测试答复：本项劳务最终扣税80元，净额920元。".encode(),
+        "text/plain", "合成最终报酬表", request_id="test-final-labor-proof",
+    )["digest"]
+    dispatch(app, token, "save_fact", company_id=info["company_id"], kind=basis.kind,
+             subject_id="test-final-labor-tax", data=basis.model_dump(mode="json"),
+             evidence=[proof], expected_revision=0, request_id="test-final-labor-tax")
+    preview = engine.preview(["recovery-gross-labor"])
+    values = preview["results"][0]["values"]
+    assert (values["gross_fen"], values["tax_fen"], values["net_fen"]) == (100_000, 8_000, 92_000)
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM voucher").fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT count(*) FROM subject WHERE kind IN ('expense','tax_accrual')"
+        ).fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_recovery_checkpoint_restart_preserves_identity(recovery_seeded):
+    app, token, info, directory = recovery_seeded
+    before = business_state(app, info["company_id"])
+    original = dispatch(app, token, "work_context", **info["work_context_payload"])["work_draft"]
+    app.close()
+    restarted = LocalService(directory / "data")
+    try:
+        new_token = restarted.security.login(
+            harness.reading.OWNER, harness.reading.PASSWORD,
+        ).session_token
+        recovered = dispatch(
+            restarted, new_token, "work_context", **info["work_context_payload"],
+        )["work_draft"]
+        assert restarted.security.catalog_instance_id == info["catalog_id"]
+        assert recovered["draft"] == original["draft"]
+        assert recovered["revision"] == info["stale_draft_revision"]
+        assert business_state(restarted, info["company_id"]) == before
+    finally:
+        restarted.close()
+
+
+def test_recovery_scenario_option_is_forwarded_to_isolated_mcp_process(tmp_path):
+    params = harness.parameters(tmp_path, scenario="stage4_recovery", resume=True)
+    assert params.args[-2:] == ["--scenario", "stage4_recovery"]
+    assert "--resume" in params.args

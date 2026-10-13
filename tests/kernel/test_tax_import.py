@@ -447,12 +447,13 @@ def test_retry_rejects_corrupt_file_with_rewritten_manifest_checksum(tmp_path):
     instance = company(tmp_path, publish=False)
     service, target = complete_details(instance), tmp_path / "out"
     plan = service.preview("2026-01")
-    service.confirm(
+    queued = service.confirm(
         "2026-01",
         preview_digest=plan["digest"],
         output_directory=str(target),
         request_id=instance.request(),
     )
+    target = target / queued["job_id"]
 
     def crash(stage, job):
         if stage == "files_published":

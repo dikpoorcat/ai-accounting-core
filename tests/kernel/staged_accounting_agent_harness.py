@@ -8,7 +8,11 @@ the existing working-draft harness. No existing local service or company is open
 
 from __future__ import annotations
 
+import argparse
 import base64
+import json
+import sys
+from functools import partial
 
 import reading_agent_harness as reading
 import work_draft_agent_harness as transport
@@ -16,7 +20,7 @@ import work_draft_agent_harness as transport
 write_json = reading.write_json
 
 
-def seed(app, token, directory):
+def seed_dependency(app, token, directory):
     from test_payroll import contribution_policy, payroll, profile
 
     from ai_accounting.kernel.payroll_preparation import PayrollPlan
@@ -204,17 +208,211 @@ def seed(app, token, directory):
     return known
 
 
-def parameters(directory, *, source_dir=None, resume=False, instrument=False, cache_build_id=None):
-    return reading.parameters(
+def seed_stage4_recovery(app, token, directory):
+    """A stale technical workaround must not authorize fifth-stage processing."""
+    from test_exports import template_bytes
+    from test_payroll import actual
+
+    from ai_accounting.kernel.domains.opening import (
+        CATEGORIES,
+        OpeningBank,
+        OpeningEquity,
+        OpeningPackage,
+    )
+    from ai_accounting.kernel.domains.payroll import LaborAccrual
+
+    known = seed_dependency(app, token, directory)
+    company = known["company_id"]
+    calls = json.loads((directory / "seed-transcript.json").read_text(encoding="utf-8"))
+
+    def command(command_name, **payload):
+        result = app.dispatch(command_name, payload, session_token=token)
+        calls.append({"command": command_name, "payload": payload, "result": result})
+        return result
+
+    def evidence(name, content, media_type="text/plain"):
+        raw = content.encode("utf-8") if isinstance(content, str) else content
+        return command(
+            "evidence", company_id=company, content_base64=base64.b64encode(raw).decode(),
+            media_type=media_type, name=name, request_id="recovery-proof-" + str(len(calls)),
+        )["digest"]
+
+    opening_proof = evidence(
+        "合成明确期初.txt", "合成公司2026年1月建账，已核实期初银行存款10000元、留存收益10000元，"
+        "与银行流水期初一致；其余各类期初资产、负债和权益均明确为零，资料完整。",
+    )
+    opening_members = []
+    for subject, detail in (
+        ("recovery-opening-bank", OpeningBank(
+            period="2026-01", package_id="recovery-opening",
+            bank_account_id=known["bank_account_id"], balance_fen=1_000_000,
+        )),
+        ("recovery-opening-equity", OpeningEquity(
+            period="2026-01", package_id="recovery-opening",
+            equity_kind="retained_earnings", balance_fen=1_000_000,
+            holder_or_basis_id="recovery-opening-confirmation",
+        )),
+    ):
+        command("save_fact", company_id=company, kind=detail.kind, subject_id=subject,
+                data=detail.model_dump(mode="json"), evidence=[opening_proof], expected_revision=0,
+                request_id=subject + "-save")
+        opening_members.append({"kind": detail.kind, "subject_id": subject})
+    counts = {**dict.fromkeys(CATEGORIES.values(), 0), "bank": 1, "equity": 1}
+    opening = OpeningPackage(period="2026-01", package_id="recovery-opening",
+                             counts=counts, members=tuple(opening_members),
+                             completeness_confirmed=True)
+    command("save_fact", company_id=company, kind=opening.kind, subject_id="recovery-opening",
+            data=opening.model_dump(mode="json"), evidence=[opening_proof], expected_revision=0,
+            request_id="recovery-opening-save")
+    opening_preview = command("preview", company_id=company, subjects=["recovery-opening"])
+    command("confirm", company_id=company, subjects=["recovery-opening"],
+            preview_digest=opening_preview["digest"], epochs=opening_preview["epochs"],
+            request_id="recovery-opening-adopt")
+    confirmation = (
+        "合成负责人此前确认：第一步四笔流水已识别，BANK-1办公服务付款、BANK-2归还垫付办公费、"
+        "BANK-3仓储服务付款、BANK-4归还股东借款本金，具体入账到第五步处理。"
+        "第二步工资方案已确认，合成员工甲2026年1月税前10000元、管理费用、最终扣税126元；"
+        "合成劳务甲本月已完成服务，劳务毛额1000元、服务成本，尚未扣缴和申报，已确认只计提毛额。"
+        "第三步实际养老金个人1000元、单位2000元，已经申报并缴款，本月公积金未参与；"
+        "这些确认仍适用，不需重问。当前第四步工资净额8874元已核对，劳务最终扣税和代发净额"
+        "依据尚未提供；本次没有要求插办后续事项。银行尚未实际代发。"
+    )
+    proof = evidence("已确认前三步与第四步进度.txt", confirmation)
+    contribution = actual().model_copy(update={"employee_id": known["employee_id"]})
+    command(
+        "save_fact", company_id=company, kind=contribution.kind,
+        subject_id="recovery-actual-contributions", data=contribution.model_dump(mode="json"),
+        evidence=[proof], expected_revision=0, request_id="recovery-contributions",
+    )
+    person = command(
+        "register_worker", company_id=company,
+        data={"display_name": "合成劳务甲", "action": "start_labor", "effective_date": "2026-01"},
+        source="已确认前三步与第四步进度", evidence_digest=proof,
+        request_id="recovery-labor-person",
+    )["entity_id"]
+    labor = LaborAccrual(
+        period="2026-01", person_id=person, gross_fee_fen=100_000,
+        expense_class="service", tax_treatment="not_withheld_not_filed",
+    )
+    labor_saved = command(
+        "save_fact", company_id=company, kind=labor.kind, subject_id="recovery-gross-labor",
+        data=labor.model_dump(mode="json"), evidence=[proof], expected_revision=0,
+        request_id="recovery-labor-gross",
+    )
+    preview = command("preview", company_id=company,
+                      subjects=["stage-january-wage", "recovery-gross-labor"])
+    published = command(
+        "confirm", company_id=company, subjects=["stage-january-wage", "recovery-gross-labor"],
+        preview_digest=preview["digest"], epochs=preview["epochs"],
+        request_id="recovery-publish-known-remuneration",
+    )
+    payees = (
+        (known["employee_id"], "合成员工甲", "001234567890"),
+        (person, "合成劳务甲", "001234567891"),
+    )
+    payee_proof = evidence(
+        "已核对合成收款资料.txt",
+        "第四步已核对的合成收款资料；不代表银行已实际代发。\n"
+        + "\n".join(f"收款人：{name}，账号：{account}。" for _, name, account in payees),
+    )
+    for party, name, account in payees:
+        command("save_payee", company_id=company, party_id=party, name=name, account=account,
+                evidence_digest=payee_proof, expected_revision=0,
+                request_id="recovery-payee-" + party)
+    template = evidence("合成银行四列模板.xlsx", template_bytes(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    tax_proof = evidence(
+        "第五步待核实税费资料.txt",
+        "已提供合成税费清单：2026年1月印花税、附加税。金额及采用依据待核实，"
+        "供第五步核算报表使用，不是第四步劳务扣税来源。",
+    )
+    old_draft = {
+        "source_refs": [{"evidence_digest": proof}, {"subject_id": "stage-january-plan"},
+                        {"subject_id": "recovery-actual-contributions"},
+                        {"subject_id": "recovery-gross-labor", "fact_id": labor_saved["fact_id"]},
+                        {"evidence_digest": payee_proof,
+                         "note": "第4步已核对的收款人姓名与账号，尚未实际代发。"},
+                        {"evidence_digest": template, "location": "Sheet!A1:D1",
+                         "note": ("第4步已保全的银行四列代发模板，"
+                                  "用于preview_export.template_evidence_digest。")},
+                        {"evidence_digest": tax_proof,
+                         "note": "第5步印花税与附加税来源，到第5步核实金额与采用依据。"}],
+        "questions": [
+            {"id": "prior-stages", "question": "前三步资料和方案是否已核对？",
+             "answer": confirmation, "status": "resolved",
+             "source_refs": [{"evidence_digest": proof}]},
+            {"id": "labor-net", "question": "合成劳务甲本项最终应扣多少税，代发净额有什么依据？",
+             "status": "pending", "target": {"field": "net_disbursement_tax", "period": "2026-01",
+                                            "entity_id": person,
+                                            "subject_id": "recovery-gross-labor",
+                                            "fact_kind": "labor_accrual"}},
+            {"id": "stage5-tax", "question": "印花税和附加税金额及核算依据是什么？",
+             "status": "pending",
+             "target": {"field": "tax_amount_fen", "period": "2026-01"}},
+            {"id": "stage5-office", "question": "办公服务555元的债权人是供应商还是员工？",
+             "status": "pending",
+             "target": {"field": "creditor_kind", "period": "2026-01"},
+             "source_refs": [{"source_id": "stage-transactions-source", "location": "CSV!B2"}]},
+        ],
+        "resume_note": "前三步已确认；第四步劳务毛额已入账，旧接口不支持劳务扣税，保留技术阻断。",
+        "next_step": "第4步保留接口阻断，进入第5步先处理独立普通业务，并询问税费和办公服务缺项。",
+        "result_refs": [
+            {"request_id": "recovery-publish-known-remuneration", "command": "confirm"},
+        ],
+    }
+    saved = command("save_work_draft", company_id=company, period="2026-01", work_area="payroll",
+                    expected_revision=None, draft=old_draft)
+    known.update({
+        "scenario": "stage4_recovery", "work_area": "payroll", "current_stage": 4,
+        "confirmation_evidence": proof, "labor_person_id": person, "labor_fact": labor_saved,
+        "payee_evidence_digest": payee_proof,
+        "template_evidence_digest": template, "prior_publication": published,
+        "stale_draft_revision": saved["revision"],
+        "initial_message": "继续刚才合成分阶段甲公司2026年1月的工作，已答过的内容请接着使用。",
+        "work_context_payload": {"company_id": company, "period": "2026-01", "work_area": "payroll",
+                                 "include_work_draft": True},
+    })
+    write_json(directory / "seed.json", known)
+    write_json(directory / "seed-transcript.json", calls)
+    write_json(directory / "evaluator-owner-turns.json", {
+        "driver_only": True, "scenario": "stage4_recovery",
+        "resume": known["initial_message"],
+        "acceptance": {
+            "current_stage": 4, "expected_question_ids": ["labor-net"],
+            "deferred_question_ids": ["stage5-tax", "stage5-office"],
+            "stale_technical_block_rechecked": True, "no_stage5_business_write": True,
+            "prior_confirmations_reused": True,
+        },
+    })
+    return known
+
+
+def seed(app, token, directory, *, scenario="dependency"):
+    factory = seed_stage4_recovery if scenario == "stage4_recovery" else seed_dependency
+    return factory(app, token, directory)
+
+
+def parameters(directory, *, source_dir=None, resume=False, instrument=False, cache_build_id=None,
+               scenario="dependency"):
+    result = reading.parameters(
         directory, source_dir=source_dir, resume=resume, instrument=instrument,
         cache_build_id=cache_build_id, entry_script=__file__,
     )
+    result.args.extend(["--scenario", scenario])
+    return result
 
 
 def main():
+    scenario_parser = argparse.ArgumentParser(add_help=False)
+    scenario_parser.add_argument(
+        "--scenario", choices=("dependency", "stage4_recovery"), default="dependency",
+    )
+    selected, remaining = scenario_parser.parse_known_args()
+    sys.argv = [sys.argv[0], *remaining]
     reading.main(
-        seed_factory=seed, workload_factory=transport.Workload,
-        parameters_factory=parameters, relay_factory=transport.relay,
+        seed_factory=partial(seed, scenario=selected.scenario), workload_factory=transport.Workload,
+        parameters_factory=partial(parameters, scenario=selected.scenario),
+        relay_factory=transport.relay,
     )
 
 

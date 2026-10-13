@@ -4,6 +4,7 @@ import asyncio
 import itertools
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -32,9 +33,12 @@ for module in modules:
     params = module.parameters(Path('synthetic'), source_dir=Path('selected-source'),
                                resume=True, instrument=True, cache_build_id='selected-build')
     assert params.command == sys.executable
-    assert params.args == ['-X', 'utf8', str(Path(module.__file__).resolve()),
-                           'mcp', 'synthetic', '--source-dir', 'selected-source',
-                           '--cache-build-id', 'selected-build', '--resume', '--instrument']
+    expected_args = ['-X', 'utf8', str(Path(module.__file__).resolve()),
+                     'mcp', 'synthetic', '--source-dir', 'selected-source',
+                     '--cache-build-id', 'selected-build', '--resume', '--instrument']
+    if module.__name__ == 'staged_accounting_agent_harness':
+        expected_args.extend(['--scenario', 'dependency'])
+    assert params.args == expected_args
 """
     subprocess.run(
         [sys.executable, "-c", script, str(Path(__file__).resolve().parent), *order],
@@ -42,9 +46,14 @@ for module in modules:
     )
 
 
-@pytest.mark.parametrize("module", (reading, *VARIANTS))
+@pytest.mark.parametrize("module,scenario", [
+    (reading, None), (work_draft, None), (staged, None), (question, None),
+    (staged, "dependency"), (staged, "stage4_recovery"),
+])
 @pytest.mark.parametrize("mode", ("mcp", "host"))
-def test_cli_dispatch_passes_variant_factories_and_options(tmp_path, monkeypatch, module, mode):
+def test_cli_dispatch_passes_variant_factories_and_options(
+    tmp_path, monkeypatch, module, scenario, mode,
+):
     calls = []
 
     def process(directory, **options):
@@ -58,10 +67,13 @@ def test_cli_dispatch_passes_variant_factories_and_options(tmp_path, monkeypatch
     monkeypatch.setattr(work_draft, "relay", relay)
     source = tmp_path / "selected-source"
     monkeypatch.setattr(sys, "path", list(sys.path))
-    monkeypatch.setattr(sys, "argv", [
+    argv = [
         module.__file__, mode, str(tmp_path), "--source-dir", str(source),
         "--resume", "--instrument", "--cache-build-id", "selected-build",
-    ])
+    ]
+    if scenario is not None:
+        argv.extend(["--scenario", scenario])
+    monkeypatch.setattr(sys, "argv", argv)
     module.main()
     directory, options = calls.pop()
     assert directory == tmp_path.resolve() and not calls
@@ -69,13 +81,19 @@ def test_cli_dispatch_passes_variant_factories_and_options(tmp_path, monkeypatch
     assert sys.path[0] == str(source.resolve())
     if mode == "mcp":
         assert options["cache_build_id"] == "selected-build"
-        assert options["seed_factory"] is (None if module is reading else module.seed)
+        factory, expected = options["seed_factory"], None if module is reading else module.seed
         assert options["workload_factory"] is (
             None if module is reading else work_draft.Workload
         )
     else:
         assert options["source_dir"] == source
-        assert options["parameters_factory"] is (None if module is reading else module.parameters)
+        factory = options["parameters_factory"]
+        expected = None if module is reading else module.parameters
+    if module is staged:
+        assert isinstance(factory, partial) and factory.func is expected
+        assert factory.args == () and factory.keywords == {"scenario": scenario or "dependency"}
+    else:
+        assert factory is expected
 
 
 @pytest.mark.parametrize("module", (reading, work_draft))

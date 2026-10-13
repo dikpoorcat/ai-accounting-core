@@ -246,6 +246,7 @@ def _job_references(row):
                 for field, typ in (
                     ("subject_id", "subject"),
                     ("calculation_id", "calculation"),
+                    ("opening_binding_calculation_id", "calculation"),
                     ("obligation", "obligation"),
                 ):
                     add(

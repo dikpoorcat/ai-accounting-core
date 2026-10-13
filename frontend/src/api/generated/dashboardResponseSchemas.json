@@ -14304,6 +14304,297 @@
     "title": "PeriodReadinessResponse",
     "type": "object"
   },
+  "export_sources": {
+    "$defs": {
+      "ExportSource": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "accounting_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Accounting Period",
+            "type": "string"
+          },
+          "current_accounting_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Current Accounting Period",
+            "type": "string"
+          },
+          "payment_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Payment Period",
+            "type": "string"
+          },
+          "payment_category": {
+            "title": "Payment Category",
+            "type": "string"
+          },
+          "management_revision_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Management Revision Id"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "adopted_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adopted Fact Id"
+          },
+          "opening_binding_calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Binding Calculation Id"
+          },
+          "opening_binding_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Binding Fact Id"
+          },
+          "current_opening_binding_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Opening Binding Fact Id"
+          },
+          "status": {
+            "enum": [
+              "published",
+              "pending",
+              "unpublished"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "obligations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/ExportSourceObligation"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Obligations"
+          }
+        },
+        "required": [
+          "subject_id",
+          "kind",
+          "fact_id",
+          "revision",
+          "accounting_period",
+          "current_accounting_period",
+          "payment_period",
+          "payment_category",
+          "management_revision_id",
+          "calculation_id",
+          "adopted_fact_id",
+          "opening_binding_calculation_id",
+          "opening_binding_fact_id",
+          "current_opening_binding_fact_id",
+          "status",
+          "obligations"
+        ],
+        "title": "ExportSource",
+        "type": "object"
+      },
+      "ExportSourceObligation": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "party_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Party Id"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "remaining_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Remaining Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "name",
+          "key",
+          "party_id",
+          "amount_fen",
+          "remaining_fen"
+        ],
+        "title": "ExportSourceObligation",
+        "type": "object"
+      },
+      "ReportEpochs": {
+        "additionalProperties": false,
+        "properties": {
+          "accounting": {
+            "minimum": 0,
+            "title": "Accounting",
+            "type": "integer"
+          },
+          "material": {
+            "minimum": 0,
+            "title": "Material",
+            "type": "integer"
+          },
+          "management": {
+            "minimum": 0,
+            "title": "Management",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accounting",
+          "material",
+          "management"
+        ],
+        "title": "ReportEpochs",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 1,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "period": {
+        "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+        "title": "Period",
+        "type": "string"
+      },
+      "epochs": {
+        "$ref": "#/$defs/ReportEpochs"
+      },
+      "read_repair_revision": {
+        "minimum": 0,
+        "title": "Read Repair Revision",
+        "type": "integer"
+      },
+      "sort": {
+        "const": "subject_id_asc",
+        "title": "Sort",
+        "type": "string"
+      },
+      "items": {
+        "items": {
+          "$ref": "#/$defs/ExportSource"
+        },
+        "title": "Items",
+        "type": "array"
+      },
+      "next_cursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next Cursor"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company_id",
+      "database_id",
+      "period",
+      "epochs",
+      "read_repair_revision",
+      "sort",
+      "items",
+      "next_cursor"
+    ],
+    "title": "ExportSourcesResponse",
+    "type": "object"
+  },
   "dashboard_context": {
     "$defs": {
       "DashboardCompany": {

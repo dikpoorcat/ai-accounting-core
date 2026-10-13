@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from entity_fixture import seed_entities
@@ -156,7 +157,7 @@ def test_new_export_previews_use_pinyin_and_saved_plan_keeps_its_original_names(
     completed = run_export_jobs(company.engine)[0]
     assert completed["status"] == "succeeded"
     manifest = json.loads(
-        (tmp_path / "pinyin-export" / "代发核对.json").read_text(encoding="utf-8")
+        (Path(completed["result"]["directory"]) / "代发核对.json").read_text(encoding="utf-8")
     )
     assert manifest["plan"] == preview
 
@@ -186,7 +187,7 @@ def test_export_preview_rejects_duplicate_key_in_selected_result(setup):
     assert rejected.value.code == "content_integrity_failed"
 
 
-def test_personal_advances_export_only_explicit_employee_reimbursement(setup):
+def test_personal_advances_export_employee_and_owner_reimbursement(setup):
     company, export, template = setup
     for party, payer_kind, amount in (("employee", "employee", 12000), ("owner", "owner", 9000)):
         source = "source-" + party
@@ -220,11 +221,17 @@ def test_personal_advances_export_only_explicit_employee_reimbursement(setup):
             "advance-" + party,
         )
         company.publish("advance-" + party)
+    export.save_payee(
+        "owner", name="负责人", account="000123456789",
+        evidence_digest=company.owner_confirmation, expected_revision=0,
+        request_id=company.request(),
+    )
     inventory(company)
     preview = export.preview("2026-01", template_evidence_digest=template)
     sources = {source["subject_id"]: source for row in preview["rows"] for source in row["sources"]}
     assert "advance-employee" in sources
-    assert "advance-owner" not in sources
+    assert sources["advance-owner"]["amount_fen"] == 9000
+    assert sources["advance-owner"]["party_id"] == "owner"
     assert sources["advance-employee"]["amount_fen"] == 12000
     assert sources["advance-employee"]["party_id"] == "employee"
 
@@ -319,7 +326,7 @@ def test_partial_actual_payment_reduces_amount_and_generating_file_records_no_pa
     assert outcomes[0]["status"] == "succeeded"
     assert {table: company.count(table) for table in before} == before
     assert company.engine.overview("2026-02") == period
-    book = load_workbook(tmp_path / "out" / WORKBOOK_NAME, data_only=False)
+    book = load_workbook(outcomes[0]["result"]["path"], data_only=False)
     try:
         assert book.active.max_column == 4
         assert [cell.value for cell in book.active[2]] == [
@@ -381,8 +388,8 @@ def test_frozen_job_uses_approved_payee_and_does_not_invalidate_other_previews(s
         expected_revision=1,
         request_id=company.request(),
     )
-    run_export_jobs(company.engine)
-    book = load_workbook(tmp_path / "frozen" / WORKBOOK_NAME)
+    completed = run_export_jobs(company.engine)[0]
+    book = load_workbook(completed["result"]["path"])
     try:
         assert book.active.cell(2, 2).value == preview["rows"][0]["account"] == "001234567890"
     finally:
@@ -449,7 +456,7 @@ def test_files_published_before_crash_are_verified_and_reused(setup, tmp_path):
 
     with pytest.raises(ProcessCrash):
         run_export_jobs(company.engine, fault=crash)
-    target = tmp_path / "crash" / WORKBOOK_NAME
+    target = tmp_path / "crash" / job["job_id"] / WORKBOOK_NAME
     original = target.read_bytes()
     with company.engine.store.connection(read_only=True) as connection:
         assert (
@@ -491,17 +498,18 @@ def test_file_failure_is_retryable_and_work_runs_outside_sql_write_transaction(s
     assert run_export_jobs(company.engine)[0]["status"] == "succeeded"
 
 
-def test_existing_unrelated_directory_is_never_overwritten(setup, tmp_path):
+def test_existing_export_parent_is_preserved_and_task_uses_its_own_directory(setup, tmp_path):
     company, export, template = setup
     destination = tmp_path / "occupied"
     destination.mkdir()
     sentinel = destination / "existing.txt"
     sentinel.write_text("owner document")
-    queue(company, export, template, destination)
+    _, task, _ = queue(company, export, template, destination)
     result = run_export_jobs(company.engine)[0]
-    assert result["status"] == "failed"
+    assert result["status"] == "succeeded"
     assert sentinel.read_text() == "owner document"
     assert not (destination / WORKBOOK_NAME).exists()
+    assert (destination / task["job_id"] / WORKBOOK_NAME).is_file()
 
 
 def test_complete_export_rejects_missing_materials_pending_and_unpublished_facts(setup):

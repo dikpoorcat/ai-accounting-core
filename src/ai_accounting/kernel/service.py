@@ -21,6 +21,7 @@ from .display import Display
 from .duplicates import Duplicates
 from .engine import PROGRAM_VERSION, Engine
 from .entities import Entities
+from .export_sources import ExportSources
 from .exports import Exports, run_export_jobs
 from .identity_corrections import IdentityCorrections
 from .materials import Materials
@@ -736,6 +737,7 @@ class LocalService:
         actions.update(
             {
                 "save_payee": exports.save_payee,
+                "export_sources": ExportSources(engine).query,
                 "preview_export": exports.preview,
                 "confirm_export": exports.confirm,
             }

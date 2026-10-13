@@ -371,7 +371,11 @@ def test_operating_topics_can_be_read_without_generating_contracts(contracts, mo
         ("preview_close", {"closing"}),
         ("preview_replay_close_range", {"replay"}),
         ("company_context", {"management"}),
-        ("preview_export", {"deliveries"}),
+        ("export_sources", {"payroll", "deliveries"}),
+        ("preview_export", {"payroll", "deliveries"}),
+        ("confirm_export", {"payroll", "deliveries"}),
+        ("preview_tax_import", {"tax_files", "deliveries"}),
+        ("confirm_tax_import", {"tax_files", "deliveries"}),
         ("prepare_obligations", {"external_actions"}),
     ],
 )
@@ -380,6 +384,47 @@ def test_selected_commands_include_only_related_operating_topics(contracts, comm
     assert set(result["agent_operating_rules"]) == topics
     assert set(result["selection"]["protocol_topics"]) == topics
     assert "agent_operating_protocol" not in result
+
+
+@pytest.mark.parametrize(
+    ("command", "business_fields"),
+    [
+        (
+            "confirm_export",
+            {
+                "period": "2026-09",
+                "template_evidence_digest": "a" * 64,
+                "epochs": {"accounting": 0, "material": 0, "management": 0},
+            },
+        ),
+        (
+            "confirm_report_export",
+            {
+                "year": 2026,
+                "quarter": 3,
+                "epochs": {"accounting": 0, "material": 0, "management": 0},
+            },
+        ),
+        ("confirm_tax_import", {"period": "2026-09"}),
+    ],
+)
+def test_export_contracts_allow_service_owned_directory_and_include_delivery_rules(
+    contracts, command, business_fields
+):
+    result = discover(contracts, view="selected", commands=[command])
+    schema = result["command_schemas"][command]
+    payload = {
+        "company_id": "synthetic-company",
+        "request_id": "synthetic-export",
+        "preview_digest": "b" * 64,
+        **business_fields,
+    }
+    Draft202012Validator(schema).validate(payload)
+    assert validate_command(contracts[1], command, payload)["output_directory"] is None
+    assert "父目录" in schema["properties"]["output_directory"]["anyOf"][0]["description"]
+    assert "deliveries" in result["agent_operating_rules"]
+    if command == "confirm_export":
+        assert set(result["agent_operating_rules"]) == {"payroll", "deliveries"}
 
 
 def test_fact_and_response_selection_also_select_operating_rules(contracts):

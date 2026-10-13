@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | `report` | `year`, `quarter`, `source=open/closed` | 返回三表、勾稽结果、结构化缺项、来源关账摘要和模板版本 |
 | `preview_report_export` | `year`, `quarter`, 可选 `carry_forward_fact_id` | 根据期末是否已关账自动选择开放或闭期来源，检查三表及资料、核算就绪情况 |
-| `confirm_report_export` | 上述期间、`preview_digest`, `epochs`, `output_directory`, `request_id` | 原子写入冻结文件任务，不在 SQLite 写锁内渲染文件 |
+| `confirm_report_export` | 上述期间、`preview_digest`, `epochs`, `request_id`，可选 `output_directory` 父目录 | 原子写入冻结文件任务，不在 SQLite 写锁内渲染文件 |
 | `run_report_jobs` | 可选 `limit` | 渲染、核对并原子发布冻结文件；`run_jobs` 也包含报表任务 |
 
 开放查询使用当前开放凭证与已闭月份的冻结凭证；闭期查询只通过 `period_close.manifest.vouchers` 选择不可变版本。
@@ -53,12 +53,13 @@
 预览和确认核对同一 `digest` 与三条 lane 的 `epochs`，确认事务还检查准备时的读取修复版本；
 发生变化须重新预览，不直接使用过期计划。内容摘要本身不含实时 epochs。
 
-目标目录是一个单任务成果目录，包含：
+`confirm_report_export` 可省略 `output_directory`，默认使用公司内部 `exports`；提供时只表示导出父目录，新任务的独立成果目录由程序分配。页面的 `confirm_browser_report_export` 不接收此参数，程序按请求编号管理公司内部下载目录，成果以任务返回路径为准。旧任务继续使用原保存的精确输出路径，重试不改写原载荷。按任务结果定位成果目录，其中包含：
 
 - `财务报表报送与信息采集（小企业会计准则）月季报_YYYYQn.xlsx`。
 - `manifest.json`：完整冻结报表、公司/数据库身份、关账来源摘要、模板版本、文件摘要和任务 ID。
 
 文件生成后按同一冻结数据重新渲染逐字节核对；原子目录发布前逐文件刷新到磁盘。
+只有 `jobs` 成功且产物核验通过后，才用会计 Skill 的桌面复制脚本交付报表和 manifest；相同内容复用，不同内容自动另名保留。
 任务在发布文件后崩溃，可以识别同一任务成果继续完成，不能覆盖其他任务或损坏的已有目录。
 后台按任务原保存的 `plan` 输出，不重新读取后来的账务替换计划；改变账或公司名称不会改变
 已经排队任务的内容。任务 payload 不可修改，失败记录与重试次数独立更新。

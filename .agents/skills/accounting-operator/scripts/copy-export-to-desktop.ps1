@@ -46,28 +46,72 @@ if (-not (Test-Path -LiteralPath $destinationRoot -PathType Container)) {
     throw 'DESKTOP_DIRECTORY_NOT_FOUND'
 }
 
-$destinationPath = [IO.Path]::GetFullPath([IO.Path]::Combine($destinationRoot, $FileName))
 $normalizedDestinationRoot = [IO.Path]::TrimEndingDirectorySeparator($destinationRoot)
-if ([IO.Path]::GetDirectoryName($destinationPath) -ne $normalizedDestinationRoot) {
-    throw 'DESKTOP_EXPORT_DESTINATION_OUTSIDE_DESKTOP'
-}
-
-$status = 'copied'
-if (Test-Path -LiteralPath $destinationPath) {
-    $destination = Get-Item -LiteralPath $destinationPath -Force
-    if ($destination.PSIsContainer -or $null -ne $destination.LinkType) {
-        throw 'DESKTOP_EXPORT_DESTINATION_MUST_BE_REGULAR_FILE'
+$baseName = [IO.Path]::GetFileNameWithoutExtension($FileName)
+$extension = [IO.Path]::GetExtension($FileName)
+$number = 1
+$temporaryPath = $null
+try {
+    while ($true) {
+        $candidateName = if ($number -eq 1) { $FileName } else { "$baseName ($number)$extension" }
+        $destinationPath = [IO.Path]::GetFullPath([IO.Path]::Combine($destinationRoot, $candidateName))
+        if ([IO.Path]::GetDirectoryName($destinationPath) -ne $normalizedDestinationRoot) {
+            throw 'DESKTOP_EXPORT_DESTINATION_OUTSIDE_DESKTOP'
+        }
+        $destination = Get-Item -LiteralPath $destinationPath -Force -ErrorAction SilentlyContinue
+        if ($null -ne $destination) {
+            if (-not $destination.PSIsContainer -and $null -eq $destination.LinkType) {
+                $destinationHash = (
+                    Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256
+                ).Hash.ToLowerInvariant()
+                if ($destinationHash -eq $sourceHash) {
+                    $status = 'reused'
+                    break
+                }
+            }
+            $number++
+            continue
+        }
+        if ($null -eq $temporaryPath) {
+            $candidateTemporaryPath = [IO.Path]::Combine(
+                $destinationRoot, ".finance-export-$([Guid]::NewGuid().ToString('N')).tmp"
+            )
+            $output = [IO.File]::Open(
+                $candidateTemporaryPath, [IO.FileMode]::CreateNew,
+                [IO.FileAccess]::Write, [IO.FileShare]::None
+            )
+            $temporaryPath = $candidateTemporaryPath
+            try {
+                $inputStream = [IO.File]::OpenRead($sourceFullPath)
+                try { $inputStream.CopyTo($output) }
+                finally { $inputStream.Dispose() }
+            }
+            finally { $output.Dispose() }
+            $stagedHash = (
+                Get-FileHash -LiteralPath $temporaryPath -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            if ($stagedHash -ne $sourceHash) {
+                throw 'DESKTOP_EXPORT_SOURCE_HASH_MISMATCH'
+            }
+        }
+        try {
+            [IO.File]::Move($temporaryPath, $destinationPath)
+            $status = 'copied'
+            break
+        }
+        catch [IO.IOException] {
+            $occupied = Get-Item -LiteralPath $destinationPath -Force -ErrorAction SilentlyContinue
+            if ($null -ne $occupied) {
+                continue
+            }
+            throw
+        }
     }
-    $destinationHash = (
-        Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
-    if ($destinationHash -ne $sourceHash) {
-        throw 'DESKTOP_EXPORT_COLLISION'
-    }
-    $status = 'reused'
 }
-else {
-    Copy-Item -LiteralPath $sourceFullPath -Destination $destinationPath
+finally {
+    if ($null -ne $temporaryPath -and [IO.File]::Exists($temporaryPath)) {
+        [IO.File]::Delete($temporaryPath)
+    }
 }
 
 $verifiedHash = (
@@ -79,7 +123,7 @@ if ($verifiedHash -ne $sourceHash) {
 
 [ordered]@{
     status = $status
-    file_name = $FileName
+    file_name = $candidateName
     file_path = $destinationPath
     sha256 = $verifiedHash
 } | ConvertTo-Json -Compress
