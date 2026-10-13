@@ -1066,7 +1066,7 @@ def _unpack_verified(
     *,
     max_database_bytes: int,
     bundle,
-    upgrade_to_current: bool = False,
+    prepare_restore: bool = False,
     **identity_checks: Any,
 ) -> tuple[dict[str, Any], Path]:
     try:
@@ -1109,7 +1109,13 @@ def _unpack_verified(
         _taxpayer_filename(result["identity"]["taxpayer_id"])
         source_result = result
         source_format = result["database_format"]
-        if upgrade_to_current and source_format["version"] != bundle.current_versions["company"]:
+        if not prepare_restore:
+            # Archive verification authenticates the original snapshot. Copied
+            # jobs and projection publications are changed only at restoration.
+            if source_format["version"] != bundle.current_versions["company"]:
+                result["source_database_format"] = source_format
+            return {**result, "manifest": manifest, "path": str(path)}, database
+        if source_format["version"] != bundle.current_versions["company"]:
 
             def validate_source(connection):
                 verify_schema(
@@ -1163,11 +1169,19 @@ def _unpack_verified(
         # rebuilds before the restored file becomes visible.
         with closing(connect(database)) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            restore_state = tuple(connection.execute("SELECT * FROM state WHERE id=1").fetchone())
             from .backup_tasks import retire_after_restore
             from .dashboard_async import reset_after_restore
 
-            retire_after_restore(connection)
-            reset_after_restore(connection)
+            retire_after_restore(
+                connection, bundle=bundle, database_format=result["database_format"]
+            )
+            reset_after_restore(
+                connection, bundle=bundle, database_format=result["database_format"]
+            )
+            after_state = tuple(connection.execute("SELECT * FROM state WHERE id=1").fetchone())
+            if after_state != restore_state:
+                raise _error("backup_content_invalid", "恢复任务清理改变了业务或读取修复版本")
             connection.commit()
             checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
             if checkpoint is None or checkpoint[0] != 0 or checkpoint[1] != checkpoint[2]:
@@ -1175,7 +1189,9 @@ def _unpack_verified(
                     "backup_content_invalid",
                     "Restored projection reset could not be finalized",
                 )
-        result = verify_file(database, _bundle=bundle, **identity_checks)
+        result = verify_file(
+            database, _bundle=bundle, **identity_checks
+        )
         if source_format["version"] != bundle.current_versions["company"]:
             result["source_database_format"] = source_format
         _sync_file(database)
@@ -1389,7 +1405,7 @@ def restore_portable(
             temporary,
             max_database_bytes=max_database_bytes,
             bundle=bundle,
-            upgrade_to_current=True,
+            prepare_restore=True,
             expected_company_id=expected_company_id,
             expected_taxpayer_id=expected_taxpayer_id,
             expected_database_id=expected_database_id,

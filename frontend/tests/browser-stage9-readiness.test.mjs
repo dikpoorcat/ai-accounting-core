@@ -3,8 +3,122 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 import * as generatedValidators from "../src/api/generated/dashboardValidators.js";
+const { verifyS9WirePayload, verifyVisibleVoucherRows, formatFen } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
+const deliveryFixtures = createRequire(import.meta.url)("./fixtures/dashboard-contracts.json");
+
+// Pure wire-boundary regression using generated contracts and existing native fixtures.
+// It does not claim an HTTP receipt or replace the browser's DOM/two-frame proof.
+const deliveryCases = [
+  ["brief", "brief", "Brief", p => p.data.financial_position, "assets_fen"],
+  ["funds", "cash_funds", "Funds", p => p.data, "total_fen"],
+  ["employees", "employees", "Employees", p => p.data.employees, "gross_salary_fen"],
+  ["assets", "assets", "Assets", p => p.data, "pending_intangible_cost_fen"],
+  ["quarterly-report", "quarterly_report", "QuarterlyReport", p => p.summary, "assets_total_fen"],
+];
+function deliveryFixture(action, name) {
+  const response = structuredClone(deliveryFixtures[name].response);
+  const selected = { id: response.read_context.company_id, period: response.selected_period?.key ?? "2026-01" };
+  const report = action === "quarterly-report";
+  const target = new URL(`https://synthetic.invalid/api/dashboard/${action}?company_id=${selected.id}&${report ? "year=2026&quarter=1" : `period=${selected.period}`}`);
+  const wire = { schema_version: 6, company_id: selected.id, period: report ? "2026-Q1" : selected.period,
+    model_version: report ? response.read_context.read_version : response.snapshot_version, state: "ready", response };
+  return { target, selected, wire, check: (value, url = target) => verifyS9WirePayload(generatedValidators, url, value, selected, "2026-Q1") };
+}
+for (const [action, name, suffix, amountParent, amountField] of deliveryCases) {
+  test(`S9 ${action} root accepts only ready Delivery 6 with matching native identity and version`, () => {
+    const { wire, target, selected, check } = deliveryFixture(action, name);
+    assert.equal(check(wire), wire.response);
+    assert.throws(() => check(wire.response));
+    for (const state of ["preparing", "failed"]) {
+      const value = { schema_version: 6, company_id: selected.id, period: wire.period, model_version: null, state,
+        ...(state === "preparing" ? { retry_after_ms: 100 } : { reason: "production_failed" }) };
+      assert(generatedValidators[`validateDashboard${suffix}DeliveryResponse`](value), `${state} is a legal wire state`);
+      assert.throws(() => check(value), /not ready/);
+    }
+    for (const [field, value] of [["schema_version", 99], ["state", "preparing"], ["company_id", "another-company"],
+      ["period", "2027-01"], ["model_version", "another-model"]]) {
+      const wrong = structuredClone(wire); wrong[field] = value;
+      assert.throws(() => check(wrong), field);
+    }
+    for (const mutate of [p => { p.read_context.company_id = "another-company"; },
+      p => { if (action === "quarterly-report") p.period.quarter = 2; else p.selected_period.key = "2027-01"; },
+      p => { if (action === "quarterly-report") p.read_context.read_version = "another-version"; else p.snapshot_version = "another-snapshot"; }]) {
+      const wrong = structuredClone(wire); mutate(wrong.response);
+      assert.throws(() => check(wrong));
+    }
+    for (const [field, value] of [["company_id", "another-company"], [action === "quarterly-report" ? "quarter" : "period", action === "quarterly-report" ? "2" : "2027-01"]]) {
+      const wrong = new URL(target); wrong.searchParams.set(field, value);
+      assert.throws(() => check(wire, wrong));
+    }
+  });
+  if (action !== "quarterly-report") test(`S9 ${action} sections and exact snapshot reads retain native contracts`, () => {
+    const { wire, target, check } = deliveryFixture(action, name);
+    const section = new URL(target); section.searchParams.set("section", Object.keys(wire.response.data.collections)[0]);
+    assert.equal(check(wire.response, section), wire.response);
+    assert.throws(() => check(wire, section));
+    if (action !== "quarterly-report") {
+      const exact = new URL(target); exact.searchParams.set("expected_version", wire.response.snapshot_version);
+      assert.equal(check(wire.response, exact), wire.response);
+      assert.throws(() => check(wire, exact));
+      exact.searchParams.set("expected_version", "another-snapshot");
+      assert.throws(() => check(wire.response, exact), /snapshot/);
+    }
+  });
+  test(`S9 ${action} generated amount contract preserves unknown and exact integer fen`, () => {
+    const { wire, check } = deliveryFixture(action, name);
+    if (action === "brief" || action === "assets") {
+      const wrong = structuredClone(wire);
+      if (action === "brief") wrong.response.data.long_term_assets.net_fen = null;
+      else wrong.response.data.fixed_asset_net_fen = null;
+      assert.throws(() => check(wrong), "required computed amount must not become unknown");
+    }
+    for (const value of [null, "0", "-123", "9007199254740993", "9223372036854775807", "-9223372036854775808"]) {
+      const changed = structuredClone(wire); amountParent(changed.response)[amountField] = value;
+      assert.equal(check(changed), changed.response, `valid ${String(value)}`);
+    }
+    for (const value of [undefined, 0, 1.1, true, false, "1.1", "00", "01", "-0", "+1", " 1", "1e2", "9223372036854775808", "-9223372036854775809"]) {
+      const wrong = structuredClone(wire); amountParent(wrong.response)[amountField] = value;
+      assert.throws(() => check(wrong), `invalid ${String(value)}`);
+    }
+  });
+}
+
+test("S9 context, brief-group and close-review stay native auxiliary responses", () => {
+  const closeReview = { schema_version: 2, company_id: "synthetic-company", database_id: "synthetic-database",
+    period: "2026-01", state: "unprepared", preview_digest: null, close_digest: null, reason: null, covered_by: null, owner_review: null };
+  for (const [action, response] of [["context", deliveryFixtures.company_with_period.response],
+    ["brief-group", deliveryFixtures.brief_activity_members_0.response], ["close-review", closeReview]]) {
+    const selected = { id: response.current_company?.company_id ?? response.read_context?.company_id ?? response.company_id, period: "2026-01" };
+    const target = new URL(`https://synthetic.invalid/api/dashboard/${action}?company_id=${selected.id}${action === "context" ? "" : "&period=2026-01"}`);
+    const check = value => verifyS9WirePayload(generatedValidators, target, value, selected, "2026-Q1");
+    assert.equal(check(response), response);
+    assert.throws(() => check({ schema_version: 6, company_id: selected.id, period: selected.period,
+      model_version: "synthetic", state: "ready", response }));
+    const wrong = structuredClone(response);
+    if (action === "context") wrong.current_company.company_id = "another-company";
+    else if (action === "close-review") wrong.period = "2027-01";
+    else wrong.selected_period.key = "2027-01";
+    assert.throws(() => check(wrong));
+  }
+});
+
+test("S9 voucher DOM requires every native line and exact cents even when the voucher stays balanced", () => {
+  const voucher = structuredClone(deliveryFixtures.brief_vouchers.response.data.collections.vouchers.items[0]);
+  const rows = voucher.lines.map(line => ({ code: line.code, account: line.account,
+    debit: line.debit_fen === "0" ? "—" : formatFen(line.debit_fen),
+    credit: line.credit_fen === "0" ? "—" : formatFen(line.credit_fen) }));
+  assert.doesNotThrow(() => verifyVisibleVoucherRows(rows, voucher));
+  const changed = structuredClone(voucher);
+  const debit = changed.lines.find(line => BigInt(line.debit_fen) > 0n);
+  const credit = changed.lines.find(line => BigInt(line.credit_fen) > 0n);
+  assert(debit && credit, "fixture must have both sides of a real voucher");
+  debit.debit_fen = String(BigInt(debit.debit_fen) + 1n);
+  credit.credit_fen = String(BigInt(credit.credit_fen) + 1n);
+  assert.throws(() => verifyVisibleVoucherRows(rows, changed));
+  assert.throws(() => verifyVisibleVoucherRows(rows.slice(1), voucher));
+});
 const { retainedRefreshKeys, retainedRefreshSelection, interactionScopeAllows, verifyRetainedRefreshState, readRetainedRefreshState, verifyRetainedResponseContract, retainedCollectionIdentities, verifyRetainedCollectionIdentities, verifyRetainedAuxiliaryComplete, verifyRetainedTargetBinding, verifiedFundsDetailCache } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
-const { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, verifyCollection, stage9TimingSummary } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
+const { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, verifyCollection, stage9TimingSummary, stage9RefreshTarget, stage9RefreshThresholdResults } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
 const { voucherTailDiagnosticSelection } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
 
 test("voucher tail diagnostic is explicit, narrow and cannot inherit formal sample counts", () => {
@@ -42,6 +156,44 @@ test("an incomplete interaction keeps finite slow timings and does not claim com
   assert.equal(result.median_ms, null);
   assert.equal(result.p95_ms, null);
   assert.equal(result.max_ms, null);
+});
+
+test("one unchanged formal sample set independently decides each refresh stage", () => {
+  const samples = [499.9, 500, 699.9, 700, 999.9];
+  const before = [...samples];
+  const pages = { brief: { samples }, funds: { samples: [100, 200, 300, 400, 450] } };
+  const results = stage9RefreshThresholdResults(pages, 5);
+  assert.equal(stage9RefreshTarget({}), 500);
+  for (const target of [500, 700, 1000]) {
+    assert.equal(stage9RefreshTarget({ refresh_target_ms: target }), target);
+    const summary = stage9TimingSummary(samples, target);
+    assert.equal(summary.target_ms, target);
+    assert.equal(summary.over_500_ms, 4);
+    assert.equal(summary.over_700_ms, 2);
+    assert.equal(summary.over_1000_ms, 0);
+    assert.equal(summary.over_target_count, results[target].over_target_count);
+  }
+  assert.equal(results[500].status, "over_target");
+  assert.equal(results[700].status, "over_target");
+  assert.equal(results[1000].status, "passed");
+  assert.equal(stage9TimingSummary([1000], 1000).over_target_count, 1);
+  assert.deepEqual(samples, before);
+  for (const target of [600, 800, "700", NaN]) assert.throws(() => stage9RefreshTarget({ refresh_target_ms: target }));
+});
+
+test("missing and invalid formal samples cannot pass a relaxed refresh target", () => {
+  for (const samples of [[], [100], [100, null], [100, undefined], [100, NaN], [100, -1]]) {
+    const results = stage9RefreshThresholdResults({ brief: { samples } }, 2);
+    for (const target of [500, 700, 1000]) assert.equal(results[target].status, "failed");
+  }
+  assert.equal(stage9RefreshThresholdResults({}, 30)[1000].status, "failed");
+  assert.equal(stage9RefreshThresholdResults({ brief: { samples: [] } }, 0)[1000].status, "failed");
+  assert.equal(stage9RefreshThresholdResults({ brief: { samples: [100, 200] } }, 2, false)[1000].status, "failed");
+  for (const samples of [[], [100, null], [NaN], [-1]]) assert.throws(() => stage9TimingSummary(samples, 1000));
+  // A prewarm or failed attempt stays outside the supplied formal sample array.
+  const raw = { warmups: [1200], samples: [100, 200], failed_attempts: [{ elapsed_ms: 1300 }] };
+  assert.equal(stage9RefreshThresholdResults({ brief: raw }, 2)[500].status, "passed");
+  assert.equal(stage9TimingSummary([599.9, 600], 600).over_target_count, 1);
 });
 
 test("retained response bytes are captured before navigation and consumed only by their original generation", async () => {

@@ -20,7 +20,7 @@ from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import install_metadata, objects, verify_schema
 
 
-def create_archived_company(path, source):
+def create_archived_company(path, source, *, taxpayer_id="synthetic-tax"):
     """Create an isolated database using the exact declared original contract."""
     contract = source.current("company")
 
@@ -33,7 +33,8 @@ def create_archived_company(path, source):
         connection.execute("INSERT INTO state VALUES(1,0,0,0,1,0)")
         connection.execute("INSERT INTO source_change_head VALUES(1,0)")
         connection.execute(
-            "INSERT INTO identity VALUES(1,'synthetic-co','synthetic-tax','synthetic-db')"
+            "INSERT INTO identity VALUES(1,'synthetic-co',?,'synthetic-db')",
+            (taxpayer_id,),
         )
         install_metadata(connection, source, "company")
         connection.commit()
@@ -163,7 +164,7 @@ def test_forward_adjustment_preserves_all_original_rows_sql_and_frozen_history(p
         ] == [
             (REMUNERATION_SOURCE_FINGERPRINT.upper(),),
         ]
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 2
         verify_schema(connection, bundle=target)
         store = Store(path, target, "synthetic-co", "synthetic-db")
         assert store.fact_data(connection, fact_id) == profile.model_dump(mode="json")
@@ -207,3 +208,84 @@ def test_forward_adjustment_rejects_undeclared_extra_sql_without_writes(prior_co
             development.upgrade_company(connection, target)
         assert failure.value.code == "schema_fingerprint_mismatch"
         assert tuple(connection.iterdump()) == before
+
+
+def test_prior_confirmed_shape_moves_forward_by_adding_empty_history_bodies(tmp_path):
+    """An e7 installation is itself a declared source, without replaying 3ead."""
+    from ai_accounting.kernel.development_contracts import REMUNERATION_TARGET_FINGERPRINT
+
+    target = production_bundle()
+    source = development.source_bundle(target, REMUNERATION_TARGET_FINGERPRINT)
+    path = tmp_path / "prior-confirmed.sqlite"
+    create_archived_company(path, source)
+    with closing(connect(path)) as connection:
+        before = connection.execute("SELECT * FROM schema_history").fetchall()
+        result = development.upgrade_company(connection, target)
+        assert len(result["steps"]) == 1
+        assert result["source_fingerprint"] == REMUNERATION_TARGET_FINGERPRINT
+        assert connection.execute("SELECT * FROM schema_history").fetchall() == before
+        assert connection.execute(
+            "SELECT count(*) FROM fact_payroll_pre_revision"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM source_change_retained_boundary"
+        ).fetchone()[0] == 0
+    assert verify_file(path)["verification"]["status"] == "verified"
+
+
+def test_prior_history_source_index_upgrade_runs_through_real_cli(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from ai_accounting.kernel.catalog import ensure_catalog
+    from ai_accounting.kernel.development_contracts import HISTORY_PRIOR_FINGERPRINT
+    from ai_accounting.kernel.permissions import ensure_private_directory
+
+    target = production_bundle()
+    source = development.source_bundle(target, HISTORY_PRIOR_FINGERPRINT)
+    root = ensure_private_directory(tmp_path / "prior-history-root")
+    ensure_catalog(root)
+    directory = ensure_private_directory(root / "91310000123456789A")
+    path = directory / "company.sqlite"
+    create_archived_company(path, source, taxpayer_id="91310000123456789A")
+    with closing(connect(root / "catalog.sqlite")) as connection:
+        connection.execute(
+            "INSERT INTO company VALUES('synthetic-co','91310000123456789A','synthetic',?,"
+            "'synthetic-db')", (str(path),),
+        )
+    with closing(connect(path)) as connection:
+        original_history = connection.execute("SELECT * FROM schema_history").fetchall()
+        planned = development._declared_changes(target)
+        index_step = [step for step in planned if step[0]["sha256"] == HISTORY_PRIOR_FINGERPRINT]
+        assert len(index_step) == 1
+        assert [(item["type"], item["name"]) for item in index_step[0][2]] == [
+            ("index", "material_resolution_pre_reference_source")
+        ]
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(development.__file__).resolve().parents[2])
+    module_source = subprocess.run(
+        [sys.executable, "-X", "utf8", "-c",
+         "from ai_accounting.kernel import cli; print(cli.__file__)"],
+        capture_output=True, text=True, encoding="utf-8", env=environment,
+    )
+    assert module_source.returncode == 0, module_source.stdout + module_source.stderr
+    assert Path(module_source.stdout.strip()).resolve() == Path(development.__file__).with_name(
+        "cli.py"
+    ).resolve()
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8", "-m", "ai_accounting.kernel.cli", "--root", str(root),
+         "upgrade-development"], capture_output=True, text=True, encoding="utf-8", env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    response = json.loads(result.stdout)
+    assert response["status"] == "upgraded"
+    assert response["companies"][0]["source_fingerprint"] == HISTORY_PRIOR_FINGERPRINT
+    assert response["companies"][0]["target_fingerprint"] == target.current()["sha256"]
+    assert len(response["companies"][0]["steps"]) == 1
+    with closing(connect(path)) as connection:
+        assert connection.execute("SELECT * FROM schema_history").fetchall() == original_history
+        verify_schema(connection, bundle=target)
+    assert verify_file(path)["verification"]["status"] == "verified"

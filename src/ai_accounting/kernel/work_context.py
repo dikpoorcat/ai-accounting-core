@@ -18,6 +18,7 @@ from .discovery import Discovery
 from .entities import profiles_for_entities, workforce_timelines
 from .entity_references import references_from_data, verify_hits
 from .fund_accounts import fund_account_definitions
+from .material_history_sql import material_relation, verify_pre_reference_links
 from .materials import PageLimit
 from .query_reads import QueryReads
 from .read_state import repair_revision
@@ -124,7 +125,7 @@ class WorkContext:
             "AND c.fact_id=d.fact_id) calculation_id FROM " + driver
         )
 
-    def _candidate_sql(self, period, area, subjects, sources):
+    def _candidate_sql(self, period, area, subjects, sources, *, connection):
         kinds = sorted(
             kind
             for kind, model in self.store.registry.models.items()
@@ -186,7 +187,8 @@ class WorkContext:
             "JOIN discovery_fact_current d ON d.fact_id=fs.fact_id UNION "
             "SELECT s.source_id FROM scoped x JOIN fact_material_period_allocation s "
             "ON s.revision_id=x.fact_id UNION "
-            "SELECT s.source_id FROM scoped x JOIN fact_material_resolution_v2 s "
+            f"SELECT s.source_id FROM scoped x JOIN "
+            f"{material_relation(connection, 'fact_material_resolution_v2')} s "
             "ON s.revision_id=x.fact_id UNION "
             "SELECT s.source_id FROM scoped x JOIN fact_material_group_resolution s "
             "ON s.revision_id=x.fact_id), "
@@ -344,7 +346,9 @@ class WorkContext:
                 }
             ).hex()
             position = self._cursor(cursor, scope)
-            prefix, parameters = self._candidate_sql(month.ordinal, work_area, subjects, sources)
+            prefix, parameters = self._candidate_sql(
+                month.ordinal, work_area, subjects, sources, connection=connection
+            )
             predicate = "NOT " + self.discovery._superseded_subject("d")
             if position is not None:
                 predicate += " AND (d.period<? OR(d.period=? AND d.fact_id<?))"
@@ -360,6 +364,10 @@ class WorkContext:
                 )
             )
             selected = records[:limit]
+            verify_pre_reference_links(connection, revision_ids=[
+                record["fact_id"] for record in selected
+                if record["kind"] == "material_resolution_v2"
+            ])
             # Reuse only this snapshot's raw JSON and freshly computed digests.
             # Both discovery seals and object-reference indexes still compare
             # their own source metadata against these exact selected facts.

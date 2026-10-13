@@ -178,8 +178,10 @@ class Worklist:
                 "SELECT category FROM fact_material_source_v2 WHERE revision_id=?", (fact_id,)
             ).fetchone()
         else:
+            from .material_history_sql import material_relation
+
             row = connection.execute(
-                f"SELECT s.category FROM fact_{kind} r "
+                f"SELECT s.category FROM {material_relation(connection, 'fact_' + kind)} r "
                 "JOIN fact_material_source_v2 s ON s.revision_id=r.source_fact_id "
                 "WHERE r.revision_id=?",
                 (fact_id,),

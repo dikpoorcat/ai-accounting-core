@@ -14,6 +14,7 @@ from ai_accounting.kernel.backup import BackupError, backup_to_file
 from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_async import _produce
 from ai_accounting.kernel.dashboard_funds import FundsRead, funds
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.integrity import verify_integrity
@@ -64,14 +65,24 @@ def prepared(book, *, closed=True):
     return engine, save, publish
 
 
-def public(engine, period="2026-10"):
+def public(engine, period="2026-10", *, default_model=False):
     result = {}
     for name in ("funds", "brief"):
-        response = getattr(Dashboard(engine), name)(period)
+        options = (
+            {"movement_account_selection": "first"} if name == "funds" and default_model else {}
+        )
+        response = getattr(Dashboard(engine), name)(period, **options)
         response.pop("generated_at", None)
         response["data"].pop("generated_at", None)
         result[name] = response
     return result
+
+
+def without_snapshot_versions(response):
+    # Async publication IDs and the independent native snapshot digest are
+    # different contracts. All business fields and other metadata must agree.
+    return {name: {key: value for key, value in page.items() if key != "snapshot_version"}
+            for name, page in response.items()}
 
 
 def assert_bank_identity_totals(response):
@@ -152,10 +163,17 @@ def test_public_historical_zero_accounts_match_complete_scope_with_less_source_p
 )
 def test_public_historical_identity_rejects_consumed_damage(bank_book, change):
     engine, _, _ = prepared(bank_book)
-    before = public(engine)
+    # Current v6 certifies the UI's first-account default. The unrestricted
+    # funds variant remains a native read; queueing alone is not a ready model.
+    produced = _produce(engine, "2026-10")
+    assert produced["status"] == "ready"
+    before = public(engine, default_model=True)
+    assert all(page["snapshot_version"] == produced["model_version"] for page in before.values())
     assert_bank_identity_totals(before)
     with raw_read():
-        assert public(engine) == before
+        assert without_snapshot_versions(public(engine, default_model=True)) == (
+            without_snapshot_versions(before)
+        )
     row = source(engine)
     if change in {"calculation_seal", "fact_seal"}:
         key, ident = (
@@ -229,11 +247,11 @@ def test_public_historical_identity_rejects_consumed_damage(bank_book, change):
     # statement hits. Preserve their original money, kind and account identity.
     # Native selection independently authenticates these physical witnesses.
     for _ in range(2):
-        after = public(engine)
+        after = public(engine, default_model=True)
         assert after == before
         assert_bank_identity_totals(after)
         with raw_read(), pytest.raises(KernelError) as failure:
-            Dashboard(engine).funds("2026-10")
+            Dashboard(engine).funds("2026-10", movement_account_selection="first")
         assert failure.value.code == "content_integrity_failed"
     with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
         verify_integrity(engine, connection)
@@ -315,10 +333,15 @@ def test_fixed_v1_keeps_complete_historical_source_reader(bank_book, monkeypatch
 
 def test_open_historical_state_still_authenticates_original_rows(bank_book):
     engine, _, _ = prepared(bank_book, closed=False)
-    before = public(engine)
+    produced = _produce(engine, "2026-10")
+    assert produced["status"] == "ready"
+    before = public(engine, default_model=True)
+    assert all(page["snapshot_version"] == produced["model_version"] for page in before.values())
     assert_bank_identity_totals(before)
     with raw_read():
-        assert public(engine) == before
+        assert without_snapshot_versions(public(engine, default_model=True)) == (
+            without_snapshot_versions(before)
+        )
     row = source(engine)
     damage(
         engine,
@@ -327,9 +350,9 @@ def test_open_historical_state_still_authenticates_original_rows(bank_book):
         (row["fact_id"],),
     )
     for _ in range(2):
-        assert public(engine) == before
+        assert public(engine, default_model=True) == before
         with raw_read(), pytest.raises(KernelError) as failure:
-            Dashboard(engine).funds("2026-10")
+            Dashboard(engine).funds("2026-10", movement_account_selection="first")
         assert failure.value.code == "content_integrity_failed"
     with engine.store.connection(read_only=True) as connection, pytest.raises(KernelError):
         verify_integrity(engine, connection)

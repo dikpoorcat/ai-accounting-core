@@ -19,6 +19,8 @@ from .backup import (
 )
 from .contracts import KernelError
 from .development_contracts import (
+    HISTORY_PRIOR_FINGERPRINT,
+    HISTORY_TARGET_FINGERPRINT,
     REMUNERATION_SOURCE_FINGERPRINT,
     REMUNERATION_TARGET_FINGERPRINT,
     get_contract_sha,
@@ -68,6 +70,8 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
         READ_MODEL_SOURCE_FINGERPRINT,
         FUND_DETAIL_SOURCE_FINGERPRINT,
         REMUNERATION_SOURCE_FINGERPRINT,
+        REMUNERATION_TARGET_FINGERPRINT,
+        HISTORY_PRIOR_FINGERPRINT,
     ):
         raise KernelError("migration_not_declared", "开发升级来源未明确声明")
     if source_fingerprint == REMUNERATION_SOURCE_FINGERPRINT:
@@ -78,6 +82,25 @@ def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
                 {**bundle.contracts, "company": MappingProxyType({0: source})}
             ),
         )
+    if source_fingerprint in {REMUNERATION_TARGET_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT}:
+        from .contracts import Registry
+
+        tables = {item["name"] for item in source["objects"] if item["type"] == "table"}
+        registry = Registry()
+        for kind in bundle.registry.models:
+            bodies = tuple((model, table) for model, table in bundle.registry.fact_bodies(kind)
+                           if table in tables)
+            model, table = bodies[0]
+            registry.register(model, bundle.registry.evaluators.get(kind),
+                              table=table, historical=bodies[1:])
+        registry.historical_only = bundle.registry.historical_only
+        registry.accounting_projectors = dict(bundle.registry.accounting_projectors)
+        registry.accounting_consumers = dict(bundle.registry.accounting_consumers)
+        registry.readiness = dict(bundle.registry.readiness)
+        registry.snapshot_readiness = dict(bundle.registry.snapshot_readiness)
+        return replace(bundle, registry=registry, contracts=MappingProxyType(
+            {**bundle.contracts, "company": MappingProxyType({0: source})}
+        ))
     registry = copy.copy(bundle.registry)
     registry.models = dict(registry.models)
     registry.evaluators = dict(registry.evaluators)
@@ -189,16 +212,16 @@ def _declared_changes(bundle):
 def _remuneration_changes(bundle):
     """Only new typed body tables and their exact one-body seal declaration."""
     from .contracts import Registry
-    from .schema import fact_ddl, schema_sql
+    from .schema import fact_ddl
     from .versions import contract
 
     source = get_contract_sha(bundle, "company", REMUNERATION_SOURCE_FINGERPRINT)
-    target = bundle.current("company")
-    transition = (REMUNERATION_SOURCE_FINGERPRINT, target["sha256"])
+    target = get_contract_sha(bundle, "company", REMUNERATION_TARGET_FINGERPRINT)
+    transition = (REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT)
     if (
         bundle.status != "draft" or source is None
         or target["sha256"] != REMUNERATION_TARGET_FINGERPRINT
-        or bundle.draft_transitions.get("company", ()) != frozenset({transition})
+        or transition not in bundle.draft_transitions.get("company", ())
     ):
         raise KernelError("migration_not_declared", "实际税额结构调整须有精确来源和目标")
     changed = {
@@ -221,7 +244,7 @@ def _remuneration_changes(bundle):
     }
     old_seal = next(item["sql"] for item in source["objects"] if item["name"] == "fact_seal_shape")
     new_seal = next(
-        item["sql"] for item in contract(schema_sql(bundle.registry))
+        item["sql"] for item in target["objects"]
         if item["name"] == "fact_seal_shape"
     )
     expected[("trigger", "fact_seal_shape")] = {
@@ -230,8 +253,68 @@ def _remuneration_changes(bundle):
     differences = diff_contracts(source, target)
     if differences != [expected[key] for key in sorted(expected)]:
         raise KernelError("migration_not_declared", "实际税额结构调整超出新增正文和封存检查")
-    return ((source, target, differences),)
+    return ((source, target, differences), _history_body_changes(bundle),
+            _prior_history_changes(bundle))
 
+
+
+def _history_body_changes(bundle):
+    """Add the four exact read-only bodies and journal retention tables to e7."""
+    from .contracts import Registry
+    from .schema import fact_ddl
+    from .source24_history import HISTORICAL_BODIES
+    from .versions import contract
+
+    source = get_contract_sha(bundle, "company", REMUNERATION_TARGET_FINGERPRINT)
+    target = bundle.current("company")
+    if (source is None or target["sha256"] != HISTORY_TARGET_FINGERPRINT
+        or (source["sha256"], target["sha256"]) not in bundle.draft_transitions["company"]):
+        raise KernelError("migration_not_declared", "历史正文增加缺少精确声明")
+    added = Registry()
+    for model, table in HISTORICAL_BODIES.values():
+        added.register(model, table=table)
+    from .change_journal import retained_coverage_ddl
+    from .materials import MATERIAL_HISTORY_INDEX_DDL
+
+    expected = {(o["type"], o["name"]): {"type": o["type"], "name": o["name"],
+                 "old_sql": None, "new_sql": o["sql"]}
+                for o in contract(
+                    fact_ddl(added) + retained_coverage_ddl() + MATERIAL_HISTORY_INDEX_DDL
+                )}
+    # Both fingerprints are package-owned and the seal changes only to include
+    # these extra bodies. Validate its exact generated target text independently.
+    from .schema import schema_sql
+
+    seal = next(o["sql"] for o in contract(schema_sql(bundle.registry))
+                if o["name"] == "fact_seal_shape")
+    before = next(o["sql"] for o in source["objects"] if o["name"] == "fact_seal_shape")
+    expected[("trigger", "fact_seal_shape")] = dict(type="trigger", name="fact_seal_shape",
+                                                     old_sql=before, new_sql=seal)
+    differences = diff_contracts(source, target)
+    if differences != [expected[key] for key in sorted(expected)]:
+        raise KernelError("migration_not_declared", "历史增加超出精确正文及封存声明")
+    return source, target, differences
+
+
+def _prior_history_changes(bundle):
+    from .materials import MATERIAL_HISTORY_SOURCE_INDEX_DDL
+    from .versions import contract
+
+    source = get_contract_sha(bundle, "company", HISTORY_PRIOR_FINGERPRINT)
+    target = bundle.current("company")
+    parent_sql = next(o["sql"] for o in source["objects"]
+                      if o["type"] == "table"
+                      and o["name"] == "fact_material_resolution_v2_pre_reference")
+    # An index's saved SQL needs its declared table when executed by the
+    # independent SQLite contract builder. Do not invent a reduced table.
+    expected = [dict(type=o["type"], name=o["name"], old_sql=None, new_sql=o["sql"])
+                for o in contract(parent_sql + ";\n" + MATERIAL_HISTORY_SOURCE_INDEX_DDL)
+                if o["type"] == "index"]
+    differences = diff_contracts(source, target)
+    if (differences != expected
+        or (source["sha256"], target["sha256"]) not in bundle.draft_transitions["company"]):
+        raise KernelError("migration_not_declared", "已调整历史结构仅增加精确来源索引")
+    return source, target, differences
 
 def _apply_remuneration_step(connection, differences, *, fault=None):
     for kind in ("table", "index", "trigger"):
@@ -419,10 +502,15 @@ def upgrade_company(
         return {"status": "verified_skip"}
     source = previous.current("company")
     target = bundle.current("company")
-    start = next(
-        index for index, step in enumerate(declared) if step[0]["sha256"] == source["sha256"]
-    )
-    steps = declared[start:]
+    steps = []
+    path_fingerprint = source["sha256"]
+    while path_fingerprint != target["sha256"]:
+        matches = [step for step in declared if step[0]["sha256"] == path_fingerprint]
+        if len(matches) != 1 or len(steps) >= len(declared):
+            raise KernelError("migration_not_declared", "开发升级路径不连续或不唯一")
+        step = matches[0]
+        steps.append(step)
+        path_fingerprint = step[1]["sha256"]
     replace_tables = source["sha256"] == SOURCE_FINGERPRINT
     try:
         if replace_tables:
@@ -445,7 +533,9 @@ def upgrade_company(
             step_rows = (
                 original_rows if step_index == 0 else _all_existing_rows(connection, step_source)
             )
-            if step_source["sha256"] == REMUNERATION_SOURCE_FINGERPRINT:
+            if step_source["sha256"] in {
+                REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT,
+            }:
                 _apply_remuneration_step(connection, differences, fault=fault)
             elif step_source["sha256"] == SOURCE_FINGERPRINT:
                 _apply_first_step(connection, step_target, differences, fault=fault)
@@ -539,12 +629,71 @@ def _company_bundle(connection, bundle):
         READ_MODEL_SOURCE_FINGERPRINT,
         FUND_DETAIL_SOURCE_FINGERPRINT,
         REMUNERATION_SOURCE_FINGERPRINT,
+        REMUNERATION_TARGET_FINGERPRINT,
+        HISTORY_PRIOR_FINGERPRINT,
     ):
         previous = source_bundle(bundle, actual)
         verify_schema(connection, bundle=previous)
         return previous
     raise KernelError("schema_fingerprint_mismatch", "当前库不属于本次开发升级的精确来源或目标")
 
+
+
+def _catalog_bundle(connection, bundle):
+    from .development_contracts import CATALOG_PRIOR_FINGERPRINT
+
+    actual = fingerprint(objects(connection)).hex()
+    if actual == bundle.current("catalog")["sha256"]:
+        previous = bundle
+    elif actual == CATALOG_PRIOR_FINGERPRINT:
+        source = get_contract_sha(bundle, "catalog", actual)
+        previous = replace(bundle, contracts=MappingProxyType(
+            {**bundle.contracts, "catalog": MappingProxyType({0: source})}
+        ))
+    else:
+        raise KernelError("schema_fingerprint_mismatch", "目录不属于本次明确加表来源")
+    verify_schema(connection, bundle=previous, kind="catalog")
+    return previous
+
+
+def _upgrade_catalog(connection, bundle, *, fault=None):
+    """The exact 0ec catalog gains append-only draft receipts, preserving all rows."""
+    from .versions import DRAFT_HISTORY_DDL, contract
+
+    if connection.in_transaction:
+        raise KernelError("migration_transaction_active", "目录升级须从无事务连接开始")
+    previous = _catalog_bundle(connection, bundle)
+    if previous is bundle:
+        return "verified_skip"
+    source, target = previous.current("catalog"), bundle.current("catalog")
+    differences = diff_contracts(source, target)
+    expected = [dict(type=o["type"], name=o["name"], old_sql=None, new_sql=o["sql"])
+                for o in contract(DRAFT_HISTORY_DDL)]
+    if (differences != expected
+        or (source["sha256"], target["sha256"]) not in bundle.draft_transitions["catalog"]):
+        raise KernelError("migration_not_declared", "目录调整超出精确追加履历声明")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        verify_schema(connection, bundle=previous, kind="catalog")
+        rows = _all_existing_rows(connection, source)
+        retained = _catalog_retained_digest(connection)
+        _apply_read_model_step(connection, differences, fault=fault)
+        if _all_existing_rows(connection, source) != rows:
+            raise KernelError("migration_integrity_failed", "目录升级改变原始记录")
+        connection.execute(
+            "INSERT INTO schema_draft_history(sequence,source_fingerprint,target_fingerprint,"
+            "retained_history_digest) VALUES(1,?,?,?)",
+            (bytes.fromhex(source["sha256"]), bytes.fromhex(target["sha256"]),
+             bytes.fromhex(retained)),
+        )
+        verify_schema(connection, bundle=bundle, kind="catalog")
+        if fault:
+            fault("before_catalog_commit")
+        connection.commit()
+        return "upgraded"
+    except BaseException:
+        connection.rollback()
+        raise
 
 def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
     """Stop is explicit; verified backups precede any registered company upgrade."""
@@ -557,8 +706,9 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
         if not acquired:
             raise KernelError("service_active", "请先 stop 当前服务，再执行显式开发升级")
         with closing(connect(root / "catalog.sqlite", read_only=True)) as catalog:
+            catalog_source = _catalog_bundle(catalog, bundle)
             _, rows = _catalog_rows(
-                catalog, root, bundle, allow_previous=False, require_completed=True
+                catalog, root, catalog_source, allow_previous=False, require_completed=True
             )
             catalog_digest = _catalog_retained_digest(catalog)
         sources = {}
@@ -584,7 +734,7 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
         with closing(connect(root / "catalog.sqlite", read_only=True)) as current:
             with closing(connect(catalog_copy)) as saved:
                 copy_to_unpublished_database(current, saved)
-                verify_schema(saved, bundle=bundle, kind="catalog")
+                verify_schema(saved, bundle=catalog_source, kind="catalog")
                 if _catalog_retained_digest(saved) != catalog_digest:
                     raise KernelError("migration_integrity_failed", "目录身份备份核验失败")
         backups = {}
@@ -593,6 +743,8 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
                 row["path"], backup, request_id=operation, _bundle=sources[row["id"]]
             )
             backups[row["id"]] = result["path"]
+        with closing(connect(root / "catalog.sqlite")) as catalog:
+            catalog_result = _upgrade_catalog(catalog, bundle, fault=fault)
         results = []
         for row in rows:
             try:
@@ -630,7 +782,7 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
                 raise KernelError("migration_integrity_failed", "开发升级改变了目录或负责人身份")
         return {
             "status": "upgraded",
-            "catalog": "verified_unchanged",
+            "catalog": catalog_result,
             "backup_directory": str(backup),
             "companies": results,
         }

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from weakref import WeakSet
 
 from .integrity import _invalid
+from .material_history_sql import material_relation, verify_pre_reference_links
 from .types import YearMonth, canonical, digest
 
 # This identifies the coverage semantics, not the application build. Increment
@@ -103,13 +104,18 @@ class FrozenMaterialReuse:
 
 
 def _current_version_summaries(connection, kind, table):
+    if kind == "material_resolution_v2":
+        verify_pre_reference_links(connection, revision_ids=[row[0] for row in connection.execute(
+            "SELECT c.fact_id FROM subject s JOIN fact_current c ON c.subject_id=s.id "
+            "WHERE s.kind=?", (kind,),
+        )])
     source_column = "c.subject_id" if kind == "material_source_v2" else "t.source_id"
     result = {}
     for source_id, count, ids, invalid in connection.execute(
         f"SELECT {source_column},count(*),json_group_array(c.fact_id ORDER BY c.fact_id),"
         "max(t.revision_id IS NULL OR z.fact_id IS NULL OR f.subject_id IS NOT c.subject_id) "
         "FROM subject s JOIN fact_current c ON c.subject_id=s.id "
-        f"LEFT JOIN {table} t ON t.revision_id=c.fact_id "
+        f"LEFT JOIN {material_relation(connection, table)} t ON t.revision_id=c.fact_id "
         "LEFT JOIN fact_revision f ON f.id=c.fact_id "
         "LEFT JOIN fact_seal z ON z.fact_id=c.fact_id "
         f"WHERE s.kind=? GROUP BY {source_column}",
@@ -287,9 +293,14 @@ def _watched_material_summary(connection, closed_through, reads, inspection_cach
 
 
 def _current_versions(connection, kind, table):
+    if kind == "material_resolution_v2":
+        verify_pre_reference_links(connection, revision_ids=[row[0] for row in connection.execute(
+            "SELECT c.fact_id FROM subject s JOIN fact_current c ON c.subject_id=s.id "
+            "WHERE s.kind=?", (kind,),
+        )])
     source_column = "c.subject_id" if kind == "material_source_v2" else "t.source_id"
     rows = connection.execute(
-        f"SELECT {source_column},c.fact_id FROM {table} t "
+        f"SELECT {source_column},c.fact_id FROM {material_relation(connection, table)} t "
         "JOIN fact_current c ON c.fact_id=t.revision_id "
         "JOIN fact_revision f ON f.id=c.fact_id "
         "JOIN fact_seal seal ON seal.fact_id=f.id "
@@ -314,6 +325,8 @@ def _frozen_versions(connection, kind, table, identifiers, *, _verified_versions
     if len(identifiers) != len(set(identifiers)):
         _invalid("close", "*", "frozen_material_version_list_duplicate")
     selected = identifiers
+    if kind == "material_resolution_v2":
+        verify_pre_reference_links(connection, revision_ids=identifiers)
     if _verified_versions is not None:
         _require_material_version_ledger(connection, _verified_versions)
         if (kind, table) not in _KINDS.values():
@@ -333,12 +346,13 @@ def _frozen_versions(connection, kind, table, identifiers, *, _verified_versions
             "CROSS JOIN fact_revision f ON f.id=ids.value "
             "CROSS JOIN fact_seal seal ON seal.fact_id=f.id "
             "CROSS JOIN subject s ON s.id=f.subject_id AND s.kind=? "
-            f"CROSS JOIN {table} t ON t.revision_id=f.id",
+            f"CROSS JOIN {material_relation(connection, table)} t ON t.revision_id=f.id",
             (canonical(selected), kind),
         ).fetchall()
     else:
         rows = connection.execute(
-            f"SELECT t.source_id,ids.value FROM json_each(?) ids CROSS JOIN {table} t "
+            f"SELECT t.source_id,ids.value FROM json_each(?) ids CROSS JOIN "
+            f"{material_relation(connection, table)} t "
             "ON t.revision_id=ids.value CROSS JOIN fact_revision f ON f.id=t.revision_id "
             "CROSS JOIN fact_seal seal ON seal.fact_id=f.id "
             "CROSS JOIN subject s ON s.id=f.subject_id AND s.kind=?",
@@ -372,19 +386,25 @@ def _changed_sources(connection, kind, table, identifiers):
     source_current = "c.subject_id" if kind == "material_source_v2" else "t.source_id"
     source_frozen = "f.subject_id" if kind == "material_source_v2" else "t.source_id"
     frozen_ids = canonical(identifiers)
+    if kind == "material_resolution_v2":
+        current_ids = [row[0] for row in connection.execute(
+            "SELECT c.fact_id FROM subject s JOIN fact_current c ON c.subject_id=s.id "
+            "WHERE s.kind=?", (kind,),
+        )]
+        verify_pre_reference_links(connection, revision_ids=[*identifiers, *current_ids])
     sealed_count = connection.execute(
         "SELECT count(*) FROM json_each(?) ids "
         "CROSS JOIN fact_revision f ON f.id=ids.value "
         "CROSS JOIN fact_seal seal ON seal.fact_id=f.id "
         "CROSS JOIN subject s ON s.id=f.subject_id AND s.kind=? "
-        f"CROSS JOIN {table} t ON t.revision_id=f.id",
+        f"CROSS JOIN {material_relation(connection, table)} t ON t.revision_id=f.id",
         (frozen_ids, kind),
     ).fetchone()[0]
     if sealed_count != len(identifiers):
         _invalid("close", "*", "frozen_material_fact_seal_missing")
     missing = connection.execute(
         "SELECT 1 FROM fact_current c JOIN subject s ON s.id=c.subject_id "
-        f"LEFT JOIN {table} t ON t.revision_id=c.fact_id "
+        f"LEFT JOIN {material_relation(connection, table)} t ON t.revision_id=c.fact_id "
         "LEFT JOIN fact_seal seal ON seal.fact_id=c.fact_id "
         "WHERE s.kind=? AND (t.revision_id IS NULL OR seal.fact_id IS NULL) LIMIT 1",
         (kind,),
@@ -396,12 +416,12 @@ def _changed_sources(connection, kind, table, identifiers):
         "added AS ("
         f"SELECT {source_current} source_id FROM fact_current c "
         "JOIN subject s ON s.id=c.subject_id AND s.kind=? "
-        f"JOIN {table} t ON t.revision_id=c.fact_id "
+        f"JOIN {material_relation(connection, table)} t ON t.revision_id=c.fact_id "
         "WHERE c.fact_id NOT IN (SELECT id FROM frozen)),"
         "removed AS ("
         f"SELECT {source_frozen} source_id FROM frozen ids "
         "JOIN fact_revision f ON f.id=ids.id "
-        f"JOIN {table} t ON t.revision_id=f.id "
+        f"JOIN {material_relation(connection, table)} t ON t.revision_id=f.id "
         "WHERE NOT EXISTS(SELECT 1 FROM fact_current c WHERE c.fact_id=ids.id)) "
         "SELECT source_id FROM added UNION SELECT source_id FROM removed",
         (frozen_ids, kind),
@@ -419,7 +439,7 @@ def _eligible_frozen_ids(connection, kind, table, identifiers, eligible):
         for row in connection.execute(
             "SELECT ids.value FROM json_each(?) ids "
             "JOIN fact_revision f ON f.id=ids.value "
-            f"JOIN {table} t ON t.revision_id=f.id "
+            f"JOIN {material_relation(connection, table)} t ON t.revision_id=f.id "
             f"WHERE {source_column} NOT IN (SELECT value FROM json_each(?))",
             (canonical(identifiers), canonical(sorted(eligible))),
         )
@@ -462,14 +482,19 @@ def _source_dependencies(connection, current):
     stale = set()
     branches = []
     kinds = []
+    verify_pre_reference_links(connection, revision_ids=[row[0] for row in connection.execute(
+        "SELECT c.fact_id FROM subject s JOIN fact_current c ON c.subject_id=s.id "
+        "WHERE s.kind='material_resolution_v2'",
+    )])
     for label in ("resolution", "group"):
         kind, table = _KINDS[label]
         branches.append(
             "SELECT t.source_id,linked.subject_id,linked.kind fact_kind,linked.fact_id,"
-            f"l.calculation_id FROM {table} t "
+            f"l.calculation_id FROM {material_relation(connection, table)} t "
             "JOIN fact_current c ON c.fact_id=t.revision_id "
             "JOIN subject own ON own.id=c.subject_id AND own.kind=? "
-            f"JOIN {table}_links l ON l.revision_id=t.revision_id "
+            f"JOIN {material_relation(connection, table + '_links')} l ON "
+            f"l.revision_id=t.revision_id "
             "LEFT JOIN calculation linked ON linked.id=l.calculation_id"
         )
         kinds.append(kind)
@@ -502,7 +527,8 @@ def _source_dependencies(connection, current):
             for source_id in linked:
                 edges[source_id].update(linked - {source_id})
     for source_id, target in connection.execute(
-        "SELECT r.source_id,r.duplicate_source_id FROM fact_material_resolution_v2 r "
+        f"SELECT r.source_id,r.duplicate_source_id FROM "
+        f"{material_relation(connection, 'fact_material_resolution_v2')} r "
         "JOIN fact_current c ON c.fact_id=r.revision_id "
         "JOIN subject s ON s.id=c.subject_id AND s.kind=? "
         "WHERE r.duplicate_source_id IS NOT NULL",

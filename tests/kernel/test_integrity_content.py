@@ -377,6 +377,13 @@ def reseal_close_for_semantic_test(engine, manifest):
         ).fetchone()
         original = decode_close(connection, close_row)
         root = json.loads(close_row["manifest"])
+        previous_digest = close_row["digest"].hex()
+        journal_rows = connection.execute(
+            "SELECT sequence FROM source_change WHERE source='close' AND target_id=? "
+            "AND after_ref=?",
+            (str(period), previous_digest),
+        ).fetchall()
+        assert len(journal_rows) == 1
         if original["adopted_results"] != manifest["adopted_results"]:
             block = connection.execute(
                 "SELECT bucket,part,content FROM close_storage_block "
@@ -445,6 +452,14 @@ def reseal_close_for_semantic_test(engine, manifest):
         "UPDATE read_index_source SET source_digest=? "
         "WHERE source_kind='close' AND source_id=?",
         (digest(manifest), str(period)),
+    )
+    # Re-sign the existing close's journal reference as well: the intended
+    # defect is inside the logical manifest, not a stale outer source digest.
+    damage(
+        engine, "source_change",
+        "UPDATE source_change SET after_ref=? WHERE sequence=? AND source='close' "
+        "AND target_id=? AND after_ref=?",
+        (digest(manifest).hex(), journal_rows[0]["sequence"], str(period), previous_digest),
     )
 
 

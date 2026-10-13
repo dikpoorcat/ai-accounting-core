@@ -285,7 +285,11 @@ def workforce_timelines(connection, entity_ids=None):
     sql += " ORDER BY e.id,p.revision"
     for row in connection.execute(sql, params):
         histories.setdefault(row["entity_id"], []).append(_profile_record(row))
-    result = {ident: verify_history(history) for ident, history in histories.items()}
+    from .entity_profile_history import retained_profile_ids
+
+    retained = retained_profile_ids(connection, histories.values())
+    result = {ident: verify_history(history, retained_ids=retained)
+              for ident, history in histories.items()}
     recorded_event_times(
         connection,
         [event for timeline in result.values() for event in timeline["event_references"]],
@@ -382,10 +386,14 @@ def verify_entities(connection):
     verify_fund_accounts(connection)
     for row in connection.execute("SELECT * FROM entity_profile_revision"):
         _profile_record(row)
+    from .entity_profile_history import retained_profile_ids
+
+    histories = [workforce_records(connection, row["id"])
+                 for row in connection.execute("SELECT id FROM entity WHERE kind='person'")]
+    retained = retained_profile_ids(connection, histories)
     events = []
-    for row in connection.execute("SELECT id FROM entity WHERE kind='person'"):
-        history = workforce_records(connection, row["id"])
-        verify_history(history)
+    for history in histories:
+        verify_history(history, retained_ids=retained)
         events.extend(item for item in history if item.get("workforce_event") is not None)
     recorded_event_times(connection, events)
     for row in connection.execute("SELECT * FROM entity_resolution"):
@@ -599,8 +607,13 @@ class Entities:
             require_entity(connection, entity_id)
             current = self._current(connection, entity_id, expected_revision)
             if entity["kind"] == "person":
-                verify_history(workforce_records(connection, entity_id))
-            merged = self._content(current)
+                from .entity_profile_history import current_person_metadata, retained_profile_ids
+
+                history = workforce_records(connection, entity_id)
+                verify_history(history, retained_ids=retained_profile_ids(connection, [history]))
+                merged = current_person_metadata(connection, current, history=history)
+            else:
+                merged = self._content(current)
             merged.update(explicit)
             # A metadata revision makes no assertion about the relationship.
             merged.pop("workforce_event", None)
@@ -656,8 +669,11 @@ class Entities:
                 require_entity(connection, identifier, kinds=("person",))
                 current = self._current(connection, identifier, expected_revision)
                 history = workforce_records(connection, identifier)
-                verify_history(history)
-                profile, revision = self._content(current), current["revision"] + 1
+                from .entity_profile_history import current_person_metadata, retained_profile_ids
+
+                verify_history(history, retained_ids=retained_profile_ids(connection, [history]))
+                profile = current_person_metadata(connection, current, history=history)
+                revision = current["revision"] + 1
             metadata = {
                 key: value
                 for key, value in explicit.items()
@@ -710,12 +726,14 @@ class Entities:
             current = self._current(connection, entity_id, expected_revision)
             require_occurred(event["effective_date"])
             history = workforce_records(connection, entity_id)
-            verify_history(history)
+            from .entity_profile_history import current_person_metadata, retained_profile_ids
+
+            verify_history(history, retained_ids=retained_profile_ids(connection, [history]))
             return self._workforce_append(
                 connection,
                 entity_id,
                 current["revision"] + 1,
-                self._content(current),
+                current_person_metadata(connection, current, history=history),
                 history,
                 event,
                 source,
@@ -780,7 +798,11 @@ class Entities:
             connection.execute("BEGIN")
             require_entity(connection, entity_id, kinds=("person",))
             history = workforce_records(connection, entity_id)
-            timeline = verify_history(history)
+            from .entity_profile_history import retained_profile_ids
+
+            timeline = verify_history(
+                history, retained_ids=retained_profile_ids(connection, [history]),
+            )
             if not history:
                 raise KernelError("entity_profile_corrupt", "对象缺少初始档案", entity_id=entity_id)
             revision = history[-1]["revision"]

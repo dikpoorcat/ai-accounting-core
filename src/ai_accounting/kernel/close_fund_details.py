@@ -112,6 +112,33 @@ def require_fund_close_snapshot(value):
     return value
 
 
+def frozen_fund_account_definitions(header, read_section):
+    """Read formal identity only where the authenticated close froze it."""
+    version = header.root["small"]["format_version"]
+    if type(version) is not int:
+        _invalid("unsupported_frozen_fund_metadata_version")
+    if version == 4:
+        # The original contract froze management profiles, not formal fund
+        # definitions. Current definitions cannot become old frozen metadata.
+        return {}
+    if version != 5:
+        _invalid("unsupported_frozen_fund_metadata_version")
+    saved = require_fund_close_snapshot(read_section("fund_details"))
+    from .fund_accounts import IDENTITY_FIELDS, PARENTS
+
+    for definition in saved["definitions"]:
+        account_type = definition.get("account_type")
+        if (not isinstance(account_type, str) or account_type not in IDENTITY_FIELDS
+            or definition["parent_account"] != PARENTS[account_type]
+            or set(definition["identity"]) != set(IDENTITY_FIELDS[account_type])
+            or any(not isinstance(value, str) or not value.strip()
+                   for value in definition["identity"].values())
+            or not isinstance(definition.get("source"), str) or not definition["source"].strip()
+            or not is_sha256_hex(definition.get("evidence_digest"))):
+            _invalid("invalid_frozen_fund_definition")
+    return {item["entity_id"]: item for item in saved["definitions"]}
+
+
 def _sources(connection, manifest):
     from .fund_line_details import snapshot_fund_details
 

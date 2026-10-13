@@ -212,23 +212,29 @@ def _check_facts(engine, connection, identifiers):
     from .entity_references import verify_fact_entity_types
 
     verify_fact_entity_types(connection, facts, registry=engine.store.registry)
-    material_links = [
-        (fact["kind"], link)
-        for fact in facts.values()
+    material_facts = [
+        fact for fact in facts.values()
         if fact["kind"] in {"material_resolution_v2", "material_group_resolution"}
-        for link in fact["data"].get("links", ())
+        and fact["data"].get("links")
     ]
-    if material_links:
+    if material_facts:
         from .materials import resolve_material_links
         from .schema import sequence_model
 
+        # Raw hashes, child order and seals were already checked. Select the
+        # actual stored body for this exact revision, without loading its links
+        # twice or guessing a grammar from payload field names.
+        link_models = {
+            revision["id"]: sequence_model(model.model_fields["links"].annotation)
+            for _, model, _, revisions in engine.store._fact_body_groups(
+                connection, material_facts,
+            )
+            for revision in revisions
+        }
         resolve_material_links(
             connection,
-            (
-                sequence_model(engine.store.registry.models[kind].model_fields["links"].annotation)
-                .model_validate_json(canonical(link))
-                for kind, link in material_links
-            ),
+            (link_models[fact["id"]].model_validate_json(canonical(link))
+             for fact in material_facts for link in fact["data"]["links"]),
             registry=engine.store.registry,
         )
     evidence_ids = set()
@@ -1432,9 +1438,9 @@ def _verify_integrity_snapshot(
         ):
             _invalid("sqlite", "*", "foreign_key_check_failed")
         _check_heads(connection)
-        from .content_history_context import duplicate_reader, journal_reader, material_watch_reader
+        from .content_history_context import duplicate_reader, material_watch_reader
 
-        journal_reader().verify_journal(connection)
+        _verify_source_change_journal(engine, connection)
         source = _check_sources(engine, connection)
         source_reads = None
         source_token = None
@@ -1740,6 +1746,24 @@ def verify_close_integrity(engine, connection, period):
         connection.rollback()
 
 
+def _verify_source_change_journal(engine, connection):
+    from . import change_journal, change_journal_v1
+    from .content_history_context import journal_reader
+    from .development_contracts import SOURCE24_BASELINE_FINGERPRINT, SOURCE24_FINGERPRINT
+
+    reader = journal_reader()
+    source_fingerprint = engine.store.bundle.current("company")["sha256"]
+    if reader is change_journal and source_fingerprint in {
+        SOURCE24_BASELINE_FINGERPRINT, SOURCE24_FINGERPRINT,
+    }:
+        # Both exact package sources share the original complete eight-source
+        # journal SQL. Later metadata events never existed in either format.
+        reader = change_journal_v1
+    elif reader is change_journal:
+        return reader.verify_journal(connection, _source_fingerprint=source_fingerprint)
+    return reader.verify_journal(connection)
+
+
 def _verify_close_integrity_snapshot(engine, connection, period):
     """Reuse verified close bodies only inside this one SQLite read snapshot."""
     from .verified_source_lease import verified_source_lease
@@ -1749,9 +1773,9 @@ def _verify_close_integrity_snapshot(engine, connection, period):
 
 
 def _verify_close_integrity_leased(engine, connection, period):
-    from .content_history_context import duplicate_reader, journal_reader, material_watch_reader
+    from .content_history_context import duplicate_reader, material_watch_reader
 
-    journal_reader().verify_journal(connection)
+    _verify_source_change_journal(engine, connection)
     month = month_type()(period).ordinal if isinstance(period, str) else period
     # Closed voucher heads are immutable; this proves the cumulative amounts
     # without substituting today's facts or calculators for historical results.

@@ -129,9 +129,8 @@ class Display:
         if closed is not None:
             from .close_storage import read_section, verified_header
 
-            snapshot = read_section(
-                connection, verified_header(connection, closed), "management_snapshot"
-            )
+            header = verified_header(connection, closed)
+            snapshot = read_section(connection, header, "management_snapshot")
             identifiers = [item["id"] for item in snapshot.get("profiles", [])]
             rows = connection.execute(
                 "SELECT p.* FROM display_profile_revision p JOIN json_each(?) i ON p.id=i.value "
@@ -155,23 +154,20 @@ class Display:
         if closed is not None:
             profile_ids = [item["id"] for item in snapshot["entity_profiles"]]
         entities = entity_profiles(connection, profile_ids=profile_ids)
-        definitions = {
-            item["entity_id"]: item
-            for item in (
-                read_section(connection, verified_header(connection, closed), "fund_details")[
-                    "definitions"
-                ]
-                if closed is not None
-                else fund_account_definitions(
-                    connection,
-                    [
-                        ident
-                        for ident, item in entities.items()
-                        if item["entity_kind"] == "fund_account"
-                    ],
-                )
+        if closed is not None:
+            from .close_fund_details import frozen_fund_account_definitions
+
+            definitions = frozen_fund_account_definitions(
+                header, lambda name: read_section(connection, header, name),
             )
-        }
+        else:
+            definitions = {
+                item["entity_id"]: item for item in fund_account_definitions(
+                    connection,
+                    [ident for ident, item in entities.items()
+                     if item["entity_kind"] == "fund_account"],
+                )
+            }
         for entity_id, profile in entities.items():
             groups = {
                 "person": ("employee", "counterparty"),

@@ -24,6 +24,41 @@ from scripts.benchmark_stage9_browser import (
 from scripts.benchmark_stage9_switch_company import complete_switch_report
 
 
+@pytest.mark.parametrize("target", [None, "500", "700", "1000"])
+def test_refresh_target_cli_is_strict_and_defaults_to_500(monkeypatch, target):
+    argv = ["benchmark_stage9_browser.py", "--book-report", "unused-report",
+            "--output", "unused-output", "--node", "unused-node",
+            "--playwright-module", "unused-module"]
+    if target is not None:
+        argv += ["--refresh-target-ms", target]
+    monkeypatch.setattr(sys, "argv", argv)
+    captured = []
+
+    def stop_before_preparation(args):
+        captured.append(args.refresh_target_ms)
+        raise RuntimeError("stop before any preparation")
+
+    monkeypatch.setattr(
+        benchmark_stage9_browser, "voucher_tail_diagnostic_options", stop_before_preparation
+    )
+    with pytest.raises(RuntimeError, match="stop before any preparation"):
+        benchmark_stage9_browser.main()
+    assert captured == [int(target) if target is not None else 500]
+
+
+@pytest.mark.parametrize("target", ["600", "800", "0", "invalid"])
+def test_refresh_target_cli_rejects_unapproved_threshold_before_preparation(monkeypatch, target):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["benchmark_stage9_browser.py", "--book-report", "unused-report",
+         "--output", "unused-output", "--node", "unused-node",
+         "--playwright-module", "unused-module", "--refresh-target-ms", target],
+    )
+    with pytest.raises(SystemExit) as caught:
+        benchmark_stage9_browser.main()
+    assert caught.value.code == 2
+
+
 def test_voucher_tail_diagnostic_cannot_enter_formal_or_requalification_modes():
     options = dict(diagnostic_voucher_tail=False, interaction_only=True, layout_only=False,
                    navigation_only=None, instrument=False, qualify_output=None,
@@ -782,7 +817,7 @@ const base = {read_context: {company_id: 'company', as_of: '2017-01-10', read_ve
     system_time_replay: false}};
 const sections = {brief: ['activity', 'open_items'],
   funds: ['accounts', 'movements', 'statements', 'investment_products', 'investment_events'],
-  employees: ['employees', 'labor_sources'], assets: ['assets', 'projects']};
+  employees: ['employees', 'labor_workers'], assets: ['assets', 'projects']};
 for (const [key, names] of Object.entries(sections)) {
   const payload = {...copy(base), schema_version: version('dashboard_' + key),
     data: {collections: Object.fromEntries(names.map(name => [name, collection()]))}};

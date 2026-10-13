@@ -40,6 +40,8 @@ def _selected(source: Path) -> tuple[Path, ...]:
         source / "frontend/package-lock.json",
         source / "frontend/vite.config.ts",
         source / "frontend/local-api-proxy.ts",
+        source / "frontend/scripts/check-contract-samples.mjs",
+        source / "frontend/scripts/generate-dashboard-contracts.mjs",
         source / "frontend/tsconfig.json",
         source / "pyproject.toml",
     )
@@ -55,6 +57,8 @@ def _selected(source: Path) -> tuple[Path, ...]:
         Path("frontend/package-lock.json"),
         Path("frontend/vite.config.ts"),
         Path("frontend/local-api-proxy.ts"),
+        Path("frontend/scripts/check-contract-samples.mjs"),
+        Path("frontend/scripts/generate-dashboard-contracts.mjs"),
         Path("frontend/tsconfig.json"),
     }
     for root in roots:

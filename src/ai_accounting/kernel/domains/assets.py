@@ -925,6 +925,10 @@ def _interest_principal(fact, ctx):
 
 
 def calculate_interest(version: FactVersion, ctx: Context) -> Outcome:
+    if type(version.fact) is not LoanInterest:
+        raise NeedsInformation(
+            "loan_interest_revision", "历史计息结果保持原样；重新核算须明确当前类型化事实",
+        )
     fact: LoanInterest = version.fact
     source, principal = _interest_principal(fact, ctx)
     agreement: LoanAgreement = ctx.one("loan_agreement", f"@{principal.agreement_id}").fact
@@ -1353,6 +1357,7 @@ def _required_loan_work(period, rows):
 
 def register(registry: Registry) -> None:
     from ..asset_batch_models import register as register_asset_batches
+    from ..source24_history import LoanInterestPreReference
 
     for model, evaluator in (
         (AssetAcquisition, calculate_acquisition),
@@ -1365,6 +1370,10 @@ def register(registry: Registry) -> None:
         (LoanDrawdown, calculate_drawdown),
         (LoanInterest, calculate_interest),
     ):
-        registry.register(model, evaluator)
+        registry.register(
+            model, evaluator,
+            historical=((LoanInterestPreReference, "fact_loan_interest_pre_reference"),)
+            if model is LoanInterest else (),
+        )
     registry.register_readiness("assets_and_financing", required_reads, required_work)
     register_asset_batches(registry)

@@ -308,6 +308,36 @@ def declarations_for(kind, model=None, *, registry=None):
     )
 
 
+
+def _declarations_for_data(kind, data, *, registry=None):
+    """Retain exact reference paths of the explicitly stored historical grammar."""
+    declarations = declarations_for(kind, registry=registry)
+    paths = None
+    if kind == "payroll" and "profile_id" in data:
+        paths = "profile_id contribution_policy_id income_tax_policy_id"
+    elif kind == "payroll_plan_v2" and "payroll" in data:
+        paths = ("payroll.profile_id payroll.contribution_policy_id payroll.income_tax_policy_id "
+                 "profile_revision.subject_id contribution_policy_revision.subject_id "
+                 "income_tax_policy_revision.subject_id change_notice_revisions.*.subject_id")
+    elif kind == "loan_interest" and "agreement_id" in data:
+        paths = "drawdown_id agreement_id"
+    elif kind == "material_resolution_v2" and any(
+        "subject_id" in link for link in data.get("links", ())
+    ):
+        paths = ("source_id source_fact_id links.*.subject_id links.*.fact_id "
+                 "links.*.calculation_id duplicate_source_id")
+    if paths is None:
+        return declarations
+    result = [item for item in declarations if item["reference_type"] == "entity"]
+    if kind == "payroll_plan_v2":
+        result.extend(dict(path=path, role="employee", kinds=("person",),
+                           account_type=None, reference_type="entity")
+                      for path in ("employee_id", "payroll.employee_id"))
+    result.extend(dict(path=path, role="business_source", kinds=(),
+                       account_type=None, reference_type="business")
+                  for path in paths.split())
+    return tuple(result)
+
 def references_for(fact, subject_id, *, registry=None):
     data = fact.model_dump(mode="json")
     return references_from_data(fact.kind, data, registry=registry)
@@ -320,7 +350,7 @@ def references_from_data(kind, data, *, registry=None):
         return v1_references(kind, data, registry.reference_declarations)
     return [
         dict(declaration, path=path, entity_id=value)
-        for declaration in declarations_for(kind, registry=registry)
+        for declaration in _declarations_for_data(kind, data, registry=registry)
         for path, value in _at(data, declaration["path"].split("."))
     ]
 
@@ -332,7 +362,7 @@ def _entity_reference_fields(kind, data, *, registry=None):
             if item["reference_type"] == "entity":
                 yield item["path"], item["entity_id"], item["role"]
         return
-    for declaration in declarations_for(kind, registry=registry):
+    for declaration in _declarations_for_data(kind, data, registry=registry):
         if declaration["reference_type"] != "entity":
             continue
         for path, value in _at(data, declaration["path"].split(".")):
@@ -356,7 +386,9 @@ def verify_fact_entity_types(connection, facts, *, registry):
         else:
             expanded = (
                 (declaration, path, entity_id)
-                for declaration in declarations_for(fact["kind"], registry=registry)
+                for declaration in _declarations_for_data(
+                    fact["kind"], fact["data"], registry=registry
+                )
                 if declaration["reference_type"] == "entity"
                 for path, entity_id in _at(fact["data"], declaration["path"].split("."))
             )

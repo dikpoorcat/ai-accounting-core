@@ -222,7 +222,7 @@ FORBIDDEN_PROFILE_FIELDS = {
 }
 
 
-def verify_history(history):
+def verify_history(history, *, retained_ids=frozenset()):
     """Every retained revision must contain metadata and at most one event."""
     from .entities import Entities, PersonProfile
 
@@ -236,6 +236,11 @@ def verify_history(history):
                 "entity_profile_corrupt", "人员档案版本缺失或混入其他人员", profile_id=profile["id"]
             )
         prefix.append(profile)
+        if profile["id"] in retained_ids:
+            from .entity_profile_history import verify_retained_profile
+
+            verify_retained_profile(profile)
+            continue
         if FORBIDDEN_PROFILE_FIELDS.intersection(profile):
             raise KernelError(
                 "entity_profile_corrupt", "人员档案含旧任职基线或派生状态，须使用新用工事件模型",

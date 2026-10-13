@@ -141,15 +141,18 @@ class Records(Mapping):
         rows = self.connection.execute(query, parameters).fetchall()
         definitions = {}
         if self.kind == "fund_account":
+            from .close_fund_details import frozen_fund_account_definitions
             from .fund_accounts import fund_account_definitions
 
-            definitions = {
-                item["entity_id"]: item
-                for item in (
-                    self.snapshot.close.section("fund_details")["definitions"]
-                    if self.frozen else fund_account_definitions(self.connection, missing)
+            definitions = (
+                frozen_fund_account_definitions(
+                    self.snapshot.close.header, self.snapshot.close.section,
                 )
-            }
+                if self.frozen else {
+                    item["entity_id"]: item
+                    for item in fund_account_definitions(self.connection, missing)
+                }
+            )
         if self.frozen:
             self.snapshot.reads.verify_close_references(rows)
         for row in rows:

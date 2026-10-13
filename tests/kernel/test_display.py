@@ -435,7 +435,8 @@ def test_stale_commentary_is_history_and_does_not_block_close(book):
 
 
 def test_commentary_preview_contains_actual_posting_month_amounts_and_business_summary(book):
-    engine, save, publish, _, _ = book
+    engine, save, publish, package, _ = book
+    package([])
     amount = 9007199254740993
     save(
         "expense",

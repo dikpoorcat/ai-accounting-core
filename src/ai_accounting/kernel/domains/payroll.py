@@ -806,6 +806,7 @@ def calculate_labor(version: FactVersion, context: Context) -> Outcome:
 
 
 def register(registry: Registry) -> None:
+    from ..source24_history import PayrollPreRevision
     for model in (PayrollContributionPolicy, PayrollContributionActual):
         registry.register(model)
     registry.register(
@@ -833,7 +834,11 @@ def register(registry: Registry) -> None:
             model,
             evaluator,
             table="fact_" + model.kind + "_confirmed",
-            historical=((historical, "fact_" + model.kind),),
+            historical=(
+                (historical, "fact_" + model.kind),
+                *(((PayrollPreRevision, "fact_payroll_pre_revision"),)
+                  if model.kind == "payroll" else ()),
+            ),
         )
     registry.register(LaborAccrual, calculate_labor_accrual)
     from ..remuneration_tax_basis import register as register_tax_basis

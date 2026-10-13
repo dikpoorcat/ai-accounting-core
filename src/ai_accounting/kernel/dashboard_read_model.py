@@ -12,6 +12,7 @@ import hashlib
 import math
 import re
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from sqlite3 import Connection
 from types import MappingProxyType
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .contracts import KernelError
 from .dashboard_model_dates import ModelDateBasis
+from .dashboard_model_dates_history import HistoricalModelDateBasis
 from .response_contracts import (
     RESPONSE_ADAPTERS,
     DashboardAssetsResponse,
@@ -145,7 +147,9 @@ class ModelRoot(_StrictModel):
     content_version: Positive
     scope: ModelScope
     blocks: tuple[BlockReference, ...]
-    date_basis: ModelDateBasis | None = None
+    date_basis: Annotated[
+        ModelDateBasis | HistoricalModelDateBasis, Field(discriminator="rule")
+    ] | None = None
 
     @model_validator(mode="after")
     def unique_blocks(self):
@@ -155,7 +159,11 @@ class ModelRoot(_StrictModel):
             raise ValueError("historical read model cannot acquire calendar inputs")
         if self.date_basis is not None and self.date_basis.valid_from != self.scope.as_of:
             raise ValueError("calendar inputs belong to another production day")
-        if self.date_basis is not None and self.date_basis.period != self.scope.period:
+        historical_dates = isinstance(self.date_basis, HistoricalModelDateBasis)
+        if historical_dates and self.content_version > 3:
+            raise ValueError("retained calendar inputs belong to the original model contract")
+        if (self.date_basis is not None and not historical_dates
+            and self.date_basis.period != self.scope.period):
             raise ValueError("workforce inputs belong to another business month")
         if len({block.key for block in self.blocks}) != len(self.blocks):
             raise ValueError("duplicate block key")
@@ -210,7 +218,8 @@ class ModelRoot(_StrictModel):
             if roster is None:
                 raise ValueError("calendar inputs need the complete employee directory")
             keys = [key[0] for _, block in roster for key in block.keys]
-            if any(len(key) != 5 for _, block in roster for key in block.keys):
+            key_size = 4 if historical_dates else 5
+            if any(len(key) != key_size for _, block in roster for key in block.keys):
                 raise ValueError("calendar employee directory requires exact period predicates")
             expected = {item.employee_id for item in self.date_basis.employees}
             if set(keys) != expected or len(keys) != len(expected):
@@ -959,6 +968,10 @@ class LoadedModel:
     connection: Connection
     descriptor: ModelDescriptor
     root: ModelRoot
+    _checked_blocks: dict[tuple[str, bool], PageBlock] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+    _checked_block_snapshot: object = field(default=None, init=False, repr=False, compare=False)
     _blocks_by_key: Mapping[str, BlockReference] = field(
         init=False,
         repr=False,
@@ -1026,11 +1039,33 @@ class LoadedModel:
         reference = self._blocks_by_key.get(key)
         if reference is None:
             raise _failure()
-        # Each returned block is hashed on this read; never cache decoded proof.
+        snapshot = self._owned_block_snapshot()
+        if (snapshot is not None and snapshot is self._checked_block_snapshot
+                and (key, native_contract) in self._checked_blocks):
+            # Payloads are mutable consumer data; no caller may change the
+            # successfully checked original later borrowed by this snapshot.
+            return deepcopy(self._checked_blocks[key, native_contract])
+        # Unprotected and writer connections always authenticate physical bytes.
         value = _load_bytes(self.connection, reference.digest)
         return _decode_finite_block_value(
             value, reference, self.root.scope, native_contract=native_contract
         )
+
+    def _owned_block_snapshot(self):
+        from .runtime import _OwnedReadConnection
+
+        if (type(self.connection) is _OwnedReadConnection
+                and self.connection._owned_read_guard is not None
+                and self.connection.in_transaction):
+            return getattr(self.connection, "_dashboard_projection_snapshot", None)
+        return None
+
+    def _remember_checked_blocks(self, checked):
+        """Publish a complete successful batch only in an unchangeable read transaction."""
+        snapshot = self._owned_block_snapshot()
+        if snapshot is not None:
+            self._checked_blocks.update(checked)
+            object.__setattr__(self, "_checked_block_snapshot", snapshot)
 
 
 def supports_native_content(descriptor: ModelDescriptor) -> bool:

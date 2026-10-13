@@ -413,6 +413,8 @@ def main():
         help="serve shipped release assets; dist is an explicit diagnostic build",
     )
     parser.add_argument("--repeats", type=int, default=30)
+    parser.add_argument("--refresh-target-ms", type=int, choices=(1000, 700, 500), default=500,
+                        help="strict default-page hot refresh target; interactions remain 600ms")
     parser.add_argument("--layout-only", action="store_true")
     parser.add_argument("--interaction-only", action="store_true", help="independent selected-region, exact-target, expanded-refresh and all-pages timing; not default-page acceptance")
     parser.add_argument("--diagnostic-voucher-tail", action="store_true", help="instrument only all-voucher interaction (1 warmup, 3 samples); never SLA eligible")
@@ -768,6 +770,7 @@ def main():
             "playwright_module": str(args.playwright_module.resolve()),
             "repeats": args.repeats,
             "warmups": args.warmups,
+            "refresh_target_ms": args.refresh_target_ms,
             "navigation_only": args.navigation_only,
             "layout_only": args.layout_only,
             "interaction_only": args.interaction_only,

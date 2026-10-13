@@ -22,6 +22,7 @@ from .key_membership_filter import (
     decode_keys_filter,
     may_contain,
 )
+from .material_history_sql import material_relation, verify_pre_reference_links
 from .types import canonical, digest
 
 DERIVED_ROOT_NAME = "duplicate"
@@ -223,11 +224,13 @@ class _Authority:
     def resolutions(self, revision_ids):
         missing = set(revision_ids) - self._resolutions.keys()
         if missing and self._has_resolutions:
+            verify_pre_reference_links(self.connection, revision_ids=missing)
             payload = canonical(sorted(missing))
             rows = {
                 row["revision_id"]: row
                 for row in self.connection.execute(
-                    "SELECT r.* FROM json_each(?) ids JOIN fact_material_resolution_v2 r "
+                    f"SELECT r.* FROM json_each(?) ids JOIN "
+                    f"{material_relation(self.connection, 'fact_material_resolution_v2')} r "
                     "ON r.revision_id=ids.value",
                     (payload,),
                 )
@@ -235,7 +238,8 @@ class _Authority:
             linked = defaultdict(list)
             for row in self.connection.execute(
                 "SELECT l.revision_id,linked.fact_id FROM json_each(?) ids "
-                "JOIN fact_material_resolution_v2_links l ON l.revision_id=ids.value "
+                f"JOIN {material_relation(self.connection, 'fact_material_resolution_v2_links')} l "
+                f"ON l.revision_id=ids.value "
                 "JOIN calculation linked ON linked.id=l.calculation_id",
                 (payload,),
             ):
@@ -863,13 +867,21 @@ def _changed_bank_split_subjects(connection, changes, registry):
         }
         # Include historical row links: withdrawal of a current association must
         # not hide the payments whose formerly valid partition was frozen.
+        verify_pre_reference_links(connection, revision_ids=[row[0] for row in connection.execute(
+            "SELECT r.revision_id FROM json_each(?) ids "
+            "JOIN fact_material_period_allocation a ON a.revision_id=ids.value "
+            f"JOIN {material_relation(connection, 'fact_material_resolution_v2')} r "
+            "ON r.source_id=a.source_id", (canonical(sorted(revisions)),),
+        )])
         result.update(
             row[0]
             for row in connection.execute(
                 "SELECT DISTINCT c.subject_id FROM json_each(?) ids "
                 "JOIN fact_material_period_allocation a ON a.revision_id=ids.value "
-                "JOIN fact_material_resolution_v2 r ON r.source_id=a.source_id "
-                "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2')} r ON "
+                f"r.source_id=a.source_id "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2_links')} l ON "
+                f"l.revision_id=r.revision_id "
                 "JOIN calculation c ON c.id=l.calculation_id WHERE c.kind='payment'",
                 (canonical(sorted(revisions)),),
             )
@@ -887,15 +899,25 @@ def _changed_bank_split_subjects(connection, changes, registry):
             for ref in (change.before_ref, change.after_ref)
             if ref is not None
         }
+        verify_pre_reference_links(connection, revision_ids=[row[0] for row in connection.execute(
+            "SELECT r.revision_id FROM json_each(?) ids "
+            "JOIN fact_material_group_resolution g ON g.revision_id=ids.value "
+            "JOIN fact_material_group_resolution_members m ON m.revision_id=g.revision_id "
+            f"JOIN {material_relation(connection, 'fact_material_resolution_v2')} r "
+            "ON r.source_id=g.source_id AND r.location=m.location",
+            (canonical(sorted(revisions)),),
+        )])
         result.update(
             row[0]
             for row in connection.execute(
                 "SELECT DISTINCT c.subject_id FROM json_each(?) ids "
                 "JOIN fact_material_group_resolution g ON g.revision_id=ids.value "
                 "JOIN fact_material_group_resolution_members m ON m.revision_id=g.revision_id "
-                "JOIN fact_material_resolution_v2 r ON r.source_id=g.source_id "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2')} r ON "
+                f"r.source_id=g.source_id "
                 "AND r.location=m.location "
-                "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2_links')} l ON "
+                f"l.revision_id=r.revision_id "
                 "JOIN calculation c ON c.id=l.calculation_id WHERE c.kind='payment'",
                 (canonical(sorted(revisions)),),
             )
@@ -968,11 +990,13 @@ def narrowed_duplicate_candidates(
     dependency_hits = lookup_duplicate_keys(connection, root, dependency_keys, cache=cache)
     after_facts = {change.after_ref for change in fact_changes if change.after_ref is not None}
     if after_facts:
+        verify_pre_reference_links(connection, revision_ids=after_facts)
         changed_subjects.update(
             row[0]
             for row in connection.execute(
                 "SELECT DISTINCT f.subject_id FROM json_each(?) ids "
-                "JOIN fact_material_resolution_v2_links l ON l.revision_id=ids.value "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2_links')} l ON "
+                f"l.revision_id=ids.value "
                 "JOIN calculation linked ON linked.id=l.calculation_id "
                 "JOIN fact_revision f ON f.id=linked.fact_id",
                 (canonical(sorted(after_facts)),),

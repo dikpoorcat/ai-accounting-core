@@ -31,7 +31,7 @@ def production_contract_file_names():
     """
     from types import SimpleNamespace
 
-    from .development_contracts import REMUNERATION_SOURCE_FINGERPRINT
+    from .development_contracts import DEVELOPMENT_SOURCES
     from .schema_bundle import STATUS, VERSION
 
     versions = (0,) if STATUS == "draft" else range(1, VERSION + 1)
@@ -44,7 +44,9 @@ def production_contract_file_names():
                 for kind in ("company", "catalog")
             },
             development_contracts=(
-                {"company": {REMUNERATION_SOURCE_FINGERPRINT: {}}} if STATUS == "draft" else {}
+                {kind: {sha: {} for sha in sources}
+                 for kind, sources in DEVELOPMENT_SOURCES.items()}
+                if STATUS == "draft" else {}
             ),
         )
     )

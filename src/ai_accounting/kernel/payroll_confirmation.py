@@ -252,6 +252,10 @@ def resolve_payroll_confirmation(
 ) -> dict:
     """Resolve one evidenced plan or one evidenced full-roster no-change confirmation."""
 
+    from .source24_history import PayrollPreRevision, resolve_pre_revision_confirmation
+
+    if type(version.fact) is PayrollPreRevision:
+        return resolve_pre_revision_confirmation(version, context)
     fact = version.fact
     scope = _employee_month(fact.employee_id, fact.period)
     plan_scope = "payroll-confirmation:" + version.subject_id

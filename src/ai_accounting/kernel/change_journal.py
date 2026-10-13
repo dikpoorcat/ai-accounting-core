@@ -29,6 +29,124 @@ SOURCES = (
     "commentary",
 )
 VERSIONED_SOURCES = frozenset({"company_note", "display_profile", "entity_profile", "commentary"})
+_ADDED_SOURCES = SOURCES[8:]
+_RETAINED_QUERIES = {
+    "evidence": "SELECT lower(hex(digest)),lower(hex(digest)),NULL FROM evidence",
+    "company_note": "SELECT 'company',id,revision FROM company_note_revision",
+    "display_profile": "SELECT kind||':'||entity_id,id,revision FROM display_profile_revision",
+    "entity_profile": "SELECT entity_id,id,revision FROM entity_profile_revision",
+    "commentary": "SELECT CAST(period AS TEXT),id,revision FROM period_commentary_revision",
+    "close": "SELECT CAST(period AS TEXT),lower(hex(digest)),NULL FROM period_close",
+}
+
+
+def retained_coverage_ddl():
+    """An explicit old-format boundary, never fabricated historical events."""
+    return """
+CREATE TABLE source_change_retained_record(source TEXT NOT NULL
+ CHECK(source IN('evidence','company_note','display_profile','entity_profile',
+ 'commentary','close')),
+ target_id TEXT NOT NULL,after_ref TEXT NOT NULL,revision INTEGER,
+ CHECK((source IN('company_note','display_profile','entity_profile','commentary')
+ AND revision IS NOT NULL AND revision>0)
+ OR (source IN('evidence','close') AND revision IS NULL)),
+ PRIMARY KEY(source,target_id,after_ref)) STRICT;
+CREATE TABLE source_change_retained_boundary(id INTEGER PRIMARY KEY CHECK(id=1),
+ source_fingerprint BLOB NOT NULL CHECK(length(source_fingerprint)=32),
+ through_sequence INTEGER NOT NULL CHECK(through_sequence>=0),
+ retained_history_digest BLOB NOT NULL CHECK(length(retained_history_digest)=32),
+ row_count INTEGER NOT NULL CHECK(row_count>=0),
+ digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT;
+CREATE TRIGGER source_change_retained_record_sealed BEFORE INSERT
+ ON source_change_retained_record WHEN EXISTS(SELECT 1 FROM source_change_retained_boundary)
+ BEGIN SELECT RAISE(ABORT,'retained journal coverage sealed'); END;
+CREATE TRIGGER source_change_retained_boundary_count BEFORE INSERT
+ ON source_change_retained_boundary WHEN NEW.row_count<>(SELECT count(*)
+ FROM source_change_retained_record)
+ BEGIN SELECT RAISE(ABORT,'retained journal coverage count mismatch'); END;
+CREATE TRIGGER source_change_retained_record_update BEFORE UPDATE
+ ON source_change_retained_record BEGIN SELECT RAISE(ABORT,'immutable journal coverage'); END;
+CREATE TRIGGER source_change_retained_record_delete BEFORE DELETE
+ ON source_change_retained_record BEGIN SELECT RAISE(ABORT,'retained journal coverage'); END;
+CREATE TRIGGER source_change_retained_boundary_update BEFORE UPDATE
+ ON source_change_retained_boundary BEGIN SELECT RAISE(ABORT,'immutable journal boundary'); END;
+CREATE TRIGGER source_change_retained_boundary_delete BEFORE DELETE
+ ON source_change_retained_boundary BEGIN SELECT RAISE(ABORT,'retained journal boundary'); END;
+"""
+
+
+def capture_retained_coverage(connection, *, source_fingerprint, retained_history_digest):
+    """Capture only the declared eight-source format, under the migration write lock."""
+    from .development_contracts import SOURCE24_FINGERPRINT
+    from .types import digest
+
+    if not connection.in_transaction or source_fingerprint != SOURCE24_FINGERPRINT:
+        raise KernelError("migration_not_declared", "旧变化记录必须来自明确的锁内结构")
+    rows = sorted(
+        (source, target, reference, revision)
+        for source, query in _RETAINED_QUERIES.items()
+        for target, reference, revision in connection.execute(query)
+    )
+    value = {"source_fingerprint": source_fingerprint, "through_sequence": head(connection),
+             "retained_history_digest": retained_history_digest, "rows": rows}
+    return {**value, "digest": digest(value).hex()}
+
+
+def install_retained_coverage(connection, value):
+    """Seal the exact capture before the real migration receipt and content verification."""
+    from .development_contracts import SOURCE24_FINGERPRINT
+    from .types import digest
+
+    expected = {"source_fingerprint", "through_sequence", "retained_history_digest", "rows",
+                "digest"}
+    if (not connection.in_transaction or set(value) != expected
+            or value["source_fingerprint"] != SOURCE24_FINGERPRINT
+            or digest({key: item for key, item in value.items() if key != "digest"}).hex()
+            != value["digest"]
+            or head(connection) != value["through_sequence"]
+            or connection.execute("SELECT 1 FROM source_change_retained_boundary").fetchone()
+            or connection.execute("SELECT 1 FROM source_change_retained_record").fetchone()):
+        raise KernelError("migration_integrity_failed", "旧变化记录承接与原快照不一致")
+    connection.executemany(
+        "INSERT INTO source_change_retained_record VALUES(?,?,?,?)", value["rows"],
+    )
+    connection.execute(
+        "INSERT INTO source_change_retained_boundary VALUES(1,?,?,?,?,?)",
+        (bytes.fromhex(value["source_fingerprint"]), value["through_sequence"],
+         bytes.fromhex(value["retained_history_digest"]), len(value["rows"]),
+         bytes.fromhex(value["digest"])),
+    )
+
+
+def _retained_coverage(connection):
+    """A migration-bound original set; later records still require actual events."""
+    from .development_contracts import SOURCE24_FINGERPRINT
+    from .types import digest
+
+    boundaries = connection.execute("SELECT * FROM source_change_retained_boundary").fetchall()
+    rows = [tuple(row) for row in connection.execute(
+        "SELECT source,target_id,after_ref,revision FROM source_change_retained_record "
+        "ORDER BY source,target_id,after_ref",
+    )]
+    if not boundaries:
+        if rows:
+            _invalid("journal_retained_boundary_missing")
+        return 0, ()
+    if len(boundaries) != 1:
+        _invalid("journal_retained_boundary_invalid")
+    boundary = boundaries[0]
+    source, through, retained, count, recorded_digest = tuple(boundary)[1:]
+    value = {"source_fingerprint": bytes(source).hex(), "through_sequence": through,
+             "retained_history_digest": bytes(retained).hex(), "rows": rows}
+    if (value["source_fingerprint"] != SOURCE24_FINGERPRINT
+            or type(through) is not int or not 0 <= through <= head(connection)
+            or count != len(rows) or digest(value) != bytes(recorded_digest)
+            or connection.execute(
+                "SELECT count(*) FROM schema_draft_history WHERE source_fingerprint=? "
+                "AND retained_history_digest=?", (source, retained),
+            ).fetchone()[0] != 1):
+        _invalid("journal_retained_boundary_mismatch")
+    return through, rows
 
 
 def _append(source, target, before, after):
@@ -167,7 +285,7 @@ def journal_ddl():
             + " END;",
         )
     )
-    return "\n".join(sql) + "\n"
+    return "\n".join(sql) + "\n" + retained_coverage_ddl()
 
 
 class SourceChange(NamedTuple):
@@ -294,7 +412,7 @@ def first_created_subjects(connection, events, *, _fact_rows=None) -> frozenset[
     return frozenset(result)
 
 
-def verify_journal(connection) -> int:
+def verify_journal(connection, *, _source_fingerprint=None) -> int:
     """Independently compare the complete event history with authoritative tables."""
     events = changes_since(connection, 0)
     heads = {"fact": {}, "calculation": {}}
@@ -302,7 +420,40 @@ def verify_journal(connection) -> int:
     recorded = {source: set() for source in SOURCES}
     versioned_heads = {source: {} for source in VERSIONED_SOURCES}
     versioned_before = {source: {} for source in VERSIONED_SOURCES}
+    from .development_contracts import (
+        REMUNERATION_SOURCE_FINGERPRINT,
+        REMUNERATION_TARGET_FINGERPRINT,
+    )
+
+    # These two exact package sources already record all fourteen event types,
+    # but predate the retained-boundary tables. Current structure never skips it.
+    through, retained_rows = (
+        (0, ()) if _source_fingerprint in {
+            REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT,
+        } else _retained_coverage(connection)
+    )
+    grouped = {}
+    for source, target, reference, revision in retained_rows:
+        if source not in _ADDED_SOURCES or not target or not reference:
+            _invalid("journal_retained_record_invalid")
+        recorded[source].add((target, reference))
+        if source in VERSIONED_SOURCES:
+            if type(revision) is not int or revision < 1:
+                _invalid("journal_retained_record_invalid")
+            grouped.setdefault((source, target), []).append((revision, reference))
+        elif revision is not None:
+            _invalid("journal_retained_record_invalid")
+    for (source, target), versions in grouped.items():
+        prior = None
+        for expected, (revision, reference) in enumerate(sorted(versions), 1):
+            if revision != expected:
+                _invalid("journal_retained_revision_gap")
+            versioned_before[source][target, reference] = prior
+            prior = reference
+        versioned_heads[source][target] = prior
     for event in events:
+        if event.sequence <= through and event.source in _ADDED_SOURCES:
+            _invalid("journal_retained_prefix_invalid")
         if event.source in heads:
             selected = heads[event.source]
             if selected.get(event.target_id) != event.before_ref:

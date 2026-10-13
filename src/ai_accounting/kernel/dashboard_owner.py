@@ -71,19 +71,31 @@ def owner_tasks(snapshot):
         return tasks
     snapshot.reads.verify_fact_versions(identifiers)
     versions = snapshot.reads.fact_versions(identifiers).values()
-    wages, plans, no_change = [], {}, False
+    from .source24_history import PayrollPlanPreRevision, PayrollPreRevision
+
+    wages, plans, original_plans, no_change = [], {}, {}, False
     for version in versions:
         fact = version.fact
         if fact.kind in PAYROLL_KINDS:
             wages.append(version)
         elif fact.kind in PLAN_KINDS:
-            plans.setdefault(fact.payroll_revision.subject_id, []).append(version)
+            if type(fact) is PayrollPlanPreRevision:
+                original_plans.setdefault((fact.employee_id, fact.period), []).append(version)
+            else:
+                plans.setdefault(fact.payroll_revision.subject_id, []).append(version)
         elif fact.kind == NO_CHANGE_KIND:
             no_change = True
     for version in sorted(wages, key=lambda item: item.subject_id):
         fact = version.fact
-        if any(plan.fact.payroll_revision.revision == version.revision
-               for plan in plans.get(version.subject_id, ())) or no_change:
+        current_input = any(plan.fact.payroll_revision.revision == version.revision
+                            for plan in plans.get(version.subject_id, ()))
+        original_input = (
+            type(fact) is PayrollPreRevision
+            and any(plan.fact.payroll == fact for plan in original_plans.get(
+                (fact.employee_id, fact.period), (),
+            ))
+        )
+        if current_input or original_input or no_change:
             # Existence is not validity. Official preparation/calculation checks
             # still decide whether an evidenced confirmation can be adopted.
             continue

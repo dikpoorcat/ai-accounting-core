@@ -56,6 +56,13 @@ def test_material_amount_projection_preserves_exact_json_values():
 
 
 def test_material_head_seek_preserves_unknown_sources_without_scanning_closed_rows():
+    from ai_accounting.kernel.schema_bundle import production_bundle
+
+    registry = production_bundle().registry
+    tables = tuple(table for _, table in registry.fact_bodies("material_resolution_v2"))
+    assert tables == (
+        "fact_material_resolution_v2", "fact_material_resolution_v2_pre_reference",
+    )
     connection = sqlite3.connect(":memory:")
     connection.executescript(
         "CREATE TABLE subject(id TEXT PRIMARY KEY,kind TEXT NOT NULL);"
@@ -63,7 +70,12 @@ def test_material_head_seek_preserves_unknown_sources_without_scanning_closed_ro
         "CREATE TABLE fact_current(subject_id TEXT PRIMARY KEY,fact_id TEXT UNIQUE);"
         "CREATE TABLE fact_material_resolution_v2(revision_id TEXT PRIMARY KEY,source_id TEXT);"
         "CREATE TABLE fact_material_resolution_v2_links(revision_id TEXT,calculation_id TEXT);"
+        "CREATE TABLE fact_material_resolution_v2_pre_reference("
+        "revision_id TEXT PRIMARY KEY,source_id TEXT);"
+        "CREATE TABLE fact_material_resolution_v2_pre_reference_links("
+        "revision_id TEXT,calculation_id TEXT);"
         + materials.MATERIAL_READ_INDEX_DDL["material_resolution_v2"]
+        + materials.MATERIAL_HISTORY_INDEX_DDL
     )
     subjects = [(f"s-{number}", "material_resolution_v2") for number in range(12000)]
     connection.executemany("INSERT INTO subject VALUES(?,?)", subjects)
@@ -71,15 +83,21 @@ def test_material_head_seek_preserves_unknown_sources_without_scanning_closed_ro
         "INSERT INTO fact_current VALUES(?,?)",
         [(subject, f"f-{subject}") for subject, _ in subjects],
     )
-    connection.executemany(
-        "INSERT INTO fact_material_resolution_v2 VALUES(?,?)",
-        [(f"f-s-{number}", f"source-{number//1000}") for number in range(12000)],
-    )
+    for body_number, table in enumerate(tables):
+        connection.executemany(
+            f"INSERT INTO {table} VALUES(?,?)",
+            [(f"f-s-{number}", f"source-{number//1000}")
+             for number in range(body_number, 12000, len(tables))],
+        )
     # The unknown source has no registry row, yet its current resolution must
     # remain visible. Historical revisions and withdrawn heads must not leak in.
-    connection.execute("UPDATE fact_material_resolution_v2 SET source_id='missing-source' "
-                       "WHERE revision_id='f-s-11000'")
-    connection.execute("INSERT INTO fact_material_resolution_v2 VALUES('old','missing-source')")
+    for body_number, table in enumerate(tables):
+        connection.execute(
+            f"UPDATE {table} SET source_id='missing-source' WHERE revision_id=?",
+            (f"f-s-{11000 + body_number}",),
+        )
+        connection.execute(f"INSERT INTO {table} VALUES(?,'missing-source')",
+                           (f"old-{body_number}",))
     connection.execute("DELETE FROM fact_current WHERE subject_id='s-11999'")
     excluded = {f"source-{number}" for number in range(11)}
     ticks = [0]
@@ -90,20 +108,24 @@ def test_material_head_seek_preserves_unknown_sources_without_scanning_closed_ro
 
     connection.set_progress_handler(counted, 100)
     expected = connection.execute(
-        "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
-        "JOIN fact_material_resolution_v2 t ON t.revision_id=c.fact_id "
+        "SELECT c.fact_id,s.id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
+        "JOIN (SELECT * FROM fact_material_resolution_v2 UNION ALL "
+        "SELECT * FROM fact_material_resolution_v2_pre_reference) t ON t.revision_id=c.fact_id "
         "WHERE s.kind=? AND t.source_id NOT IN (SELECT value FROM json_each(?)) "
         "ORDER BY c.subject_id",
         ("material_resolution_v2", canonical(sorted(excluded))),
     ).fetchall()
     previous_work = ticks[0]
     ticks[0] = 0
-    actual = materials._unfrozen_material_heads(connection, "material_resolution_v2", excluded)
+    actual = materials._unfrozen_material_heads(
+        connection, registry, "material_resolution_v2", excluded,
+    )
     connection.set_progress_handler(None, 0)
     assert actual == expected
     assert len(actual) == 999
-    assert ("f-s-11000",) in actual
-    assert ("old",) not in actual
+    assert ("f-s-11000", "s-11000") in actual
+    assert ("f-s-11001", "s-11001") in actual
+    assert not ({"old-0", "old-1", "f-s-11999"} & {row[0] for row in actual})
     assert ticks[0] < previous_work // 4
     connection.close()
 

@@ -358,6 +358,179 @@ def test_current_bank_account_number_uses_only_formal_registered_identity(engine
         )
 
 
+@pytest.mark.parametrize("codec_version", [4, 5])
+def test_frozen_fund_metadata_uses_only_its_declared_close_format(
+    engine, monkeypatch, codec_version,
+):
+    from close_storage_fixture import use_v4_close_manifest
+
+    from ai_accounting.kernel.close_storage import decode_close
+    from ai_accounting.kernel.fund_accounts import require_fund_account
+
+    if codec_version == 4:
+        # Generate the explicit historical contract with the normal close
+        # writer. No immutable saved close is rewritten to satisfy this test.
+        use_v4_close_manifest(monkeypatch)
+    save(engine)
+    publish(engine)
+    original = profile(engine, "fund_account", "bank", display_name="冻结账户名称")
+    profile(engine, "asset", "asset", display_name="冻结资产名称", display_number="原资产号")
+    profile(engine, "employee", "employee", display_name="冻结员工名称",
+            workforce_event={"action": "hire", "effective_date": "2026-01"})
+    with engine.store.connection(read_only=True) as connection:
+        old_account = require_fund_account(connection, "bank")
+    close(engine)
+
+    def frozen_bytes():
+        with engine.store.connection(read_only=True) as connection:
+            return {table: tuple(tuple(row) for row in connection.execute(f"SELECT * FROM {table}"))
+                    for table in ("period_close", "close_storage_directory", "close_storage_block",
+                                  "close_reference")}
+
+    immutable = frozen_bytes()
+    proof = engine.register_evidence(
+        b"synthetic exact account number correction", "text/plain", "correction",
+        request_id="v4-v5-correction-proof",
+    )["digest"]
+    newer = Entities(engine).correct_fund_account_identity(
+        "bank", account_type="bank", data=old_account["identity"] | {"bank_account_number": "222"},
+        expected_identity_digest=old_account["digest"], recording_error_confirmed=True,
+        source="后来明确纠正账号", evidence_digest=proof, request_id="v4-v5-correct-number",
+    )["fund_account"]
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        row = connection.execute("SELECT * FROM period_close").fetchone()
+        manifest = decode_close(connection, row)
+        assert manifest["format_version"] == codec_version
+        assert ("fund_details" in manifest) is (codec_version == 5)
+        if codec_version == 4:
+            from ai_accounting.kernel import close_storage_v1
+            from ai_accounting.kernel.close_fund_details import frozen_fund_account_definitions
+
+            historical_header = close_storage_v1.verified_header(connection, row)
+
+            def forbidden_section(_name):
+                raise AssertionError("The declared v4 reader has no frozen fund section")
+
+            assert frozen_fund_account_definitions(historical_header, forbidden_section) == {}
+        snapshot = detached_snapshot(engine, connection)
+        frozen = snapshot.profiles["fund_account"]["bank"]
+        assert frozen["id"] == original["id"]
+        assert frozen["display_name"] == "冻结账户名称"
+        assert frozen["account_number"] == (
+            None if codec_version == 4 else old_account["identity"]["bank_account_number"]
+        )
+        direct = Display.profiles(connection, "2026-01")
+        assert direct["fund_account"]["bank"] == frozen
+        assert direct["asset"]["asset"]["display_number"] == "原资产号"
+        assert snapshot.profiles["employee"]["employee"]["display_name"] == "冻结员工名称"
+        selected = snapshot.profile("fund_account", "bank")
+        source = selected["field_sources"]["account_number"]
+        if codec_version == 4:
+            assert selected["account_number"] == "222"
+            assert (source["id"], source["basis"]) == (newer["digest"], "current_supplement")
+        else:
+            assert selected["account_number"] == old_account["identity"]["bank_account_number"]
+            assert (source["id"], source["basis"]) == (old_account["digest"], "frozen")
+    assert frozen_bytes() == immutable
+
+
+@pytest.mark.parametrize("damage", [
+    "missing_section", "missing_definitions", "bad_digest", "missing_type", "missing_number",
+    "missing_source", "missing_evidence",
+])
+def test_v5_frozen_fund_metadata_never_defaults_a_damaged_section(engine, monkeypatch, damage):
+    from ai_accounting.kernel.close_fund_details import frozen_fund_account_definitions
+    from ai_accounting.kernel.contracts import KernelError
+
+    save(engine)
+    publish(engine)
+    profile(engine, "fund_account", "bank", display_name="冻结账户名称")
+    close(engine)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        snapshot = detached_snapshot(engine, connection)
+        original = snapshot.close.section
+
+        def damaged(name):
+            import copy
+
+            assert name == "fund_details"
+            if damage == "missing_section":
+                raise KernelError("content_integrity_failed", "missing frozen fund section")
+            value = copy.deepcopy(original(name))
+            if damage == "missing_definitions":
+                del value["definitions"]
+            elif damage == "bad_digest":
+                value["digest"] = "00" * 32
+            else:
+                from ai_accounting.kernel.types import digest
+
+                definition = next(item for item in value["definitions"]
+                                  if item["entity_id"] == "bank")
+                if damage == "missing_number":
+                    del definition["identity"]["bank_account_number"]
+                else:
+                    del definition[{
+                        "missing_type": "account_type", "missing_source": "source",
+                        "missing_evidence": "evidence_digest",
+                    }[damage]]
+                # Authenticate the fixture's changed logical shape so the
+                # reader reaches its explicit field contract, not only digest.
+                value["digest"] = digest({key: item for key, item in value.items()
+                                          if key != "digest"}).hex()
+            return value
+
+        with pytest.raises(KernelError) as error:
+            frozen_fund_account_definitions(snapshot.close.header, damaged)
+        assert error.value.code == "content_integrity_failed"
+        monkeypatch.setattr(snapshot.close, "section", damaged)
+        with pytest.raises(KernelError):
+            snapshot.profiles["fund_account"]["bank"]
+        assert snapshot.profiles["fund_account"].cache == {}
+
+
+@pytest.mark.parametrize("codec_version", [4, 5])
+def test_nonempty_closed_funds_produces_all_default_pages_without_changing_frozen_bytes(
+    bank_book, monkeypatch, codec_version,
+):
+    from close_storage_fixture import use_v4_close_manifest
+    from test_dashboard_bank_source_proof import closed_banks
+
+    from ai_accounting.kernel.dashboard import Dashboard
+    from ai_accounting.kernel.dashboard_async import _produce
+    from ai_accounting.kernel.response_contracts import validate_response
+
+    if codec_version == 4:
+        use_v4_close_manifest(monkeypatch)
+    engine = closed_banks(bank_book)[0]
+
+    def authority():
+        with engine.store.connection(read_only=True) as connection:
+            return {
+                table: tuple(tuple(row) for row in connection.execute(f"SELECT * FROM {table}"))
+                for table in ("state", "fact_revision", "calculation", "period_close",
+                              "close_storage_directory", "close_storage_block", "close_reference")
+            }
+
+    before = authority()
+    native = Dashboard(engine).funds("2026-09", movement_account_selection="first")["data"]
+    assert native["total_fen"] == 1500
+    assert len(native["collections"]["accounts"]["items"]) == 2
+    produced = _produce(engine, "2026-09")
+    assert produced["status"] == "ready"
+    dashboard = Dashboard(engine)
+    for name in ("brief", "funds", "assets", "employees"):
+        options = {"movement_account_selection": "first"} if name == "funds" else {}
+        page = getattr(dashboard, name)("2026-09", **options)
+        validate_response("dashboard_" + name, page)
+        if name == "funds":
+            assert page["data"]["total_fen"] == native["total_fen"]
+            assert page["data"]["collections"]["accounts"] == native["collections"]["accounts"]
+    validate_response("dashboard_quarterly_report", dashboard.quarterly_report(2026, 3))
+    assert authority() == before
+
+
 def test_tax_identity_scope_loads_only_requested_employee_candidates(bank_book, monkeypatch):
     engine, save, _, _ = bank_book
     expected = set()

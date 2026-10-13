@@ -10,6 +10,30 @@ from .migration_contracts import HEADERS, _digest, _object_map
 REMUNERATION_SOURCE_FINGERPRINT = "3ead9f3bcf5ec7507d31f9ef4b36f5aeb24b91251bab184db3a59b77a39ef3a8"
 REMUNERATION_TARGET_FINGERPRINT = "e7fc519628e260724cbd9307cdffef1a05904e76860c985a7b06624633114d58"
 
+SOURCE24_FINGERPRINT = "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
+SOURCE24_BASELINE_FINGERPRINT = "52556e8ec6cbbb81ab9ad9a69bb87897401471dba9c693e7b7ebddd2a5b08bf4"
+HISTORY_PRIOR_FINGERPRINT = "0290c4fcea7c559ed6be6353cf2e68996fcfc2a7bce7f5171c6e91385288b673"
+HISTORY_TARGET_FINGERPRINT = "041fb3c8e4de2cf0bde980a54a061cd66563495c4f06d5f6e6b93978d00dadf8"
+CATALOG_SOURCE24_FINGERPRINT = "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
+CATALOG_PRIOR_FINGERPRINT = "0ec502b9c9ca75f97097da3abb496b779d325e6afc4210577755d52b7b75060e"
+CATALOG_HISTORY_FINGERPRINT = "42f63ac448d8a7f840a39fac8704680877a3e96e26668c197800b7c224bff35c"
+DEVELOPMENT_SOURCES = {
+    "company": (REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT,
+                SOURCE24_FINGERPRINT, SOURCE24_BASELINE_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT),
+    "catalog": (CATALOG_SOURCE24_FINGERPRINT, CATALOG_PRIOR_FINGERPRINT),
+}
+DEVELOPMENT_TRANSITIONS = {
+    "company": ((REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT),
+                (REMUNERATION_TARGET_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
+                (SOURCE24_BASELINE_FINGERPRINT, SOURCE24_FINGERPRINT),
+                (SOURCE24_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
+                (SOURCE24_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT),
+                (REMUNERATION_TARGET_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT),
+                (HISTORY_PRIOR_FINGERPRINT, HISTORY_TARGET_FINGERPRINT)),
+    "catalog": ((CATALOG_SOURCE24_FINGERPRINT, CATALOG_HISTORY_FINGERPRINT),
+                (CATALOG_PRIOR_FINGERPRINT, CATALOG_HISTORY_FINGERPRINT)),
+}
+
 
 def remuneration_source_registry(registry):
     """Decode the source using its original bodies, independent of active input."""
@@ -66,8 +90,8 @@ def validate_draft_contract(value, *, family, application_id, kind="company"):
     return value
 
 
-def load_development_contracts(directory, fingerprints, *, family, application_id):
-    """Read only explicitly declared company snapshots; never discover loose files."""
+def load_development_contracts(directory, fingerprints, *, family, application_id, kind="company"):
+    """Read explicitly declared exact snapshots; never discover loose files."""
     result = {}
     for fingerprint in fingerprints:
         if not isinstance(fingerprint, str) or len(fingerprint) != 64:
@@ -78,11 +102,11 @@ def load_development_contracts(directory, fingerprints, *, family, application_i
             value = json.loads((Path(directory) / (fingerprint + ".json")).read_text("utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ValueError("missing or damaged packaged development source") from exc
-        validate_draft_contract(value, family=family, application_id=application_id)
+        validate_draft_contract(value, family=family, application_id=application_id, kind=kind)
         if value["sha256"] != fingerprint or fingerprint in result:
             raise ValueError("development source identity mismatch")
         result[fingerprint] = value
-    return {"company": result}
+    return {kind: result}
 
 
 def get_contract_sha(bundle, kind, fingerprint):

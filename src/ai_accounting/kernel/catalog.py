@@ -54,6 +54,7 @@ def _archive_snapshot(archive, parent):
 
 def catalog_sql():
     from .security.schema import CATALOG_DDL
+    from .versions import DRAFT_HISTORY_DDL
 
     return (
         """
@@ -81,6 +82,7 @@ CREATE TRIGGER immutable_company_setting_delete BEFORE DELETE ON company_setting
  BEGIN SELECT RAISE(ABORT,'immutable company setting'); END;
 """  # noqa: E501 -- persisted DDL must retain its exact structural fingerprint
         + HISTORY_DDL
+        + DRAFT_HISTORY_DDL
         + META_DDL
         + ";\n".join(CATALOG_DDL)
         + ";\n"

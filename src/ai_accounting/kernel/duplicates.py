@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .contracts import Fact, KernelError, NeedsInformation
+from .material_history_sql import material_relation, verify_pre_reference_links
 from .stored_json import DuplicateStoredKey, loads_unique
 from .types import EvidenceDigest, YearMonth, canonical, digest, sum_fen, validate_evidence_digests
 
@@ -1013,12 +1014,14 @@ def _verify_candidate_materials(connection, candidate: Mapping[str, Any]) -> Non
         resolution = item.get("resolution_fact_id")
         if resolution is None:
             continue
+        verify_pre_reference_links(connection, revision_ids=[resolution])
         fact_id = candidate.get("fact_id")
         if (
             fact_id is None
             or connection.execute(
-                "SELECT 1 FROM fact_material_resolution_v2 r "
-                "JOIN fact_material_resolution_v2_links l ON l.revision_id=r.revision_id "
+                f"SELECT 1 FROM {material_relation(connection, 'fact_material_resolution_v2')} r "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2_links')} l ON "
+                f"l.revision_id=r.revision_id "
                 "JOIN calculation linked ON linked.id=l.calculation_id "
                 "WHERE r.revision_id=? AND r.source_id=? AND r.source_fact_id=? "
                 "AND r.location=? AND linked.fact_id=?",
@@ -1044,13 +1047,18 @@ def _material_locations(connection, fact_ids: Iterable[str]) -> dict[str, list[d
     if not identifiers:
         return result
     payload = canonical(identifiers)
+    verify_pre_reference_links(connection, calculation_ids=[row[0] for row in connection.execute(
+        "SELECT c.id FROM json_each(?) ids CROSS JOIN calculation c ON c.fact_id=ids.value",
+        (payload,),
+    )])
     rows = connection.execute(
         "SELECT linked.fact_id,r.revision_id resolution_fact_id,r.source_id,r.source_fact_id,"
         "r.location,s.evidence_digest "
-        "FROM fact_material_resolution_v2_links l "
+        f"FROM {material_relation(connection, 'fact_material_resolution_v2_links')} l "
         "JOIN calculation linked ON linked.id=l.calculation_id "
         "JOIN fact_current c ON c.fact_id=l.revision_id "
-        "JOIN fact_material_resolution_v2 r ON r.revision_id=c.fact_id "
+        f"JOIN {material_relation(connection, 'fact_material_resolution_v2')} r ON "
+        f"r.revision_id=c.fact_id "
         "JOIN fact_material_source_v2 s ON s.revision_id=r.source_fact_id "
         "WHERE linked.fact_id IN (SELECT value FROM json_each(?)) "
         "AND r.treatment='recognize' ORDER BY linked.fact_id,r.source_id,r.location",
@@ -1128,6 +1136,10 @@ def _strong_location_pair_fact_ids(connection, rows):
     if len(rows) < 2:
         return set()
     scope_ids = canonical([row["id"] for row in rows])
+    verify_pre_reference_links(connection, calculation_ids=[row[0] for row in connection.execute(
+        "SELECT c.id FROM json_each(?) ids CROSS JOIN calculation c ON c.fact_id=ids.value",
+        (scope_ids,),
+    )])
     # Walk only the reassign ancestry of the actual candidate facts. A check
     # on a successor replaces its ancestor's recorded locations, so no older
     # check can affect that branch after the first checked ancestor.
@@ -1175,10 +1187,11 @@ def _strong_location_pair_fact_ids(connection, rows):
             "WHERE d.result_fact_id=i.after_fact_id)),"
             "locations AS ("
             "SELECT scope.fact_id,scope.role,src.evidence_digest evidence_digest,r.location "
-            "FROM fact_material_resolution_v2_links l "
+            f"FROM {material_relation(connection, 'fact_material_resolution_v2_links')} l "
             "CROSS JOIN calculation linked ON linked.id=l.calculation_id "
             "CROSS JOIN fact_current c ON c.fact_id=l.revision_id "
-            "CROSS JOIN fact_material_resolution_v2 r ON r.revision_id=c.fact_id "
+            f"CROSS JOIN {material_relation(connection, 'fact_material_resolution_v2')} r ON "
+            f"r.revision_id=c.fact_id "
             "CROSS JOIN fact_material_source_v2 src ON src.revision_id=r.source_fact_id "
             "CROSS JOIN scoped scope ON scope.fact_id=linked.fact_id "
             "WHERE r.treatment='recognize' UNION ALL "
@@ -1662,9 +1675,11 @@ def _review_pair_identity(connection, proposed, candidate):
             locations[key] = original
             resolution_id = item.get("resolution_fact_id")
             if resolution_id is not None:
+                verify_pre_reference_links(connection, revision_ids=[resolution_id])
                 row = connection.execute(
                     "SELECT r.period,r.treatment,r.amount_fen,r.recognition_period "
-                    "FROM fact_material_resolution_v2 r WHERE r.revision_id=?",
+                    f"FROM {material_relation(connection, 'fact_material_resolution_v2')} r WHERE "
+                    f"r.revision_id=?",
                     (resolution_id,),
                 ).fetchone()
                 if row is None:
@@ -1677,7 +1692,8 @@ def _review_pair_identity(connection, proposed, candidate):
                         "SELECT linked.subject_id,linked.kind fact_kind,"
                         "l.amount_field,l.amount_fen,"
                         "linked.period recognition_period,f.digest AS fact_digest "
-                        "FROM fact_material_resolution_v2_links l "
+                        f"FROM "
+                        f"{material_relation(connection, 'fact_material_resolution_v2_links')} l "
                         "JOIN calculation linked ON linked.id=l.calculation_id "
                         "JOIN fact_revision f ON f.id=linked.fact_id WHERE l.revision_id=? "
                         "ORDER BY linked.subject_id,linked.kind,l.amount_field,l.amount_fen,"
@@ -1782,8 +1798,10 @@ class DuplicateCandidates:
         )
 
         empty = frozenset()
+        verify_pre_reference_links(connection, revision_ids=[resolution_id])
         row = connection.execute(
-            "SELECT r.revision_id FROM fact_material_resolution_v2 r "
+            f"SELECT r.revision_id FROM "
+            f"{material_relation(connection, 'fact_material_resolution_v2')} r "
             "JOIN fact_current h ON h.fact_id=r.revision_id "
             "JOIN fact_current s ON s.subject_id=r.source_id AND s.fact_id=r.source_fact_id "
             "WHERE r.revision_id=? AND r.treatment='recognize'",
@@ -1798,7 +1816,8 @@ class DuplicateCandidates:
             return empty
         # Competing dispositions or a group cannot turn a row into split proof.
         competing = connection.execute(
-            "SELECT r.revision_id FROM fact_material_resolution_v2 r "
+            f"SELECT r.revision_id FROM "
+            f"{material_relation(connection, 'fact_material_resolution_v2')} r "
             "JOIN fact_current h ON h.fact_id=r.revision_id "
             "WHERE r.source_id=? AND r.location=? UNION ALL "
             "SELECT g.revision_id FROM fact_material_group_resolution g "
@@ -2123,11 +2142,21 @@ class DuplicateCandidates:
             }
             <= self.store.registry.models.keys()
         ):
+            resolution_ids = [row[0] for row in connection.execute(
+                "SELECT r.revision_id FROM json_each(?) ids "
+                "CROSS JOIN fact_material_source_v2 s ON s.evidence_digest=ids.value "
+                f"CROSS JOIN {material_relation(connection, 'fact_material_resolution_v2')} r "
+                "ON r.source_fact_id=s.revision_id JOIN fact_current h ON h.fact_id=r.revision_id",
+                (canonical(source_evidence),),
+            )]
+            verify_pre_reference_links(connection, revision_ids=resolution_ids)
             scopes.append(
-                "SELECT linked.fact_id FROM fact_material_resolution_v2_links l "
+                f"SELECT linked.fact_id FROM "
+                f"{material_relation(connection, 'fact_material_resolution_v2_links')} l "
                 "JOIN calculation linked ON linked.id=l.calculation_id "
                 "JOIN fact_current mc ON mc.fact_id=l.revision_id "
-                "JOIN fact_material_resolution_v2 r ON r.revision_id=mc.fact_id "
+                f"JOIN {material_relation(connection, 'fact_material_resolution_v2')} r ON "
+                f"r.revision_id=mc.fact_id "
                 "JOIN fact_material_source_v2 ms ON ms.revision_id=r.source_fact_id "
                 "WHERE ms.evidence_digest IN(SELECT value FROM json_each(?))"
             )

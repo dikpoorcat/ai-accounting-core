@@ -29,6 +29,36 @@ ROOT = Path(__file__).resolve().parents[2]
 resident = resident_fixture
 
 
+def prepare_http_delivery(service, company, payload):
+    """Prepare genuine derived publications before observing the HTTP boundary."""
+    from ai_accounting.kernel.dashboard_async import delivery_state, run_pending
+    from ai_accounting.kernel.maintenance import Maintenance
+
+    command = payload["command"]
+    if command + "_delivery" not in RESPONSE_ADAPTERS:
+        return
+    engine = service.engine(company)
+    if command == "dashboard_quarterly_report":
+        first = payload["quarter"] * 3 - 2
+        months = [f"{payload['year']:04d}-{month:02d}" for month in range(first, first + 3)]
+    else:
+        months = [payload["period"]]
+    with engine.store.connection(read_only=True) as connection:
+        before = tuple(connection.execute("SELECT * FROM state WHERE id=1").fetchone())
+    for month in months:
+        Maintenance(engine).rebuild_dashboard_read_model(
+            month, request_id="response-contract-ready-" + month
+        )
+        for _ in range(len(months)):
+            state = delivery_state(engine, month)
+            if state["state"] == "ready":
+                break
+            run_pending(engine, limit=1)
+        assert delivery_state(engine, month)["state"] == "ready"
+    with engine.store.connection(read_only=True) as connection:
+        assert tuple(connection.execute("SELECT * FROM state WHERE id=1").fetchone()) == before
+
+
 @pytest.fixture(scope="module")
 def samples(tmp_path_factory):
     return native_samples(tmp_path_factory.mktemp("response-contracts"))
@@ -510,6 +540,7 @@ def test_service_and_http_fail_closed_for_bad_reads(resident, monkeypatch):
 def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
     resident, samples, monkeypatch
 ):
+    import ai_accounting.kernel.dashboard_delivery as delivery
     import ai_accounting.kernel.response_contracts as contracts
 
     service, _, _, http, _ = resident
@@ -523,6 +554,7 @@ def test_dashboard_http_dispatch_validates_once_and_keeps_native_money(
         return original(command, value)
 
     monkeypatch.setattr(contracts, "validate_response", counted)
+    monkeypatch.setattr(delivery, "validate_response", counted)
     native = service.dispatch("dashboard_funds", {"company_id": company}, session_token=token)
     assert type(native["schema_version"]) is int
     checked.clear()
@@ -611,6 +643,7 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
     extra,
 ):
     """Observe the common HTTP boundary with current kernel-generated responses."""
+    import ai_accounting.kernel.dashboard_delivery as delivery
     import ai_accounting.kernel.response_contracts as contracts
 
     service, _, _, http, _ = resident
@@ -623,8 +656,11 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
         if sample
         else service.dispatch(command, payload, session_token=token)
     )
+    prepare_http_delivery(service, company, payload | {"command": command})
     original_validate = contracts.validate_response
     adapter_type = type(RESPONSE_ADAPTERS[command])
+    delivery_command = command + "_delivery"
+    wire_command = delivery_command if delivery_command in RESPONSE_ADAPTERS else command
     original_dump = adapter_type.dump_json
     observed = []
 
@@ -639,16 +675,21 @@ def test_every_dashboard_http_route_checks_once_and_rejects_bad_payload(
         return original_validate(actual_command, actual_value)
 
     def encoded(self, *args, **kwargs):
-        if self is RESPONSE_ADAPTERS[command]:
+        if self is RESPONSE_ADAPTERS[wire_command]:
             observed.append(("encode", command))
         return original_dump(self, *args, **kwargs)
 
     monkeypatch.setattr(service, "_dispatch", read)
     monkeypatch.setattr(contracts, "validate_response", checked)
+    monkeypatch.setattr(delivery, "validate_response", checked)
     monkeypatch.setattr(adapter_type, "dump_json", encoded)
     native = service.dispatch(command, payload, session_token=token)
-    assert native == value and observed == [("validate", command)]
-    expected_wire = json.loads(original_dump(RESPONSE_ADAPTERS[command], native))
+    if wire_command == delivery_command:
+        assert native["state"] == "ready" and native["response"] == value
+    else:
+        assert native == value
+    assert observed == [("validate", command)]
+    expected_wire = json.loads(original_dump(RESPONSE_ADAPTERS[wire_command], native))
     observed.clear()
     status, _, _, result = http.request(
         f"/api/dashboard/{action}?{urlencode(payload)}",

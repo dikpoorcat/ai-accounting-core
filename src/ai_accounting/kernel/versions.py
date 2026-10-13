@@ -46,8 +46,6 @@ def verify_draft_history(connection, bundle, kind="company"):
     """Verify declared draft structure ancestry; never scan retained business rows."""
     from .development_contracts import get_contract_sha
 
-    if kind != "company":
-        return
     if bundle.current(kind)["status"] != "draft":
         present = connection.execute(
             "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='schema_draft_history'"
@@ -235,9 +233,8 @@ def _verify_schema(connection, *, bundle, kind, allow_previous):
     history = connection.execute(
         "SELECT version,fingerprint FROM schema_history ORDER BY version"
     ).fetchall()
-    if kind == "company":
-        verify_draft_history(connection, bundle, kind)
-    if status == "draft" and kind == "company":
+    verify_draft_history(connection, bundle, kind)
+    if status == "draft":
         history = []  # Draft ancestry is fingerprint-based, not a released version chain.
     elif not history or history[-1][0] != version or (status == "draft" and len(history) != 1):
         raise KernelError("schema_history_mismatch", "数据库安装历史与当前版本不一致")

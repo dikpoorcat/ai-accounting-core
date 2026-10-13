@@ -9,6 +9,7 @@ from test_dashboard_model_transactions import comparable, raw_read, state
 
 from ai_accounting.kernel import business_queries
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_async import _produce
 from ai_accounting.kernel.dashboard_model_dates import (
     EmployeeDateBasis,
     ModelDateBasis,
@@ -17,7 +18,7 @@ from ai_accounting.kernel.dashboard_model_dates import (
     make_date_basis,
     original_date_states_valid,
 )
-from ai_accounting.kernel.dashboard_model_runtime import model_scope
+from ai_accounting.kernel.dashboard_model_runtime import authenticated_model
 from ai_accounting.kernel.dashboard_read_model import load_model
 from ai_accounting.kernel.maintenance import Maintenance
 
@@ -43,7 +44,9 @@ def basis(employee="person", *, states=("unknown",), possible=None, end="unknown
         (("unknown",), "unknown"),
     ],
 )
-def test_monthly_certificate_uses_confirmed_timeline_states_without_calendar_substitution(states, end):
+def test_monthly_certificate_uses_confirmed_timeline_states_without_calendar_substitution(
+    states, end
+):
     saved = make_date_basis((basis(states=states, end=end),), "2026-02-01", "2026-01")
     for day in ("2026-02-01", "2026-02-15", "2026-03-01"):
         assert employee_states(saved, day) == {"person": end}
@@ -100,10 +103,13 @@ def test_all_five_pages_cross_day_without_writes_or_native_fallback(book, monkey
     expected = {}
     with raw_read():
         for page in ("brief", "funds", "employees", "assets"):
-            expected[page] = comparable(getattr(dashboard, page)("2026-09"))
+            expected[page] = comparable(getattr(dashboard, page)(
+                "2026-09", **({"movement_account_selection": "first"} if page == "funds" else {})
+            ))
         expected["quarterly_report"] = dashboard.quarterly_report(2026, 3)
-    before = state(engine)
     monkeypatch.setattr(business_queries, "_today_china", lambda: "2026-10-11")
+    _produce(engine, "2026-09")
+    before = state(engine)
     from ai_accounting.kernel import dashboard_model_reads
 
     observed = []
@@ -125,9 +131,13 @@ def test_all_five_pages_cross_day_without_writes_or_native_fallback(book, monkey
     monkeypatch.setattr(dashboard_model_reads, "read_page", read)
     monkeypatch.setattr(dashboard_model_reads, "read_quarterly_report", quarter)
     for page in ("brief", "funds", "employees", "assets"):
-        result = comparable(getattr(dashboard, page)("2026-09"))
+        result = comparable(getattr(dashboard, page)(
+            "2026-09", **({"movement_account_selection": "first"} if page == "funds" else {})
+        ))
         assert result["read_context"]["as_of"] == "2026-10-11"
         result["read_context"] = expected[page]["read_context"]
+        assert len(result["snapshot_version"]) == 64
+        result["snapshot_version"] = expected[page]["snapshot_version"]
         # A real reading-day cursor is deliberately rebound, never replayed.
         for collection in result["data"]["collections"].values():
             collection["page"]["next_cursor"] = None
@@ -146,10 +156,12 @@ def test_all_five_pages_cross_day_without_writes_or_native_fallback(book, monkey
 def test_business_epoch_staleness_never_acquires_calendar_only_freshness(book, monkeypatch):
     engine, save, publish, _ = book
     opening(save, publish)
-    with engine.store.connection(read_only=True) as connection:
-        connection.execute("BEGIN")
-        scope = model_scope(engine, connection, "2026-09")
-        assert load_model(connection, scope) is not None
+    _produce(engine, "2026-09")
+    dashboard = Dashboard(engine)
+    with dashboard._snapshot("2026-09") as snapshot:
+        model = authenticated_model(dashboard, snapshot)
+        assert model is not None
+        scope = model.descriptor.scope
         changed = scope.model_copy(
             update={
                 "as_of": "2099-01-01",
@@ -158,7 +170,7 @@ def test_business_epoch_staleness_never_acquires_calendar_only_freshness(book, m
                 ),
             }
         )
-        assert load_model(connection, changed) is None
+        assert load_model(model.connection, changed) is None
 
 
 def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amounts(
@@ -211,6 +223,8 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
     )
     for day in ("2026-10-11", "2026-11-01"):
         monkeypatch.setattr(business_queries, "_today_china", lambda day=day: day)
+        _produce(engine, "2026-09")
+        before = state(engine)
         with raw_read():
             expected = {
                 selection: dashboard.employees("2026-09", employee_filter=selection)
@@ -219,13 +233,21 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
 
         def require_bounded(*args, **kwargs):
             result = original(*args, **kwargs)
-            assert result is not None
+            selection = kwargs.get("filters", {}).get("employee_filter")
+            if selection == "employment_active":
+                assert result is not None  # Current default page has a real model hit.
+            else:
+                assert result is None  # Non-default selections use bounded native readers.
             return result
 
         with monkeypatch.context() as reads:
             reads.setattr(dashboard_model_reads, "read_page", require_bounded)
             for selection in filters:
                 actual = dashboard.employees("2026-09", employee_filter=selection)
+                assert len(actual["snapshot_version"]) == 64
+                # A produced certificate and a raw view have distinct opaque
+                # paging identities; all source context and business fields agree.
+                actual["snapshot_version"] = expected[selection]["snapshot_version"]
                 assert actual == expected[selection]
             all_people = dashboard.employees("2026-09", employee_filter="all")["data"]
         states = {
@@ -236,7 +258,7 @@ def test_real_day_and_month_transitions_keep_bounded_filters_and_complete_amount
         assert states["month-person"] == "departed"
         assert states["unpaid-person"] == "unpaid_leave"
         assert "unknown-person" not in states
-    assert state(engine) == before
+        assert state(engine) == before
 
 
 def test_complete_verification_retains_the_business_month_across_observation_days(
@@ -259,8 +281,19 @@ def test_complete_verification_retains_the_business_month_across_observation_day
         expected_revision=0,
         request_id="profile",
     )
-    before = state(engine)
+    _produce(engine, "2026-09")
     monkeypatch.setattr(business_queries, "_today_china", lambda: "2026-10-12")
+    dashboard = Dashboard(engine)
+    with dashboard._snapshot("2026-09") as snapshot:
+        assert authenticated_model(dashboard, snapshot) is None  # Old reading day is stale.
+    _produce(engine, "2026-09")
+    before = state(engine)
     result = Maintenance(engine).verify_integrity()
-    assert result["coverage"]["dashboard_read_models"]["current_compared"] > 0
+    assert result["status"] == "verified"
+    with dashboard._snapshot("2026-09") as snapshot:
+        model = authenticated_model(dashboard, snapshot)
+        assert model is not None
+        assert model.descriptor.scope.period == "2026-09"
+        assert model.descriptor.scope.as_of == "2026-10-12"
+        model.read_page_block("employees/default/overview/0")
     assert state(engine) == before

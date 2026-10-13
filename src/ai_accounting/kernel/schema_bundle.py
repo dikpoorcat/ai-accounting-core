@@ -118,18 +118,19 @@ def load_bundle(
     draft_transitions = draft_transitions or {}
     if (development_contracts or draft_transitions) and status != "draft":
         raise ValueError("development contracts cannot enter released bundles")
-    if (development_contracts.keys() | draft_transitions.keys()) - {"company"}:
-        raise ValueError("development adjustment is company-only")
-    for sha, item in development_contracts.get("company", {}).items():
-        validate_draft_contract(item, family=family, application_id=application_id)
-        if item["sha256"] != sha:
-            raise ValueError("development contract key mismatch")
-    known = set(development_contracts.get("company", {}))
-    if status == "draft":
-        known.add(loaded["company"][0]["sha256"])
-    for source, target in draft_transitions.get("company", ()):
-        if source == target or source not in known or target not in known:
-            raise ValueError("development transition endpoints not declared")
+    if (development_contracts.keys() | draft_transitions.keys()) - KINDS:
+        raise ValueError("unknown development adjustment kind")
+    for kind in KINDS:
+        for sha, item in development_contracts.get(kind, {}).items():
+            validate_draft_contract(item, family=family, application_id=application_id, kind=kind)
+            if item["sha256"] != sha:
+                raise ValueError("development contract key mismatch")
+        known = set(development_contracts.get(kind, {}))
+        if status == "draft":
+            known.add(loaded[kind][0]["sha256"])
+        for source, target in draft_transitions.get(kind, ()):
+            if source == target or source not in known or target not in known:
+                raise ValueError("development transition endpoints not declared")
     return SchemaBundle(
         registry,
         family,
@@ -205,24 +206,20 @@ def production_bundle():
     )
 
     from .development_contracts import (
-        REMUNERATION_SOURCE_FINGERPRINT,
-        REMUNERATION_TARGET_FINGERPRINT,
+        DEVELOPMENT_SOURCES,
+        DEVELOPMENT_TRANSITIONS,
         load_development_contracts,
     )
 
     directory = Path(__file__).with_name("schema_contracts")
-    development = (
-        load_development_contracts(
-            directory / "development" / "company", (REMUNERATION_SOURCE_FINGERPRINT,),
-            family=FAMILY, application_id=APPLICATION_ID,
-        ) if STATUS == "draft" else {}
-    )
-    # Bind both endpoints to shipped exact SQL contracts, never a database's
-    # own fingerprint declaration.
-    transitions = (
-        {"company": ((REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT),)}
-        if STATUS == "draft" else {}
-    )
+    development = {}
+    if STATUS == "draft":
+        for kind, fingerprints in DEVELOPMENT_SOURCES.items():
+            development.update(load_development_contracts(
+                directory / "development" / kind, fingerprints,
+                family=FAMILY, application_id=APPLICATION_ID, kind=kind,
+            ))
+    transitions = DEVELOPMENT_TRANSITIONS if STATUS == "draft" else {}
 
     return _require_released_company_verifiers(
         load_bundle(

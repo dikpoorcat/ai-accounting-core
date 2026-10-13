@@ -252,17 +252,25 @@ def _derived_structure_digest():
 
 
 @contextmanager
-def _derived_store(engine, *, create=False, generation=None):
+def _derived_store(engine, *, create=False, generation=None, _owned_snapshot=False):
     path = _store_path(engine, generation=generation)
     if not path.exists() and not create:
         raise KernelError("content_integrity_failed", "已发布看板内容库缺失")
     from .permissions import ensure_private_file
 
     ensure_private_file(path, create=create)
+    if create and _owned_snapshot:
+        raise ValueError("a produced content snapshot must be read-only")
     if create:
         connection = sqlite3.connect(path, timeout=30)
     else:
-        connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=30)
+        from .runtime import _OwnedReadConnection
+
+        connection = sqlite3.connect(
+            path.as_uri() + "?mode=ro", uri=True, timeout=30,
+            **({"factory": _OwnedReadConnection, "isolation_level": None}
+               if _owned_snapshot else {}),
+        )
     connection.row_factory = sqlite3.Row
     try:
         connection.execute("PRAGMA foreign_keys=ON")
@@ -299,7 +307,18 @@ def _derived_store(engine, *, create=False, generation=None):
             or identity[0]["structure_digest"] != _derived_structure_digest()
         ):
             raise KernelError("content_integrity_failed", "看板内容库身份或结构不符")
-        yield connection, identity[0]["store_id"]
+        if _owned_snapshot:
+            from .runtime import _install_owned_read_guard, _owned_read_transaction
+
+            _install_owned_read_guard(connection)
+            with _owned_read_transaction(connection):
+                connection._dashboard_projection_snapshot = object()
+                try:
+                    yield connection, identity[0]["store_id"]
+                finally:
+                    connection._dashboard_projection_snapshot = None
+        else:
+            yield connection, identity[0]["store_id"]
     except sqlite3.DatabaseError as exc:
         raise KernelError("content_integrity_failed", "看板内容库损坏") from exc
     finally:
@@ -335,10 +354,21 @@ def _publication(connection, period):
     return row
 
 
-def reset_after_restore(connection, *, reason="restore"):
+def reset_after_restore(connection, *, reason="restore", bundle=None, database_format=None):
     """Explicit restore boundary preserves old proofs while scheduling new derived bytes."""
-    if not supported(connection):
+    from .backup_tasks import restore_declared_tables
+    from .schema_bundle import production_bundle
+
+    tables = restore_declared_tables(bundle or production_bundle(), database_format)
+    required = {
+        "dashboard_projection_reset", "dashboard_projection_publication",
+        "dashboard_projection_current", "dashboard_projection_request",
+    }
+    present = required & tables
+    if not present:
         return
+    if present != required:
+        raise KernelError("backup_schema_unsupported", "恢复清理看板能力的合同不完整")
     connection.execute(
         "INSERT INTO dashboard_projection_reset(sequence,publication_through,reason) "
         "SELECT coalesce((SELECT max(sequence) FROM dashboard_projection_reset),0)+1,"
@@ -354,7 +384,11 @@ def reset_after_restore(connection, *, reason="restore"):
 
 def _anchored_model(engine, publication, derived, store_id):
     from .dashboard_read_model import (
-        LoadedModel, _anchored_descriptor, _load_root, _receipt_row, supports_native_content,
+        LoadedModel,
+        _anchored_descriptor,
+        _load_root,
+        _receipt_row,
+        supports_native_content,
     )
 
     if publication["store_id"] != store_id:
@@ -386,8 +420,18 @@ def _anchored_model(engine, publication, derived, store_id):
     model = LoadedModel(derived, descriptor, root)
     _read_dependencies(derived, publication)
     native = supports_native_content(descriptor)
+    reusable = model._owned_block_snapshot() is not None
+    checked = {}
     for reference in root.blocks:
-        model.read_page_block(reference.key, native_contract=native)
+        block = model.read_page_block(
+            reference.key, native_contract=native,
+        )
+        if reusable:
+            checked[reference.key, native] = block
+    # Only the complete successful batch can be borrowed by this model's later
+    # page consumer. Readiness's independent connections never retain it.
+    if reusable:
+        model._remember_checked_blocks(checked)
     return model
 
 
@@ -401,10 +445,9 @@ def load_for_snapshot(engine, snap):
     from .stored_json import loads_unique
 
     generation = loads_unique(publication["basis"])["projection_generation"]
-    manager = _derived_store(engine, generation=generation)
+    manager = _derived_store(engine, generation=generation, _owned_snapshot=True)
     connection, store_id = manager.__enter__()
     try:
-        connection.execute("BEGIN")
         model = _anchored_model(engine, publication, connection, store_id)
     except BaseException:
         manager.__exit__(None, None, None)
@@ -414,42 +457,49 @@ def load_for_snapshot(engine, snap):
     return model
 
 
+def _delivery_state_in_snapshot(engine, connection, period):
+    """Inspect this source snapshot and sidecar without scheduling or caching a proof."""
+    if not connection.in_transaction:
+        raise ValueError("delivery inspection requires its caller's transaction")
+    if not supported(connection):
+        raise KernelError("schema_migration_required", "当前公司库需要显式前向结构调整")
+    try:
+        publication = _publication(connection, period)
+    except KernelError:
+        return {"state": "failed", "model_version": None, "reason": "corrupt"}
+    request = connection.execute(
+        "SELECT status,error_code FROM dashboard_projection_request WHERE period=?", (period,),
+    ).fetchone()
+    if request and request["status"] == "failed":
+        return {
+            "state": "failed", "model_version": None,
+            "reason": "corrupt" if request["error_code"] == "content_integrity_failed"
+            else "production_failed",
+        }
+    if publication is not None:
+        try:
+            from .stored_json import loads_unique
+
+            generation = loads_unique(publication["basis"])["projection_generation"]
+            with _derived_store(engine, generation=generation) as (derived, store_id):
+                derived.execute("BEGIN")
+                _anchored_model(engine, publication, derived, store_id)
+            if _unchanged(engine, connection, publication, verify_selectors=False):
+                return {"state": "ready", "model_version": publication["id"]}
+        except KernelError as exc:
+            if exc.code == "content_integrity_failed":
+                return {"state": "failed", "model_version": None, "reason": "corrupt"}
+            raise
+    return {"state": "preparing", "model_version": None, "retry_after_ms": 500}
+
+
 def delivery_state(engine, period):
     """Authenticate content before readiness; stale and damaged are distinct."""
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        if not supported(connection):
-            raise KernelError("schema_migration_required", "当前公司库需要显式前向结构调整")
-        try:
-            publication = _publication(connection, period)
-        except KernelError:
-            return {"state": "failed", "model_version": None, "reason": "corrupt"}
-        request = connection.execute(
-            "SELECT status,error_code FROM dashboard_projection_request WHERE period=?",
-            (period,),
-        ).fetchone()
-        if request and request["status"] == "failed":
-            return {
-                "state": "failed",
-                "model_version": None,
-                "reason": "corrupt"
-                if request["error_code"] == "content_integrity_failed"
-                else "production_failed",
-            }
-        if publication is not None:
-            try:
-                from .stored_json import loads_unique
-
-                generation = loads_unique(publication["basis"])["projection_generation"]
-                with _derived_store(engine, generation=generation) as (derived, store_id):
-                    derived.execute("BEGIN")
-                    _anchored_model(engine, publication, derived, store_id)
-                if _unchanged(engine, connection, publication, verify_selectors=False):
-                    return {"state": "ready", "model_version": publication["id"]}
-            except KernelError as exc:
-                if exc.code == "content_integrity_failed":
-                    return {"state": "failed", "model_version": None, "reason": "corrupt"}
-                raise
+        state = _delivery_state_in_snapshot(engine, connection, period)
+        if state["state"] != "preparing":
+            return state
         target = sequence(connection)
     engine._write(
         "projection-request/" + uuid.uuid4().hex,
@@ -462,7 +512,7 @@ def delivery_state(engine, period):
             or {"status": "queued", "period": period}
         ),
     )
-    return {"state": "preparing", "model_version": None, "retry_after_ms": 500}
+    return state
 
 
 def _produce(engine, period, *, worker_id=None):

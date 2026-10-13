@@ -4,6 +4,21 @@
 
 本文记录可复用的合成规模样本、构造来源和后续浏览器测量方式。样本用于隔离性能观察，不代表真实企业账簿，也不构成正式性能验收结果。按用户当前决定，普通规模验收只使用main12／main48／main120（三档50人、每月1,000笔）；independent12／48／120及stress12仅为按需辅助对照／压力诊断，不每轮重复、不作为普通三档固定门禁。历史七样本、资格及有效raw保留，不继承给新源码。本文历史压力样本键为pressure12，对应当前所称stress12。
 
+## 当前原样本批量调整
+
+当前普通验收仅使用下表的main12／main48／main120。用户明确要求在原样本基础上批量调整，不重建。使用`scripts/adjust_stage9_samples.py`的`plan`、`check`、`apply`入口；它只接受这三个固定合成目录，不接受任意资料根。
+
+调整先完整核验来源并保全已核验便携包和目录库，再逐库执行明确的结构与历史正文承接。写锁内比较保全来源，拒绝备份后的变化；原事实、结果、凭证及冻结正文保留，明确的合成管理资料格式转换另存来源。每库执行前检查实际空间预算，失败回执保留已完成步骤，不覆盖既有报告。
+
+建设checkpoint保全原字节、原snapshots和原attestation，仅通过独立调整回执绑定当前真实状态。后续`--qualify-output`仍完整核验当前来源并重建开放月预览；原报告只提供建设维度，旧成绩和旧资格不放行。本轮适配、测试和未验证范围见[当前优化记录](dashboard-performance-targets-20261013.md)。
+
+```powershell
+& '.tmp-kernel-venv/Scripts/python.exe' -I -B -X utf8 'scripts/adjust_stage9_samples.py' `
+  --phase plan --samples main12 main48 main120 --run-id '<新的计划标识>'
+# 已完成小样本验证、代码固定且空间预算通过后，使用新的run-id执行apply。
+# 不调用reseed、rebase或prepare_suite重建原样本。
+```
+
 ## 历史七样本准备结果
 
 本轮构造 ledger 为 `.tmp/stage9-preparation-20261009-recovery2-preparation.json`，状态为 `ready`，七个样本均为 `verified`。实际 Python 进程退出回执为 `.tmp/stage9-preparation-20261009-recovery2-process-exit.json`，退出码为 0。各样本的核验报告按 `.tmp/stage9-preparation-20261009-recovery2-{key}-verified.json` 命名。

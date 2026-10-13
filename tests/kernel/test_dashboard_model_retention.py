@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from test_banking import book as book  # noqa: F401
-from test_banking import opening
+from test_banking import funding, opening
 from test_dashboard_read_model_storage import anchor, assert_corrupt, produce
 from test_dashboard_read_model_storage import database as database  # noqa: F401
 from test_dashboard_read_model_storage import native as native  # noqa: F401
@@ -14,6 +14,7 @@ from test_dashboard_read_model_storage import native as native  # noqa: F401
 from ai_accounting.kernel import dashboard_read_model as storage
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_async import _produce
 from ai_accounting.kernel.dashboard_model_integrity import verify_models
 from ai_accounting.kernel.engine import PROGRAM_VERSION
 from ai_accounting.kernel.maintenance import Maintenance
@@ -227,13 +228,16 @@ def test_content_v1_receipt_remains_immutable_across_v2_forward_production(
     assert storage.authenticate_current_storage(database)
 
 
-def test_two_month_write_checks_current_once_before_and_once_after_publication(book, monkeypatch):
+def test_two_month_async_write_queues_without_inline_model_authentication_or_collection(
+    book, monkeypatch
+):
     engine, save, publish, _ = book
     opening(save, publish)
     opening(save, publish, bank="bank-b", month="2026-08")
     maintenance = Maintenance(engine)
     for period in ("2026-08", "2026-09"):
         maintenance.rebuild_dashboard_read_model(period, request_id="baseline-" + period)
+        _produce(engine, period)
     calls = {"authenticate": 0, "collect": 0}
     actual_authenticate = storage.authenticate_current_storage
     actual_collect = storage.collect_obsolete_blocks
@@ -250,11 +254,29 @@ def test_two_month_write_checks_current_once_before_and_once_after_publication(b
     monkeypatch.setattr(storage, "collect_obsolete_blocks", collect)
     engine.register_evidence(b"later unattached evidence", "text/plain", "later",
                              request_id="two-month-write")
-    assert calls == {"authenticate": 2, "collect": 1}
+    assert calls == {"authenticate": 0, "collect": 0}
+    with engine.store.connection(read_only=True) as connection:
+        pending = dict(connection.execute(
+            "SELECT period,status FROM dashboard_projection_request "
+            "WHERE period IN('2026-08','2026-09')"
+        ))
+    assert pending == {"2026-08": "ready", "2026-09": "ready"}
+    funding(save, publish, subject="later-real-funding", amount=1)
+    assert calls == {"authenticate": 0, "collect": 0}
+    with engine.store.connection(read_only=True) as connection:
+        pending = dict(connection.execute(
+            "SELECT period,status FROM dashboard_projection_request "
+            "WHERE period IN('2026-08','2026-09')"
+        ))
+    assert pending == {"2026-08": "pending", "2026-09": "pending"}
     for period in ("2026-08", "2026-09"):
+        _produce(engine, period)
         dashboard = Dashboard(engine)
         from test_dashboard_model_transactions import raw_read
 
         with raw_read():
             expected = dashboard.funds(period, movement_account_selection="first")
-        assert dashboard.funds(period, movement_account_selection="first") == expected
+        observed = dashboard.funds(period, movement_account_selection="first")
+        assert len(observed["snapshot_version"]) == 64
+        observed["snapshot_version"] = expected["snapshot_version"]
+        assert observed == expected

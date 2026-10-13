@@ -138,8 +138,14 @@ class PayrollNoChange(Fact):
 
 
 def register(registry):
+    from .source24_history import PayrollPlanPreRevision
+
     for model in (PayrollPlan, PayrollChangeNotice, PayrollNoChange):
-        registry.register(model)
+        registry.register(
+            model,
+            historical=((PayrollPlanPreRevision, "fact_payroll_plan_v2_pre_revision"),)
+            if model is PayrollPlan else (),
+        )
 
 
 class PayrollPreparation:
@@ -286,9 +292,17 @@ class PayrollPreparation:
                 issues.append(
                     {"field": "payroll_no_change", "message": "本月存在多个全员无变化确认"}
                 )
-            by_subject = {item.subject_id: item for item in current}
+            from .source24_history import PayrollPlanPreRevision, PayrollPreRevision
+
+            def plan_matches(plan, wage):
+                if type(plan.fact) is PayrollPlanPreRevision:
+                    return (type(wage.fact) is PayrollPreRevision
+                            and plan.fact.payroll == wage.fact)
+                return plan.fact.payroll_revision.subject_id == wage.subject_id
+
             for plan in plans:
-                wage = by_subject.get(plan.fact.payroll_revision.subject_id)
+                wages = [w for w in current if plan_matches(plan, w)]
+                wage = wages[0] if len(wages) == 1 else None
                 if wage is None:
                     issues.append(
                         {
@@ -302,7 +316,7 @@ class PayrollPreparation:
                 planned = [
                     item
                     for item in plans
-                    if item.fact.payroll_revision.subject_id in {w.subject_id for w in saved}
+                    if any(plan_matches(item, wage) for wage in saved)
                 ]
                 if len(saved) > 1 or len(planned) > 1:
                     issues.append(
@@ -315,7 +329,7 @@ class PayrollPreparation:
                     continue
                 if planned:
                     source, version = planned[0], saved[0]
-                    if not isinstance(version.fact, Payroll):
+                    if not isinstance(version.fact, (Payroll, PayrollPreRevision)):
                         issues.append(
                             {
                                 "field": "remuneration_revision",

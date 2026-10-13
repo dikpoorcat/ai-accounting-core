@@ -9,23 +9,55 @@ from ai_accounting.kernel import offline_development_upgrade as development
 from ai_accounting.kernel.backup import verify_file
 from ai_accounting.kernel.contract_files import production_contract_file_names
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.development_contracts import REMUNERATION_SOURCE_FINGERPRINT
+from ai_accounting.kernel.development_contracts import (
+    CATALOG_HISTORY_FINGERPRINT,
+    CATALOG_PRIOR_FINGERPRINT,
+    CATALOG_SOURCE24_FINGERPRINT,
+    HISTORY_PRIOR_FINGERPRINT,
+    HISTORY_TARGET_FINGERPRINT,
+    REMUNERATION_SOURCE_FINGERPRINT,
+    REMUNERATION_TARGET_FINGERPRINT,
+    SOURCE24_BASELINE_FINGERPRINT,
+    SOURCE24_FINGERPRINT,
+)
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import objects, verify_schema
 
 
-def test_production_bundle_declares_only_the_exact_remuneration_source_and_target():
+def test_production_bundle_declares_exact_company_and_catalog_history_paths():
     bundle = production_bundle()
     assert bundle.status == "draft"
-    assert set(bundle.development_contracts["company"]) == {REMUNERATION_SOURCE_FINGERPRINT}
-    assert bundle.draft_transitions["company"] == {
-        (REMUNERATION_SOURCE_FINGERPRINT, bundle.current()["sha256"]),
+    company_sources = {
+        REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT,
+        SOURCE24_BASELINE_FINGERPRINT, SOURCE24_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT,
+    }
+    catalog_sources = {CATALOG_SOURCE24_FINGERPRINT, CATALOG_PRIOR_FINGERPRINT}
+    assert set(bundle.development_contracts) == {"company", "catalog"}
+    assert set(bundle.development_contracts["company"]) == company_sources
+    assert set(bundle.development_contracts["catalog"]) == catalog_sources
+    assert bundle.current("company")["sha256"] == HISTORY_TARGET_FINGERPRINT
+    assert bundle.current("catalog")["sha256"] == CATALOG_HISTORY_FINGERPRINT
+    assert bundle.draft_transitions == {
+        "company": {
+            (REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT),
+            (REMUNERATION_TARGET_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
+            (SOURCE24_BASELINE_FINGERPRINT, SOURCE24_FINGERPRINT),
+            (SOURCE24_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
+            (SOURCE24_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT),
+            (REMUNERATION_TARGET_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT),
+            (HISTORY_PRIOR_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
+        },
+        "catalog": {
+            (CATALOG_SOURCE24_FINGERPRINT, CATALOG_HISTORY_FINGERPRINT),
+            (CATALOG_PRIOR_FINGERPRINT, CATALOG_HISTORY_FINGERPRINT),
+        },
     }
     assert set(production_contract_file_names()) == {
         "company/draft.json", "catalog/draft.json",
-        f"development/company/{REMUNERATION_SOURCE_FINGERPRINT}.json",
+        *(f"development/company/{value}.json" for value in company_sources),
+        *(f"development/catalog/{value}.json" for value in catalog_sources),
     }
 
 

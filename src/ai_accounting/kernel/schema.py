@@ -468,7 +468,7 @@ def _schema_for_models(models, bodies) -> str:
     from .fund_line_details import FUND_LINE_DETAILS_DDL
     from .identity_corrections import IDENTITY_CORRECTION_DDL
     from .material_watch import MATERIAL_WATCH_DDL
-    from .materials import MATERIAL_READ_INDEX_DDL
+    from .materials import MATERIAL_READ_INDEX_DDL, historical_read_index_ddl
     from .period_balance_freeze import BALANCE_FREEZE_DDL
     from .read_indexes import READ_INDEX_DDL
     from .replay_schema import REPLAY_DDL
@@ -507,6 +507,7 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
             sql for kind, sql in DUPLICATE_ACTUAL_INDEX_DDL.items() if kind in registry.models
         )
         + "\n".join(sql for kind, sql in MATERIAL_READ_INDEX_DDL.items() if kind in registry.models)
+        + historical_read_index_ddl(registry)
         + immutable_sql("entity")
         + immutable_sql("entity_profile_revision")
         + immutable_sql("entity_resolution")

@@ -38,9 +38,9 @@ from pydantic import (
 )
 
 from .build import calculator_build_id
-from .runtime_snapshot import pinned_build_id
 from .contracts import Fact, FactVersion, KernelError, NeedsInformation
 from .inspection_cache import InspectionCache
+from .runtime_snapshot import pinned_build_id
 from .storage import Store
 from .types import (
     ActualDate,
@@ -73,6 +73,27 @@ MATERIAL_READ_INDEX_DDL = {
         "material_period_allocation",
     )
 }
+MATERIAL_HISTORY_SOURCE_INDEX_DDL = (
+    "CREATE INDEX material_resolution_pre_reference_source ON "
+    "fact_material_resolution_v2_pre_reference(source_id,revision_id);"
+)
+MATERIAL_HISTORY_INDEX_DDL = (
+    MATERIAL_HISTORY_SOURCE_INDEX_DDL
+    +     "CREATE INDEX material_resolution_pre_reference_link_calculation ON "
+    "fact_material_resolution_v2_pre_reference_links(calculation_id,revision_id);"
+)
+
+
+def historical_read_index_ddl(registry):
+    """Only add the reverse lookup when its exact historical body is registered."""
+    if "material_resolution_v2" in registry.models and any(
+        table == "fact_material_resolution_v2_pre_reference"
+        for _, table in registry.fact_bodies("material_resolution_v2")
+    ):
+        return MATERIAL_HISTORY_INDEX_DDL
+    return ""
+
+
 Category = Literal["transactions", "payroll", "bank", "tax", "assets", "financing"]
 PageLimit = Annotated[int, Field(strict=True, ge=1, le=500)]
 
@@ -388,6 +409,18 @@ def resolve_material_links(connection, links, *, registry, _bindings=None, _read
                 ),
             )
         bindings.update(staged)
+    from .source24_history import MaterialLinkPreReference
+
+    for link in links:
+        if isinstance(link, MaterialLinkPreReference):
+            binding = bindings[link.calculation_id]
+            if (link.subject_id, link.fact_kind, link.fact_id, link.recognition_period) != (
+                binding.fact_version.subject_id, binding.fact_version.fact.kind,
+                binding.fact_version.id, binding.calculation.period,
+            ):
+                raise KernelError(
+                    "content_integrity_failed", "历史资料关联的完整身份与精确计算不一致",
+                )
     return tuple(ResolvedMaterialLink(link, bindings[link.calculation_id]) for link in links)
 
 
@@ -508,8 +541,14 @@ class MaterialGroupResolution(Fact):
 
 
 def register(registry):
+    from .source24_history import MaterialResolutionPreReference
+
     registry.register(MaterialSource)
-    registry.register(MaterialResolution)
+    registry.register(
+        MaterialResolution,
+        historical=((MaterialResolutionPreReference,
+                     "fact_material_resolution_v2_pre_reference"),),
+    )
     registry.register(MaterialPeriodAllocation)
     registry.register(MaterialGroupResolution)
 
@@ -1440,26 +1479,34 @@ def _inspect_passages(raw, spec):
     }
 
 
-def _unfrozen_material_heads(connection, kind, excluded_sources):
-    """Seek source keys in authority, then only their current typed revisions.
+def _unfrozen_material_heads(connection, registry, kind, excluded_sources):
+    """Seek every registered body's source index, then its current typed heads.
 
-    Source keys come from the typed table, including missing or withdrawn
-    sources. Joining only the material-source registry would hide those issues.
+    Each body owns a direct MIN/range query. A MIN over a UNION projection can
+    scan every historical row, even when each underlying source index exists.
     """
     if kind not in MATERIAL_READ_INDEX_DDL:
         raise ValueError("unsupported material source lookup")
-    table = "fact_" + kind
+    declarations, branches, parameters = [], [], [canonical(sorted(excluded_sources))]
+    for number, (_, table) in enumerate(registry.fact_bodies(kind)):
+        source = f"sources_{number}"
+        declarations.append(
+            f"{source}(source_id) AS (SELECT min(source_id) FROM {table} UNION ALL "
+            f"SELECT (SELECT min(source_id) FROM {table} "
+            f"WHERE source_id>{source}.source_id) FROM {source} WHERE source_id IS NOT NULL)"
+        )
+        branches.append(
+            f"SELECT c.fact_id,s.id AS subject_id FROM {source} "
+            f"CROSS JOIN {table} t ON t.source_id={source}.source_id "
+            "CROSS JOIN fact_current c ON c.fact_id=t.revision_id "
+            "CROSS JOIN subject s ON s.id=c.subject_id "
+            f"WHERE s.kind=? AND {source}.source_id NOT IN (SELECT source_id FROM excluded)"
+        )
+        parameters.append(kind)
     return connection.execute(
-        "WITH RECURSIVE sources(source_id) AS ("
-        f"SELECT min(source_id) FROM {table} UNION ALL "
-        f"SELECT (SELECT min(source_id) FROM {table} "
-        "WHERE source_id>sources.source_id) FROM sources WHERE source_id IS NOT NULL) "
-        f"SELECT c.fact_id FROM sources CROSS JOIN {table} t ON t.source_id=sources.source_id "
-        "CROSS JOIN fact_current c ON c.fact_id=t.revision_id "
-        "CROSS JOIN subject s ON s.id=c.subject_id "
-        "WHERE s.kind=? AND sources.source_id NOT IN (SELECT value FROM json_each(?)) "
-        "ORDER BY c.subject_id",
-        (kind, canonical(sorted(excluded_sources))),
+        "WITH RECURSIVE excluded(source_id) AS (SELECT value FROM json_each(?)),"
+        + ",".join(declarations) + " " + " UNION ALL ".join(branches) + " ORDER BY subject_id",
+        parameters,
     ).fetchall()
 
 
@@ -1553,7 +1600,9 @@ class _CompletenessReads:
                 MaterialPeriodAllocation.kind,
             }
             rows = (
-                _unfrozen_material_heads(self.connection, kind, self.excluded_sources)
+                _unfrozen_material_heads(
+                    self.connection, self.registry, kind, self.excluded_sources
+                )
                 if filtered
                 else self.connection.execute(
                     "SELECT c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
@@ -2191,21 +2240,12 @@ def check_completeness_many(
     _allow_frozen_reuse=False,
     _query_reads=None,
     _summary_only=False,
-    _source_ids=None,
-    _inventory_months=None,
-    _evidence_digests=None,
 ) -> dict[int, dict]:
-    """Check review months, optionally starting from exact related original sources.
-
-    A private source scope changes discovery, never row validation. Referenced
-    duplicates and competing uses still expand the complete source closure.
-    """
+    """Evaluate several review months once, including every current closed-period row."""
     review_months = tuple(sorted(set(months)))
     if not review_months:
         return {}
     review_periods = {month: YearMonth.from_ordinal(month) for month in review_months}
-    source_scope = None if _source_ids is None else frozenset(_source_ids)
-    inventory_months = review_months if _inventory_months is None else tuple(_inventory_months)
     if _inspection_cache is not None and _inspection_cache.connection is not connection:
         raise ValueError("material inspection cache belongs to another snapshot connection")
     sql_outcome_batch = (
@@ -2274,12 +2314,10 @@ def check_completeness_many(
         mapped_sources.update(frozen.source_ids)
     unallocated = current_sources.keys() - mapped_sources
     allocation_versions, group_versions, resolution_versions = {}, {}, {}
-    relevant = set(unallocated if source_scope is None else source_scope)
+    relevant = set(unallocated)
     if frozen is not None:
         relevant.update(frozen.source_ids)
     for allocation in all_allocations:
-        if source_scope is not None and allocation.fact.source_id not in source_scope:
-            continue
         if current_sources.get(allocation.fact.source_id) != allocation.fact.source_fact_id:
             continue
         groups = [
@@ -2311,29 +2349,10 @@ def check_completeness_many(
             relevant.add(allocation.fact.source_id)
             allocation_versions[allocation.id] = allocation
     for source in all_sources.values():
-        if source_scope is not None and source.subject_id not in source_scope:
-            continue
         if source.fact.period.ordinal in review_months:
             relevant.add(source.subject_id)
     sources_by_business = {}
-    reverse_duplicates = {}
     for item in (*all_resolutions, *all_groups):
-        # Withdrawal keeps historical dispositions. They are not current
-        # source claims; an active duplicate's missing target is checked later.
-        if item.fact.source_id not in current_sources:
-            continue
-        if isinstance(item.fact, MaterialResolution) and item.fact.duplicate_source_id:
-            reverse_duplicates.setdefault(item.fact.duplicate_source_id, set()).add(
-                item.fact.source_id
-            )
-        if source_scope is None and any(
-            link.recognition_period.ordinal in review_months
-            or closed_through is not None and link.recognition_period.ordinal <= closed_through
-            for link in reads.links(item.fact.links)
-        ):
-            # A source claiming this month's adopted business is relevant even
-            # when its receipt or original attribution wrongly says "future".
-            relevant.add(item.fact.source_id)
         if current_sources.get(item.fact.source_id) != item.fact.source_fact_id:
             continue
         for link in reads.links(item.fact.links):
@@ -2343,7 +2362,7 @@ def check_completeness_many(
         source_id: all_sources[source_id] for source_id in relevant if source_id in all_sources
     }
     by_item, raw_issues, parsed, parsed_items = {}, [], {}, {}
-    for source_id in sorted(unallocated.intersection(relevant)):
+    for source_id in sorted(unallocated):
         raw_issues.append(
             _issue(
                 "material_allocation_required",
@@ -2352,7 +2371,6 @@ def check_completeness_many(
                 _unassigned=True,
             )
         )
-    checked_unallocated = set(unallocated.intersection(relevant))
     inventory_origins, inventory_rows, inventory_items = {}, {}, {}
     for row in connection.execute(
         "WITH current_inventory AS ("
@@ -2360,18 +2378,9 @@ def check_completeness_many(
         "FROM material_revision n WHERE n.period=m.period AND n.category=m.category)) "
         "SELECT c.*,i.evidence_digest item_digest FROM current_inventory c "
         "LEFT JOIN material_item i ON i.inventory_id=c.id WHERE "
-        "(c.period IN (SELECT value FROM json_each(?)) OR (? IS NOT NULL AND c.period<=?)) "
-        "AND (? IS NULL OR (c.category='payroll' "
-        "AND c.period IN (SELECT value FROM json_each(?))) "
-        "OR i.evidence_digest IN (SELECT unhex(value) FROM json_each(?)) "
-        "OR i.evidence_digest IN (SELECT unhex(s.evidence_digest) "
-        "FROM json_each(?) ids JOIN fact_current f ON f.subject_id=ids.value "
-        "JOIN fact_material_source_v2 s ON s.revision_id=f.fact_id)) "
+        "c.period IN (SELECT value FROM json_each(?)) OR (? IS NOT NULL AND c.period<=?) "
         "ORDER BY c.period,c.category,i.evidence_digest",
-        (canonical(review_months), closed_through, closed_through,
-         None if source_scope is None else canonical(sorted(source_scope)),
-         canonical(sorted(inventory_months)), canonical(sorted(_evidence_digests or ())),
-         canonical(sorted(source_scope or ()))),
+        (canonical(review_months), closed_through, closed_through),
     ):
         inventory_rows[row["id"]] = row
         inventory_items.setdefault(row["id"], [])
@@ -2384,10 +2393,7 @@ def check_completeness_many(
         for ident, row in sorted(inventory_rows.items())
     ]
     for row in inventory_rows.values():
-        if row["expected"] > row["received"] and (
-            source_scope is None
-            or row["category"] == "payroll" and row["period"] in inventory_months
-        ):
+        if row["expected"] > row["received"]:
             raw_issues.append(
                 _issue(
                     "material_expected_missing",
@@ -2422,19 +2428,9 @@ def check_completeness_many(
         # proof, even when all its own rows belong to a future review month.
         # Discover once so shared business identities do not expand the queue
         # repeatedly, and retain the complete transitive dependency closure.
-        if source_id not in relevant:
+        if source_id not in relevant and source_id not in unallocated:
             relevant.add(source_id)
-            if source_id in unallocated:
-                by_id[source_id] = all_sources[source_id]
-                if source_id not in checked_unallocated:
-                    checked_unallocated.add(source_id)
-                    raw_issues.append(_issue(
-                        "material_allocation_required",
-                        "原件尚未建立与当前来源一致的归属版本",
-                        source_id=source_id, _unassigned=True,
-                    ))
-            else:
-                queue.append(source_id)
+            queue.append(source_id)
 
     while queue:
         source_id = queue.pop()
@@ -2443,9 +2439,6 @@ def check_completeness_many(
         if source_id in loaded:
             continue
         loaded.add(source_id)
-        if source_scope is not None:
-            for duplicate_source_id in sorted(reverse_duplicates.get(source_id, ())):
-                enqueue(duplicate_source_id)
         if source_id not in by_id:
             source = all_sources.get(source_id)
             if source is None:
@@ -2996,11 +2989,6 @@ def check_completeness_many(
         periods = item_periods.get(source_id, {})
         selected = tuple(locations) or tuple(periods)
         for location in selected:
-            values.update(
-                link.recognition_period.ordinal
-                for version in by_item.get((source_id, location), ())
-                for link in reads.links(version.fact.links)
-            )
             groups = by_group_member.get((source_id, location), ())
             if groups:
                 values.update(
@@ -3112,14 +3100,6 @@ def check_completeness_many(
                     else frozenset()
                 )
                 origins = {value.ordinal for value in shared_periods}
-                # A row claiming a current result is relevant now even if
-                # its original attribution disagrees. Genuine future rows
-                # without a current-period claim keep the normal rule.
-                origins.update(
-                    link.recognition_period.ordinal
-                    for version in by_item.get((source_id, location), ())
-                    for link in reads.links(version.fact.links)
-                )
                 unknown = not groups and allocated_period is None
                 if allocated_period is not None and not groups:
                     origins.add(allocated_period.ordinal)
@@ -3304,7 +3284,7 @@ def check_completeness_many(
         for summary in file_summaries:
             summary["issue_count"] = len(file_diagnostics[summary["source_id"]])
             summary["status"] = "needs_information" if summary["issue_count"] else "complete"
-        for source_id in sorted(unallocated.intersection(by_id)):
+        for source_id in sorted(unallocated):
             file_summaries.append(
                 {
                     "source_id": source_id,

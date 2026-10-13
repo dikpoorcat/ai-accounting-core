@@ -200,13 +200,36 @@ def check_write_allowed(
         )
 
 
-def retire_after_restore(connection: sqlite3.Connection) -> None:
+def restore_declared_tables(bundle, database_format=None):
+    """Capabilities come from the complete trusted contract verified for this copy."""
+    if database_format is None:
+        contract = bundle.current("company")
+    else:
+        contract = bundle.contracts["company"].get(database_format["version"])
+        if contract is None or database_format != {
+            key: contract[key] for key in ("family", "kind", "status", "version")
+        } | {"fingerprint": contract["sha256"]}:
+            raise KernelError("backup_schema_unsupported", "恢复清理格式未绑定已核验的完整合同")
+    return frozenset(item["name"] for item in contract["objects"] if item["type"] == "table")
+
+
+def retire_after_restore(connection: sqlite3.Connection, *, bundle, database_format=None) -> None:
     """End copied delivery work at the restore boundary without rewriting attempts.
 
     A portable snapshot can contain the worker's in-flight job and queued
     snapshot row. That intent belongs to the source database and its private
     path; it must not run again from the restored database.
     """
+    tables = restore_declared_tables(bundle, database_format)
+    if "jobs" not in tables or len({"backup_snapshot", "backup_seal"} & tables) == 1:
+        raise KernelError("backup_schema_unsupported", "恢复清理任务能力的合同不完整")
+    if "backup_snapshot" not in tables:
+        connection.execute(
+            "UPDATE jobs SET status='failed',error_code='restored_backup_task_retired',"
+            "last_error='Backup task retired at portable restore boundary' "
+            "WHERE kind='portable_backup' AND status IN('pending','running')"
+        )
+        return
     now = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
     connection.execute(
         "UPDATE jobs SET status='failed',error_code='restored_backup_task_retired',"

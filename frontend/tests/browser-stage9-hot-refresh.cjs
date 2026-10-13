@@ -659,7 +659,8 @@ function verifyExactInteractionTarget(payload, target, selected, section, identi
 
 const percentile = (sorted, proportion) => sorted[Math.ceil(sorted.length * proportion) - 1];
 function stage9TimingSummary(timings, targetMs, complete = true) {
-  assert(targetMs === 500 || targetMs === 600, "unknown Stage 9 timing target");
+  assert([500, 600, 700, 1000].includes(targetMs), "unknown Stage 9 timing target");
+  if (complete) assert(timings.length > 0 && timings.every(value => Number.isFinite(value) && value >= 0), "invalid completed Stage 9 samples");
   const sorted = complete ? [...timings].sort((a, b) => a - b) : [];
   return {
     target_ms: targetMs,
@@ -669,8 +670,24 @@ function stage9TimingSummary(timings, targetMs, complete = true) {
     over_target_count: timings.filter(value => Number.isFinite(value) && value >= targetMs).length,
     // Preserve the original diagnostic counter for comparison with old reports.
     over_500_ms: timings.filter(value => Number.isFinite(value) && value >= 500).length,
+    over_700_ms: timings.filter(value => Number.isFinite(value) && value >= 700).length,
+    over_1000_ms: timings.filter(value => Number.isFinite(value) && value >= 1000).length,
     ...(targetMs === 600 ? { over_600_ms: timings.filter(value => Number.isFinite(value) && value >= 600).length } : {}),
   };
+}
+function stage9RefreshTarget(config) {
+  const target = config.refresh_target_ms ?? 500;
+  assert([500, 700, 1000].includes(target), "unknown Stage 9 refresh target");
+  return target;
+}
+function stage9RefreshThresholdResults(pages, sampleCount, completed = true) {
+  const values = Object.values(pages);
+  const complete = completed && Number.isInteger(sampleCount) && sampleCount > 0 && values.length > 0 && values.every(page => page.samples?.length === sampleCount
+    && page.samples.every(value => Number.isFinite(value) && value >= 0));
+  return Object.fromEntries([500, 700, 1000].map(target => {
+    const over = values.reduce((count, page) => count + (page.samples ?? []).filter(value => Number.isFinite(value) && value >= target).length, 0);
+    return [target, { target_ms: target, status: complete ? over ? "over_target" : "passed" : "failed", over_target_count: over }];
+  }));
 }
 const sanitize = value => String(value)
   .replace(/https?:\/\/[^\s"']+/g, "[browser URL]")
@@ -1274,10 +1291,58 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
   }
 }
 
+
+// Independent S9 delivery observer. The original qualified harness is preserved.
+// Boundary follows the fixed service dispatch: only main roots without an exact
+// section/snapshot use Delivery; context and on-demand auxiliary reads are native.
+function verifyS9WirePayload(validators, target, wire, selected, quarter) {
+  const action = target.pathname.split('/').at(-1);
+  const suffix = { context: 'Context', brief: 'Brief', funds: 'Funds', employees: 'Employees', assets: 'Assets',
+    'quarterly-report': 'QuarterlyReport', 'brief-group': 'BriefGroup', 'business-status': 'BusinessStatus',
+    'close-review': 'CloseReview' }[action];
+  assert(suffix, `S9 observer: unplanned response ${target.pathname}`);
+  assert.equal(target.searchParams.get('company_id'), selected.id, 'S9 observer: wrong request company');
+  const report = action === 'quarterly-report';
+  const period = report ? `${target.searchParams.get('year')}-Q${target.searchParams.get('quarter')}` : selected.period;
+  if (report) assert.equal(period, quarter, 'S9 observer: wrong requested quarter');
+  else if (action !== 'context') assert.equal(target.searchParams.get('period'), period, 'S9 observer: wrong requested period');
+  const delivery = ['brief', 'funds', 'employees', 'assets', 'quarterly-report'].includes(action)
+    && !target.searchParams.has('section') && !target.searchParams.has('expected_version');
+  let payload = wire;
+  if (delivery) {
+    const validator = validators[`validateDashboard${suffix}DeliveryResponse`];
+    assert(validator && validator(wire), `S9 observer: generated delivery contract rejected ${target.pathname}`);
+    assert.equal(wire.state, 'ready', 'S9 observer: wire is not ready');
+    assert.equal(wire.company_id, selected.id, 'S9 observer: wrong delivery company');
+    assert.equal(wire.period, period, 'S9 observer: wrong delivery period');
+    payload = wire.response;
+    const version = report ? payload.read_context.read_version : payload.snapshot_version;
+    assert(typeof wire.model_version === 'string' && wire.model_version.length, 'S9 observer: missing model version');
+    assert.equal(wire.model_version, version, 'S9 observer: delivery/native model version mismatch');
+  }
+  const validator = validators[`validateDashboard${suffix}Response`];
+  assert(validator && validator(payload), `S9 observer: generated native contract rejected ${target.pathname}`);
+  assert.equal(payload.read_context?.company_id ?? payload.current_company?.company_id ?? payload.company_id,
+    selected.id, 'S9 observer: wrong native company');
+  if (report) assert.equal(`${payload.period.year}-Q${payload.period.quarter}`, period, 'S9 observer: wrong native quarter');
+  else if (action === 'close-review') assert.equal(payload.period, period, 'S9 observer: wrong native close-review period');
+  else if (action !== 'context') assert.equal(payload.selected_period?.key, period, 'S9 observer: wrong native period');
+  if (target.searchParams.has('expected_version')) assert.equal(payload.snapshot_version,
+    target.searchParams.get('expected_version'), 'S9 observer: wrong native snapshot');
+  return payload;
+}
+function recordS9ActualWire(file, reply, wire) {
+  if (!file) return;
+  fs.appendFileSync(file, JSON.stringify({ url: diagnosticUrl(reply.url()), status: reply.status(),
+    wire, observer_sha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(__filename)).digest('hex') }) + '\n');
+}
+
 async function run(config) {
   const voucherTailDiagnostic = voucherTailDiagnosticSelection(config);
   const retainedRefreshOnly = retainedRefreshSelection(config);
-  const generatedValidators = retainedRefreshOnly ? await import("../src/api/generated/dashboardValidators.js") : null;
+  const generatedValidators = await import("../src/api/generated/dashboardValidators.js");
+  const actualWirePath = process.env.STAGE9_DELIVERY_OBSERVER_WIRE_LOG;
+  if (actualWirePath) fs.writeFileSync(actualWirePath, "", { flag: "wx" });
   const retainedPayloads = [];
   const retainedBodies = createRetainedResponseBodies();
   let retainedGeneration = 0, retainedCaptureActive = false;
@@ -1290,6 +1355,7 @@ async function run(config) {
   assert(company.id && company.period && company.state !== "empty");
   const quarter = config.quarter ?? `${company.period.slice(0, 4)}-Q${Math.ceil(Number(company.period.slice(5)) / 3)}`;
   const warmups = config.warmups ?? 3, samples = config.repeats ?? 30;
+  const refreshTargetMs = stage9RefreshTarget(config);
   assert(Number.isInteger(warmups) && warmups >= (config.interaction_only ? 0 : 1));
   assert(Number.isInteger(samples) && samples >= 1);
   const { chromium } = require(config.playwright_module);
@@ -1462,8 +1528,12 @@ async function run(config) {
       return cached;
     }
     assert.equal(reply.status(), 200, `${module.key}: ${target.pathname} failed`);
-    const payload = cached ?? await waitForStage9(() => retainedRefreshOnly && retainedCaptureActive
+    const wire = cached ? null : await waitForStage9(() => retainedRefreshOnly && retainedCaptureActive
       ? retainedBodies.read(reply, retainedGeneration) : reply.json(), `${module.key}: response JSON body`);
+    if (!cached) recordS9ActualWire(actualWirePath, reply, wire);
+    const selectedQuarter = selected.id === company.id ? quarter
+      : `${selected.period.slice(0, 4)}-Q${Math.ceil(Number(selected.period.slice(5)) / 3)}`;
+    const payload = cached ?? verifyS9WirePayload(generatedValidators, target, wire, selected, selectedQuarter);
     if (cached && retainedRefreshOnly) retainedBodies.consumed(reply);
     if (retainedRefreshOnly) {
       verifyRetainedResponseContract(generatedValidators, target, payload);
@@ -3052,7 +3122,7 @@ async function run(config) {
       result[module.key] = {
         samples: timings,
         resource_samples: resourceSamples,
-        ...stage9TimingSummary(timings, 500),
+        ...stage9TimingSummary(timings, refreshTargetMs),
       };
     }
     const switchTarget = config.companies.find(item => item.id !== company.id
@@ -3065,8 +3135,9 @@ async function run(config) {
       : { status: "unavailable", reason: "single_eligible_company" };
     partialNavigation.company_switch = companySwitch;
     assertNoBrowserFailures();
+    const thresholdResults = stage9RefreshThresholdResults(result, samples);
     return {
-      status: Object.keys(result).length > 0 && Object.values(result).every(page => page.samples.length === samples && page.over_target_count === 0) ? "passed" : "over_target", target_ms: 500,
+      status: thresholdResults[refreshTargetMs].status, target_ms: refreshTargetMs, threshold_results: thresholdResults,
       company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
       refresh_attempts: refreshAttempts,
       navigation: { ...navigationBase, cold_open_ms: coldOpen, company_switch: companySwitch },
@@ -3074,6 +3145,8 @@ async function run(config) {
   } catch (error) {
     failureReport = {
       status: "failed", message: sanitize(error?.message || error),
+      ...(!config.interaction_only && !config.navigation_only && !config.layout_only
+        ? { target_ms: refreshTargetMs, threshold_results: stage9RefreshThresholdResults(result, samples, false) } : {}),
       ...(retainedRefreshOnly ? { measurement_scope: "retained_refresh_state", default_page_acceptance: false } : {}),
       company_id: company.id, period: company.period, pages: result,
       interactions: interactionResults, interaction_attempts: interactionAttempts,
@@ -3108,5 +3181,7 @@ if (require.main === module) {
 
 module.exports = { waitForStage9, waitForStage9Frames, selectStage9Option, closeStage9Browser, localReadMatchesSelection, localReplyIsObsolete, verifyLocalActionReplies, interactionReadUrl, interactionReadMultiset, interactionReadPlanReady, verifiedRequestRecord, verifyEmployeeRootRows, verifiedReadCycleReady, resultHasVisibleContent, observeInteraction, verifyExactInteractionTarget, verifySelectedFilter, verifyBriefGroup, obsoleteLocalCancellation, diagnosticUrl, createRequestDiagnostics, waitForLater, recordRefreshAttempt, verifyLocalRead, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyVisibleVoucherRows, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };
 Object.assign(module.exports, { retainedRefreshKeys, retainedRefreshSelection, interactionScopeAllows, verifyRetainedRefreshState, readRetainedRefreshState, verifyRetainedResponseContract, retainedCollectionIdentities, verifyRetainedCollectionIdentities, retainedItemIdentity, verifyRetainedAuxiliaryComplete, verifyRetainedTargetBinding, verifiedFundsDetailCache });
-Object.assign(module.exports, { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, stage9TimingSummary });
+Object.assign(module.exports, { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, stage9TimingSummary, stage9RefreshTarget, stage9RefreshThresholdResults });
 Object.assign(module.exports, { voucherTailDiagnosticSelection });
+
+Object.assign(module.exports, { verifyS9WirePayload, recordS9ActualWire });

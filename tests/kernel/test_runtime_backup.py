@@ -267,7 +267,9 @@ def test_portable_creation_verifies_only_the_packaged_snapshot_content(company, 
         return actual_verifier(connection, active_bundle)
 
     observed = replace(bundle, company_verifiers={**bundle.company_verifiers, version: counted})
-    archive = Path(backup.create_portable(company, tmp_path / "portable", _bundle=observed)["path"])
+    archive = Path(backup.create_portable(
+        company, tmp_path / "portable", request_id="first", _bundle=observed,
+    )["path"])
     assert len(calls) == 1
     assert calls[0] != str(company)
     assert backup.verify_portable(archive, _bundle=observed)["evidence_count"] == 1
@@ -277,7 +279,20 @@ def test_portable_creation_verifies_only_the_packaged_snapshot_content(company, 
     assert len(calls) == 4  # Public standalone backup retains both content checks.
     restored = tmp_path / "restored.sqlite"
     assert backup.restore_portable(archive, restored, _bundle=observed)["evidence_count"] == 1
-    assert len(calls) == 5  # External restore independently checks the archive.
+    assert len(calls) == 6  # Restore checks the original and its task/projection cleanup.
+    replay = backup.create_portable(
+        company, tmp_path / "portable", request_id="first", _bundle=observed,
+    )
+    assert replay["idempotent_replay"] and len(calls) == 8
+    assert calls[-1] == str(company)  # Replay still independently verifies the live source.
+    add_evidence(company, b"later portable invoice")
+    rolled = backup.create_portable(
+        company, tmp_path / "portable", rollover=True, request_id="second", _bundle=observed,
+    )
+    assert rolled["evidence_count"] == 2 and len(calls) == 10
+    previous = archive.with_name(f"{TAXPAYER}.previous.finance-company.zip")
+    assert backup.verify_portable(previous, _bundle=observed)["evidence_count"] == 1
+    assert len(calls) == 11
 
 
 def test_portable_creation_rejects_stable_source_damage_and_corrupt_replay(

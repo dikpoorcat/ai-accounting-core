@@ -26,6 +26,8 @@ def _source(path, *, diagnostic_dist=True):
         "frontend/package-lock.json": "{}\n",
         "frontend/vite.config.ts": "// config\n",
         "frontend/local-api-proxy.ts": "// local service discovery\n",
+        "frontend/scripts/check-contract-samples.mjs": "// fixed sample checker\n",
+        "frontend/scripts/generate-dashboard-contracts.mjs": "// fixed contract generator\n",
         "frontend/tsconfig.json": "{}\n",
         "pyproject.toml": "[project]\nname = 'synthetic'\n",
     }
@@ -38,6 +40,10 @@ def _source(path, *, diagnostic_dist=True):
     ignored = path / "src/ai_accounting/__pycache__/example.pyc"
     ignored.parent.mkdir(parents=True)
     ignored.write_bytes(b"cached")
+    for name in ("frontend/node_modules/example/index.js", "frontend/scripts/check-result.tmp"):
+        item = path / name
+        item.parent.mkdir(parents=True, exist_ok=True)
+        item.write_text("runtime or temporary artifact", encoding="utf-8")
     return path
 
 
@@ -56,6 +62,9 @@ def test_snapshot_records_equal_before_after_and_copied_bytes(tmp_path):
     assert "frontend/tests/browser-stage9-hot-refresh.cjs" in saved["files"]
     assert "frontend/package-lock.json" in saved["files"]
     assert "frontend/local-api-proxy.ts" in saved["files"]
+    assert "frontend/scripts/check-contract-samples.mjs" in saved["files"]
+    assert "frontend/scripts/generate-dashboard-contracts.mjs" in saved["files"]
+    assert not any("node_modules" in name or name.endswith(".tmp") for name in saved["files"])
     assert "frontend/src/App.vue" in saved["files"]
     assert "frontend/src/main.ts" in saved["files"]
     assert "src/ai_accounting/static/dashboard/assets/main.js" in saved["files"]
@@ -65,7 +74,8 @@ def test_snapshot_records_equal_before_after_and_copied_bytes(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "changed_file", ("src/ai_accounting/kernel/example.py", "frontend/src/App.vue")
+    "changed_file", ("src/ai_accounting/kernel/example.py", "frontend/src/App.vue",
+                     "frontend/scripts/check-contract-samples.mjs")
 )
 def test_snapshot_never_publishes_manifest_when_source_changes(tmp_path, monkeypatch, changed_file):
     workspace = tmp_path / "workspace"
@@ -117,3 +127,17 @@ def test_snapshot_without_diagnostic_dist_fixes_frontend_source_and_release(tmp_
     assert "frontend/src/App.vue" in result["files"]
     assert "src/ai_accounting/static/dashboard/index.html" in result["files"]
     assert not (target / "frontend/dist").exists()
+
+
+@pytest.mark.parametrize(
+    "helper", ["check-contract-samples.mjs", "generate-dashboard-contracts.mjs"]
+)
+def test_snapshot_requires_its_contract_helpers(tmp_path, helper):
+    workspace = tmp_path / "workspace"
+    (workspace / ".tmp").mkdir(parents=True)
+    source = _source(tmp_path / "source")
+    (source / "frontend/scripts" / helper).unlink()
+    target = workspace / ".tmp/stage9-missing-helper"
+    with pytest.raises(ValueError, match="missing code"):
+        snapshot_stage9_source.snapshot_source(source, target, workspace=workspace)
+    assert not target.exists()

@@ -3818,9 +3818,34 @@ def _workforce_employee_amounts(snap, aggregates):
     return sums, controlled, ledger, ledger - controlled
 
 
-def _workforce_labor_amounts(snap, payroll_rows, *, with_withholding=False, verify_sources=False):
-    fields = ("gross_fen", "withholding_method") if with_withholding else ("gross_fen",)
-    labor_rows = metric_rows(snap.month_journal.select(kinds=LABOR_KINDS), fields)
+def _labor_withholding_presentations(snap, calculations):
+    from .labor_result_presentation import labor_withholding_presentation
+
+    calculations = tuple(calculations)
+    models = {
+        row["id"]: model
+        for _, model, _, rows in snap.store._fact_body_groups(
+            snap.connection,
+            list({calc["fact_id"]: dict(id=calc["fact_id"], kind=calc["kind"])
+                  for calc in calculations}.values()),
+        )
+        for row in rows
+    }
+    outcomes = snap.reads.verify_selected_content({calc["id"] for calc in calculations})
+    return {
+        calc["id"]: labor_withholding_presentation(
+            outcomes[calc["id"]]["values"], models[calc["fact_id"]],
+            fact_id=calc["fact_id"], subject_id=calc["subject_id"],
+            period=str(YearMonth.from_ordinal(calc["period"]))
+            if type(calc["period"]) is int else calc["period"],
+            content_version=getattr(snap.store.registry, "content_version", None),
+        )
+        for calc in calculations
+    }
+
+
+def _workforce_labor_amounts(snap, payroll_rows, *, verify_sources=False):
+    labor_rows = metric_rows(snap.month_journal.select(kinds=LABOR_KINDS), ("gross_fen",))
     capital_rows = metric_rows(
         snap.month_journal.select(kinds={"labor_project_cost"}), ("capitalized_fen",)
     )
@@ -3852,9 +3877,11 @@ def _brief_workforce_cost(snap):
     aggregates = _workforce_payroll_aggregates(rows, lambda _calc: None, include_details=False)
     sums, controlled, ledger, adjustment = _workforce_employee_amounts(snap, aggregates)
     labor_rows, capital_rows, labor, capitalized = _workforce_labor_amounts(
-        snap, rows, with_withholding=True, verify_sources=True
+        snap, rows, verify_sources=True
     )
-    modes = {row["basis"]["outcome"]["values"]["withholding_method"] for row in labor_rows}
+    modes = {item["withholding_method"] for item in _labor_withholding_presentations(
+        snap, (row["basis"] for row in labor_rows),
+    ).values()}
     employee = {
         "has_activity": bool(rows) or ledger != 0,
         "breakdown_available": adjustment == 0,
@@ -3876,8 +3903,13 @@ def _brief_workforce_cost(snap):
             "has_activity": bool(labor_rows), "breakdown_available": True, "reason": None,
             "total_fen": labor, "gross_remuneration_fen": labor,
             "withholding_note": "本月无个人劳务费用。" if not labor_rows
+            else "部分劳务只计提应付、尚未记录扣缴及申报；其余扣税金额按保存依据确认，"
+            "付款及申报状态分别核对。"
+            if {"not_withheld_not_filed", "confirmed_tax_basis"} <= modes
             else "尚未记录扣缴及申报。" if "not_withheld_not_filed" in modes
             else "已确认按毛额支付、未扣税。" if "gross_paid_without_withholding" in modes
+            else "已按有来源的扣税依据确认金额，付款及申报状态分别核对。"
+            if "confirmed_tax_basis" in modes
             else "已按核算事实确认扣税义务，付款及申报状态分别核对。",
         },
     }
@@ -4492,6 +4524,7 @@ def _employees(
             )
     if displayed_labor:
         _prepare_people_asset_settlements(snap, {calc["subject_id"] for calc in displayed_labor})
+    withholding = _labor_withholding_presentations(snap, displayed_labor)
     for calc in displayed_labor:
         if calc["kind"] not in LABOR_KINDS | {"labor_project_cost"}:
             continue
@@ -4511,12 +4544,7 @@ def _employees(
                 "gross_fen": values["gross_fen"],
                 "net_fen": values["net_fen"],
                 "booked_tax_fen": values["tax_fen"],
-                "withholding_method": values["withholding_method"],
-                "withholding_label": {
-                    "not_withheld_not_filed": "尚未记录扣缴及申报",
-                    "gross_paid_without_withholding": "已按毛额付款、未扣税",
-                    "net_after_withholding": "已确认净额及扣税义务",
-                }[values["withholding_method"]],
+                **withholding[calc["id"]],
                 **_people_asset_settlement(snap, calc),
             }
         )

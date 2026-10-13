@@ -17,6 +17,7 @@ from .change_journal import CONTRACT as JOURNAL_CONTRACT
 from .change_journal import changes_since, first_created_subjects, head, heads_at
 from .close_storage import decode_close, derived_root, verified_header
 from .contracts import KernelError
+from .material_history_sql import material_relation, verify_pre_reference_links
 from .types import YearMonth, canonical, digest
 
 MATERIAL_WATCH_DDL = """
@@ -72,12 +73,14 @@ def _version_rows(connection, identifiers, table):
         _invalid(-1, "version_list_invalid")
     if not identifiers:
         return ()
+    if table == "fact_material_resolution_v2":
+        verify_pre_reference_links(connection, revision_ids=identifiers)
     source_column = "f.subject_id" if table == "fact_material_source_v2" else "t.source_id"
     return tuple(
         connection.execute(
             f"SELECT f.id,f.subject_id,{source_column} FROM json_each(?) ids "
             "JOIN fact_revision f ON f.id=ids.value "
-            f"JOIN {table} t ON t.revision_id=f.id "
+            f"JOIN {material_relation(connection, table)} t ON t.revision_id=f.id "
             "JOIN fact_seal seal ON seal.fact_id=f.id",
             (canonical(identifiers),),
         )
@@ -139,7 +142,8 @@ def _directory(connection, period, manifest, *, historic_heads=None):
                 "SELECT l.revision_id,linked.subject_id,linked.fact_id,l.calculation_id,"
                 "linked.period "
                 "FROM json_each(?) ids "
-                f"CROSS JOIN {table}_links l ON l.revision_id=ids.value "
+                f"CROSS JOIN {material_relation(connection, table + '_links')} l ON "
+                f"l.revision_id=ids.value "
                 "CROSS JOIN calculation linked ON linked.id=l.calculation_id",
                 (canonical(proof[label]),),
             ):
@@ -159,7 +163,8 @@ def _directory(connection, period, manifest, *, historic_heads=None):
         if label == "resolution_versions" and proof[label]:
             for revision_id, duplicate in connection.execute(
                 "SELECT t.revision_id,t.duplicate_source_id FROM json_each(?) ids "
-                "CROSS JOIN fact_material_resolution_v2 t ON t.revision_id=ids.value "
+                f"CROSS JOIN {material_relation(connection, 'fact_material_resolution_v2')} t ON "
+                f"t.revision_id=ids.value "
                 "WHERE t.duplicate_source_id IS NOT NULL",
                 (canonical(proof[label]),),
             ):
@@ -490,6 +495,10 @@ def _change_keys(connection, events, closed_through, *, inspection_cache=None):
                 "material_group_resolution",
             )
         }
+        verify_pre_reference_links(
+            connection,
+            revision_ids=json.loads(references_by_kind["material_resolution_v2"]),
+        )
         matched = set()
         for revision_id, evidence in connection.execute(
             "SELECT t.revision_id,t.evidence_digest FROM json_each(?) ids "
@@ -506,7 +515,7 @@ def _change_keys(connection, events, closed_through, *, inspection_cache=None):
         ):
             for revision_id, source_id in connection.execute(
                 "SELECT t.revision_id,t.source_id FROM json_each(?) ids "
-                f"CROSS JOIN {table} t ON t.revision_id=ids.value",
+                f"CROSS JOIN {material_relation(connection, table)} t ON t.revision_id=ids.value",
                 (references_by_kind[kind],),
             ):
                 matched.add(revision_id)
@@ -519,7 +528,8 @@ def _change_keys(connection, events, closed_through, *, inspection_cache=None):
                 f"business:{row[0]}"
                 for row in connection.execute(
                     "SELECT DISTINCT linked.subject_id FROM json_each(?) ids "
-                    f"CROSS JOIN {table} l ON l.revision_id=ids.value "
+                    f"CROSS JOIN {material_relation(connection, table)} l ON "
+                    f"l.revision_id=ids.value "
                     "CROSS JOIN calculation linked ON linked.id=l.calculation_id",
                     (references_by_kind[kind],),
                 )
@@ -528,7 +538,8 @@ def _change_keys(connection, events, closed_through, *, inspection_cache=None):
             f"business:{row[0]}"
             for row in connection.execute(
                 "SELECT DISTINCT t.duplicate_source_id FROM json_each(?) ids "
-                "CROSS JOIN fact_material_resolution_v2 t ON t.revision_id=ids.value "
+                f"CROSS JOIN {material_relation(connection, 'fact_material_resolution_v2')} t ON "
+                f"t.revision_id=ids.value "
                 "WHERE t.duplicate_source_id IS NOT NULL",
                 (references_by_kind["material_resolution_v2"],),
             )

@@ -33,8 +33,8 @@ class Maintenance:
 
         period = str(YearMonth(period))
         from .dashboard_async import (
+            _delivery_state_in_snapshot,
             _queue,
-            delivery_state,
             reset_after_restore,
             sequence,
             supported,
@@ -42,9 +42,12 @@ class Maintenance:
         with self.store.connection(read_only=True) as connection:
             asynchronous = supported(connection)
         if asynchronous:
-            state = delivery_state(self.engine, period)
-
             def schedule(connection):
+                # Sidecar bytes are repairable display state. Independently
+                # verify the complete company authority before any queue,
+                # reset, revision or audit mutation in this write transaction.
+                verify_integrity(self.engine, connection)
+                state = _delivery_state_in_snapshot(self.engine, connection, period)
                 reset = state["state"] == "failed" and state["reason"] == "corrupt"
                 if reset:
                     reset_after_restore(connection, reason="verified_repair")
