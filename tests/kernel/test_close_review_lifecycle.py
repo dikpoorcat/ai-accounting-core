@@ -34,9 +34,19 @@ def test_owner_review_releases_position_after_success_or_failure(
         from ai_accounting.kernel import position_v1
         from ai_accounting.kernel.close_storage import decode_close
 
-        book[3]("2026-01")
+        current_builder = close_review.build_owner_review
+
+        def previous_presentation(*args, **kwargs):
+            kwargs.setdefault("_presentation_contract", close_review.PRESENTATION_CONTRACT_V1)
+            return current_builder(*args, **kwargs)
+
+        with monkeypatch.context() as previous:
+            previous.setattr(close_review, "build_owner_review", previous_presentation)
+            book[3]("2026-01")
         with engine.store.connection(read_only=True) as connection:
-            row = connection.execute("SELECT * FROM period_close ORDER BY period LIMIT 1").fetchone()
+            row = connection.execute(
+                "SELECT * FROM period_close ORDER BY period LIMIT 1"
+            ).fetchone()
             manifest = decode_close(connection, row)
             expected = manifest["owner_review"]
 
@@ -61,13 +71,17 @@ def test_owner_review_releases_position_after_success_or_failure(
         selected_engine = engine
         module, factory_name, position_name = dashboard, "_Snapshot", "_position"
         builder = close_review.build_owner_review
-    original_factory, original_position = getattr(module, factory_name), getattr(module, position_name)
+    original_factory, original_position = (
+        getattr(module, factory_name),
+        getattr(module, position_name),
+    )
     observed = []
 
-    def capture(*args, **kwargs):
-        view = original_factory(*args, **kwargs)
-        observed.append(weakref.ref(view))
-        return view
+    class ObservedView(original_factory):
+        def __new__(cls, *args, **kwargs):
+            view = object.__new__(cls)
+            observed.append(weakref.ref(view))
+            return view
 
     def position(view):
         assert view.engine is selected_engine and view.connection.in_transaction
@@ -77,7 +91,7 @@ def test_owner_review_releases_position_after_success_or_failure(
             raise RuntimeError("synthetic position failure")
         return result
 
-    monkeypatch.setattr(module, factory_name, capture)
+    monkeypatch.setattr(module, factory_name, ObservedView)
     monkeypatch.setattr(module, position_name, position)
     try:
         with engine.store.connection(read_only=True) as connection:
@@ -99,7 +113,9 @@ def test_owner_review_releases_position_after_success_or_failure(
                 else:
                     result = builder(connection, selected_engine, manifest,
                                      _frozen_followups=expected["followup_summary"])
-                    assert result == expected, "release cannot alter current or frozen review values"
+                    assert result == expected, (
+                        "release cannot alter current or frozen review values"
+                    )
             assert len(observed) == 1
             assert observed[0]() is None, "view cycle must not await a later cyclic GC"
             assert connection.in_transaction, "release must not end the caller's transaction"
@@ -143,7 +159,11 @@ def test_position_constructor_source_failure_does_not_retain_a_read_graph(
     denied_table = "period_close" if historical else "monthly_account"
 
     def deny_source(action, table, *_):
-        return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ and table == denied_table else sqlite3.SQLITE_OK
+        return (
+            sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_READ and table == denied_table
+            else sqlite3.SQLITE_OK
+        )
 
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
@@ -159,7 +179,9 @@ def test_position_constructor_source_failure_does_not_retain_a_read_graph(
         assert len(observed) == 1
         if not historical:
             assert len(helpers) == 1, "a reverse helper exists before the denied source read"
-            assert observed[0]().__dict__ == {}, "even the exception traceback must not retain business sources"
+            assert observed[0]().__dict__ == {}, (
+                "even the exception traceback must not retain business sources"
+            )
             assert helpers[0]() is None, "the helper cycle is broken before traceback disposal"
         del failure
         assert observed[0]() is None, "failed construction must not wait for cyclic GC"

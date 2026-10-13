@@ -12,12 +12,19 @@ from ai_accounting.kernel.types import YearMonth
 
 def use_v4_close_manifest(monkeypatch, *, source_version=None):
     """Generate synthetic historical v4 inputs without broadening production writes."""
-    from ai_accounting.kernel import close_fund_details
+    from ai_accounting.kernel import close_fund_details, close_review
     from ai_accounting.kernel.close_contract_v1 import require_close_contract
     from ai_accounting.kernel.periods import Periods
     from ai_accounting.kernel.types import digest
 
     original = Periods._manifest
+    original_review = close_review.build_owner_review
+
+    def historical_review(*args, **kwargs):
+        # v4 adopts the released v1 display amounts as well as its shape. Build
+        # those semantics explicitly instead of relabeling a current v2 review.
+        kwargs["_presentation_contract"] = close_review.PRESENTATION_CONTRACT_V1
+        return original_review(*args, **kwargs)
 
     def unused_funds(_connection, manifest, *, previous_manifest=None):
         # v4 never adopted this section. Do not make its historical builder
@@ -52,6 +59,7 @@ def use_v4_close_manifest(monkeypatch, *, source_version=None):
         return require_close_contract(manifest)
 
     monkeypatch.setattr(Periods, "_manifest", historical_manifest)
+    monkeypatch.setattr(close_review, "build_owner_review", historical_review)
     monkeypatch.setattr(close_fund_details, "build_fund_close_snapshot", unused_funds)
 
 

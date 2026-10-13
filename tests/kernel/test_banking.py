@@ -7,6 +7,7 @@ import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 from opening_fixture import adopt_empty_opening
+from tax_point_fixture import sourced_tax_data
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
@@ -39,6 +40,8 @@ def book(tmp_path, *, opening_period="2026-09"):
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
+        if kind in {"service_sale", "advance", "advance_fulfillment"}:
+            data = sourced_tax_data(engine, kind, subject, data)
         seed_registration_entities(engine, kind, data)
         return engine.save_fact(
             kind,

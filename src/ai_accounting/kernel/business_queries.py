@@ -22,7 +22,7 @@ from .query_semantics import (
     resolve_calculation_relations,
 )
 from .stored_json import verify_outcome_bytes
-from .types import ActualDate, YearMonth, digest, is_sha256_hex
+from .types import ActualDate, YearMonth, digest, is_sha256_hex, sum_fen
 from .workflow import (
     NON_ACCOUNTING_CALCULATIONS,
     Workflow,
@@ -74,6 +74,7 @@ BUSINESS_AMOUNT_SPEC = {
     "money_fund_subscription": ("cost_fen", "申购确认成本"),
     "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
     "income_tax_assessment": ("change_fen", "本期所得税确认额"),
+    "tax_assessment": ("payable_vat_fen", "增值税及附加税费合计"),
     "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
     "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
     "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
@@ -88,6 +89,11 @@ def business_amount_field(kind):
     return BUSINESS_AMOUNT_SPEC.get(kind, ("amount_fen", "业务确认金额"))[0]
 
 
+def business_amount_fields(kind):
+    fields = (business_amount_field(kind),)
+    return (*fields, "surtax_fen") if kind == "tax_assessment" else fields
+
+
 def business_display_amount(calculation):
     """Return the explicit owner-facing amount for one exact calculation version."""
 
@@ -95,7 +101,10 @@ def business_display_amount(calculation):
     values = calculation["outcome"]["values"]
     field, label = BUSINESS_AMOUNT_SPEC.get(calculation["kind"], ("amount_fen", "业务确认金额"))
     amount = values.get(field, data.get(field))
-    if calculation["kind"] == "employee_advance":
+    if calculation["kind"] == "tax_assessment":
+        amounts = [values.get(name) for name in business_amount_fields(calculation["kind"])]
+        amount = sum_fen(amounts) if all(type(value) is int for value in amounts) else None
+    elif calculation["kind"] == "employee_advance":
         obligations = values.get("obligations", ())
         amount = obligations[0]["amount_fen"] if len(obligations) == 1 else None
         label = "代付转债确认额"

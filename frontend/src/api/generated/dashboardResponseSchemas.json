@@ -1,4 +1,823 @@
 {
+  "tax_filing_data": {
+    "$defs": {
+      "CalculationTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "calculation_id"
+        ],
+        "title": "CalculationTarget",
+        "type": "object"
+      },
+      "DuplicateSignal": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "same_exact_material_location",
+              "same_complete_signature_and_evidence",
+              "same_complete_actual_money",
+              "same_complete_signature",
+              "shared_evidence",
+              "same_material_location_different_signature",
+              "same_actual_money_coordinates"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "matched_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Fields",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "source_locations": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSourceLocation"
+            },
+            "title": "Source Locations",
+            "type": "array"
+          },
+          "distinct_locations_proven": {
+            "title": "Distinct Locations Proven",
+            "type": "boolean"
+          },
+          "complete_bank_split_proven": {
+            "title": "Complete Bank Split Proven",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "matched_fields"
+        ],
+        "title": "DuplicateSignal",
+        "type": "object"
+      },
+      "DuplicateSourceLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_digest",
+          "location"
+        ],
+        "title": "DuplicateSourceLocation",
+        "type": "object"
+      },
+      "IssueCandidateResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Candidates",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "IssueCandidateResolution",
+        "type": "object"
+      },
+      "IssueCommandResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "enum": [
+              "save_fact",
+              "amend_fact",
+              "find_facts",
+              "prepare_fact_registration",
+              "receive_material",
+              "resolve_material",
+              "resolve_material_group",
+              "register_entity",
+              "update_entity_profile",
+              "inspect_material"
+            ],
+            "title": "Command",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "IssueCommandResolution",
+        "type": "object"
+      },
+      "IssueFactResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "fact_kind": {
+            "minLength": 1,
+            "title": "Fact Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact_kind"
+        ],
+        "title": "IssueFactResolution",
+        "type": "object"
+      },
+      "ReadinessIssue": {
+        "additionalProperties": false,
+        "description": "Fields emitted by material, accounting, report and close checkers.\n\nCheckers may attach the listed diagnostics. Adding a diagnostic requires an\nexplicit contract change; monetary values cannot fall through an open map.",
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "semantics": {
+            "title": "Semantics",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "work_area": {
+            "enum": [
+              "bank",
+              "payroll",
+              "transactions",
+              "tax",
+              "assets",
+              "financing"
+            ],
+            "title": "Work Area",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "inventory_id": {
+            "minimum": 0,
+            "title": "Inventory Id",
+            "type": "integer"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "drawdown_id": {
+            "title": "Drawdown Id",
+            "type": "string"
+          },
+          "bank_account_id": {
+            "title": "Bank Account Id",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "obligation_kind": {
+            "title": "Obligation Kind",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "member_location": {
+            "title": "Member Location",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "amount_field": {
+            "title": "Amount Field",
+            "type": "string"
+          },
+          "amount_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Amount Fields",
+            "type": "array"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "period_start": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "period_end_exclusive": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period End Exclusive",
+            "type": "string"
+          },
+          "pages": {
+            "minimum": 0,
+            "title": "Pages",
+            "type": "integer"
+          },
+          "voucher_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Version Id"
+          },
+          "voucher_number": {
+            "title": "Voucher Number",
+            "type": "integer"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "obligation_key": {
+            "title": "Obligation Key",
+            "type": "string"
+          },
+          "allocation_index": {
+            "minimum": 0,
+            "title": "Allocation Index",
+            "type": "integer"
+          },
+          "source_index": {
+            "minimum": 0,
+            "title": "Source Index",
+            "type": "integer"
+          },
+          "row": {
+            "minimum": 0,
+            "title": "Row",
+            "type": "integer"
+          },
+          "affected_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Affected Lines",
+            "type": "array"
+          },
+          "line_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line No"
+          },
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "allowed_precision": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Precision",
+            "type": "array"
+          },
+          "reusable_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reusable Sources",
+            "type": "array"
+          },
+          "constraint": {
+            "title": "Constraint",
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IssueCommandResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueFactResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueCandidateResolution"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "blocking_scope": {
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "expected_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fen"
+          },
+          "actual_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Fen"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/$defs/SelectionCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "trace_targets": {
+            "items": {
+              "$ref": "#/$defs/CalculationTarget"
+            },
+            "title": "Trace Targets",
+            "type": "array"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "dimension": {
+            "enum": [
+              "bank",
+              "platform"
+            ],
+            "title": "Dimension",
+            "type": "string"
+          },
+          "expected_direction": {
+            "enum": [
+              "inflow",
+              "outflow"
+            ],
+            "title": "Expected Direction",
+            "type": "string"
+          },
+          "candidate_subject_id": {
+            "title": "Candidate Subject Id",
+            "type": "string"
+          },
+          "pair_digest": {
+            "title": "Pair Digest",
+            "type": "string"
+          },
+          "review_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Review Period",
+            "type": "string"
+          },
+          "origin_periods": {
+            "items": {
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+              "type": "string"
+            },
+            "title": "Origin Periods",
+            "type": "array"
+          },
+          "responsibility": {
+            "enum": [
+              "direct",
+              "closed_followup",
+              "unassigned"
+            ],
+            "title": "Responsibility",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/$defs/DuplicateSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "title": "ReadinessIssue",
+        "type": "object"
+      },
+      "SelectionCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "has_journal_lines": {
+            "title": "Has Journal Lines",
+            "type": "boolean"
+          },
+          "trace_only": {
+            "const": true,
+            "title": "Trace Only",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "calculation_id",
+          "fact_id",
+          "result_digest",
+          "kind",
+          "has_journal_lines",
+          "trace_only"
+        ],
+        "title": "SelectionCandidate",
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ],
+        "title": "SourceReference",
+        "type": "object"
+      },
+      "TaxFilingField": {
+        "additionalProperties": false,
+        "properties": {
+          "field_id": {
+            "title": "Field Id",
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/$defs/TaxFilingFieldDefinition"
+          },
+          "section": {
+            "enum": [
+              "financial_statement",
+              "cit",
+              "vat_and_surtax"
+            ],
+            "title": "Section",
+            "type": "string"
+          },
+          "period_basis": {
+            "enum": [
+              "current",
+              "year_to_date"
+            ],
+            "title": "Period Basis",
+            "type": "string"
+          },
+          "period_start": {
+            "title": "Period Start",
+            "type": "string"
+          },
+          "period_end": {
+            "title": "Period End",
+            "type": "string"
+          },
+          "value_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Fen"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "source_basis": {
+            "items": {
+              "$ref": "#/$defs/SourceReference"
+            },
+            "title": "Source Basis",
+            "type": "array"
+          },
+          "source_basis_digest": {
+            "title": "Source Basis Digest",
+            "type": "string"
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "field_id",
+          "definition",
+          "section",
+          "period_basis",
+          "period_start",
+          "period_end",
+          "value_fen",
+          "status",
+          "source_basis",
+          "source_basis_digest",
+          "fact_issues"
+        ],
+        "title": "TaxFilingField",
+        "type": "object"
+      },
+      "TaxFilingFieldDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "meaning": {
+            "title": "Meaning",
+            "type": "string"
+          },
+          "business_scope": {
+            "title": "Business Scope",
+            "type": "string"
+          },
+          "amount_basis": {
+            "enum": [
+              "tax_exclusive",
+              "tax_inclusive",
+              "tax_amount",
+              "accounting_amount"
+            ],
+            "title": "Amount Basis",
+            "type": "string"
+          },
+          "rounding_rule": {
+            "title": "Rounding Rule",
+            "type": "string"
+          },
+          "form_field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Form Field"
+          }
+        },
+        "required": [
+          "meaning",
+          "business_scope",
+          "amount_basis",
+          "rounding_rule",
+          "form_field"
+        ],
+        "title": "TaxFilingFieldDefinition",
+        "type": "object"
+      },
+      "TaxFilingMapping": {
+        "additionalProperties": false,
+        "properties": {
+          "form": {
+            "title": "Form",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "effective_from": {
+            "title": "Effective From",
+            "type": "string"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "form",
+          "version",
+          "effective_from",
+          "source_url"
+        ],
+        "title": "TaxFilingMapping",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "status": {
+        "enum": [
+          "ready",
+          "needs_information"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "company_id": {
+        "title": "Company Id",
+        "type": "string"
+      },
+      "database_id": {
+        "title": "Database Id",
+        "type": "string"
+      },
+      "year": {
+        "title": "Year",
+        "type": "integer"
+      },
+      "quarter": {
+        "title": "Quarter",
+        "type": "integer"
+      },
+      "source": {
+        "enum": [
+          "open",
+          "closed"
+        ],
+        "title": "Source",
+        "type": "string"
+      },
+      "mapping_versions": {
+        "items": {
+          "$ref": "#/$defs/TaxFilingMapping"
+        },
+        "title": "Mapping Versions",
+        "type": "array"
+      },
+      "fields": {
+        "items": {
+          "$ref": "#/$defs/TaxFilingField"
+        },
+        "title": "Fields",
+        "type": "array"
+      },
+      "source_basis_digest": {
+        "title": "Source Basis Digest",
+        "type": "string"
+      },
+      "fact_issues": {
+        "items": {
+          "$ref": "#/$defs/ReadinessIssue"
+        },
+        "title": "Fact Issues",
+        "type": "array"
+      }
+    },
+    "required": [
+      "status",
+      "company_id",
+      "database_id",
+      "year",
+      "quarter",
+      "source",
+      "mapping_versions",
+      "fields",
+      "source_basis_digest",
+      "fact_issues"
+    ],
+    "title": "TaxFilingDataResponse",
+    "type": "object"
+  },
   "prepare_fact_registration": {
     "$defs": {
       "DuplicateCandidate": {

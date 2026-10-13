@@ -72,6 +72,7 @@ _TAX_VALUE_FIELDS = (
     "urban_tax_fen",
     "education_tax_fen",
     "local_education_tax_fen",
+    "vat_exemption_profit_lines",
 )
 
 
@@ -323,6 +324,22 @@ def _bound_root(connection, row):
     return root
 
 
+def _valid_tax_values(values):
+    for key, value in values.items():
+        if key != "vat_exemption_profit_lines":
+            if type(value) is not int:
+                return False
+            continue
+        if type(value) is not list or any(
+            type(item) is not dict or set(item) != {"line_no", "amount_fen"}
+            or type(item["line_no"]) is not int or item["line_no"] <= 0
+            or type(item["amount_fen"]) is not int
+            for item in value
+        ) or len({item["line_no"] for item in value}) != len(value):
+            return False
+    return True
+
+
 def _decode(content):
     try:
         value = json.loads(content)
@@ -340,7 +357,7 @@ def _decode(content):
             or not value["kind"]
             or type(value["values"]) is not dict
             or not set(value["values"]) <= set(_TAX_VALUE_FIELDS)
-            or any(type(item) is not int for item in value["values"].values())
+            or not _valid_tax_values(value["values"])
             or type(value["fact"]) is not dict
             or type(value["cash_source"]) is not dict
             or not set(value["fact"]) <= set(_FACT_FIELDS)

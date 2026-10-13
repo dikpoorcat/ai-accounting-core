@@ -5,7 +5,6 @@ import json
 from dataclasses import replace
 
 import pytest
-from monthly_close_fixture import ready
 from test_close_review_transport import prepared_company
 from test_close_review_transport import resident as resident_fixture
 from test_resident_service import PASSWORD
@@ -54,9 +53,7 @@ def test_actual_review_states_validate_source_and_public_contract_once(
     if state == "closed":
         freeze(resident, prepared, tmp_path)
     elif state == "covered":
-        ready(engine, proof, first="2026-02", last="2026-02")
-        second = execute("preview_close", period="2026-02", owner_confirmation=proof)
-        freeze(resident, (*prepared[:-1], second), tmp_path, period="2026-02")
+        freeze(resident, prepared, tmp_path)
     elif state == "stale":
         with engine.store.connection() as connection:
             connection.execute("UPDATE state SET management=management+1 WHERE id=1")
@@ -82,10 +79,11 @@ def test_actual_review_states_validate_source_and_public_contract_once(
         "public": 1,
         "summary": int(state in {"prepared", "stale"}),
     }
-    native = execute("dashboard_close_review", period="2026-01")
+    period = "2025-12" if state == "covered" else "2026-01"
+    native = execute("dashboard_close_review", period=period)
     assert native["state"] == state and counts == expected
     counts.update(source=0, public=0, summary=0)
-    status, _, _, wire = read()
+    status, _, _, wire = read(period=period)
     assert status == 200 and wire["state"] == state and counts == expected
     assert (wire["owner_review"] is None) == (native["owner_review"] is None)
     if native["owner_review"] is not None:

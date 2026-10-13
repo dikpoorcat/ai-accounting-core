@@ -121,7 +121,7 @@ def test_page_and_native_window_project_the_same_exact_review(resident):
     assert response["schema_version"] == 2
     assert response["owner_review"] == public
     assert "collection" not in response
-    assert stored["presentation_contract"] == "ai-accounting-kernel/2/close-review/1"
+    assert stored["presentation_contract"] == "ai-accounting-kernel/2/close-review/2"
     assert stored["collections"]
     text = _owner_review_text(stored)
     assert "本月收入：¥0.00" in text

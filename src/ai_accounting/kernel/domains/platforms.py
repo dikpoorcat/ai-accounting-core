@@ -353,6 +353,9 @@ class PlatformPayment(MovementConsumption):
     def reads(self):
         return (*Payment.reads(self), *movement_reads(self.movement_ids, self.period))
 
+    def reads_after(self, subject_id, context):
+        return Payment.reads_after(self, subject_id, context)
+
 
 class PlatformFunding(MovementConsumption):
     kind: ClassVar[str] = "platform_funding"

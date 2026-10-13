@@ -55,6 +55,7 @@ from .report_semantics import (
     read_report_semantics,
     report_source_fact,
 )
+from .reporting_fields import profit_statement_fields
 from .types import Fen, NonNegativeFen, PositiveFen, YearMonth, canonical, digest, sum_fen
 
 _POSITION_ACCOUNTS = KNOWN_POSITION_ACCOUNTS
@@ -1077,6 +1078,7 @@ class Reports:
         carry_forward_fact_id=None,
         reads=None,
         _issues_only=False,
+        _pre_tax_fields_only=False,
     ):
         start, end, year_start = _periods(year, quarter)
         if through_period is not None:
@@ -1721,7 +1723,9 @@ class Reports:
                         statements, carry, opening_rows, start, book_start, problems
                     )
             confirmations = [f for f in facts if f.fact.kind == ReportIncomeTaxConfirmation.kind]
-            for q in range((int(max(book_start, year_start)[5:]) - 1) // 3 + 1, quarter + 1):
+            for q in (() if _pre_tax_fields_only else range(
+                (int(max(book_start, year_start)[5:]) - 1) // 3 + 1, quarter + 1
+            )):
                 month = YearMonth(f"{year:04d}-{q * 3:02d}")
                 selected = [f for f in confirmations if f.fact.period == month]
                 if len(selected) != 1:
@@ -1793,6 +1797,7 @@ class Reports:
                 accounting_kinds = sorted(
                     kind for kind in self.store.registry.evaluators
                     if self.store.registry.models[kind].lane == "accounting"
+                    and not (_pre_tax_fields_only and kind == "income_tax_assessment")
                 )
                 pending = connection.execute(
                     "SELECT p.subject_id FROM pending p CROSS JOIN fact_current a "
@@ -2323,9 +2328,21 @@ def _profit_rows(rows, begin, end, problems):
             and (kind == "loan_interest" or getattr(fact, "income_kind", None) == "bank_interest")
         ):
             result[19] += row["amount"]
-        if account == "6301" and (
-            kind == "tax_assessment" or getattr(fact, "income_kind", None) == "government_grant"
-        ):
+        if account == "6301" and kind == "tax_assessment":
+            exemption_lines = row["values"].get("vat_exemption_profit_lines")
+            if exemption_lines is None:
+                # Historical adopted results had no separate rounding income.
+                result[23] -= row["amount"]
+            else:
+                direction = -1 if row["reverses_id"] else 1
+                components = [item for item in exemption_lines
+                              if item["line_no"] == row["line_no"]]
+                if len(components) > 1 or any(
+                    item["amount_fen"] * direction != -row["amount"] for item in components
+                ):
+                    raise KernelError("content_integrity_failed", "免税收益明细与精确凭证行不一致")
+                result[23] += sum_fen(item["amount_fen"] * direction for item in components)
+        elif account == "6301" and getattr(fact, "income_kind", None) == "government_grant":
             result[23] -= row["amount"]
         details = (
             [x for x in row["classification"].profit_details if x.line_no == row["line_no"]]
@@ -2552,10 +2569,7 @@ def _statements(
             str(k): {"name": v, "ending_fen": balance_end[k], "beginning_fen": balance_begin[k]}
             for k, v in BALANCE_NAMES.items()
         },
-        "profit_statement": {
-            str(k): {"name": v, "current_fen": current_profit[k], "year_to_date_fen": ytd_profit[k]}
-            for k, v in PROFIT_NAMES.items()
-        },
+        "profit_statement": profit_statement_fields(PROFIT_NAMES, current_profit, ytd_profit),
         "cash_flow_statement": {
             str(k): {"name": v, "current_fen": current_cash[k], "year_to_date_fen": ytd_cash[k]}
             for k, v in CASH_FLOW_NAMES.items()

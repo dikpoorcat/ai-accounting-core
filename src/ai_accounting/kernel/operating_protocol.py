@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 21,
+    "version": 22,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -241,6 +241,34 @@ OPERATING_PROTOCOL = {
                     "删除携带当前revision。损坏、身份不符或格式不支持保留并报错，不自动重建、"
                     "覆盖或删除。程序更新不淘汰工作稿；同资料根身份下可跨服务重启恢复，"
                     "当前公司备份ZIP不包含工作稿。"
+                ),
+            },
+        },
+        "tax_reporting": {
+            "title": "记账、财报与税务统一取数",
+            "read_when": "登记税点依据、预览税费或准备财报和税务申报数据时",
+            "rules": {
+                "single_source": (
+                    "按适用表单固定业务范围、核算期或税期、含税或不含税、本期或累计及舍入规则。"
+                    "使用tax_filing_data读取内核统一申报字段和财报对应字段，复用精确来源与版本；"
+                    "AI不得另行汇总计税收入、选择纳税月份、重新拆税或手算税额。"
+                    "个税和企业所得税继续采用有据的已确认税额；不存在自动所得税计算能力。"
+                ),
+                "tax_point": (
+                    "新业务通过tax_point_basis绑定合同付款、履约、收款和开票的精确原件事实及位置。"
+                    "内核按生效规则确定税期及计税范围；不提交自由指定的tax_obligation_period/date。"
+                    "核对此前候选，单一晚收款不能证明无更早税点。允许足够的月精度，不补月末；"
+                    "实际先后、真实回款或月中规则需要实际日。部分收款不自动触发整笔计税。"
+                    "收款税点复用已有payment、cash_payment或platform_payment事实中本业务的明确分配，"
+                    "不等待其凭证计算；银行原行总额或普通原件不能单独决定业务收款归属。"
+                    "同一收款业务只使用一次，不通过更换位置、事实版本或分段金额重复计税。"
+                    "原历史税月不自动转成新规则依据，旧冻结结果按原版本读取。"
+                ),
+                "readiness": (
+                    "同公司、同期间、同含义字段由统一来源取数。字段缺项按fact_issues及可复用来源处理，"
+                    "未知不写零，未支持表式不由AI补数。税前收入、成本和利润不等待所得税确认；"
+                    "完整财报及有关税费仍须满足其必要条件。来源变化重新准备并复核同一版本，"
+                    "不能以负责人确认绕过缺少的核算事实。实际申报、缴款及原报送资料独立保全。"
                 ),
             },
         },
@@ -647,6 +675,12 @@ OPERATING_PROTOCOL = {
 }
 
 TOPIC_SELECTORS = {
+    "tax_reporting": {
+        "commands": ["tax_filing_data", "report", "preview_report_export"],
+        "facts": ["tax_point_basis", "tax_assessment", "service_sale", "service_tax_point",
+                  "advance", "asset_disposal", "income_tax_assessment"],
+        "responses": ["tax_filing_data"],
+    },
     "workflow": {
         "commands": ["workflow"],
         "responses": ["workflow"],

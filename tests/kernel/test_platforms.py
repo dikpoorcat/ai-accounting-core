@@ -7,6 +7,7 @@ import pytest
 from entity_fixture import seed_entities, seed_registration_entities
 from opening_fixture import adopt_empty_opening
 from pydantic import ValidationError
+from tax_point_fixture import sourced_tax_data
 from test_banking import entry, match, opening, reconciliation, statement
 from test_business_domains import surtax_policy, vat_policy
 
@@ -42,6 +43,8 @@ def book(tmp_path, *, opening_period="2026-09"):
     wire = command_models(bundle.registry)
 
     def save(kind, subject, data, revision=0):
+        if kind in {"service_sale", "advance", "advance_fulfillment"}:
+            data = sourced_tax_data(engine, kind, subject, data)
         # Existing media scenarios supply explicit actual money. Preserve each as a
         # separate synthetic original row; dedicated movement tests exercise mismatches.
         if (

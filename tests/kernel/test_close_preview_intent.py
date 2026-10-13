@@ -87,6 +87,8 @@ def test_intent_summary_sha_signature_and_all_bindings_reject_damage_before_stal
 
 
 def test_repreview_retires_old_intent_and_cross_company_month_swap_is_rejected(resident):
+    from opening_fixture import adopt_empty_opening
+
     service, engine, company, proof, _, execute, _, preview = prepared_company(resident)
     first_key = (company["id"], company["database_id"], preview["digest"])
     first = service.close_previews[first_key]
@@ -97,19 +99,23 @@ def test_repreview_retires_old_intent_and_cross_company_month_swap_is_rejected(r
     second_key = (company["id"], company["database_id"], second["digest"])
     assert first_key not in service.close_previews
     second_intent = service.close_previews[second_key]
-    ready(engine, proof, first="2026-02", last="2026-02")
-    february = execute("preview_close", period="2026-02", owner_confirmation=proof)
-    february_key = (company["id"], company["database_id"], february["digest"])
-    other = service.catalog.create_company("91310000999999999X", "other synthetic company")
-    other_engine = service.engine(other["id"])
-    other_proof = other_engine.register_evidence(
-        b"other synthetic confirmation", "text/plain", "other", request_id="other-proof"
-    )["digest"]
-    ready(other_engine, other_proof, first="2026-01", last="2026-01")
-    other_preview = Periods(other_engine).preview_close("2026-01", owner_confirmation=other_proof)
-    service._remember_close_preview(other_engine, other_preview, other_proof)
-    other_key = (other["id"], other["database_id"], other_preview["digest"])
-    for swapped in (first, service.close_previews[february_key], service.close_previews[other_key]):
+
+    def other_intent(period, taxpayer):
+        other = service.catalog.create_company(taxpayer, "other synthetic company " + period)
+        other_engine = service.engine(other["id"])
+        other_proof = other_engine.register_evidence(
+            b"other synthetic confirmation", "text/plain", "other", request_id="other-proof",
+        )["digest"]
+        adopt_empty_opening(other_engine, period=period)
+        ready(other_engine, other_proof, first=period, last=period)
+        other_preview = Periods(other_engine).preview_close(period, owner_confirmation=other_proof)
+        service._remember_close_preview(other_engine, other_preview, other_proof)
+        key = (other["id"], other["database_id"], other_preview["digest"])
+        return service.close_previews[key]
+
+    february = other_intent("2026-02", "91310000999999999X")
+    other = other_intent("2026-01", "91310000999999999Y")
+    for swapped in (first, february, other):
         service.close_previews[second_key] = swapped
         with pytest.raises(KernelError) as failure:
             service.require_active_close_preview(
@@ -120,7 +126,6 @@ def test_repreview_retires_old_intent_and_cross_company_month_swap_is_rejected(r
 
 
 def test_real_payroll_preview_summary_and_native_window_have_identical_money(resident):
-    from opening_fixture import adopt_empty_opening
     from test_payroll import contribution_policy, payroll, profile
     from test_payroll_corrections import Company
 
@@ -128,7 +133,6 @@ def test_real_payroll_preview_summary_and_native_window_have_identical_money(res
     helper = Company.__new__(Company)
     helper.engine, helper.sequence = engine, 0
     helper.materials, helper.owner_confirmation = defaultdict(list), proof
-    adopt_empty_opening(engine)
     for fact, subject in (
         (profile(), "profile"),
         (contribution_policy(), "contributions"),

@@ -54,11 +54,11 @@ VAT_CALCULATION_KINDS = (
 )
 
 
-def _through_period(kind: str, key: str, period: YearMonth) -> Read:
+def _through_period(kind: str, key: str, period: YearMonth, *, lane="fact") -> Read:
     # Later confirmations validate their predecessors. An unrelated future use
     # must not invalidate an already frozen tax result merely for capacity checks.
     after = YearMonth.from_ordinal(period.ordinal + 1) if period != "9999-12" else None
-    return Read("fact", kind, key, after)
+    return Read(lane, kind, key, after)
 
 
 class TaxInput(BaseModel):
@@ -145,6 +145,13 @@ class VatSales(TaxInput):
     net_sales_fen: Fen
     accrued_vat_fen: Fen
     exemption_eligible: StrictBool
+    filing_bucket: Literal["standard", "used_asset"] = "standard"
+    rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("rate_percent", mode="before")
+    @classmethod
+    def declared_rate(cls, value):
+        return None if value is None else exact_decimal_rate(value)
 
 
 class VatAssessment(TaxInput):
@@ -158,6 +165,14 @@ class VatAssessment(TaxInput):
     surtax_fen: Money
     vat_policy_version: str
     surtax_policy_version: str
+    taxable_sales_fen: Money
+    exempt_sales_fen: Money
+    rounding_adjustment_fen: Fen
+    filing_fields: dict[str, int]
+    filing_mapping_version: str
+    filing_source_url: str
+    filing_effective_from: str
+    filing_issues: tuple[dict[str, str], ...] = ()
 
 
 def checked_fen(value: int) -> int:
@@ -208,7 +223,67 @@ def calculate_vat_period(
         raise NeedsInformation(
             "tax_credit_disposition", "退回与免税销售归属存在差异，需要明确原税期退抵及免税转回结果"
         )
-    payable = accrued - relief
+    exempt_net = (
+        sum_fen(row.net_sales_fen for row in sales if row.exemption_eligible) if below else 0
+    )
+    taxable_net = net - exempt_net
+    standard_net = sum_fen(
+        row.net_sales_fen for row in sales
+        if row.filing_bucket == "standard" and not (below and row.exemption_eligible)
+    )
+    other_tax = sum_fen(
+        row.accrued_vat_fen for row in sales
+        if row.filing_bucket != "standard" and not (below and row.exemption_eligible)
+    )
+    if min(exempt_net, taxable_net, standard_net, other_tax) < 0:
+        raise NeedsInformation("tax_credit_disposition", "各计税类别的净退回需要明确原税期处置")
+    by_rate, exempt_by_rate = {}, {}
+    for row in sales:
+        if row.filing_bucket != "standard":
+            continue
+        rate = row.rate_percent if row.rate_percent is not None else vat_policy.rate_percent
+        target = exempt_by_rate if below and row.exemption_eligible else by_rate
+        target[rate] = sum_fen((target.get(rate, 0), row.net_sales_fen))
+    if any(amount < 0 for amount in (*by_rate.values(), *exempt_by_rate.values())):
+        raise NeedsInformation(
+            "tax_credit_disposition", "不同征收率的退回须核对原税期来源，不互相抵销"
+        )
+    with localcontext(DecimalContext(prec=80)):
+        normal_net = sum_fen(by_rate.get(rate, 0) for rate in (Decimal("1"), Decimal("3")))
+        before_reduction = round_fen(Decimal(normal_net) * Decimal("3") / 100)
+        before_reduction += sum_fen(
+            round_fen(Decimal(amount) * rate / 100)
+            for rate, amount in by_rate.items() if rate not in (Decimal("1"), Decimal("3"))
+        )
+        rate_reduction = round_fen(Decimal(by_rate.get(Decimal("1"), 0)) * Decimal("2") / 100)
+        payable = checked_fen(before_reduction - rate_reduction + other_tax)
+        exemption_display = round_fen(Decimal(sum_fen(
+            exempt_by_rate.get(rate, 0) for rate in (Decimal("1"), Decimal("3"))
+        )) * Decimal("3") / 100)
+        exemption_display += sum_fen(
+            round_fen(Decimal(amount) * rate / 100)
+            for rate, amount in exempt_by_rate.items() if rate not in (Decimal("1"), Decimal("3"))
+        )
+    rounding = sum_fen((payable, relief, -accrued))
+    issues = ()
+    if (set(by_rate) | set(exempt_by_rate)) - {Decimal("1"), Decimal("3")} or any(
+        row.filing_bucket != "standard" for row in sales
+    ):
+        issues = ({"field": "vat.form", "semantics": "accounting",
+                   "message": "当前固定表式仅支持普通3%征收率及减按1%的业务，其他类别需对应表式"},)
+    filing_fields = {
+        "net_sales_fen": net,
+        "taxable_sales_fen": taxable_net,
+        "exempt_sales_fen": exempt_net,
+        "row_1_fen": standard_net,
+        "row_9_fen": exempt_net,
+        "row_10_fen": exempt_net,
+        "row_15_fen": before_reduction,
+        "row_16_fen": rate_reduction,
+        "row_17_fen": exemption_display,
+        "row_18_fen": exemption_display,
+        "row_20_fen": payable,
+    }
     with localcontext(DecimalContext(prec=80)):
 
         def surcharge(rate: Decimal) -> int:
@@ -228,6 +303,26 @@ def calculate_vat_period(
         surtax_fen=checked_fen(urban + education + local),
         vat_policy_version=vat_policy.version,
         surtax_policy_version=surtax_policy.version,
+        taxable_sales_fen=taxable_net,
+        exempt_sales_fen=exempt_net,
+        rounding_adjustment_fen=rounding,
+        filing_fields=filing_fields,
+        filing_mapping_version=("cn-small-scale-vat-2026-no6" if end >= date(2026, 2, 1)
+                                else "cn-small-scale-vat-2021-no20"),
+        filing_source_url=("https://fgk.chinatax.gov.cn/zcfgk/c100012/c5247507/content.html"
+                           if end >= date(2026, 2, 1)
+                           else "https://12366.chinatax.gov.cn/bzds/003/003.html"),
+        filing_effective_from="2026-02-01" if end >= date(2026, 2, 1) else "2021-08-01",
+        filing_issues=issues + tuple(
+            {"field": "vat.prepayment_basis", "amount_field": name, "message": message}
+            for name, message in (
+                ("row_21_fen", "第21栏缺少本期预缴税额依据，不能推定为零"),
+                ("row_22_fen", "第22栏应补退税额需要第21栏预缴依据"),
+                ("row_23_fen", "第23栏需要附列资料中已缴税额、减免及预缴依据"),
+                ("row_24_fen", "第24栏需要附列资料中已缴费额、减免及预缴依据"),
+                ("row_25_fen", "第25栏需要附列资料中已缴费额、减免及预缴依据"),
+            )
+        ),
     )
 
 
@@ -334,11 +429,21 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
             credited_returns.add(identity)
         credits.append(credit)
     sales = []
+    source_calculation_ids = set()
     for index in range(fact.period_start.period.ordinal, fact.period_end.period.ordinal + 1):
         month = YearMonth.from_ordinal(index)
         for kind in VAT_CALCULATION_KINDS:
             for row in ctx.calculations(kind, f"tax:{month}"):
+                source_calculation_ids.add(row.id)
                 if kind in ACTUAL_PAYMENT_KINDS:
+                    for item in row.values.get("tax_sales", ()):
+                        if item.get("rate_percent") is None and (
+                            item["net_sales_fen"] or item["accrued_vat_fen"]
+                        ):
+                            raise NeedsInformation(
+                                "tax_source.rate_percent", "计税来源缺少明确征收率",
+                                sources=(row.subject_id,),
+                            )
                     sales.extend(
                         VatSales(
                             **{
@@ -348,7 +453,7 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
                                     "accrued_vat_fen",
                                     "exemption_eligible",
                                 )
-                            }
+                            } | {"rate_percent": item.get("rate_percent")}
                         )
                         for item in row.values.get("tax_sales", ())
                     )
@@ -365,11 +470,20 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
                             "跨税期退回需要原申报和税务确认的退抵结果",
                             sources=(row.subject_id,),
                         )
+                if kind != "asset_disposal" and row.values.get("rate_percent") is None and (
+                    row.values["net_sales_fen"] or row.values["accrued_vat_fen"]
+                ):
+                    raise NeedsInformation(
+                        "tax_source.rate_percent", "计税来源缺少明确征收率",
+                        sources=(row.subject_id,),
+                    )
                 sales.append(
                     VatSales(
                         net_sales_fen=row.values["net_sales_fen"],
                         accrued_vat_fen=row.values["accrued_vat_fen"],
                         exemption_eligible=row.values["exemption_eligible"],
+                        filing_bucket="used_asset" if kind == "asset_disposal" else "standard",
+                        rate_percent=row.values.get("rate_percent"),
                     )
                 )
     assessment = calculate_vat_period(
@@ -380,7 +494,16 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
         surtax_policy=surtax_version.fact.policy,
     )
     lines = []
+    exemption_profit_lines = []
+    if assessment.rounding_adjustment_fen > 0:
+        lines += [Line("571105", debit=assessment.rounding_adjustment_fen),
+                  Line("222101", credit=assessment.rounding_adjustment_fen)]
+    elif assessment.rounding_adjustment_fen < 0:
+        lines += [Line("222101", debit=-assessment.rounding_adjustment_fen),
+                  Line("6301", credit=-assessment.rounding_adjustment_fen)]
     if assessment.relief_fen:
+        exemption_profit_lines.append({"line_no": len(lines) + 2,
+                                       "amount_fen": assessment.relief_fen})
         lines += [
             Line("222101", debit=assessment.relief_fen),
             Line("6301", credit=assessment.relief_fen),
@@ -411,6 +534,8 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
     for credit in credits:
         reversed_relief = credit.values["exemption_reversal_fen"]
         if reversed_relief:
+            exemption_profit_lines.append({"line_no": len(lines) + 1,
+                                           "amount_fen": -reversed_relief})
             lines += [Line("6301", debit=reversed_relief), Line("222101", credit=reversed_relief)]
         surtax_credit = credit.values["surtax_credit_fen"]
         if surtax_credit:
@@ -441,8 +566,10 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
         | {
             "obligations": obligations,
             "tax_credit_calculations": [credit.id for credit in credits],
+            "vat_source_calculation_ids": sorted(source_calculation_ids),
             "period_start": str(fact.period_start),
             "period_end": str(fact.period_end),
+            "vat_exemption_profit_lines": exemption_profit_lines,
         },
         tuple(BalanceEffect(o["key"], o["amount_fen"], o["category"]) for o in obligations),
         ({"vat_policy_id": vat_version.id, "surtax_policy_id": surtax_version.id},),
@@ -613,6 +740,14 @@ class TaxCreditConfirmation(Fact):
                         Read("calculation", x.original_kind, f"@{x.original_id}")
                         for x in self.returns
                     ),
+                    *(
+                        _through_period(
+                            "service_tax_point", f"advance-tax:{x.original_id}",
+                            self.original_period_end.period,
+                            lane="calculation",
+                        )
+                        for x in self.returns if x.original_kind == "advance"
+                    ),
                 }
             )
         )
@@ -656,6 +791,26 @@ def calculate_tax_credit_confirmation(version: FactVersion, ctx: Context) -> Out
         returned_fact = ctx.one(item.return_kind, f"@{item.return_id}")
         returned = _tax_calculation(ctx, item.return_kind, item.return_id)
         sale = _tax_calculation(ctx, item.original_kind, item.original_id)
+        if item.original_kind == "advance" and not sale.values["vat_due_on_advance"]:
+            tax_sources = ctx.select(_through_period(
+                "service_tax_point", f"advance-tax:{item.original_id}",
+                fact.original_period_end.period,
+                lane="calculation",
+            ))
+            matches = [source for source in tax_sources
+                       if source.values.get("advance_id") == item.original_id
+                       and source.id == returned.values.get("tax_source_calculation")]
+            if len(matches) != 1:
+                raise NeedsInformation(
+                    "original_tax_source", "预收退款需要原已采用转税结果的精确来源",
+                    sources=(item.original_id, item.return_id),
+                )
+            sale = matches[0]
+            if sale.id not in original.values.get("vat_source_calculation_ids", ()):
+                raise NeedsInformation(
+                    "original_filing_tax_source", "原申报未建立该预收转税结果的精确采用依据",
+                    sources=(fact.original_assessment_id, sale.subject_id),
+                )
         linked_source = (
             returned_fact.fact.sale_id
             if item.return_kind == "sale_return"

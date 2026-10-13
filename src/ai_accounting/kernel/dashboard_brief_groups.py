@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .business_queries import business_amount_field, business_display_amount
+from .business_queries import business_amount_fields, business_display_amount
 from .contracts import KernelError
 from .dashboard_matters import activity_matter
 from .dashboard_reads import page_keys
@@ -55,11 +55,16 @@ def _amount_inputs(snap, headers):
         else:
             missing_by_kind[header["kind"]].add(ident)
     for kind, missing in missing_by_kind.items():
-        field = business_amount_field(kind)
-        path = "$.values." + field
+        fields = business_amount_fields(kind)
+        aliases = ["amount" if index == 0 else f"amount_{index}" for index in range(len(fields))]
+        amount_columns = ",".join(
+            f"json_type(c.outcome,?) {alias}_type,json_extract(c.outcome,?) {alias}"
+            for alias in aliases
+        )
+        paths = tuple(path for field in fields for path in ("$.values." + field,) * 2)
         for row in snap.connection.execute(
             "SELECT c.id,json_type(c.outcome,'$.values') values_type,"
-            "json_type(c.outcome,?) amount_type,json_extract(c.outcome,?) amount,"
+            + amount_columns + ","
             "json_extract(c.outcome,'$.values.direction') direction,"
             "CASE WHEN c.kind='employee_advance' THEN "
             "json_type(c.outcome,'$.values.obligations') END obligation_type,"
@@ -70,15 +75,16 @@ def _amount_inputs(snap, headers):
             "CASE WHEN c.kind='employee_advance' THEN "
             "json_extract(c.outcome,'$.values.obligations[0].amount_fen') END obligation_amount "
             "FROM json_each(?) ids CROSS JOIN calculation c ON c.id=ids.value",
-            (path, path, canonical(sorted(missing))),
+            (*paths, canonical(sorted(missing))),
         ):
             if row["values_type"] != "object":
                 raise KernelError("content_integrity_failed", "业务金额的保存结果格式不匹配")
             values = {"direction": row["direction"]}
             # A missing property falls back to the exact fact; explicit null and
             # non-integers remain unknown, matching business_display_amount.
-            if row["amount_type"] is not None:
-                values[field] = row["amount"] if row["amount_type"] == "integer" else None
+            for field, alias in zip(fields, aliases, strict=True):
+                if row[alias + "_type"] is not None:
+                    values[field] = row[alias] if row[alias + "_type"] == "integer" else None
             if kind == "employee_advance":
                 if row["obligation_type"] not in (None, "array"):
                     raise KernelError("content_integrity_failed", "代付转债的保存义务格式不匹配")

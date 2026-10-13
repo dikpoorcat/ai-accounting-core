@@ -32,6 +32,7 @@ from .replay_close import ReplayClose, ReplayCloseScope, ReplayScopeConfig
 from .replay_runner import ReplayCommands
 from .reports import Reports, run_report_jobs
 from .security import SecurityService, consume_close_approval
+from .tax_filing_data import TaxFilingData
 from .tax_import import TaxImport
 from .workflow import Workflow
 
@@ -639,6 +640,7 @@ class LocalService:
         periods = Periods(engine, authorize_close=authorize_close)
         exports = Exports(engine)
         reports = Reports(engine)
+        tax_filing = TaxFilingData(engine)
         workflow = Workflow(engine)
         materials = Materials(engine, inspection_cache=self.inspection_cache)
         discovery = Discovery(engine)
@@ -693,6 +695,7 @@ class LocalService:
             "repair_read_indexes": maintenance.repair_read_indexes,
             "rebuild_dashboard_read_model": maintenance.rebuild_dashboard_read_model,
             "report": reports.report,
+            "tax_filing_data": tax_filing.query,
             "preview_report_export": reports.preview_export,
             "confirm_report_export": reports.confirm_export,
             "confirm_browser_report_export": reports.confirm_browser_export,

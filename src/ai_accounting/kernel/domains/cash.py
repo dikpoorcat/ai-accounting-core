@@ -69,6 +69,9 @@ class CashPayment(Fact):
         # including explicit tax-point transitions, regardless of cash channel.
         return Payment.reads(self)
 
+    def reads_after(self, subject_id, context):
+        return Payment.reads_after(self, subject_id, context)
+
 
 class CashFunding(Fact):
     kind: ClassVar[str] = "cash_funding"

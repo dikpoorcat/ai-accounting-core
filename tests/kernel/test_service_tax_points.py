@@ -1,12 +1,17 @@
 """Revenue, actual receipt, VAT point and advance fulfillment remain distinct facts."""
 
+import json
+
 import pytest
+from material_fixture import supporting_text
 from test_business_domains import surtax_policy, vat_policy
 from test_tax_credits import Company
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains import taxes, transactions
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+from ai_accounting.kernel.tax_filing_data import TaxFilingData
+from ai_accounting.kernel.tax_point_basis import TaxPointBasis
 
 
 @pytest.fixture
@@ -78,6 +83,228 @@ def lines(company, kind, subject):
         ]
 
 
+@pytest.mark.parametrize("tax_origin", ["completion", "contract", "invoice"])
+def test_commission_source_point_drives_revenue_late_receipt_assessment_and_filing(
+    company, tax_origin
+):
+    engine = company.engine
+    deferred = tax_origin == "contract"
+    review_month = "2026-04" if deferred else "2026-03"
+    proof = engine.register_evidence(
+        json.dumps(
+            {
+                "business": "commission-sale",
+                "gross_fen": 149400,
+                "service_completed": "2026-03-31",
+                "contract_status": "no_written_contract"
+                if tax_origin == "completion"
+                else "payment_date_set",
+                "contract_payment_date": None if tax_origin == "completion" else "2026-04-10",
+                "invoice_date": "2026-03-05" if tax_origin == "invoice" else None,
+                "review": "all earlier invoices, payment rights and receipts checked through "
+                + review_month,
+            }
+        ).encode(),
+        "text/plain",
+        "合成佣金服务税点原件",
+        request_id=company.request(),
+    )["digest"]
+    supporting_text(engine, proof, period=review_month)
+    with engine.store.connection(read_only=True) as connection:
+        original = engine.store.current_fact(connection, "synthetic-support:" + proof)
+    source = {
+        "kind": original.fact.kind,
+        "subject_id": original.subject_id,
+        "fact_id": original.id,
+        "evidence_digest": proof,
+        "location": "synthetic-confirmation",
+    }
+    fields = {
+        "period": review_month,
+        "business_kind": "service_sale",
+        "business_id": "commission-sale",
+        "service_pattern": "single",
+        "earlier_candidates_reviewed": True,
+        "reviewed_through_period": review_month,
+        "review_source": source,
+        "contract_source": source,
+        "written_contract_status": "no_written_contract"
+        if tax_origin == "completion"
+        else "payment_date_set",
+        "performance_completion_period": "2026-03",
+        "performance_completion_date": "2026-03-31",
+        "performance_source": source,
+    }
+    if tax_origin != "completion":
+        fields |= {"contract_payment_period": "2026-04", "contract_payment_date": "2026-04-10"}
+    if tax_origin == "invoice":
+        fields["candidates"] = [
+            {
+                "trigger": "invoice",
+                "period": "2026-03",
+                "actual_date": "2026-03-05",
+                "gross_start_fen": 0,
+                "gross_end_fen": 149400,
+                "source": source,
+            }
+        ]
+    basis = TaxPointBasis.model_validate_json(json.dumps(fields))
+    engine.save_fact(
+        basis.kind,
+        "commission-tax-basis",
+        basis.model_dump(mode="json"),
+        evidence=[proof],
+        expected_revision=0,
+        request_id=company.request(),
+    )
+    company.save(
+        transactions.ServiceSale,
+        "commission-sale",
+        period="2026-03",
+        customer_id="customer",
+        gross_fen=149400,
+        fulfillment_date="2026-03-31",
+        vat_policy_id="vat",
+        exemption_eligible=False,
+    )
+    company.publish("commission-sale")
+    revenue = company.current("service_sale", "commission-sale")
+    assert revenue.values["recognized_revenue_fen"] == 147921
+    assert revenue.values["accrued_vat_fen"] == (0 if deferred else 1479)
+    assert revenue.values["tax_point_basis"]["intervals"][0]["trigger"] == (
+        "invoice" if tax_origin == "invoice" else "contract"
+    )
+
+    def assess_quarter(quarter):
+        start, end = ("2026-01-01", "2026-03-31") if quarter == 1 else ("2026-04-01", "2026-06-30")
+        subject = f"commission-assessment-q{quarter}"
+        company.save(
+            taxes.TaxAssessment,
+            subject,
+            period=end[:7],
+            period_start=start,
+            period_end=end,
+            vat_policy_id="vat",
+            surtax_policy_id="surtax",
+        )
+        company.publish(subject)
+        return company.current("tax_assessment", subject)
+
+    first_assessment = assess_quarter(1)
+    assert first_assessment.values["payable_vat_fen"] == (0 if deferred else 1480)
+    if deferred:
+        # This is the already evidenced contractual right, independently of the later cash.
+        company.save(
+            transactions.ServiceTaxPoint,
+            "commission-april-point",
+            period="2026-04",
+            sale_id="commission-sale",
+            trigger="declared",
+            declaration_confirmed=True,
+        )
+        company.publish("commission-april-point")
+    receipt(company, "commission-late-receipt", 149400, "2026-05-15", source="commission-sale")
+    company.publish("commission-late-receipt")
+    assert not company.current("payment", "commission-late-receipt").values.get("tax_sales")
+    assert company.balance("payment:service_sale:commission-sale:primary") == 0
+    second_assessment = assess_quarter(2)
+    assert second_assessment.values["payable_vat_fen"] == (1480 if deferred else 0)
+    for quarter, assessment in ((1, first_assessment), (2, second_assessment)):
+        filing = TaxFilingData(engine).query(2026, quarter)
+        vat_fields = {
+            f["field_id"]: f
+            for f in filing["fields"]
+            if f["section"] == "vat_and_surtax" and f["period_basis"] == "current"
+        }
+        field = vat_fields["vat_and_surtax.payable_vat_fen"]
+        assert field["status"] == "ready"
+        assert field["value_fen"] == assessment.values["payable_vat_fen"]
+        assert {"type": "calculation_id", "value": assessment.id} in field["source_basis"]
+
+
+def attach_receipt_sources(company, *subjects):
+    """Append a fresh review that explicitly adopts exact fictional receipts."""
+
+    with company.engine.store.connection(read_only=True) as connection:
+        basis = company.engine.store.current_fact(connection, "tax-basis:sale")
+        receipts = [company.engine.store.current_fact(connection, s) for s in subjects]
+    data = basis.fact.model_dump(mode="json")
+    original = {
+        "review": "all earlier invoices, contractual rights and exact receipts checked",
+        "receipts": [
+            {"fact_id": r.id, "date": str(r.fact.actual_date), "gross_fen": r.fact.amount_fen}
+            for r in receipts
+        ],
+    }
+    proof = company.engine.register_evidence(
+        json.dumps(original).encode(),
+        "text/plain",
+        "合成完整税点复核",
+        request_id=company.request(),
+    )["digest"]
+    supporting_text(company.engine, proof, period=data["period"])
+    with company.engine.store.connection(read_only=True) as connection:
+        review = company.engine.store.current_fact(connection, "synthetic-support:" + proof)
+    data["review_source"] = {
+        "kind": review.fact.kind,
+        "subject_id": review.subject_id,
+        "fact_id": review.id,
+        "evidence_digest": proof,
+        "location": "synthetic-confirmation",
+    }
+    total, candidates = 0, []
+    for r in sorted(receipts, key=lambda r: (r.fact.actual_date, r.subject_id)):
+        candidates.append(
+            {
+                "trigger": "receipt",
+                "period": str(r.fact.period),
+                "actual_date": str(r.fact.actual_date),
+                "gross_start_fen": total,
+                "gross_end_fen": total + r.fact.amount_fen,
+                "receipt_stage": "during_or_after_transaction",
+                "source": {
+                    "kind": r.fact.kind,
+                    "subject_id": r.subject_id,
+                    "fact_id": r.id,
+                    "evidence_digest": r.evidence[0],
+                    "location": "synthetic actual receipt",
+                },
+            }
+        )
+        total += r.fact.amount_fen
+    data["candidates"] = candidates
+    company.engine.save_fact(
+        "tax_point_basis",
+        basis.subject_id,
+        data,
+        evidence=tuple(sorted({*basis.evidence, proof, *(r.evidence[0] for r in receipts)})),
+        expected_revision=basis.revision,
+        request_id=company.request(),
+    )
+
+
+def test_partial_receipts_before_contract_due_transfer_only_received_ranges_without_cycle(company):
+    sale(company, tax_month="2026-06")
+    receipt(company, "first", 40000, "2026-04-02")
+    receipt(company, "second", 109400, "2026-05-10")
+    attach_receipt_sources(company, "first", "second")
+    company.publish("sale", "first", "second")
+    assert lines(company, "payment", "first") == [
+        ("1002", 40000, 0),
+        ("1122", 0, 40000),
+        ("222104", 396, 0),
+        ("222101", 0, 396),
+    ]
+    assert lines(company, "payment", "second") == [
+        ("1002", 109400, 0),
+        ("1122", 0, 109400),
+        ("222104", 1083, 0),
+        ("222101", 0, 1083),
+    ]
+    assert company.current("payment", "first").values["tax_sales"][0]["net_sales_fen"] == 39604
+    assert company.current("payment", "second").values["tax_sales"][0]["net_sales_fen"] == 108317
+
+
 def test_revenue_month_needs_no_invented_fulfillment_day(company):
     result = sale(company)
     assert result.values["recognized_revenue_fen"] == 147921
@@ -90,7 +317,7 @@ def test_revenue_month_needs_no_invented_fulfillment_day(company):
     ]
 
 
-def test_first_partial_receipt_transfers_whole_source_vat_once_in_same_voucher(company):
+def test_full_contractual_entitlement_then_partial_receipt_transfers_vat_once(company):
     sale(company, tax_obligation_date="2026-04-02")
     receipt(company, "first", 40000, "2026-04-02")
     company.publish("first")
@@ -125,7 +352,8 @@ def test_first_partial_receipt_transfers_whole_source_vat_once_in_same_voucher(c
     )
     company.publish("march", "april")
     assert company.current("tax_assessment", "march").values["payable_vat_fen"] == 0
-    assert company.current("tax_assessment", "april").values["payable_vat_fen"] == 1479
+    assert company.current("tax_assessment", "april").values["payable_vat_fen"] == 1480
+    assert company.current("tax_assessment", "april").values["accrued_vat_fen"] == 1479
     assert company.current("tax_assessment", "april").values["net_sales_fen"] == 147921
 
 
@@ -135,7 +363,7 @@ def test_actual_receipt_cannot_infer_a_different_declared_tax_point(company, day
     receipt(company, "wrong", 40000, day)
     with pytest.raises(NeedsInformation) as error:
         company.engine.preview(["wrong"])
-    assert error.value.issues[0]["field"] == "tax_obligation_period"
+    assert error.value.issues[0]["field"] in {"tax_point_basis", "tax_point_basis.candidates"}
     assert company.balance("bank") == 0
 
 
@@ -189,7 +417,7 @@ def test_missing_tax_month_and_partial_month_policy_need_actual_facts(company):
     )
     with pytest.raises(NeedsInformation) as error:
         company.engine.preview(["missing"])
-    assert error.value.issues[0]["field"] == "tax_obligation_period"
+    assert error.value.issues[0]["field"] == "tax_point_basis"
     company.save(
         taxes.VatPolicyFact,
         "partial-policy",
@@ -208,7 +436,9 @@ def test_missing_tax_month_and_partial_month_policy_need_actual_facts(company):
     )
     with pytest.raises(NeedsInformation) as error:
         company.engine.preview(["partial"])
-    assert error.value.issues[0]["field"] == "tax_obligation_date"
+    assert error.value.issues[0]["field"] == "tax_point_basis.contract_payment_date"
+    assert error.value.issues[0]["allowed_precision"] == ["day"]
+    assert error.value.issues[0]["reusable_sources"]
 
 
 def test_taxed_advance_partial_fulfillment_uses_cumulative_net_without_vat_twice(company):
@@ -263,6 +493,11 @@ def test_taxed_advance_partial_fulfillment_uses_cumulative_net_without_vat_twice
 
 
 def test_untaxed_advance_requires_explicit_fulfillment_tax_point(company):
+    from tax_point_fixture import contract_tax_basis
+
+    contract_tax_basis(
+        company.engine, "advance", "advance", business_period="2026-01", contract_period="2026-03"
+    )
     company.save(
         transactions.Advance,
         "advance",
@@ -283,7 +518,7 @@ def test_untaxed_advance_requires_explicit_fulfillment_tax_point(company):
     )
     with pytest.raises(NeedsInformation) as error:
         company.engine.preview(["fulfilled"])
-    assert error.value.issues[0]["field"] == "vat_policy_id"
+    assert error.value.issues[0]["field"] == "tax_point_basis"
     company.save(
         transactions.AdvanceFulfillment,
         "fulfilled",
@@ -302,6 +537,194 @@ def test_untaxed_advance_requires_explicit_fulfillment_tax_point(company):
     ]
 
 
+@pytest.mark.parametrize("prior_refund", [0, 40000])
+def test_phased_prepaid_service_independent_tax_point_then_partial_fulfillment_and_refund(
+    company, prior_refund
+):
+    from tax_point_fixture import contract_tax_basis
+
+    contract_tax_basis(
+        company.engine, "advance", "advance", business_period="2026-01", contract_period="2026-06"
+    )
+    company.save(
+        transactions.Advance,
+        "advance",
+        period="2026-01",
+        counterparty_id="customer",
+        amount_fen=149400,
+        side="customer",
+        contractual_obligation_established=True,
+        vat_due_on_advance=False,
+        vat_policy_id="vat",
+        exemption_eligible=False,
+    )
+    company.publish("advance")
+    receipt(company, "prepaid", 149400, "2026-01-10", source_kind="advance", source="advance")
+    company.publish("prepaid")
+    if prior_refund:
+        company.save(
+            transactions.AdvanceRefund,
+            "prior-refund",
+            period="2026-02",
+            advance_id="advance",
+            refunded_gross_fen=prior_refund,
+            refund_right_confirmed=True,
+        )
+        company.publish("prior-refund")
+    with company.engine.store.connection(read_only=True) as connection:
+        basis = company.engine.store.current_fact(connection, "tax-basis:advance")
+        paid = company.engine.store.current_fact(connection, "prepaid")
+    data = basis.fact.model_dump(mode="json")
+    document = {
+        "service_pattern": "phased",
+        "first_actual_service_period": "2026-04",
+        "receipt_fact_id": paid.id,
+        "received_gross_fen": 149400,
+        "earlier_invoice_and_payment_rights_reviewed": True,
+    }
+    proof = company.engine.register_evidence(
+        json.dumps(document).encode(),
+        "text/plain",
+        "合成分次服务首次开始依据",
+        request_id=company.request(),
+    )["digest"]
+    supporting_text(company.engine, proof, period="2026-06")
+    with company.engine.store.connection(read_only=True) as connection:
+        original = company.engine.store.current_fact(connection, "synthetic-support:" + proof)
+    ref = {
+        "kind": original.fact.kind,
+        "subject_id": original.subject_id,
+        "fact_id": original.id,
+        "evidence_digest": proof,
+        "location": "synthetic-confirmation",
+    }
+    data.update(
+        service_pattern="phased",
+        first_service_started=True,
+        first_service_period="2026-04",
+        first_service_source=ref,
+        review_source=ref,
+        candidates=[
+            {
+                "trigger": "receipt",
+                "period": "2026-01",
+                "actual_date": "2026-01-10",
+                "gross_start_fen": 0,
+                "gross_end_fen": 149400,
+                "receipt_stage": "before_transaction",
+                "source": {
+                    "kind": paid.fact.kind,
+                    "subject_id": paid.subject_id,
+                    "fact_id": paid.id,
+                    "evidence_digest": paid.evidence[0],
+                    "location": "synthetic actual prepaid receipt",
+                },
+            }
+        ],
+    )
+    company.engine.save_fact(
+        "tax_point_basis",
+        basis.subject_id,
+        data,
+        evidence=tuple(sorted({*basis.evidence, proof, paid.evidence[0]})),
+        expected_revision=basis.revision,
+        request_id=company.request(),
+    )
+    company.save(
+        transactions.ServiceTaxPoint,
+        "advance-point",
+        period="2026-04",
+        sale_id="advance",
+        trigger="declared",
+        declaration_confirmed=True,
+    )
+    company.save(
+        transactions.AdvanceFulfillment,
+        "first-performance",
+        period="2026-05",
+        advance_id="advance",
+        fulfilled_gross_fen=40000,
+    )
+    company.publish("advance", "advance-point", "first-performance")
+    vat_due = 1479 if prior_refund == 0 else 1083
+    assert lines(company, "service_tax_point", "advance-point") == [
+        ("2203", vat_due, 0),
+        ("222101", 0, vat_due),
+    ]
+    assert lines(company, "advance_fulfillment", "first-performance") == [
+        ("2203", 39604, 0),
+        ("5001", 0, 39604),
+    ]
+    assert company.current("service_tax_point", "advance-point").values["net_sales_fen"] == (
+        147921 if prior_refund == 0 else 108317
+    )
+    assert company.current("advance_fulfillment", "first-performance").values["net_sales_fen"] == 0
+    company.save(
+        taxes.TaxAssessment,
+        "q2",
+        period="2026-06",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        vat_policy_id="vat",
+        surtax_policy_id="surtax",
+    )
+    company.publish("q2")
+    tax_source = company.current("service_tax_point", "advance-point").id
+    assert (
+        tax_source in company.current("tax_assessment", "q2").values["vat_source_calculation_ids"]
+    )
+    company.save(
+        transactions.AdvanceRefund,
+        "refund-rest",
+        period="2026-07",
+        advance_id="advance",
+        refunded_gross_fen=109400 - prior_refund,
+        refund_right_confirmed=True,
+    )
+    company.publish("refund-rest")
+    refunded = company.current("advance_refund", "refund-rest").values
+    assert (
+        refunded["returned_net_fen"],
+        refunded["credit_note_vat_fen"],
+        refunded["original_sale_period"],
+    ) == (108317 if prior_refund == 0 else 68713, 1083 if prior_refund == 0 else 687, "2026-04")
+    assert refunded["tax_source_calculation"] == tax_source
+    assert company.balance("advance:advance:advance") == 0
+    company.save(
+        taxes.TaxCreditConfirmation,
+        "phased-credit",
+        period="2026-08",
+        original_assessment_id="q2",
+        original_period_start="2026-04-01",
+        original_period_end="2026-06-30",
+        returns=[{"return_id": "refund-rest", "original_advance_id": "advance"}],
+        authority_confirmed=True,
+        original_filing_reference="synthetic-q2-filing",
+        confirmation_reference="synthetic-phased-refund-credit",
+        original_filing_evidence=company.filing,
+        confirmation_evidence=company.confirmation,
+        confirmation_date="2026-08-05",
+        disposition="refund_or_offset",
+        vat_credit_fen=1083 if prior_refund == 0 else 687,
+        surtax_credit_fen=0,
+        exemption_reversal_fen=0,
+    )
+    company.publish("phased-credit")
+    assert company.current("tax_credit_confirmation", "phased-credit").values["vat_credit_fen"] == (
+        1083 if prior_refund == 0 else 687
+    )
+    company.save(
+        transactions.ServiceTaxPoint,
+        "duplicate-point",
+        period="2026-04",
+        sale_id="advance",
+        trigger="declared",
+        declaration_confirmed=True,
+    )
+    with pytest.raises(KernelError, match="重复"):
+        company.engine.preview(["duplicate-point"])
+
+
 def test_return_before_tax_point_reduces_deferred_source_then_receipt_transfers_remainder(company):
     sale(company, period="2026-01", tax_month="2026-03", gross_fen=202000)
     company.save(
@@ -318,6 +741,113 @@ def test_return_before_tax_point_reduces_deferred_source_then_receipt_transfers_
     receipt(company, "paid", 101000, "2026-03-10")
     company.publish("paid")
     assert lines(company, "payment", "paid")[-2:] == [("222104", 1000, 0), ("222101", 0, 1000)]
+
+
+@pytest.mark.parametrize("path", ["declared", "bank", "cash", "platform"])
+def test_full_deferred_tax_point_preserves_confirmed_red_note_allocation(company, path):
+    from ai_accounting.kernel.domains.cash import CashPayment
+    from ai_accounting.kernel.domains.platforms import PlatformPayment
+
+    sale(company, gross_fen=100)
+    company.save(transactions.SaleReturn, "red-note", period="2026-03", sale_id="sale",
+                 returned_gross_fen=49, credit_note_vat_fen=1, customer_id="customer")
+    company.publish("red-note")
+    if path == "declared":
+        company.save(transactions.ServiceTaxPoint, "tax-rest", period="2026-04",
+                     sale_id="sale", trigger="declared", declaration_confirmed=True)
+        company.publish("tax-rest")
+        values = company.current("service_tax_point", "tax-rest").values
+    else:
+        model, account = {
+            "bank": (transactions.Payment, {"bank_account_id": "bank"}),
+            "cash": (CashPayment, {"cash_account_id": "cash"}),
+            "platform": (PlatformPayment, {"platform_account_id": "platform"}),
+        }[path]
+        if path == "platform":
+            from entity_fixture import seed_registration_entities
+
+            row_data = dict(period="2026-04", actual_date="2026-04-10", direction="inflow",
+                            platform_account_id="platform", amount_fen=51,
+                            source_location="synthetic platform row 1")
+            proof = company.engine.register_evidence(
+                json.dumps(row_data).encode(), "text/plain", "合成平台收款原行",
+                request_id=company.request(),
+            )["digest"]
+            supporting_text(company.engine, proof, period="2026-04")
+            row_data["source_evidence_digest"] = proof
+            seed_registration_entities(company.engine, "platform_movement", row_data)
+            company.engine.save_fact(
+                "platform_movement", "platform-row", row_data, evidence=(proof,),
+                expected_revision=0, request_id=company.request(),
+            )
+            company.publish("platform-row")
+            account["movement_ids"] = ["platform-row"]
+        company.save(model, "tax-rest", period="2026-04", actual_date="2026-04-10",
+                     direction="inflow", counterparty_id="customer", amount_fen=51,
+                     allocations=[dict(source_kind="service_sale", source_id="sale",
+                                       obligation="primary", amount_fen=51)], **account)
+        company.publish("tax-rest")
+        values = company.current(model.kind, "tax-rest").values["tax_sales"][0]
+    assert (values["net_sales_fen"], values["accrued_vat_fen"]) == (51, 0)
+    with company.engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT coalesce(sum(credit-debit),0) FROM monthly_account WHERE account='222104'",
+        ).fetchone()[0] == 0
+
+
+def test_partial_tax_point_after_return_requires_the_actual_return_scope(company):
+    sale(company, gross_fen=100, tax_month="2026-06")
+    company.save(transactions.SaleReturn, "red-note", period="2026-03", sale_id="sale",
+                 returned_gross_fen=49, credit_note_vat_fen=1, customer_id="customer")
+    company.publish("red-note")
+    receipt(company, "partial-rest", 25, "2026-04-10")
+    attach_receipt_sources(company, "partial-rest")
+    with company.engine.store.connection(read_only=True) as connection:
+        epochs = company.engine.store.epochs(connection)
+        calculation_count = connection.execute("SELECT count(*) FROM calculation").fetchone()[0]
+    with pytest.raises(NeedsInformation) as failure:
+        company.engine.preview(["sale", "partial-rest"])
+    assert any(issue["field"] == "return_tax_scope" for issue in failure.value.issues)
+    with company.engine.store.connection(read_only=True) as connection:
+        assert company.engine.store.epochs(connection) == epochs
+        assert connection.execute(
+            "SELECT count(*) FROM calculation"
+        ).fetchone()[0] == calculation_count
+
+
+def test_complete_pre_tax_return_records_zero_at_its_declared_tax_point(company):
+    sale(company, gross_fen=100)
+    company.save(transactions.SaleReturn, "full-red-note", period="2026-03", sale_id="sale",
+                 returned_gross_fen=100, credit_note_vat_fen=1, customer_id="customer")
+    company.publish("full-red-note")
+    company.save(transactions.ServiceTaxPoint, "zero-tax-point", period="2026-04",
+                 sale_id="sale", trigger="declared", declaration_confirmed=True)
+    company.publish("zero-tax-point")
+    values = company.current("service_tax_point", "zero-tax-point").values
+    assert (values["net_sales_fen"], values["accrued_vat_fen"]) == (0, 0)
+    assert lines(company, "service_tax_point", "zero-tax-point") == []
+
+
+@pytest.mark.parametrize("path", ["declared", "receipt"])
+def test_later_return_after_full_remaining_tax_point_uses_that_adopted_tax_month(company, path):
+    sale(company, gross_fen=100)
+    company.save(transactions.SaleReturn, "before-tax-return", period="2026-03", sale_id="sale",
+                 returned_gross_fen=49, credit_note_vat_fen=1, customer_id="customer")
+    company.publish("before-tax-return")
+    before = company.current("sale_return", "before-tax-return")
+    if path == "declared":
+        company.save(transactions.ServiceTaxPoint, "tax-rest", period="2026-04",
+                     sale_id="sale", trigger="declared", declaration_confirmed=True)
+    else:
+        receipt(company, "tax-rest", 51, "2026-04-10")
+    company.publish("tax-rest")
+    company.save(transactions.SaleReturn, "after-tax-return", period="2026-05", sale_id="sale",
+                 returned_gross_fen=51, credit_note_vat_fen=0, customer_id="customer")
+    company.publish("after-tax-return")
+    values = company.current("sale_return", "after-tax-return").values
+    assert (values["original_sale_period"], values["net_sales_fen"],
+            values["accrued_vat_fen"]) == ("2026-04", -51, 0)
+    assert company.current("sale_return", "before-tax-return").id == before.id
 
 
 def test_later_return_does_not_reopen_earlier_closed_return(march_company):

@@ -3245,7 +3245,50 @@ class ExportSourcesResponse(ResponseObject):
     next_cursor: str | None
 
 
+class TaxFilingMapping(ResponseObject):
+    form: str
+    version: str
+    effective_from: str
+    source_url: str
+
+
+class TaxFilingFieldDefinition(ResponseObject):
+    meaning: str
+    business_scope: str
+    amount_basis: Literal["tax_exclusive", "tax_inclusive", "tax_amount", "accounting_amount"]
+    rounding_rule: str
+    form_field: str | None
+
+
+class TaxFilingField(ResponseObject):
+    field_id: str
+    definition: TaxFilingFieldDefinition
+    section: Literal["financial_statement", "cit", "vat_and_surtax"]
+    period_basis: Literal["current", "year_to_date"]
+    period_start: str
+    period_end: str
+    value_fen: WireFen | None
+    status: Literal["ready", "needs_information"]
+    source_basis: list[SourceReference]
+    source_basis_digest: str
+    fact_issues: list[ReadinessIssue]
+
+
+class TaxFilingDataResponse(ResponseObject):
+    status: Literal["ready", "needs_information"]
+    company_id: str
+    database_id: str
+    year: int
+    quarter: int
+    source: Literal["open", "closed"]
+    mapping_versions: list[TaxFilingMapping]
+    fields: list[TaxFilingField]
+    source_basis_digest: str
+    fact_issues: list[ReadinessIssue]
+
+
 RESPONSE_ADAPTERS = {
+    "tax_filing_data": TypeAdapter(TaxFilingDataResponse),
     "prepare_fact_registration": TypeAdapter(FactRegistrationPreparation),
     "prepare_replay": TypeAdapter(ReplayPreparedResponse),
     "confirm_replay": TypeAdapter(ReplayQueuedResponse),

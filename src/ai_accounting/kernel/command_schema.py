@@ -36,6 +36,7 @@ from .replay_close import ReplayClose
 from .replay_runner import ReplayCommands
 from .reports import Reports
 from .schema_discovery import SchemaQuery
+from .tax_filing_data import TaxFilingData
 from .tax_import import TaxImport
 from .types import EvidenceDigest, canonical
 from .work_context import WorkContext
@@ -127,6 +128,7 @@ def command_models(registry):
         "preview_export": Exports.preview,
         "confirm_export": Exports.confirm,
         "report": Reports.report,
+        "tax_filing_data": TaxFilingData.query,
         "preview_report_export": Reports.preview_export,
         "confirm_report_export": Reports.confirm_export,
         "confirm_browser_report_export": Reports.confirm_browser_export,

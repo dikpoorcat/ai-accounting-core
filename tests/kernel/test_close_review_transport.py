@@ -6,6 +6,7 @@ import pytest
 import test_resident_service as resident_cases
 from entity_fixture import seed_registration_entities
 from monthly_close_fixture import ready
+from opening_fixture import adopt_empty_opening
 from test_dashboard_transport import authenticated
 from test_resident_service import PASSWORD
 
@@ -67,6 +68,7 @@ def prepared_company(resident, *, prepare=True):
         "合成确认",
         request_id="proof",
     )["digest"]
+    adopt_empty_opening(engine, period="2026-01")
     ready(engine, proof, first="2026-01", last="2026-01")
 
     def execute(command, **payload):

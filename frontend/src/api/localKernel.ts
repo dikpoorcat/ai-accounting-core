@@ -85,6 +85,7 @@ export const localBusinessNames: Record<string, string> = {
   bank_opening: "银行账面起点",
   bank_reconciliation: "银行对账",
   service_tax_point: "服务收入增值税确认",
+  tax_point_basis: "增值税税期依据",
   advance_fulfillment: "预收款履约确认",
   advance_refund: "预收预付款退回",
   report_profile: "财务报表编制资料",

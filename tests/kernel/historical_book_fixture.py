@@ -342,6 +342,9 @@ def historical_book(tmp_path, monkeypatch):
             )
         for table, previous in frozen.items():
             assert tuple(map(tuple, connection.execute(f"SELECT * FROM {table}"))) == previous
+        from ai_accounting.kernel.offline_development_upgrade import upgrade_company
+
+        assert upgrade_company(connection, production_bundle())["status"] == "upgraded"
     company.engine = Engine(
         Store(path, production_bundle(), "synthetic-company", "synthetic-database")
     )

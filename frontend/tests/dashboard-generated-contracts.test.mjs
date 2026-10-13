@@ -65,14 +65,15 @@ test("the explicit generated manifest covers every browser-visible response cont
     "dashboard_brief_group", "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_employees_delivery", "dashboard_funds", "dashboard_funds_delivery",
     "dashboard_period_preparation", "dashboard_quarterly_report", "dashboard_quarterly_report_delivery",
-    "delete_work_draft", "inventory_batch", "list_work_drafts", "period_readiness", "prepare_fact_registration", "prepare_replay",
-    "read_work_draft", "replay_classification_prepare", "replay_status", "report_export_receipt", "report_export_status", "resume_replay", "save_work_draft", "workflow",
+    "delete_work_draft", "export_sources", "inventory_batch", "list_work_drafts", "period_readiness", "prepare_fact_registration", "prepare_replay",
+    "read_work_draft", "replay_classification_prepare", "replay_status", "report_export_receipt", "report_export_status", "resume_replay", "save_work_draft", "tax_filing_data", "workflow",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
   const serviceOnly = new Set([
     "confirm_replay",
     "confirm_replay_close_range",
     "delete_work_draft",
+    "export_sources",
     "inventory_batch",
     "list_work_drafts",
     "prepare_replay",
@@ -82,6 +83,7 @@ test("the explicit generated manifest covers every browser-visible response cont
     "replay_status",
     "resume_replay",
     "save_work_draft",
+    "tax_filing_data",
   ]);
   for (const key of Object.keys(schemas)) {
     if (!serviceOnly.has(key)) assert(source.includes(`["${key}"`), key);

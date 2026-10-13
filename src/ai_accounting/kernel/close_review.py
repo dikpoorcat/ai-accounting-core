@@ -22,7 +22,11 @@ from .query_reads import QueryReads
 from .response_types import Version2, WireFen
 from .types import YearMonth, canonical, digest
 
-PRESENTATION_CONTRACT = "ai-accounting-kernel/2/close-review/1"
+PRESENTATION_CONTRACT_V1 = "ai-accounting-kernel/2/close-review/1"
+PRESENTATION_CONTRACT = "ai-accounting-kernel/2/close-review/2"
+PresentationContract = Literal[
+    "ai-accounting-kernel/2/close-review/1", "ai-accounting-kernel/2/close-review/2"
+]
 DETAIL_BLOCK_SIZE = 50
 CloseReviewSection = Literal[
     "vouchers", "adopted_bases", "policies", "payroll_confirmations", "evidence"
@@ -45,6 +49,55 @@ POLICY_FACT_KINDS = frozenset(
 PAYROLL_RESULT_KINDS = frozenset(
     {"payroll", "payroll_bounded", "annual_bonus", "labor", "labor_accrual", "labor_project_cost"}
 )
+
+
+def _business_amount_v1(calculation):
+    """Interpret the exact amount semantics recorded by native review format 1."""
+    data = calculation["fact"]["data"]
+    values = calculation["outcome"]["values"]
+    spec = {
+        "service_sale": ("gross_fen", "含税收入确认额"),
+        "payroll": ("gross_fen", "税前工资"),
+        "payroll_bounded": ("gross_fen", "税前工资"),
+        "annual_bonus": ("gross_fen", "税前奖金"),
+        "labor": ("gross_fen", "劳务确认毛额"),
+        "labor_accrual": ("gross_fen", "劳务确认毛额"),
+        "labor_project_cost": ("gross_fen", "资本化劳务确认毛额"),
+        "asset": ("cost_fen", "已确认资产成本"),
+        "reimbursed_asset": ("cost_fen", "已确认资产成本"),
+        "reimbursed_asset_batch": ("cost_fen", "整批确认成本"),
+        "asset_activation": ("cost_fen", "启用资产成本"),
+        "asset_consumption": ("consumption_fen", "本期折旧摊销"),
+        "asset_activation_batch": ("amount_fen", "本批启用资产成本"),
+        "asset_consumption_month": ("amount_fen", "本月折旧摊销"),
+        "asset_disposal": ("gross_proceeds_fen", "处置确认价款"),
+        "loan_interest": ("interest_fen", "本期确认利息"),
+        "loan_drawdown": ("principal_fen", "借款本金"),
+        "project_release": ("released_fen", "转费用成本"),
+        "money_fund_subscription": ("cost_fen", "申购确认成本"),
+        "money_fund_redemption": ("net_proceeds_fen", "赎回结算额"),
+        "income_tax_assessment": ("change_fen", "本期所得税确认额"),
+        "platform_expense_confirmation": ("confirmed_amount_fen", "确认费用"),
+        "managed_reserve_expense": ("amount_fen", "备用金实际支出"),
+        "managed_reserve_refund": ("amount_fen", "备用金实际退款"),
+        "managed_reserve_internal_movement": (
+            "original_amount_fen", "备用金内部原行金额合计（不入公司账）",
+        ),
+    }
+    kind = calculation["kind"]
+    field, label = spec.get(kind, ("amount_fen", "业务确认金额"))
+    amount = values.get(field, data.get(field))
+    if kind == "employee_advance":
+        obligations = values.get("obligations", ())
+        amount = obligations[0]["amount_fen"] if len(obligations) == 1 else None
+        label = "代付转债确认额"
+    elif kind in {"payment", "cash_payment", "platform_payment", "payroll_reserve_payment"}:
+        label = "实际收付款"
+    elif kind in {"funding", "cash_funding", "platform_funding"}:
+        label = "实际投入或借入金额"
+    elif kind == "bank_platform_transfer":
+        label = "内部划转金额"
+    return (amount if type(amount) is int else None), label
 
 
 class _StrictObject(TypedDict):
@@ -165,7 +218,7 @@ class CloseReviewFollowupSummary(_StrictObject):
 
 
 class OwnerReview(_StrictObject):
-    presentation_contract: Literal["ai-accounting-kernel/2/close-review/1"]
+    presentation_contract: PresentationContract
     period: str
     accounting_summary: CloseReviewAccountingSummary
     business_summary: list[CloseReviewBusinessSummary]
@@ -1021,8 +1074,11 @@ def build_owner_review(
     _frozen_position=None,
     _checked_open=None,
     _source_reads=None,
+    _presentation_contract=PRESENTATION_CONTRACT,
 ):
-    """Build the complete immutable v1 owner review inside the caller transaction."""
+    """Build the exact declared review semantics inside the caller transaction."""
+    if _presentation_contract not in {PRESENTATION_CONTRACT_V1, PRESENTATION_CONTRACT}:
+        _fail("invalid_owner_review_contract")
     working = {**manifest, "_engine": engine}
     basis = _basis_inventory(connection, working, _source_reads=_source_reads)
     working.pop("_engine", None)
@@ -1066,6 +1122,12 @@ def build_owner_review(
     # one account code would lose a receivable from one party against a payable
     # to another party.
     from .dashboard import _position, _Snapshot
+
+    amount_reader = (
+        _business_amount_v1
+        if _presentation_contract == PRESENTATION_CONTRACT_V1
+        else _Snapshot.business_amount
+    )
 
     trial_rows = [
         {"account": row["account"], "amount": row["debit"] - row["credit"]}
@@ -1127,7 +1189,7 @@ def build_owner_review(
         nonlocal actual_receipts, actual_payments, internal_transfer
         calculation = business_calculations[calculation_id]
         kind = calculation["kind"]
-        amount, amount_label = _Snapshot.business_amount(
+        amount, amount_label = amount_reader(
             calculation | {"fact": {"data": calculation["fact_data"]}}
         )
         signed_amount = (-amount if reversal else amount) if amount is not None else None
@@ -1292,7 +1354,7 @@ def build_owner_review(
         frozen_followups = _frozen_followups
     return _OWNER_REVIEW_ADAPTER.validate_python(
         {
-            "presentation_contract": PRESENTATION_CONTRACT,
+            "presentation_contract": _presentation_contract,
             "period": manifest["period"],
             "accounting_summary": {
                 "voucher_count": len(voucher_ids),
@@ -1357,6 +1419,7 @@ def verify_owner_review_integrity(
         {key: value for key, value in manifest.items() if key != "owner_review"},
         _frozen_followups=review["followup_summary"],
         _source_reads=_source_reads,
+        _presentation_contract=review["presentation_contract"],
         _frozen_position=(
             None
             if verify_financial_position
@@ -1391,10 +1454,10 @@ def reviewed_preview_digest(manifest):
     ).hex()
 
 
-def _cursor(binding, section, block, offset):
+def _cursor(binding, section, block, offset, *, presentation_contract=PRESENTATION_CONTRACT):
     raw = canonical(
         {
-            "contract": PRESENTATION_CONTRACT,
+            "contract": presentation_contract,
             "binding": binding,
             "section": section,
             "block": block,
@@ -1404,7 +1467,7 @@ def _cursor(binding, section, block, offset):
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode().rstrip("=")
 
 
-def _decode_cursor(value, binding, section):
+def _decode_cursor(value, binding, section, *, presentation_contract=PRESENTATION_CONTRACT):
     try:
         raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
         data = json.loads(raw)
@@ -1412,7 +1475,7 @@ def _decode_cursor(value, binding, section):
         raise KernelError("dashboard_snapshot_changed", "关账核对分页位置已失效") from None
     if (
         not isinstance(data, dict)
-        or data.get("contract") != PRESENTATION_CONTRACT
+        or data.get("contract") != presentation_contract
         or data.get("binding") != binding
         or data.get("section") != section
         or type(data.get("block")) is not int
@@ -1444,7 +1507,11 @@ def read_collection(
         else require_owner_review(manifest.get("owner_review"))
     )
     directory = next(item for item in review["collections"] if item["section"] == section)
-    block_index, offset = _decode_cursor(cursor, binding, section) if cursor else (0, 0)
+    block_index, offset = (
+        _decode_cursor(cursor, binding, section,
+                       presentation_contract=review["presentation_contract"])
+        if cursor else (0, 0)
+    )
     if not directory["blocks"]:
         if cursor:
             raise KernelError("dashboard_snapshot_changed", "关账核对分页位置已失效")
@@ -1489,7 +1556,9 @@ def read_collection(
                 "returned_count": len(items),
                 "has_more": next_position is not None,
                 "next_cursor": (
-                    _cursor(binding, section, *next_position) if next_position is not None else None
+                    _cursor(binding, section, *next_position,
+                            presentation_contract=review["presentation_contract"])
+                    if next_position is not None else None
                 ),
             },
         }

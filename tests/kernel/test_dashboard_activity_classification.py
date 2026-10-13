@@ -3,6 +3,7 @@
 from collections import Counter
 
 import pytest
+from tax_point_fixture import contract_tax_basis
 from test_banking import book as book
 from test_banking import (
     close_month,
@@ -624,6 +625,12 @@ def test_mixed_customer_receipt_splits_exact_categories_across_readers_and_chann
 def test_receipt_with_unrelated_and_third_sources_preserves_categories(book, with_collection):
     engine, save, publish, _ = book
     _receipt_sources(book)
+    # This independent fictional contract is payable in October. The complete
+    # September review proves that this advance is not a current VAT source.
+    contract_tax_basis(
+        engine, "advance", "advance", business_period="2026-08",
+        contract_period="2026-10", reviewed_through="2026-09",
+    )
     save("advance", "advance", {
         "period": "2026-08", "side": "customer", "counterparty_id": "customer",
         "amount_fen": 2000, "contractual_obligation_established": True,

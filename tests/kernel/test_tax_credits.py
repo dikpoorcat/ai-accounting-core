@@ -8,6 +8,7 @@ from entity_fixture import seed_fact_entities
 from material_fixture import supporting_text
 from opening_fixture import adopt_empty_opening
 from pydantic import ValidationError
+from tax_point_fixture import sourced_tax_data
 from test_business_domains import surtax_policy, vat_policy
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
@@ -44,6 +45,8 @@ class Company:
         return f"request-{self.counter}"
 
     def save(self, model, subject, **fields):
+        if model.kind in {"service_sale", "advance", "advance_fulfillment"}:
+            fields = sourced_tax_data(self.engine, model.kind, subject, fields)
         fact = model.model_validate_json(json.dumps(fields))
         seed_fact_entities(self.engine, fact)
         result = self.engine.save_fact(
