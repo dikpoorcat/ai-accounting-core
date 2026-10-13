@@ -12,8 +12,8 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from pathlib import Path
 
-from .build import calculator_build_id
 from .catalog import ensure_catalog
 from .contracts import KernelError
 from .permissions import assert_private_file, ensure_private_file, reject_reparse_path
@@ -226,12 +226,17 @@ def ensure_service(root, *, timeout=20):
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             # Only safe status is written to this log; requests and tokens are never logged.
             log_path = ensure_private_file(root / "service.log", create=True)
+            import ai_accounting
+
+            package_parent = str(Path(ai_accounting.__file__).resolve().parent.parent)
             with log_path.open("ab") as log:
                 subprocess.Popen(
                     [
                         sys.executable,
-                        "-m",
-                        "ai_accounting.kernel.cli",
+                        "-I", "-B", "-X", "utf8", "-c",
+                        "import sys; sys.path.insert(0, sys.argv.pop(1)); "
+                        "from ai_accounting.kernel.cli import main; main()",
+                        package_parent,
                         "--root",
                         str(root),
                         "daemon",
@@ -428,17 +433,8 @@ def run(root, *, port=0, replay_scope_file=None):
                     "此资料目录已有本地服务运行；请先停止服务，再显式启动重放服务",
                 )
             return
-        if isinstance(static_runtime, tuple) and len(static_runtime) == 2:
-            from .runtime_snapshot import (
-                activate_runtime_package,
-                configure_runtime_package,
-                explicit_update_checkpoint,
-            )
-
-            package_path, source_digest = activate_runtime_package(root)
-            # The package search path now points only at the private captured copy;
-            # refresh all code, contract and resource identities from that copy.
-            explicit_update_checkpoint()
+        # Static preparation already captures this process's code and assets.
+        # Ordinary startup keeps its loaded package; retained snapshots are explicit tools.
         from .offline_upgrade import check_root_current
 
         check_root_current(root)
@@ -478,8 +474,8 @@ def run(root, *, port=0, replay_scope_file=None):
                 "build_id": server.build_id,
             }
             write_protected_json(root / ".service.json", metadata)
-            from .replay_runner import run_ready
             from .dashboard_async import run_pending
+            from .replay_runner import run_ready
 
             def run_company_background(engine):
                 replay = run_ready(

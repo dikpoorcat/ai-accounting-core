@@ -31,6 +31,7 @@ from .contracts import (
 from .dependencies import fact_matches, scope_keys
 from .engine import Engine
 from .payroll_confirmation import FactRevisionReference
+from .remuneration_tax_basis import REMUNERATION_KINDS
 from .stored_json import load_outcome, verify_outcome_bytes
 from .types import EvidenceDigest, validate_evidence_digests
 
@@ -122,7 +123,7 @@ def _tax_basis_companion(change, source, fact, changes, originals):
         or (
             target_change.data is None
             or target_change.expected_revision + 1 != reference.revision
-            or target.fact.kind not in {"payroll", "payroll_bounded", "annual_bonus", "labor"}
+            or target.fact.kind not in REMUNERATION_KINDS
             or target.fact.kind != fact.source_kind
             or target.subject_id != fact.source_id
             or target.fact.period != fact.period

@@ -5,6 +5,7 @@ from typing import ClassVar, Literal
 from pydantic import StrictBool
 
 from ..contracts import BalanceEffect, Fact, FactVersion, Line, NeedsInformation, Outcome
+from ..remuneration_tax_basis import remuneration_tax_reads, remuneration_tax_reads_after
 from ..types import PositiveFen
 from .payroll import labor_accrual_outcome
 from .transactions import Identifier, obligation, outcome
@@ -65,7 +66,7 @@ def calculate_asset_advance(version: FactVersion, context) -> Outcome:
 
 
 class LaborProjectCost(Fact):
-    """Accepted labor creates one capitalized cost and one gross personal liability."""
+    """Accepted labor creates one capitalized cost; confirmed tax splits its payable."""
 
     kind: ClassVar[str] = "labor_project_cost"
     identity_fields: ClassVar[tuple[str, ...]] = ("person_id", "project_id")
@@ -82,6 +83,12 @@ class LaborProjectCost(Fact):
     def scopes(self):
         return (str(self.period), f"project:{self.project_id}", f"person:{self.person_id}")
 
+    def reads_for(self, subject_id):
+        return remuneration_tax_reads(self.kind, subject_id)
+
+    def reads_after(self, subject_id, context):
+        return remuneration_tax_reads_after(self.kind, subject_id, context)
+
 
 def calculate_labor_project_cost(version: FactVersion, context) -> Outcome:
     fact: LaborProjectCost = version.fact
@@ -92,6 +99,7 @@ def calculate_labor_project_cost(version: FactVersion, context) -> Outcome:
     result = labor_accrual_outcome(
         version,
         "189901",
+        context,
         cashflow="asset_acquisition",
         extra_values={
             "project_id": fact.project_id,

@@ -11,10 +11,12 @@ from test_exports import evidence, inventory, queue
 from test_exports import setup as setup  # noqa: F401
 from test_materials import csv_spec
 
+from ai_accounting.kernel import materials
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.domains.adjustments import EmployeeAdvance
 from ai_accounting.kernel.domains.transactions import Allocation, Expense, Payment
 from ai_accounting.kernel.exports import MANIFEST_NAME, WORKBOOK_NAME, run_export_jobs
+from ai_accounting.kernel.inspection_cache import InspectionCache
 from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.types import YearMonth
@@ -62,6 +64,131 @@ def assert_incomplete(export, template, *, sources=None, code=None):
     if code:
         assert any(issue.get("code") == code for issue in issues), issues
     return issues
+
+
+def signed_tax_original(format, *, defects=False):
+    rows = [["说明", "金额"], ["已选工资", 10000], ["合计", 10000],
+            *[[text] for text in ("声明", "负责人签章", "填表人签章", "填表日期")]]
+    if defects:
+        rows = rows[:3] + [["原格不明金额", "待核对"], ["隐藏签章"], [99],
+                          ["公式", "=SUM(B2:B2)"], ["签章", None, "未映射内容"],
+                          ["未处置签章"]]
+    output = BytesIO()
+    if format == "xls":
+        import xlwt
+
+        book = xlwt.Workbook()
+        sheet = book.add_sheet("个税明细")
+        for row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                if value is not None:
+                    sheet.write(row, column, value)
+    else:
+        book = Workbook()
+        sheet = book.active
+        sheet.title = "个税明细"
+        for values in rows:
+            sheet.append(values)
+        if defects:
+            sheet.row_dimensions[5].hidden = True
+    book.save(output)
+    if format == "xlsx":
+        book.close()
+    spec = {"format": format,
+            "columns": [{"column": "A", "role": "context"},
+                        {"column": "B", "role": "amount"}],
+            "controls": [{"location": "个税明细!B3", "locations": ["个税明细!B2"]}]}
+    return output.getvalue(), spec
+
+
+def confirm_signed_tax_month(company, source, last_row):
+    confirmation = evidence(
+        company, "负责人确认本份个税明细与签章页脚的核对归属均为2026-01".encode(), "tax-month",
+    )
+    assignments = [{"sheet": "个税明细", "column": "B", "first_row": 2,
+                    "last_row": last_row, "recognition_period": "2026-01",
+                    "basis": "confirmed_period", "basis_evidence_digest": confirmation,
+                    "basis_location": "负责人本次确认", "basis_excerpt": "完整原件归属2026-01"}]
+    materials_api = Materials(company.engine)
+    preview = materials_api.preview_period_allocation(source["subject_id"], assignments)
+    materials_api.confirm_period_allocation(
+        source["subject_id"], assignments, preview_digest=preview["digest"],
+        epochs=preview["epochs"], expected_revision=preview["expected_revision"],
+        request_id=company.request(),
+    )
+
+
+@pytest.mark.parametrize("format", ["xls", "xlsx"])
+def test_signed_tax_footer_reuses_null_disposition_for_month_and_selected_export(
+    setup, tmp_path, monkeypatch, format,
+):
+    company, export, template = setup
+    raw, spec = signed_tax_original(format)
+    source, proof = receive(company, "signed-tax", raw, spec=spec)
+    confirm_signed_tax_month(company, source, 7)
+    resolve(company, source, proof, location="个税明细!B2")
+    assert_incomplete(export, template, code="material_amount_missing")
+    for row in range(4, 8):
+        resolve(company, source, proof, location=f"个税明细!B{row}",
+                treatment="no_accounting", non_accounting_reason="not_company_business",
+                amount_fen=None, links=[], reason="已核对原件，此行是签章声明页脚，无业务金额")
+
+    calls, original = [], materials.inspect_bytes
+
+    def counted(raw, specification):
+        calls.append(True)
+        return original(raw, specification)
+
+    monkeypatch.setattr(materials, "inspect_bytes", counted)
+    cache_root = tmp_path
+    reader = Materials(company.engine, inspection_cache=InspectionCache(
+        cache_root, build_id="signed-footer-test",
+    ))
+    public = reader.inspect(proof, spec)
+    assert "absent_text_amount_locations" not in json.dumps(public)
+    assert reader.inspect(proof, spec) == public
+    restarted = Materials(company.engine, inspection_cache=InspectionCache(
+        cache_root, build_id="signed-footer-test",
+    ))
+    assert restarted.inspect(proof, spec) == public and len(calls) == 1
+    with company.engine.store.connection(read_only=True) as connection:
+        cache = materials._CompletenessInspectionCache(connection)
+        month = YearMonth("2026-01").ordinal
+        first = materials.check_completeness_many(
+            connection, (month,), company.engine.store.registry, _inspection_cache=cache,
+        )[month]
+        call_count = len(calls)
+        second = materials.check_completeness_many(
+            connection, (month,), company.engine.store.registry, _inspection_cache=cache,
+        )[month]
+        assert first["issues"] == [] and second == first and len(calls) == call_count
+    assert selected(export, template)["total_fen"] == 907400
+    with company.engine.store.connection(read_only=True) as connection:
+        footer = connection.execute(
+            "SELECT amount_fen FROM fact_material_resolution_v2 r JOIN fact_current c "
+            "ON c.fact_id=r.revision_id WHERE r.source_id=? AND r.location!=?",
+            (source["subject_id"], "个税明细!B2"),
+        ).fetchall()
+    assert len(footer) == 4 and all(row[0] is None for row in footer)
+
+
+def test_null_footer_disposition_keeps_actual_hidden_formula_unmapped_and_unresolved_issues(setup):
+    company, export, template = setup
+    raw, spec = signed_tax_original("xlsx", defects=True)
+    source, proof = receive(company, "signed-tax-with-defects", raw, spec=spec)
+    confirm_signed_tax_month(company, source, 9)
+    resolve(company, source, proof, location="个税明细!B2")
+    for row in range(4, 9):
+        resolve(company, source, proof, location=f"个税明细!B{row}",
+                treatment="no_accounting", non_accounting_reason="not_company_business",
+                amount_fen=None, links=[], reason="明确按非业务处置，仍需核验完整原件")
+    issues = assert_incomplete(export, template)
+    found = {(item.get("code"), item.get("location")) for item in issues}
+    assert {("material_amount_missing", f"个税明细!B{row}") for row in (4, 5, 6, 7, 9)} <= found
+    assert ("material_formula_result_missing", "个税明细!B7") in found
+    assert ("material_column_unmapped", "个税明细!C8") in found
+    assert ("material_item_unresolved", "个税明细!B9") in found
+    assert ("material_amount_missing", "个税明细!B8") not in found
 
 
 def test_selected_salary_can_deliver_file_while_complete_export_and_close_keep_month_checks(

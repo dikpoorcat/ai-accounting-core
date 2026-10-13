@@ -690,6 +690,31 @@ class _TableBudget:
                 _too_large("单个文件最多支持十万条数据行，表头和控制行另计")
 
 
+class _TableRow(dict):
+    """Private original-cell properties, without adding material wire fields."""
+
+    visible_text_only = False
+
+
+class _TableInspection(dict):
+    """Completeness-only provenance; JSON reading caches retain ordinary keys."""
+
+    absent_text_amount_locations = frozenset()
+
+
+def _plain_text(value):
+    if not isinstance(value, str) or not value.strip():
+        return False
+    text = value.strip()
+    for char in (",", "¥", "￥", "元", " "):
+        text = text.replace(char, "")
+    try:
+        Decimal(text)
+    except InvalidOperation:
+        return True
+    return False
+
+
 def _csv_rows(raw, budget):
     try:
         raw.decode("utf-8-sig")
@@ -716,7 +741,8 @@ def _xls_rows(raw, budget):
             sheet = book.sheet_by_index(sheet_index)
             budget.dimensions(sheet.name, sheet.nrows, sheet.ncols)
             for row in range(sheet.nrows):
-                cells = {}
+                cells = _TableRow()
+                text_only = True
                 row_info = sheet.rowinfo_map.get(row)
                 for column in range(sheet.ncols):
                     cell = sheet.cell(row, column)
@@ -730,15 +756,17 @@ def _xls_rows(raw, budget):
                     elif cell.ctype == xlrd.XL_CELL_ERROR:
                         value = None
                     column_info = sheet.colinfo_map.get(column)
-                    cells[column + 1] = (
-                        value,
-                        cell.ctype == xlrd.XL_CELL_ERROR,
-                        bool(
-                            sheet.visibility
-                            or (row_info and row_info.hidden)
-                            or (column_info and column_info.hidden)
-                        ),
+                    hidden = bool(
+                        sheet.visibility
+                        or (row_info and row_info.hidden)
+                        or (column_info and column_info.hidden)
                     )
+                    text_only = text_only and (
+                        cell.ctype == xlrd.XL_CELL_TEXT and _plain_text(value) and not hidden
+                    )
+                    cells[column + 1] = value, cell.ctype == xlrd.XL_CELL_ERROR, hidden
+                # xlrd exposes cached cell types, not complete formula provenance.
+                cells.visible_text_only = bool(cells) and text_only
                 budget.accept(sheet.name, row + 1, cells)
                 if cells:
                     yield sheet.name, row + 1, cells
@@ -791,7 +819,7 @@ def _xlsx_dates(archive):
     }
 
 
-class _XlsxRow(dict):
+class _XlsxRow(_TableRow):
     """Private parsing evidence; never part of the material wire contract."""
 
     verified_empty_template = False
@@ -958,6 +986,7 @@ def _xlsx_rows(raw, budget):
                         last_row = number
                         row_hidden = node.get("hidden") in {"1", "true"}
                         cells = _XlsxRow()
+                        text_only = True
                         originals = {}
                         seen_columns = set()
                         for cell in node.findall(main + "c"):
@@ -999,12 +1028,18 @@ def _xlsx_rows(raw, budget):
                             if value is None or not str(value).strip():
                                 if not missing:
                                     continue
+                            hidden = sheet_hidden or row_hidden or column in hidden_columns
+                            text_only = text_only and (
+                                not formula and kind in {"s", "inlineStr", "str"}
+                                and _plain_text(value) and not hidden
+                            )
                             cells[column] = (
                                 value,
                                 missing,
-                                sheet_hidden or row_hidden or column in hidden_columns,
+                                hidden,
                             )
                         if cells:
+                            cells.visible_text_only = text_only
                             cells.verified_empty_template = _empty_xlsx_template(number, originals)
                             budget.accept(name, number, cells)
                             yield name, number, cells
@@ -1015,7 +1050,7 @@ def _xlsx_rows(raw, budget):
 
 
 def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
-    """Normalize one row at a time, retaining only the public inspection result."""
+    """Normalize original rows and retain private absent-cell provenance."""
     spec = specification
     if len(raw) > MAX_MATERIAL_BYTES:
         _too_large("资料原件最多支持20 MiB")
@@ -1031,6 +1066,7 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
     rows = {"csv": _csv_rows, "xls": _xls_rows, "xlsx": _xlsx_rows}[spec.format](raw, budget)
     mappings, issues, items, coverage, totals, sums = {}, [], [], [], [], {}
     known_periods = {}
+    absent_text_amount_locations = set()
     grouped_locations = {item.location for item in spec.controls}
     for sheet, row, cells in rows:
         if sheet not in mappings:
@@ -1062,6 +1098,10 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
                 budget.cells += 1
                 if budget.cells > MAX_NONEMPTY_CELLS:
                     _too_large("原单元格与待补金额字段合计最多支持200万个")
+                if getattr(cells, "visible_text_only", False):
+                    absent_text_amount_locations.add(
+                        f"{sheet}!{get_column_letter(column)}{row}"
+                    )
                 cells[column] = None, False, False
         period, context = None, []
         for column, (value, _, _) in cells.items():
@@ -1151,7 +1191,11 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
         issues.append(
             _issue("material_no_business_columns", "未识别业务金额列，不能以空集合确认处理完成")
         )
-    return {"items": items, "issues": issues, "coverage": coverage, "control_totals": totals}
+    result = _TableInspection(
+        items=items, issues=issues, coverage=coverage, control_totals=totals
+    )
+    result.absent_text_amount_locations = frozenset(absent_text_amount_locations)
+    return result
 
 
 def _bind_controls(items, totals, spec, issues):
@@ -2712,6 +2756,21 @@ def check_completeness_many(
             if item["amount_fen"] is None
             and recovered_amount(source_id, item["location"]) is not None
         }
+        non_accounting_text = set()
+        for location in getattr(inspection, "absent_text_amount_locations", ()):
+            matches = by_item.get((source_id, location), ())
+            if len(matches) != 1:
+                continue
+            resolution = matches[0].fact
+            if (
+                resolution.source_fact_id == by_id[source_id].id
+                and resolution.treatment == "no_accounting"
+                and resolution.non_accounting_reason == "not_company_business"
+                and resolution.amount_fen is None
+                and (resolution.reason or "").strip()
+                and not resolution.links
+            ):
+                non_accounting_text.add(location)
         controls = []
         for control in inspection["control_totals"]:
             expected = control["expected_fen"]
@@ -2763,6 +2822,10 @@ def check_completeness_many(
             and not (
                 item["location"] in repaired
                 and item["code"] in {"material_amount_missing", "material_formula_result_missing"}
+            )
+            and not (
+                item["location"] in non_accounting_text
+                and item["code"] == "material_amount_missing"
             )
         ] + controls
 

@@ -28,7 +28,12 @@ from .development_contracts import (
 )
 from .migration_contracts import diff_contracts
 from .offline_upgrade import _catalog_retained_digest, _catalog_rows
-from .permissions import create_private_file, ensure_private_directory, reject_reparse_path
+from .permissions import (
+    assert_private_file,
+    create_private_file,
+    ensure_private_directory,
+    reject_reparse_path,
+)
 from .runtime import (
     connect,
     migration_connection,
@@ -809,6 +814,11 @@ def upgrade_root(root, *, bundle=None, fault=None, fund_account_inputs=None):
                     raise KernelError(
                         "migration_integrity_failed", "开发升级改变了目录或负责人身份"
                     )
+            # The resident lock proves the service is stopped. Its old contract-bound
+            # transport metadata cannot be reused after this explicit structure upgrade.
+            service_state = root / ".service.json"
+            if service_state.exists():
+                assert_private_file(service_state).rename(backup / "previous-service.json")
         except Exception as exc:
             raise _root_upgrade_failure(
                 exc, backup=backup, catalog_result=catalog_result, results=results,

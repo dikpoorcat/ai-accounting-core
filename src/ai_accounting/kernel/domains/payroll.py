@@ -627,11 +627,12 @@ def calculate_annual_bonus(version: FactVersion, context: Context) -> Outcome:
 
 
 class LaborAccrual(Fact):
-    """Earned remuneration whose actual payment and withholding have not occurred.
+    """Earned gross remuneration before separate payment and withholding facts.
 
     This records a gross creditor claim, never a tax exemption or a completed
     payment/filing.  The recognition month is sufficient for the accrual; actual
-    funds, tax treatment and external completion remain separate facts.
+    funds and external completion remain separate facts. A later confirmed tax
+    basis splits the same payable without recognizing the earned cost twice.
     """
 
     material_amount_aliases: ClassVar[dict[str, str]] = {"fact.gross_fee_fen": "result.gross_fen"}
@@ -664,6 +665,12 @@ class LaborAccrual(Fact):
     def scopes(self) -> tuple[str, ...]:
         return (employee_month(self.person_id, self.period),)
 
+    def reads_for(self, subject_id):
+        return remuneration_tax_reads(self.kind, subject_id)
+
+    def reads_after(self, subject_id, context):
+        return remuneration_tax_reads_after(self.kind, subject_id, context)
+
 
 def calculate_labor_accrual(version: FactVersion, context: Context) -> Outcome:
     fact = version.fact
@@ -671,17 +678,19 @@ def calculate_labor_accrual(version: FactVersion, context: Context) -> Outcome:
     return labor_accrual_outcome(
         version,
         {"management": "560204", "sales": "560104", "service": "540104"}[fact.expense_class],
+        context,
     )
 
 
 def labor_accrual_outcome(
     version: FactVersion,
     cost_account: str,
+    context: Context,
     *,
     cashflow: str | None = None,
     extra_values: dict | None = None,
 ) -> Outcome:
-    """One gross liability and an explicit unrecorded withholding state.
+    """Recognize earned cost once, adopting an explicitly supplied deduction later.
 
     Domain calculators select the cost destination. Public commands cannot
     supply accounts, journal lines or a second copy of this earned cost.
@@ -694,20 +703,40 @@ def labor_accrual_outcome(
             "tax_treatment", "需明确本项只计提劳务应付、尚未记录扣缴及申报，不能推定免税"
         )
     gross = fact.gross_fee_fen
+    tax_source = resolve_remuneration_tax(version, context, required=False)
+    tax = tax_source.fact.tax_amount_fen if tax_source is not None else 0
+    net = sum_fen((gross, -tax))
+    if net < 0:
+        raise KernelError("negative_labor_net", "已确认的劳务扣税金额超过劳务毛额")
+    tax_values = (
+        {
+            "tax_basis": tax_basis_values(tax_source),
+            "source_versions": [tax_source.id],
+            "tax_assessed": True,
+            "tax_review_required": False,
+        }
+        if tax_source is not None
+        else {
+            "withholding_method": "not_withheld_not_filed",
+            "tax_assessed": False,
+            "tax_review_required": True,
+        }
+    )
     return _remuneration_outcome(
         version,
         cost_account,
         gross,
-        (("net", "224104", gross, fact.person_id),),
+        (
+            (("net", "224104", net, fact.person_id), ("tax", "222103", tax, None))
+            if tax_source is not None else (("net", "224104", gross, fact.person_id),)
+        ),
         {
             "person_id": fact.person_id,
             "gross_fen": gross,
-            "net_fen": gross,
-            "tax_fen": 0,
-            "withholding_method": "not_withheld_not_filed",
-            "tax_assessed": False,
-            "tax_review_required": True,
+            "net_fen": net,
+            "tax_fen": tax,
             "rule_versions": [],
+            **tax_values,
             **(extra_values or {}),
         },
         (
@@ -715,11 +744,18 @@ def labor_accrual_outcome(
                 "step": "labor_accrual",
                 "recognition_period": str(fact.period),
                 "gross_fee_fen": gross,
-                "withholding_recorded_fen": 0,
+                "withholding_recorded_fen": (
+                    tax if tax_source is not None
+                    and tax_source.fact.basis_type == "actual_withholding" else 0
+                ),
                 "tax_calculation": "not_performed",
                 "external_filing": "not_recorded_by_this_accrual",
                 "actual_payment": "separate_fact_required",
             },
+        ) + (
+            ({"step": "confirmed_remuneration_tax",
+              "values": {"tax_basis": tax_values["tax_basis"]}},)
+            if tax_source is not None else ()
         ),
         cashflow=cashflow,
     )

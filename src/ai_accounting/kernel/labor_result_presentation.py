@@ -16,7 +16,10 @@ def labor_withholding_presentation(
     from .payroll_history import HistoricalLaborRemuneration
     from .remuneration_tax_basis import RemunerationTaxBasis
 
-    if model is LaborRemuneration and content_version != 1:
+    confirmed_accrual = (
+        model.kind in {"labor_accrual", "labor_project_cost"} and "tax_basis" in values
+    )
+    if content_version != 1 and (model is LaborRemuneration or confirmed_accrual):
         basis = values.get("tax_basis")
         if not isinstance(basis, dict) or "withholding_method" in values:
             _invalid()
@@ -30,7 +33,7 @@ def labor_withholding_presentation(
         except (TypeError, ValueError):
             _invalid()
         if (
-            saved.source_kind != "labor" or saved.source_id != subject_id
+            saved.source_kind != model.kind or saved.source_id != subject_id
             or saved.source_fact_id != fact_id
             or saved.period != period
             or type(values.get("tax_fen")) is not int

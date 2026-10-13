@@ -16,7 +16,9 @@ from .types import (
     sum_fen,
 )
 
-REMUNERATION_KINDS = ("payroll", "payroll_bounded", "annual_bonus", "labor")
+REMUNERATION_KINDS = (
+    "payroll", "payroll_bounded", "annual_bonus", "labor", "labor_accrual", "labor_project_cost"
+)
 
 
 def tax_basis_scope(kind: str, subject_id: str) -> str:
@@ -50,7 +52,9 @@ class HistoricalWithholdingOrigin(BaseModel):
 
 class PooledTaxAllocation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    source_kind: Literal["payroll", "payroll_bounded", "annual_bonus", "labor"]
+    source_kind: Literal[
+        "payroll", "payroll_bounded", "annual_bonus", "labor", "labor_accrual", "labor_project_cost"
+    ]
     source_id: SubjectId
     period: YearMonth
     tax_amount_fen: NonNegativeFen
@@ -89,7 +93,9 @@ class RemunerationTaxBasis(Fact):
             }
         },
     )
-    source_kind: Literal["payroll", "payroll_bounded", "annual_bonus", "labor"]
+    source_kind: Literal[
+        "payroll", "payroll_bounded", "annual_bonus", "labor", "labor_accrual", "labor_project_cost"
+    ]
     source_id: SubjectId = Field(
         json_schema_extra={
             "x-accounting-fact": {
@@ -221,13 +227,15 @@ def remuneration_tax_reads_after(kind, subject_id, context):
     return tuple(dict.fromkeys((*origins, *targets, *pools)))
 
 
-def resolve_remuneration_tax(version: FactVersion, context: Context):
+def resolve_remuneration_tax(version: FactVersion, context: Context, *, required=True):
     sources = context.facts(
         RemunerationTaxBasis.kind, tax_basis_scope(version.fact.kind, version.subject_id)
     )
     if len(sources) > 1:
         raise KernelError("ambiguous_remuneration_tax_basis", "同一报酬存在多个当前税额依据")
     if not sources:
+        if not required:
+            return None
         raise NeedsInformation(
             "remuneration_tax_basis",
             "需要本项报酬有依据的最终扣税额；明确零额也须确认",
@@ -273,6 +281,8 @@ def resolve_remuneration_tax(version: FactVersion, context: Context):
             "commission_rate_ppm",
             "income_date",
         ),
+        "labor_accrual": ("person_id", "gross_fee_fen"),
+        "labor_project_cost": ("person_id", "project_id", "gross_fee_fen"),
     }[fact.source_kind]
     if any(getattr(adopted.fact, field) != getattr(version.fact, field) for field in fields):
         raise NeedsInformation(

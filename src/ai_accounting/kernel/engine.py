@@ -556,6 +556,15 @@ class Engine:
             )
             if kind in self.store.registry.evaluators:
                 affected.add(subject_id)
+            if kind == "remuneration_tax_basis" and fact.source_kind in {
+                "labor_accrual", "labor_project_cost"
+            } and connection.execute(
+                "SELECT 1 FROM subject s JOIN calculation_current c ON c.subject_id=s.id "
+                "WHERE s.id=? AND s.kind=?", (fact.source_id, fact.source_kind),
+            ).fetchone():
+                # Previously published gross accruals have no tax-scope edge yet.
+                # Seed only the named source, then reuse ordinary descendant invalidation.
+                affected.add(fact.source_id)
             affected = self._descendants(connection, affected)
             connection.executemany(
                 "INSERT INTO pending VALUES(?,?) ON CONFLICT DO NOTHING",

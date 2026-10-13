@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+
 def main():
     parser = argparse.ArgumentParser(description="本地 SQLite 确定性会计内核")
     parser.add_argument("--root", type=Path)
@@ -55,10 +56,6 @@ def main():
                     "data_root_required", "请使用启动器，或明确指定 --root / FINANCE_DATA_ROOT"
                 )
             args.root = Path(configured_root)
-        if args.mode == "daemon":
-            from .runtime_snapshot import bootstrap_runtime
-
-            bootstrap_runtime(args.root)
         from .daemon import ServiceClient, default_root
 
         if args.root is None:
