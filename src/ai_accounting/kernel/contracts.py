@@ -9,9 +9,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from .types import YearMonth, checked, sum_fen
 
@@ -36,6 +36,93 @@ def freeze(value):
     return value
 
 
+def fact_missing_issue(model, field_path, subject_id=None, *, prefix="", _metadata_cache=None):
+    """Use declared leaf metadata, optionally reused within one missing-error group."""
+    def annotation_variants(annotation):
+        origin = get_origin(annotation)
+        if origin is Annotated:
+            yield from annotation_variants(get_args(annotation)[0])
+        elif origin is not None and origin not in {list, tuple}:
+            for variant in get_args(annotation):
+                yield from annotation_variants(variant)
+        else:
+            yield annotation
+
+    annotations, fields = [model], []
+    for part in field_path:
+        next_annotations, fields = [], []
+        for annotation in annotations:
+            for variant in annotation_variants(annotation):
+                if type(part) is int and get_origin(variant) in {list, tuple}:
+                    next_annotations.append(get_args(variant)[0])
+                elif isinstance(variant, type) and issubclass(variant, BaseModel):
+                    field = variant.model_fields.get(part) if isinstance(part, str) else None
+                    if field is not None:
+                        next_annotations.append(field.annotation)
+                        fields.append(field)
+                    elif variant.__name__ == part or any(
+                        get_origin(info.annotation) is Literal
+                        and part in get_args(info.annotation)
+                        for info in variant.model_fields.values()
+                    ):
+                        next_annotations.append(variant)
+        annotations = next_annotations
+    metadata_options, explicit_metadata = [], []
+    for field in fields:
+        cached = _metadata_cache.get(field) if _metadata_cache is not None else None
+        if cached is None:
+            schema = TypeAdapter(field.rebuild_annotation()).json_schema()
+            inherited = [
+                item["x-accounting-fact"]
+                for item in [schema, *schema.get("anyOf", ()), *schema.get("oneOf", ())]
+                if isinstance(item.get("x-accounting-fact"), dict)
+            ]
+            metadata = (
+                dict(inherited[0])
+                if inherited and all(item == inherited[0] for item in inherited) else {}
+            )
+            extra = field.json_schema_extra
+            explicit = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
+            metadata.update(explicit)
+            cached = metadata, explicit
+            if _metadata_cache is not None:
+                _metadata_cache[field] = cached
+        metadata, explicit = cached
+        explicit_metadata.append(explicit)
+        metadata_options.append(metadata)
+    metadata = (
+        metadata_options[0]
+        if metadata_options and all(item == metadata_options[0] for item in metadata_options)
+        else {}
+    )
+    declared_roles = {item["role"] for item in explicit_metadata if "role" in item}
+    # Scalar ActualDate metadata describes precision; it cannot turn a
+    # management fact's date into a required accounting fact.
+    semantics = (
+        next(iter(declared_roles)) if len(declared_roles) == 1
+        else "accounting" if model.lane == "accounting" else "management"
+    )
+    precision = metadata.get("allowed_precision")
+    if precision is None:
+        declared = metadata.get("precision")
+        if declared is None and tuple(field_path) == ("period",):
+            declared = "month"
+        precision = [declared] if isinstance(declared, str) else []
+    sources = metadata.get("reusable_sources")
+    if sources is None:
+        sources = [subject_id] if isinstance(subject_id, str) and subject_id else []
+    issue = {
+        "field": prefix + ".".join(map(str, field_path)),
+        "message": "缺少必需管理资料" if semantics == "management" else "缺少必需核算事实",
+        "semantics": semantics,
+        "reusable_sources": list(sources),
+        "allowed_precision": list(precision),
+    }
+    if "constraint" in metadata:
+        issue["constraint"] = metadata["constraint"]
+    return issue
+
+
 class KernelError(ValueError):
     def __init__(self, code: str, message: str, **details):
         super().__init__(message)
@@ -47,12 +134,19 @@ class KernelError(ValueError):
                 or not all(isinstance(issue, dict) for issue in issues)
             ):
                 raise ValueError("needs_information requires nonempty fact_issues")
-            if "resolution" in details:
+            registry = details.pop("_resolution_registry", None)
+            if "resolution" in details or any("resolution" in issue for issue in issues):
                 from .resolution import validate_resolution
 
-                details["resolution"] = validate_resolution(
-                    details["resolution"], registry=details.pop("_resolution_registry", None)
-                )
+                if "resolution" in details:
+                    details["resolution"] = validate_resolution(
+                        details["resolution"], registry=registry
+                    )
+                for issue in issues:
+                    if "resolution" in issue:
+                        issue["resolution"] = validate_resolution(
+                            issue["resolution"], registry=registry
+                        )
         self.code, self.details = code, details
 
     def response(self):
@@ -62,6 +156,8 @@ class KernelError(ValueError):
                 "status": "needs_information",
                 "fact_issues": self.details.get("fact_issues", []),
                 **({"resolution": resolution} if resolution is not None else {}),
+                **({"blocking_scope": self.details["blocking_scope"]}
+                   if "blocking_scope" in self.details else {}),
             }
         return {"status": "rejected", "code": self.code, "message": str(self), **self.details}
 
@@ -76,6 +172,7 @@ class NeedsInformation(KernelError):
         precision=(),
         resolution=None,
         registry=None,
+        blocking_scope=None,
     ):
         if isinstance(field, str):
             issues = [
@@ -94,9 +191,21 @@ class NeedsInformation(KernelError):
         details = {"fact_issues": issues}
         if resolution is not None:
             details["resolution"] = resolution
+        if registry is not None:
             details["_resolution_registry"] = registry
+        if blocking_scope is not None:
+            details["blocking_scope"] = blocking_scope
         super().__init__("needs_information", message, **details)
         self.issues = issues
+
+    def issues_with_context(self):
+        """Retain shared diagnostic context when embedding each original issue."""
+        shared = {
+            key: self.details[key]
+            for key in ("resolution", "blocking_scope")
+            if key in self.details
+        }
+        return [{**shared, **issue} for issue in self.issues]
 
     def response(self):
         return super().response()
@@ -149,6 +258,7 @@ def _fact_registration_schema(schema):
         if len(non_null) == 1 and len(non_null) != len(alternatives):
             field.pop("anyOf")
             field.update(non_null[0])
+            field["x-accounting-fact"] = {**field.get("x-accounting-fact", {}), **metadata}
 
 
 class Fact(BaseModel):
@@ -181,15 +291,9 @@ class Fact(BaseModel):
             extra = info.json_schema_extra
             metadata = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
             if metadata.get("required_for_registration") and getattr(self, name) is None:
-                issues.append(
-                    {
-                        "field": name,
-                        "message": metadata["constraint"],
-                        "semantics": metadata["role"],
-                        "reusable_sources": metadata.get("reusable_sources", []),
-                        "allowed_precision": [],
-                    }
-                )
+                issue = fact_missing_issue(type(self), (name,))
+                issue["message"] = metadata["constraint"]
+                issues.append(issue)
         if issues:
             raise NeedsInformation(issues)
 

@@ -21,6 +21,7 @@ from .contracts import (
     FactVersion,
     KernelError,
     NeedsInformation,
+    fact_missing_issue,
     read_identity_payload,
 )
 from .dependencies import checked_lanes, read_matches, scope_keys, select_fact_dependencies
@@ -398,34 +399,13 @@ class Engine:
         except ValidationError as exc:
             missing = [e for e in exc.errors() if e["type"] == "missing"]
             if missing:
-                issues = []
-                for issue in missing:
-                    field = ".".join(map(str, issue["loc"]))
-                    top = str(issue["loc"][0]) if issue["loc"] else ""
-                    field_info = model.model_fields.get(top)
-                    field_extra = field_info.json_schema_extra if field_info else None
-                    metadata = (
-                        field_extra.get("x-accounting-fact", {})
-                        if isinstance(field_extra, dict)
-                        else {}
+                metadata_cache = {}
+                issues = [
+                    fact_missing_issue(
+                        model, issue["loc"], subject_id, _metadata_cache=metadata_cache
                     )
-                    semantics = metadata.get(
-                        "role", "accounting" if model.lane == "accounting" else "management"
-                    )
-                    precision = metadata.get("precision")
-                    issues.append(
-                        {
-                            "field": field,
-                            "message": (
-                                "缺少必需管理资料"
-                                if semantics == "management"
-                                else "缺少必需核算事实"
-                            ),
-                            "semantics": semantics,
-                            "reusable_sources": [subject_id],
-                            "allowed_precision": [precision] if isinstance(precision, str) else [],
-                        }
-                    )
+                    for issue in missing
+                ]
                 raise NeedsInformation(
                     issues,
                     "缺少必需事实",

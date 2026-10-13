@@ -397,7 +397,10 @@ class PayrollPreparation:
                 try:
                     confirmation = resolve_payroll_confirmation(version, Context(selections))
                 except NeedsInformation as exc:
-                    issues.extend(item | {"employee_id": employee} for item in exc.issues)
+                    issues.extend(
+                        {**item, "employee_id": employee}
+                        for item in exc.issues_with_context()
+                    )
                     continue
                 except KernelError as exc:
                     if exc.code not in {"ambiguous_source", "payroll_profile_mismatch"}:

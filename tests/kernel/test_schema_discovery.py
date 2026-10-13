@@ -437,3 +437,32 @@ def test_shared_service_returns_common_and_selected_rules_from_one_source(tmp_pa
     assert overview["agent_operating_protocol"]["core"] == OPERATING_PROTOCOL["core"]
     assert selected["agent_operating_protocol_version"] == OPERATING_PROTOCOL["version"]
     assert selected["agent_operating_rules"] == {"payroll": OPERATING_PROTOCOL["topics"]["payroll"]}
+
+
+def test_overview_exposes_question_reuse_and_recovery_rules(contracts):
+    core = discover(contracts)["agent_operating_protocol"]["core"]
+    lookup = core["owner_questions"]["lookup_first"]
+    assert "实际业务期间、对象及字段" in lookup
+    assert "work_context(include_work_draft=true)" in lookup
+    assert "分页" in lookup and "精确来源引用" in lookup
+    assert "source_refs可跨原资料类别精确复用" in lookup
+    assert "对应领域的prepare或preview" in lookup
+    missing = core["owner_questions"]["missing_information"]
+    assert "嵌套cause" in missing and "blocking_scope" in missing
+    assert "request_result" in missing
+    assert "技术阻塞" in missing and "独立能力缺口" in missing
+    assert "待重算" in core["recovery"]
+    assert "文件失败不自行撤销确认" in core["owner_confirmation"]
+
+
+@pytest.mark.parametrize("command", ["work_context", "save_work_draft", "read_work_draft"])
+def test_work_draft_selection_keeps_question_disposition_semantics(contracts, command):
+    selected = discover(contracts, view="selected", commands=[command])
+    rules = selected["agent_operating_rules"]["work_drafts"]["rules"]
+    content = rules["content"]
+    assert "pending、answered、resolved、withdrawn、deferred" in content
+    assert "answered仅表示回答已收到" in content
+    assert "旧稿省略status不自动视为已解决" in content
+    assert "field必填" in content
+    assert "不从外围工作期补值" in content
+    assert "不代替正式事实、批准或来源核验" in content

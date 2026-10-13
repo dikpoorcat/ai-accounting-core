@@ -10358,6 +10358,69 @@
         "title": "FileReference",
         "type": "object"
       },
+      "IssueCandidateResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Candidates",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "IssueCandidateResolution",
+        "type": "object"
+      },
+      "IssueCommandResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "enum": [
+              "save_fact",
+              "amend_fact",
+              "find_facts",
+              "prepare_fact_registration",
+              "receive_material",
+              "resolve_material",
+              "resolve_material_group",
+              "register_entity",
+              "update_entity_profile",
+              "inspect_material"
+            ],
+            "title": "Command",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "IssueCommandResolution",
+        "type": "object"
+      },
+      "IssueFactResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "fact_kind": {
+            "minLength": 1,
+            "title": "Fact Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact_kind"
+        ],
+        "title": "IssueFactResolution",
+        "type": "object"
+      },
       "LaterClosure": {
         "additionalProperties": false,
         "properties": {
@@ -10630,6 +10693,28 @@
             "title": "Reusable Sources",
             "type": "array"
           },
+          "constraint": {
+            "title": "Constraint",
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IssueCommandResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueFactResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueCandidateResolution"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "blocking_scope": {
+            "title": "Blocking Scope",
+            "type": "string"
+          },
           "expected_fen": {
             "anyOf": [
               {
@@ -10842,6 +10927,14 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "cause": {
+            "$ref": "#/$defs/ReadinessIssue"
           },
           "employee_id": {
             "title": "Employee Id",
@@ -12532,6 +12625,69 @@
         "title": "InspectedFileSummary",
         "type": "object"
       },
+      "IssueCandidateResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Candidates",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "IssueCandidateResolution",
+        "type": "object"
+      },
+      "IssueCommandResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "enum": [
+              "save_fact",
+              "amend_fact",
+              "find_facts",
+              "prepare_fact_registration",
+              "receive_material",
+              "resolve_material",
+              "resolve_material_group",
+              "register_entity",
+              "update_entity_profile",
+              "inspect_material"
+            ],
+            "title": "Command",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "IssueCommandResolution",
+        "type": "object"
+      },
+      "IssueFactResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "fact_kind": {
+            "minLength": 1,
+            "title": "Fact Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact_kind"
+        ],
+        "title": "IssueFactResolution",
+        "type": "object"
+      },
       "LaterClosure": {
         "additionalProperties": false,
         "properties": {
@@ -13333,6 +13489,28 @@
             "title": "Reusable Sources",
             "type": "array"
           },
+          "constraint": {
+            "title": "Constraint",
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IssueCommandResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueFactResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueCandidateResolution"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "blocking_scope": {
+            "title": "Blocking Scope",
+            "type": "string"
+          },
           "expected_fen": {
             "anyOf": [
               {
@@ -13815,6 +13993,14 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "cause": {
+            "$ref": "#/$defs/ReadinessIssue"
           },
           "employee_id": {
             "title": "Employee Id",
@@ -24675,6 +24861,69 @@
         "title": "FileJobFollowup",
         "type": "object"
       },
+      "IssueCandidateResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Candidates",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "IssueCandidateResolution",
+        "type": "object"
+      },
+      "IssueCommandResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "enum": [
+              "save_fact",
+              "amend_fact",
+              "find_facts",
+              "prepare_fact_registration",
+              "receive_material",
+              "resolve_material",
+              "resolve_material_group",
+              "register_entity",
+              "update_entity_profile",
+              "inspect_material"
+            ],
+            "title": "Command",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "IssueCommandResolution",
+        "type": "object"
+      },
+      "IssueFactResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "fact_kind": {
+            "minLength": 1,
+            "title": "Fact Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact_kind"
+        ],
+        "title": "IssueFactResolution",
+        "type": "object"
+      },
       "LaterClosure": {
         "additionalProperties": false,
         "properties": {
@@ -25273,6 +25522,28 @@
             "title": "Reusable Sources",
             "type": "array"
           },
+          "constraint": {
+            "title": "Constraint",
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IssueCommandResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueFactResolution"
+              },
+              {
+                "$ref": "#/$defs/IssueCandidateResolution"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "blocking_scope": {
+            "title": "Blocking Scope",
+            "type": "string"
+          },
           "expected_fen": {
             "anyOf": [
               {
@@ -25671,6 +25942,14 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "blocking_scope": {
+            "const": "tax_import_file",
+            "title": "Blocking Scope",
+            "type": "string"
+          },
+          "cause": {
+            "$ref": "#/$defs/ReadinessIssue"
           },
           "employee_id": {
             "title": "Employee Id",

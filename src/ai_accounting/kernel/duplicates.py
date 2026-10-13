@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .contracts import Fact, KernelError, NeedsInformation
+from .contracts import Fact, KernelError, NeedsInformation, fact_missing_issue
 from .material_history_sql import material_relation, verify_pre_reference_links
 from .stored_json import DuplicateStoredKey, loads_unique
 from .types import EvidenceDigest, YearMonth, canonical, digest, sum_fen, validate_evidence_digests
@@ -3158,15 +3158,22 @@ class Duplicates:
 
         _reject_binary_numbers(data)
         try:
-            fact = self.store.registry.models[kind].model_validate_json(canonical(data))
+            model = self.store.registry.models[kind]
+            fact = model.model_validate_json(canonical(data))
         except ValidationError as exc:
             missing = [item for item in exc.errors() if item["type"] == "missing"]
             if missing:
-                issue = missing[0]
+                metadata_cache = {}
                 raise NeedsInformation(
-                    ".".join(map(str, issue["loc"])),
-                    "缺少必需核算事实",
-                    sources=(subject_id,),
+                    [
+                        fact_missing_issue(
+                            model, issue["loc"], subject_id, _metadata_cache=metadata_cache
+                        )
+                        for issue in missing
+                    ],
+                    "缺少必需事实",
+                    resolution={"fact_kind": kind},
+                    registry=self.store.registry,
                 ) from exc
             raise KernelError(
                 "invalid_fact",

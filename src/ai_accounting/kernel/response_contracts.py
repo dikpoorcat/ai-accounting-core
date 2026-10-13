@@ -30,6 +30,7 @@ from .close_review import (
 )
 from .contracts import KernelError
 from .reports import DetailCode
+from .resolution import ResolutionCommand
 from .response_types import (
     Version1,
     Version2,
@@ -365,6 +366,35 @@ class DuplicateSignal(ResponseObject):
     complete_bank_split_proven: NotRequired[bool]
 
 
+class IssueCommandResolution(ResponseObject):
+    command: ResolutionCommand
+
+
+class IssueFactResolution(ResponseObject):
+    # Registry membership is checked when the domain creates NeedsInformation;
+    # the static response schema describes the single target shape only.
+    fact_kind: Annotated[str, Field(min_length=1)]
+
+
+class IssueCandidateResolution(ResponseObject):
+    candidates: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=200)]],
+        Field(min_length=1, max_length=100, json_schema_extra={"uniqueItems": True}),
+    ]
+
+
+def _issue_resolution(value):
+    from .resolution import validate_resolution
+
+    return value if "fact_kind" in value else validate_resolution(value)
+
+
+IssueResolution = Annotated[
+    IssueCommandResolution | IssueFactResolution | IssueCandidateResolution,
+    AfterValidator(_issue_resolution),
+]
+
+
 class ReadinessIssue(ResponseObject):
     """Fields emitted by material, accounting, report and close checkers.
 
@@ -413,6 +443,9 @@ class ReadinessIssue(ResponseObject):
     account: NotRequired[str]
     allowed_precision: NotRequired[list[str]]
     reusable_sources: NotRequired[list[str]]
+    constraint: NotRequired[str]
+    resolution: NotRequired[IssueResolution]
+    blocking_scope: NotRequired[str]
     expected_fen: NotRequired[WireFen | None]
     actual_fen: NotRequired[WireFen | None]
     reason: NotRequired[str]
@@ -542,6 +575,8 @@ class TaxImportMappingIssue(ResponseObject):
     category: Literal["management_fact", "capability", "publication"]
     field: str
     message: str
+    blocking_scope: NotRequired[Literal["tax_import_file"]]
+    cause: NotRequired[ReadinessIssue]
     employee_id: NotRequired[str]
     component_codes: NotRequired[list[str]]
     amount_fen: NotRequired[WireFen]

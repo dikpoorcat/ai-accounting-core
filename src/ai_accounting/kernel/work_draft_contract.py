@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import math
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .contracts import KernelError
-from .types import EvidenceDigest, SubjectId, canonical
+from .types import EvidenceDigest, SubjectId, YearMonth, canonical
 
 Identifier = Annotated[str, Field(min_length=1, max_length=200)]
 
@@ -39,11 +39,27 @@ class DraftCandidate(DraftModel):
     payload: dict[str, JsonValue]
 
 
+class DraftQuestionTarget(DraftModel):
+    """Explicit business scope; the draft's storage month supplies no facts."""
+
+    field: Identifier
+    period: YearMonth | None = None
+    entity_id: SubjectId | None = None
+    subject_id: SubjectId | None = None
+    candidate_id: Identifier | None = None
+    fact_kind: Identifier | None = None
+
+
 class DraftQuestion(DraftModel):
+    """Caller-declared progress carries no registration or approval authority."""
+
     id: Identifier
     question: Annotated[str, Field(min_length=1)]
     answer: str | None = None
     source_refs: list[DraftSourceRef] | None = None
+    status: Literal["pending", "answered", "resolved", "withdrawn", "deferred"] | None = None
+    target: DraftQuestionTarget | None = None
+    disposition_reason: Annotated[str, Field(min_length=1)] | None = None
 
 
 class DraftPendingRequest(DraftModel):
@@ -105,6 +121,7 @@ DRAFT_COMMANDS = frozenset(
         "register_worker",
         "change_workforce_relationship",
         "update_company_note",
+        "save_display_profile",
         "receive_material",
         "resolve_material",
         "resolve_material_group",
@@ -140,6 +157,7 @@ PENDING_REQUEST_COMMANDS = frozenset(
         "register_worker",
         "change_workforce_relationship",
         "update_company_note",
+        "save_display_profile",
         "receive_material",
         "resolve_material",
         "resolve_material_group",

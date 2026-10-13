@@ -39,6 +39,26 @@ test("generated validators accept all current synthetic backend response branche
   }
 });
 
+test("issue resolutions retain Unicode limits and one typed action in browser validators", () => {
+  const response = structuredClone(samples.open_workflow.response);
+  const issue = { field: "source", message: "需要核对来源", resolution: { candidates: ["😀".repeat(200)] } };
+  response.issues.push(issue);
+  response.fact_issue_refs.push(response.issues.length - 1);
+  assert.equal(validators.validateWorkflowResponse(response), true);
+  issue.resolution.candidates = ["😀".repeat(201)];
+  assert.equal(validators.validateWorkflowResponse(response), false);
+  issue.resolution = { command: "find_facts" };
+  assert.equal(validators.validateWorkflowResponse(response), true);
+  issue.resolution = { command: "find_facts", fact_kind: "payroll" };
+  assert.equal(validators.validateWorkflowResponse(response), false);
+  issue.resolution = { candidates: [] };
+  assert.equal(validators.validateWorkflowResponse(response), false);
+  issue.resolution = { candidates: ["same", "same"] };
+  assert.equal(validators.validateWorkflowResponse(response), false);
+  issue.resolution = { candidates: ["first", "second"] };
+  assert.equal(validators.validateWorkflowResponse(response), true);
+});
+
 test("the explicit generated manifest covers every browser-visible response contract", () => {
   assert.deepEqual(Object.keys(schemas).sort(), [
     "browser_security_status", "confirm_replay", "confirm_replay_close_range", "dashboard_assets", "dashboard_assets_delivery", "dashboard_brief", "dashboard_brief_delivery",

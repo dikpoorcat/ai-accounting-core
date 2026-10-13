@@ -112,6 +112,100 @@ def test_model_input_does_not_fill_omitted_fields(store):
     assert store.read("2026-10", "financing")["draft"] == candidate()
 
 
+@pytest.mark.parametrize("status", ["pending", "answered", "resolved", "withdrawn", "deferred"])
+def test_question_lifecycle_and_explicit_business_scope_survive_restart(store, status):
+    draft = {
+        "questions": [
+            {
+                "id": "creditor",
+                "question": "出借方性质？",
+                "answer": "负责人本人",
+                "status": status,
+                "target": {
+                    "period": "2026-09",
+                    "entity_id": "owner",
+                    "subject_id": "loan:owner",
+                    "field": "data.creditor_kind",
+                    "candidate_id": "loan-1",
+                    "fact_kind": "loan",
+                },
+                "disposition_reason": "复用了已保全的负责人确认",
+                "source_refs": [{"source_id": "owner-answer", "location": "原回答"}],
+            }
+        ],
+    }
+    saved = save(store, WorkDraft.model_validate(draft, strict=True))
+    reopened = make_store(store).read("2026-10", "financing")
+    assert reopened["draft"] == draft
+    assert reopened["revision"] == saved["revision"]
+    assert reopened["period"] == "2026-10"
+    assert reopened["draft"]["questions"][0]["target"]["period"] == "2026-09"
+
+
+def test_question_answer_does_not_infer_status_scope_or_fact(store):
+    draft = {
+        "questions": [
+            {
+                "id": "period",
+                "question": "所属期？",
+                "answer": "2026-09，已确认可以登记",
+                "target": {"field": "data.period"},
+                "source_refs": [{"source_id": "owner-answer"}],
+            }
+        ]
+    }
+    save(store, WorkDraft.model_validate(draft, strict=True))
+    reopened = make_store(store).read("2026-10", "financing")["draft"]
+    assert reopened == draft
+    assert "status" not in reopened["questions"][0]
+    assert "period" not in reopened["questions"][0]["target"]
+    assert "candidates" not in reopened
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {},
+        {"field": ""},
+        {"field": 12},
+        {"field": ["period"]},
+        {"field": "period", "period": "2026-13"},
+        {"field": "period", "period": "0000-01"},
+        {"field": "period", "period": "2026-09-01"},
+        {"field": "period", "period": 202609},
+        {"field": "period", "period": "2026-09\n"},
+        {"field": "period", "subject_id": 7},
+        {"field": "period", "entity_id": True},
+        {"field": "period", "subject_id": "x" * 201},
+        {"field": "period", "candidate_id": []},
+        {"field": "period", "fact_kind": ""},
+        {"field": "period", "company_id": "other"},
+    ],
+)
+def test_invalid_question_target_does_not_replace_existing_draft(store, target):
+    saved = save(store, {"resume_note": "保留"})
+    before = saved_path(store).read_bytes()
+    draft = {"questions": [{"id": "period", "question": "所属期？", "target": target}]}
+    assert_error("work_draft_invalid", save, store, draft, saved["revision"])
+    assert saved_path(store).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"status": "approved"},
+        {"status": True},
+        {"status": ""},
+        {"disposition_reason": ""},
+        {"disposition_reason": 1},
+    ],
+)
+def test_question_lifecycle_is_strict(store, extra):
+    draft = {"questions": [{"id": "period", "question": "所属期？", **extra}]}
+    assert_error("work_draft_invalid", save, store, draft)
+    assert store.read("2026-10", "financing")["status"] == "absent"
+
+
 @pytest.mark.parametrize(
     "change",
     [{"company_id": "second"}, {"database_id": "second"}, {"catalog_instance_id": "second"}],

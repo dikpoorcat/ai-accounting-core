@@ -119,6 +119,39 @@ def test_partial_candidates_answers_cross_month_refs_roundtrip_without_business_
     assert business_state(app, scope["company_id"]) == before
 
 
+@pytest.mark.parametrize("status", ["answered", "resolved"])
+def test_question_disposition_does_not_authorize_or_complete_business_fact(service, status):
+    app, _, scope, restart = service
+    before = business_state(app, scope["company_id"])
+    draft = {
+        "candidates": [candidate(scope)],
+        "questions": [
+            {
+                "id": "creditor",
+                "question": "债权人类别？",
+                "answer": "已确认可以登记",
+                "status": status,
+                "target": {"field": "data.creditor_kind", "subject_id": "expense"},
+                "disposition_reason": "已找到来源",
+                "source_refs": [{"source_id": "owner-answer", "location": "负责人原回答"}],
+            }
+        ],
+    }
+    saved = save(app, scope, draft)
+    app.close()
+    reopened, _ = restart()
+    restored = reopened.dispatch("read_work_draft", scope)
+    assert restored["draft"] == draft and restored["revision"] == saved["revision"]
+    assert business_state(reopened, scope["company_id"]) == before
+    with pytest.raises(KernelError) as failure:
+        reopened.dispatch("save_fact", draft["candidates"][0]["payload"])
+    assert failure.value.response()["status"] == "needs_information"
+    assert any(
+        "creditor_kind" in issue["field"] for issue in failure.value.response()["fact_issues"]
+    )
+    assert business_state(reopened, scope["company_id"]) == before
+
+
 def test_dedicated_candidates_retain_entry_and_generic_route_is_rejected(service):
     app, _, scope, _ = service
     dedicated = {

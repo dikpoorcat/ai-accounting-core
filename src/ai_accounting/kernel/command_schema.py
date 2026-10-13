@@ -12,7 +12,7 @@ from .backup import run_backup_jobs
 from .business_queries import BusinessQueries
 from .catalog import Catalog
 from .close_review import CloseReview
-from .contracts import KernelError, NeedsInformation
+from .contracts import KernelError, NeedsInformation, fact_missing_issue
 from .discovery import Discovery
 from .display import Display
 from .duplicates import DuplicateReview, Duplicates, SourceLocation
@@ -329,7 +329,7 @@ def command_schemas(registry):
     return {name: model.json_schema() for name, model in command_models(registry).items()}
 
 
-def _registration_missing_issue(error, command, payload, registry):
+def _registration_missing_issue(error, command, payload, registry, *, metadata_cache=None):
     if command not in {"save_fact", "amend_fact", "save_facts"} or registry is None:
         return None
     location = error["loc"]
@@ -355,22 +355,9 @@ def _registration_missing_issue(error, command, payload, registry):
     model = registry.models.get(kind) if isinstance(kind, str) else None
     if model is None:
         return None
-    field = ".".join(map(str, field_path))
-    field_info = model.model_fields.get(str(field_path[0]))
-    extra = field_info.json_schema_extra if field_info else None
-    metadata = extra.get("x-accounting-fact", {}) if isinstance(extra, dict) else {}
-    semantics = metadata.get("role", "accounting" if model.lane == "accounting" else "management")
-    precision = metadata.get("precision")
-    if precision is None and field_path[0] == "period":
-        precision = "month"
-    source = item.get("subject_id")
-    return {
-        "field": prefix + field,
-        "message": "缺少必需管理资料" if semantics == "management" else "缺少必需核算事实",
-        "semantics": semantics,
-        "reusable_sources": [source] if isinstance(source, str) and source else [],
-        "allowed_precision": [precision] if isinstance(precision, str) else [],
-    }
+    return fact_missing_issue(
+        model, field_path, item.get("subject_id"), prefix=prefix, _metadata_cache=metadata_cache
+    )
 
 
 def _workforce_missing_issue(error, command):
@@ -391,6 +378,7 @@ def _workforce_missing_issue(error, command):
             "reusable_sources", ["owner_confirmation", "workforce_document"]
         ),
         "allowed_precision": metadata.get("allowed_precision", []),
+        **({"constraint": metadata["constraint"]} if "constraint" in metadata else {}),
     }
 
 
@@ -423,12 +411,15 @@ def validate_command(models, command, payload, *, registry=None):
         return result
     except ValidationError as exc:
         errors = exc.errors(include_input=False, include_url=False, include_context=False)
+        metadata_cache = {}
         missing = [
             issue
             for error in errors
             if error["type"] == "missing"
             if (issue := (
-                _registration_missing_issue(error, command, payload, registry)
+                _registration_missing_issue(
+                    error, command, payload, registry, metadata_cache=metadata_cache
+                )
                 or _workforce_missing_issue(error, command)
             )) is not None
         ]

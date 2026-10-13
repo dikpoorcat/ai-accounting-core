@@ -214,6 +214,8 @@ def _prepared_wages(store, connection, period, *, reads=None):
             item["field"],
             item["message"],
             employee_id=item["employee_id"],
+            blocking_scope="tax_import_file",
+            cause=dict(item),
         )
         for source_period in sorted(source_periods)
         for item in _payroll_population_issues(profiles, facts, source_period, source_period)
@@ -296,8 +298,10 @@ def _prepared_wages(store, connection, period, *, reads=None):
                     issue["field"],
                     issue["message"],
                     employee_id=employee,
+                    blocking_scope="tax_import_file",
+                    cause=issue,
                 )
-                for issue in exc.issues
+                for issue in exc.issues_with_context()
             )
             continue
         except KernelError as exc:

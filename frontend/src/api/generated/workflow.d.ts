@@ -169,6 +169,26 @@ export namespace WorkflowContract {
   export type Account = string;
   export type AllowedPrecision = string[];
   export type ReusableSources = string[];
+  export type Constraint = string;
+  export type Resolution = IssueCommandResolution | IssueFactResolution | IssueCandidateResolution;
+  export type Command =
+    | "save_fact"
+    | "amend_fact"
+    | "find_facts"
+    | "prepare_fact_registration"
+    | "receive_material"
+    | "resolve_material"
+    | "resolve_material_group"
+    | "register_entity"
+    | "update_entity_profile"
+    | "inspect_material";
+  export type FactKind = string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  export type Candidates = [string, ...string[]];
+  export type BlockingScope1 = string;
   export type ExpectedFen = string | null;
   export type ActualFen = string | null;
   export type Reason = string;
@@ -178,7 +198,7 @@ export namespace WorkflowContract {
   export type Kind4 = string;
   export type HasJournalLines = boolean;
   export type TraceOnly = true;
-  export type Candidates = SelectionCandidate[];
+  export type Candidates1 = SelectionCandidate[];
   export type CalculationId6 = string;
   export type TraceTargets = CalculationTarget[];
   export type Statement = string;
@@ -210,6 +230,7 @@ export namespace WorkflowContract {
   export type Category2 = "management_fact" | "capability" | "publication";
   export type Field1 = string;
   export type Message1 = string;
+  export type BlockingScope2 = "tax_import_file";
   export type EmployeeId1 = string;
   export type ComponentCodes = string[];
   export type AmountFen = string;
@@ -433,10 +454,13 @@ export namespace WorkflowContract {
     account?: Account;
     allowed_precision?: AllowedPrecision;
     reusable_sources?: ReusableSources;
+    constraint?: Constraint;
+    resolution?: Resolution;
+    blocking_scope?: BlockingScope1;
     expected_fen?: ExpectedFen;
     actual_fen?: ActualFen;
     reason?: Reason;
-    candidates?: Candidates;
+    candidates?: Candidates1;
     trace_targets?: TraceTargets;
     statement?: Statement;
     column?: Column;
@@ -448,6 +472,15 @@ export namespace WorkflowContract {
     origin_periods?: OriginPeriods;
     responsibility?: Responsibility;
     signals?: Signals;
+  }
+  export interface IssueCommandResolution {
+    command: Command;
+  }
+  export interface IssueFactResolution {
+    fact_kind: FactKind;
+  }
+  export interface IssueCandidateResolution {
+    candidates: Candidates;
   }
   export interface SelectionCandidate {
     calculation_id: CalculationId5;
@@ -477,6 +510,8 @@ export namespace WorkflowContract {
     category: Category2;
     field: Field1;
     message: Message1;
+    blocking_scope?: BlockingScope2;
+    cause?: ReadinessIssue;
     employee_id?: EmployeeId1;
     component_codes?: ComponentCodes;
     amount_fen?: AmountFen;

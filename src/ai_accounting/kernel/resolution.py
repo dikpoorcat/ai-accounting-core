@@ -7,12 +7,14 @@ generate an action. No resolution is emitted when the next action is uncertain.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal, get_args
 
-_COMMANDS = frozenset({
+ResolutionCommand = Literal[
     "save_fact", "amend_fact", "find_facts", "prepare_fact_registration",
     "receive_material", "resolve_material", "resolve_material_group",
     "register_entity", "update_entity_profile", "inspect_material",
-})
+]
+_COMMANDS = frozenset(get_args(ResolutionCommand))
 
 
 def validate_resolution(value: Mapping, *, registry=None) -> dict:

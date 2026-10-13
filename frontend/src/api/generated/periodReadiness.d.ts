@@ -110,6 +110,26 @@ export namespace PeriodReadinessContract {
   export type Account = string;
   export type AllowedPrecision = string[];
   export type ReusableSources = string[];
+  export type Constraint = string;
+  export type Resolution = IssueCommandResolution | IssueFactResolution | IssueCandidateResolution;
+  export type Command =
+    | "save_fact"
+    | "amend_fact"
+    | "find_facts"
+    | "prepare_fact_registration"
+    | "receive_material"
+    | "resolve_material"
+    | "resolve_material_group"
+    | "register_entity"
+    | "update_entity_profile"
+    | "inspect_material";
+  export type FactKind = string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  export type Candidates = [string, ...string[]];
+  export type BlockingScope = string;
   export type ExpectedFen = string | null;
   export type ActualFen = string | null;
   export type Reason1 = string;
@@ -119,7 +139,7 @@ export namespace PeriodReadinessContract {
   export type Kind = string;
   export type HasJournalLines = boolean;
   export type TraceOnly = true;
-  export type Candidates = SelectionCandidate[];
+  export type Candidates1 = SelectionCandidate[];
   export type CalculationId2 = string;
   export type TraceTargets = CalculationTarget[];
   export type Statement = string;
@@ -256,13 +276,14 @@ export namespace PeriodReadinessContract {
   export type CurrentFileAvailability = "not_checked";
   export type FileJobs = FileJob[];
   export type Status17 = "ready" | "needs_information" | "unsupported" | "pending_confirmation" | "not_applicable";
-  export type BlockingScope = "tax_import_file";
+  export type BlockingScope1 = "tax_import_file";
   export type MappingFactIds = string[];
   export type CalculationIds = string[];
   export type Code3 = string;
   export type Category3 = "management_fact" | "capability" | "publication";
   export type Field1 = string;
   export type Message2 = string;
+  export type BlockingScope2 = "tax_import_file";
   export type EmployeeId1 = string;
   export type ComponentCodes = string[];
   export type AmountFen1 = string;
@@ -448,10 +469,13 @@ export namespace PeriodReadinessContract {
     account?: Account;
     allowed_precision?: AllowedPrecision;
     reusable_sources?: ReusableSources;
+    constraint?: Constraint;
+    resolution?: Resolution;
+    blocking_scope?: BlockingScope;
     expected_fen?: ExpectedFen;
     actual_fen?: ActualFen;
     reason?: Reason1;
-    candidates?: Candidates;
+    candidates?: Candidates1;
     trace_targets?: TraceTargets;
     statement?: Statement;
     column?: Column;
@@ -463,6 +487,15 @@ export namespace PeriodReadinessContract {
     origin_periods?: OriginPeriods1;
     responsibility?: Responsibility1;
     signals?: Signals;
+  }
+  export interface IssueCommandResolution {
+    command: Command;
+  }
+  export interface IssueFactResolution {
+    fact_kind: FactKind;
+  }
+  export interface IssueCandidateResolution {
+    candidates: Candidates;
   }
   export interface SelectionCandidate {
     calculation_id: CalculationId1;
@@ -645,7 +678,7 @@ export namespace PeriodReadinessContract {
   }
   export interface TaxImportMappingFollowup {
     status: Status17;
-    blocking_scope: BlockingScope;
+    blocking_scope: BlockingScope1;
     mapping_fact_ids: MappingFactIds;
     calculation_ids: CalculationIds;
     issues: Issues6;
@@ -655,6 +688,8 @@ export namespace PeriodReadinessContract {
     category: Category3;
     field: Field1;
     message: Message2;
+    blocking_scope?: BlockingScope2;
+    cause?: ReadinessIssue;
     employee_id?: EmployeeId1;
     component_codes?: ComponentCodes;
     amount_fen?: AmountFen1;

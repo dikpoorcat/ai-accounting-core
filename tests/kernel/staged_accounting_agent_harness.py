@@ -9,8 +9,6 @@ the existing working-draft harness. No existing local service or company is open
 from __future__ import annotations
 
 import base64
-import sys
-from pathlib import Path
 
 import reading_agent_harness as reading
 import work_draft_agent_harness as transport
@@ -207,24 +205,18 @@ def seed(app, token, directory):
 
 
 def parameters(directory, *, source_dir=None, resume=False, instrument=False, cache_build_id=None):
-    from mcp import StdioServerParameters
-
-    args = ["-X", "utf8", str(Path(__file__).resolve()), "mcp", str(directory)]
-    for flag, value in (("--source-dir", source_dir), ("--cache-build-id", cache_build_id)):
-        if value is not None:
-            args.extend([flag, str(value)])
-    if resume:
-        args.append("--resume")
-    if instrument:
-        args.append("--instrument")
-    return StdioServerParameters(command=sys.executable, args=args)
+    return reading.parameters(
+        directory, source_dir=source_dir, resume=resume, instrument=instrument,
+        cache_build_id=cache_build_id, entry_script=__file__,
+    )
 
 
-reading.seed = seed
-reading.parameters = parameters
-transport.parameters = parameters
-reading.relay = transport.relay
+def main():
+    reading.main(
+        seed_factory=seed, workload_factory=transport.Workload,
+        parameters_factory=parameters, relay_factory=transport.relay,
+    )
 
 
 if __name__ == "__main__":
-    reading.main()
+    main()

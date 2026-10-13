@@ -241,21 +241,15 @@ class Workload(reading.Workload):
 
 
 def parameters(directory, *, source_dir=None, resume=False, instrument=False, cache_build_id=None):
-    from mcp import StdioServerParameters
-
-    args = ["-X", "utf8", str(Path(__file__).resolve()), "mcp", str(directory)]
-    if source_dir is not None:
-        args.extend(["--source-dir", str(source_dir)])
-    if resume:
-        args.append("--resume")
-    if instrument:
-        args.append("--instrument")
-    if cache_build_id is not None:
-        args.extend(["--cache-build-id", str(cache_build_id)])
-    return StdioServerParameters(command=sys.executable, args=args)
+    return reading.parameters(
+        directory, source_dir=source_dir, resume=resume, instrument=instrument,
+        cache_build_id=cache_build_id, entry_script=__file__,
+    )
 
 
-async def relay(directory, *, source_dir=None, resume=False, instrument=False):
+async def relay(
+    directory, *, source_dir=None, resume=False, instrument=False, parameters_factory=None,
+):
     """Forward explicitly queued tools and retain all workload counters."""
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client
@@ -271,7 +265,9 @@ async def relay(directory, *, source_dir=None, resume=False, instrument=False):
         (directory / "requests").mkdir()
         (directory / "responses").mkdir()
     async with stdio_client(
-        parameters(directory, source_dir=source_dir, resume=resume, instrument=instrument)
+        (parameters_factory or parameters)(
+            directory, source_dir=source_dir, resume=resume, instrument=instrument
+        )
     ) as streams:
         async with ClientSession(*streams) as client:
             await client.initialize()
@@ -349,11 +345,12 @@ async def relay(directory, *, source_dir=None, resume=False, instrument=False):
     write_json(directory / "stopped.json", {"relay_pid": os.getpid(), "stopped": True})
 
 
-reading.seed = seed
-reading.Workload = Workload
-reading.parameters = parameters
-reading.relay = relay
+def main():
+    reading.main(
+        seed_factory=seed, workload_factory=Workload,
+        parameters_factory=parameters, relay_factory=relay,
+    )
 
 
 if __name__ == "__main__":
-    reading.main()
+    main()

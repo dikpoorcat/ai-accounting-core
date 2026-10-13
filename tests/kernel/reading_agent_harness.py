@@ -267,7 +267,10 @@ class Workload:
                 log.write(json.dumps(metric) + "\n")
 
 
-def mcp_process(directory, *, resume=False, instrument=False, cache_build_id=None):
+def mcp_process(
+    directory, *, resume=False, instrument=False, cache_build_id=None,
+    seed_factory=None, workload_factory=None,
+):
     from pydantic import SecretStr
 
     from ai_accounting.kernel import mcp as production_mcp
@@ -281,7 +284,7 @@ def mcp_process(directory, *, resume=False, instrument=False, cache_build_id=Non
         raise RuntimeError("A fresh synthetic root is required; use --resume for this harness root")
     if resume and not (directory / "seed.json").is_file():
         raise RuntimeError("Only an existing synthetic reading harness can be resumed")
-    workload = Workload(directory, instrument)
+    workload = (workload_factory or Workload)(directory, instrument)
     workload.install()
     app = LocalService(root)
     if not resume:
@@ -292,7 +295,7 @@ def mcp_process(directory, *, resume=False, instrument=False, cache_build_id=Non
     seed_info = (
         json.loads((directory / "seed.json").read_text(encoding="utf-8"))
         if resume
-        else seed(app, token, directory)
+        else (seed_factory or seed)(app, token, directory)
     )
     if resume:
         if (
@@ -352,10 +355,13 @@ def mcp_process(directory, *, resume=False, instrument=False, cache_build_id=Non
         app.close()
 
 
-def parameters(directory, *, source_dir=None, resume=False, instrument=False, cache_build_id=None):
+def parameters(
+    directory, *, source_dir=None, resume=False, instrument=False, cache_build_id=None,
+    entry_script=None,
+):
     from mcp import StdioServerParameters
 
-    args = ["-X", "utf8", str(Path(__file__).resolve()), "mcp", str(directory)]
+    args = ["-X", "utf8", str(Path(entry_script or __file__).resolve()), "mcp", str(directory)]
     for flag, value in (("--source-dir", source_dir), ("--cache-build-id", cache_build_id)):
         if value is not None:
             args.extend([flag, str(value)])
@@ -366,7 +372,9 @@ def parameters(directory, *, source_dir=None, resume=False, instrument=False, ca
     return StdioServerParameters(command=sys.executable, args=args)
 
 
-async def relay(directory, *, source_dir=None, resume=False, instrument=False):
+async def relay(
+    directory, *, source_dir=None, resume=False, instrument=False, parameters_factory=None,
+):
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client
 
@@ -380,7 +388,9 @@ async def relay(directory, *, source_dir=None, resume=False, instrument=False):
         (directory / "requests").mkdir()
         (directory / "responses").mkdir()
     async with stdio_client(
-        parameters(directory, source_dir=source_dir, resume=resume, instrument=instrument)
+        (parameters_factory or parameters)(
+            directory, source_dir=source_dir, resume=resume, instrument=instrument
+        )
     ) as streams:
         async with ClientSession(*streams) as session:
             await session.initialize()
@@ -450,7 +460,9 @@ def call(directory, tool, arguments_file):
     print(output.read_text(encoding="utf-8"))
 
 
-def main():
+def main(
+    *, seed_factory=None, workload_factory=None, parameters_factory=None, relay_factory=None,
+):
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("host", "mcp", "call", "stop"))
     parser.add_argument("directory", type=Path)
@@ -470,14 +482,17 @@ def main():
             resume=args.resume,
             instrument=args.instrument,
             cache_build_id=args.cache_build_id,
+            seed_factory=seed_factory,
+            workload_factory=workload_factory,
         )
     elif args.mode == "host":
         asyncio.run(
-            relay(
+            (relay_factory or relay)(
                 directory,
                 source_dir=args.source_dir,
                 resume=args.resume,
                 instrument=args.instrument,
+                parameters_factory=parameters_factory,
             )
         )
     elif args.mode == "stop":

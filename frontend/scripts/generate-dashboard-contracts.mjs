@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { _ } from "ajv/dist/compile/codegen/index.js";
+import ucs2lengthRuntime from "ajv/dist/runtime/ucs2length.js";
 import standaloneCode from "ajv/dist/standalone/index.js";
 import { compile } from "json-schema-to-typescript";
 
@@ -88,7 +89,12 @@ function generatedValidator(schema, key, name) {
   ajv.addSchema(validationSchema, key);
   const baseName = deliveryResponses.get(key);
   const validatorName = baseName ? `validate${name}Envelope` : `validate${name}Response`;
-  const generated = standaloneCode(ajv, { [validatorName]: key });
+  // Ajv emits this CommonJS runtime even with esm=true. Inline its own Unicode
+  // helper so browser validators retain code-point length checks without require.
+  const generated = standaloneCode(ajv, { [validatorName]: key }).replaceAll(
+    'require("ajv/dist/runtime/ucs2length").default', ucs2lengthRuntime.default.toString(),
+  );
+  assert(!/\brequire\s*\(/.test(generated), `${key} contains an unsupported CommonJS runtime`);
   if (!baseName) return banner + generated;
   return `${banner}\nimport { validate${baseName}Response } from "./${moduleName(baseName)}.js";\n\n${generated}\n\nexport const validate${name}Response = Object.assign((value) => {\n  if (!${validatorName}(value)) {\n    validate${name}Response.errors = ${validatorName}.errors ?? null;\n    return false;\n  }\n  if (value.state !== "ready") {\n    validate${name}Response.errors = null;\n    return true;\n  }\n  const valid = validate${baseName}Response(value.response);\n  validate${name}Response.errors = valid ? null : validate${baseName}Response.errors ?? null;\n  return valid;\n}, { errors: null });\n`;
 }
