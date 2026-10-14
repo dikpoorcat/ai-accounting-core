@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 27,
+    "version": 28,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -63,6 +63,8 @@ OPERATING_PROTOCOL = {
             "progress": (
                 "每轮最终回复必须说明公司、工作月份、本轮结果、八步简短进度及当前阶段下一事项；"
                 "追问、待确认、缺资料、技术阻塞或没有推进时也必须展示。"
+                "回复先说明公司、工作月份和本轮结果，再展示本月八步进度，"
+                "最后列出当前事项需要负责人确认、回答或补充的内容。"
                 "业务状态变化或已展示事项完成后重读当前月份workflow；状态未变化时复用"
                 "当前公司、月份最近已核验的进度，不为输出重复刷新。范围未确定或进度无法核验时"
                 "明确标为待确定或待核验，不猜测状态。"
