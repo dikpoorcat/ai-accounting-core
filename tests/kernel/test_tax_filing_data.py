@@ -1,5 +1,7 @@
 """Filing consumers retain accounting scope and exact adopted sources."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 from test_local_service import service as service
@@ -233,6 +235,38 @@ def test_pending_business_blocks_only_its_proven_tax_scope(tmp_path, period, exp
     field = fields["vat_and_surtax.row_20_fen"]
     assert (field["status"] == "ready") is expected_ready
     assert (field["value_fen"] == 0) is expected_ready
+
+
+@pytest.mark.parametrize("tax_period,expected_ready", [("2026-03", False), ("2026-04", True)])
+def test_confirmed_tax_period_without_contract_basis_limits_pending_filing_scope(
+    tmp_path, tax_period, expected_ready
+):
+    from entity_fixture import seed_fact_entities
+
+    from ai_accounting.kernel.domains.transactions import ServiceSale
+
+    company = vat_company(tmp_path)
+    fact = ServiceSale.model_validate_json(json.dumps({
+        "period": "2026-03", "customer_id": "customer", "gross_fen": 202_000,
+        "vat_policy_id": "vat", "exemption_eligible": False,
+        "tax_obligation_period": tax_period, "tax_obligation_date": f"{tax_period}-02",
+    }))
+    seed_fact_entities(company.engine, fact)
+    # Use the real registration entry, not the fixture that creates a contract basis.
+    company.engine.save_fact(
+        fact.kind, "source-confirmed-income", fact.model_dump(mode="json"),
+        evidence=(company.filing, company.confirmation), expected_revision=0,
+        request_id=company.request(),
+    )
+    with company.engine.store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM fact_tax_point_basis").fetchone()[0] == 0
+    result = TaxFilingData(company.engine).query(2026, 1)
+    field = vat_fields(result)["vat_and_surtax.row_20_fen"]
+    assert (field["status"] == "ready") is expected_ready
+    assert field["value_fen"] == (0 if expected_ready else None)
+    if not expected_ready:
+        assert any(issue.get("subject_id") == "source-confirmed-income"
+                   for issue in field["fact_issues"])
 
 
 def test_current_and_cumulative_fields_use_their_own_complete_tax_periods(tmp_path):

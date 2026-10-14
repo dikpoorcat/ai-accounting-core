@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from entity_fixture import seed_fact_entities
 from material_fixture import supporting_text
 from test_business_domains import surtax_policy, vat_policy
 from test_tax_credits import Company
@@ -81,6 +82,309 @@ def lines(company, kind, subject):
                 (calculation.id,),
             )
         ]
+
+
+def save_explicit_tax_fact(company, model, subject, **fields):
+    """Register the scenario's exact source without generating a detailed basis."""
+    fact = model.model_validate_json(json.dumps(fields))
+    seed_fact_entities(company.engine, fact)
+    original = company.engine.register_evidence(
+        json.dumps(fields).encode(), "text/plain", "合成有源业务及明确税期",
+        request_id=company.request(),
+    )["digest"]
+    result = company.engine.save_fact(
+        fact.kind, subject, fact.model_dump(mode="json"), evidence=(original,),
+        expected_revision=company.revisions.get(subject, 0), request_id=company.request(),
+    )
+    company.revisions[subject] = result["revision"]
+    return result
+
+
+def assert_no_tax_basis(company):
+    with company.engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM subject WHERE kind='tax_point_basis'"
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("tax_day", [None, "2026-04-02"])
+def test_explicit_sourced_tax_month_publishes_and_settles_actual_april_receipt(company, tax_day):
+    registered = save_explicit_tax_fact(
+        company, transactions.ServiceSale, "explicit-sale", period="2026-03",
+        customer_id="customer", gross_fen=149400, vat_policy_id="vat", exemption_eligible=False,
+        tax_obligation_period="2026-04", tax_obligation_date=tax_day,
+    )
+    assert registered["status"] == "confirmed"
+    company.publish("explicit-sale")
+    revenue = company.current("service_sale", "explicit-sale")
+    assert revenue.values["recognized_revenue_fen"] == 147921
+    assert revenue.values["tax_obligation_period"] == "2026-04"
+    assert revenue.values["tax_obligation_date"] == tax_day
+    assert "tax_point_basis" not in revenue.values
+    assert lines(company, "service_sale", "explicit-sale") == [
+        ("1122", 149400, 0), ("5001", 0, 147921), ("222104", 0, 1479),
+    ]
+    receipt(company, "actual-april-receipt", 149400, "2026-04-02", source="explicit-sale")
+    company.publish("actual-april-receipt")
+    assert lines(company, "payment", "actual-april-receipt") == [
+        ("1002", 149400, 0), ("1122", 0, 149400),
+        ("222104", 1479, 0), ("222101", 0, 1479),
+    ]
+    assert company.balance("payment:service_sale:explicit-sale:primary") == 0
+    assert company.balance("bank") == 149400
+    assert_no_tax_basis(company)
+
+
+def test_explicit_advance_tax_and_untaxed_advance_fulfillment_use_no_detailed_basis(company):
+    save_explicit_tax_fact(
+        company, transactions.Advance, "taxed-advance", period="2026-01",
+        counterparty_id="customer", amount_fen=101000, side="customer",
+        contractual_obligation_established=True, vat_due_on_advance=True,
+        vat_policy_id="vat", exemption_eligible=False,
+        tax_obligation_period="2026-01", tax_obligation_date="2026-01-05",
+    )
+    company.publish("taxed-advance")
+    assert lines(company, "advance", "taxed-advance") == [
+        ("1122", 101000, 0), ("2203", 0, 100000), ("222101", 0, 1000),
+    ]
+    save_explicit_tax_fact(
+        company, transactions.Advance, "untaxed-advance", period="2026-01",
+        counterparty_id="customer", amount_fen=101000, side="customer",
+        contractual_obligation_established=True, vat_due_on_advance=False,
+    )
+    company.publish("untaxed-advance")
+    save_explicit_tax_fact(
+        company, transactions.AdvanceFulfillment, "explicit-fulfilled", period="2026-03",
+        advance_id="untaxed-advance", fulfilled_gross_fen=101000,
+        vat_policy_id="vat", exemption_eligible=False, tax_obligation_period="2026-03",
+    )
+    company.publish("explicit-fulfilled")
+    assert lines(company, "advance_fulfillment", "explicit-fulfilled") == [
+        ("2203", 101000, 0), ("5001", 0, 100000), ("222101", 0, 1000),
+    ]
+    assert_no_tax_basis(company)
+
+
+@pytest.mark.parametrize("tax_month", ["2026-01", "2025-12"])
+def test_explicit_advance_tax_month_cannot_be_ignored_by_a_no_tax_claim(company, tax_month):
+    save_explicit_tax_fact(
+        company, transactions.Advance, "contradictory-no-tax", period="2026-01",
+        counterparty_id="customer", amount_fen=101000, side="customer",
+        contractual_obligation_established=True, vat_due_on_advance=False,
+        vat_policy_id="vat", exemption_eligible=False, tax_obligation_period=tax_month,
+    )
+    with company.engine.store.connection(read_only=True) as connection:
+        epochs = company.engine.store.epochs(connection)
+        calculations = connection.execute("SELECT count(*) FROM calculation").fetchone()[0]
+    with pytest.raises(NeedsInformation) as failure:
+        company.engine.preview(["contradictory-no-tax"])
+    assert failure.value.issues[0]["field"] == "vat_due_on_advance"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert company.engine.store.epochs(connection) == epochs
+        assert connection.execute("SELECT count(*) FROM calculation").fetchone()[0] == calculations
+    assert_no_tax_basis(company)
+
+
+@pytest.mark.parametrize("model,fields", [
+    (transactions.ServiceSale, {"customer_id": "customer", "gross_fen": 101000}),
+    (transactions.Advance, {
+        "counterparty_id": "customer", "amount_fen": 101000, "side": "customer",
+    }),
+    (transactions.AdvanceFulfillment, {"advance_id": "advance", "fulfilled_gross_fen": 101000}),
+])
+@pytest.mark.parametrize("month", [None, "2026-03"])
+def test_direct_tax_day_requires_its_explicit_matching_month(company, model, fields, month):
+    with pytest.raises(NeedsInformation if month is None else KernelError) as failure:
+        save_explicit_tax_fact(
+            company, model, "conflicting-date", period="2026-03",
+            tax_obligation_period=month, tax_obligation_date="2026-04-02", **fields,
+        )
+    if month is None:
+        assert failure.value.issues[0]["field"] == "tax_obligation_period"
+        assert failure.value.issues[0]["allowed_precision"] == ["month"]
+    else:
+        assert failure.value.code == "tax_precision_conflict"
+        assert failure.value.details["fact_issues"][0]["field"] == "tax_obligation_date"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT 1 FROM subject WHERE id='conflicting-date'"
+        ).fetchone() is None
+
+
+@pytest.mark.parametrize("basis_month,basis_day,field", [
+    ("2026-05", "2026-05-02", "tax_obligation_period"),
+    ("2026-04", "2026-04-03", "tax_obligation_date"),
+    ("2026-04", None, "tax_obligation_date"),
+])
+def test_explicit_tax_point_cannot_silently_override_a_conflicting_detailed_source(
+    company, basis_month, basis_day, field,
+):
+    from tax_point_fixture import contract_tax_basis
+
+    save_explicit_tax_fact(
+        company, transactions.ServiceSale, "different-sources", period="2026-03",
+        customer_id="customer", gross_fen=149400, vat_policy_id="vat", exemption_eligible=False,
+        tax_obligation_period="2026-04", tax_obligation_date="2026-04-02",
+    )
+    contract_tax_basis(
+        company.engine, "service_sale", "different-sources",
+        business_period="2026-03", contract_period=basis_month, contract_date=basis_day,
+    )
+    with company.engine.store.connection(read_only=True) as connection:
+        epochs = company.engine.store.epochs(connection)
+        count = connection.execute("SELECT count(*) FROM calculation").fetchone()[0]
+    with pytest.raises(NeedsInformation) as failure:
+        company.engine.preview(["different-sources"])
+    assert failure.value.issues[0]["field"] == field
+    assert failure.value.issues[0]["reusable_sources"]
+    with company.engine.store.connection(read_only=True) as connection:
+        assert company.engine.store.epochs(connection) == epochs
+        assert connection.execute("SELECT count(*) FROM calculation").fetchone()[0] == count
+
+
+@pytest.mark.parametrize("tax_day", [None, "2026-04-02"])
+def test_explicit_tax_month_reuses_a_consistent_optional_detailed_source(company, tax_day):
+    from tax_point_fixture import contract_tax_basis
+
+    save_explicit_tax_fact(
+        company, transactions.ServiceSale, "consistent-sources", period="2026-03",
+        customer_id="customer", gross_fen=149400, vat_policy_id="vat", exemption_eligible=False,
+        tax_obligation_period="2026-04", tax_obligation_date=tax_day,
+    )
+    contract_tax_basis(
+        company.engine, "service_sale", "consistent-sources", business_period="2026-03",
+        contract_period="2026-04", contract_date="2026-04-02",
+    )
+    company.publish("consistent-sources")
+    result = company.current("service_sale", "consistent-sources")
+    assert result.values["tax_obligation_period"] == "2026-04"
+    assert result.values["tax_point_basis"]["intervals"][0]["actual_date"] == "2026-04-02"
+    assert result.values["recognized_revenue_fen"] == 147921
+
+
+def test_direct_tax_month_needs_actual_day_when_policy_changes_within_that_month(company):
+    company.save(taxes.VatPolicyFact, "partial-direct-policy", period="2026-03",
+                 policy=vat_policy().model_dump(mode="json") | {"effective_from": "2026-03-15"})
+    save_explicit_tax_fact(
+        company, transactions.ServiceSale, "direct-partial", period="2026-03",
+        customer_id="customer", gross_fen=101000, vat_policy_id="partial-direct-policy",
+        exemption_eligible=False, tax_obligation_period="2026-03",
+    )
+    with pytest.raises(NeedsInformation) as failure:
+        company.engine.preview(["direct-partial"])
+    assert failure.value.issues[0]["field"] == "tax_obligation_date"
+    assert failure.value.issues[0]["allowed_precision"] == ["day"]
+    assert failure.value.issues[0]["reusable_sources"] == ["direct-partial"]
+    assert_no_tax_basis(company)
+
+
+def adopted_advance_tax(company, path, *, with_day=True):
+    from tax_point_fixture import contract_tax_basis
+
+    month = "2026-04" if path == "later" else "2026-01"
+    day = month + "-05" if with_day else None
+    fields = dict(period="2026-01", counterparty_id="customer", amount_fen=101000,
+                  side="customer", contractual_obligation_established=True,
+                  vat_due_on_advance=path != "later", vat_policy_id="vat", exemption_eligible=False)
+    if path == "direct":
+        fields.update(tax_obligation_period=month, tax_obligation_date=day)
+    else:
+        contract_tax_basis(company.engine, "advance", "inherited-advance",
+                           business_period="2026-01", contract_period=month, contract_date=day)
+    save_explicit_tax_fact(company, transactions.Advance, "inherited-advance", **fields)
+    company.publish("inherited-advance")
+    source = company.current("advance", "inherited-advance")
+    if path == "later":
+        company.save(transactions.ServiceTaxPoint, "adopted-later-tax", period=month,
+                     sale_id="inherited-advance", trigger="declared", declaration_confirmed=True)
+        company.publish("adopted-later-tax")
+        source = company.current("service_tax_point", "adopted-later-tax")
+    return source, month, day
+
+
+@pytest.mark.parametrize("path", ["direct", "basis", "later"])
+@pytest.mark.parametrize("supplied", ["omitted", "explicit", "basis", "basis_month_only"])
+def test_already_taxed_fulfillment_inherits_the_exact_adopted_tax_source(company, path, supplied):
+    from tax_point_fixture import contract_tax_basis
+
+    source, month, day = adopted_advance_tax(company, path)
+    fields = dict(period="2026-05", advance_id="inherited-advance", fulfilled_gross_fen=50500)
+    if supplied == "explicit":
+        fields.update(tax_obligation_period=month, tax_obligation_date=day)
+    elif supplied in {"basis", "basis_month_only"}:
+        contract_tax_basis(
+            company.engine, "advance_fulfillment", "inherited-fulfilled",
+            business_period="2026-05", contract_period=month,
+            contract_date=day if supplied == "basis" else None,
+        )
+    save_explicit_tax_fact(
+        company, transactions.AdvanceFulfillment, "inherited-fulfilled", **fields,
+    )
+    company.publish("inherited-fulfilled")
+    result = company.current("advance_fulfillment", "inherited-fulfilled")
+    assert result.values["tax_source_calculation"] == source.id
+    assert result.values["net_sales_fen"] == result.values["accrued_vat_fen"] == 0
+    assert lines(company, "advance_fulfillment", "inherited-fulfilled") == [
+        ("2203", 50000, 0), ("5001", 0, 50000),
+    ]
+
+
+@pytest.mark.parametrize("path", ["direct", "basis", "later"])
+@pytest.mark.parametrize("supplied,field", [
+    ("different_month", "tax_obligation_period"),
+    ("different_day", "tax_obligation_date"),
+    ("different_basis", "tax_point_basis"),
+])
+def test_already_taxed_fulfillment_rejects_contradictory_tax_sources_atomically(
+    company, path, supplied, field,
+):
+    from tax_point_fixture import contract_tax_basis
+
+    source, month, _ = adopted_advance_tax(company, path)
+    fields = dict(period="2026-05", advance_id="inherited-advance", fulfilled_gross_fen=50500)
+    if supplied == "different_month":
+        fields["tax_obligation_period"] = "2026-05"
+    elif supplied == "different_day":
+        fields.update(tax_obligation_period=month, tax_obligation_date=month + "-06")
+    else:
+        contract_tax_basis(company.engine, "advance_fulfillment", "contradictory-fulfilled",
+                           business_period="2026-05", contract_period="2026-05")
+    save_explicit_tax_fact(
+        company, transactions.AdvanceFulfillment, "contradictory-fulfilled", **fields,
+    )
+    with company.engine.store.connection(read_only=True) as connection:
+        epochs = company.engine.store.epochs(connection)
+        calculations = connection.execute("SELECT count(*) FROM calculation").fetchone()[0]
+        vouchers = connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0]
+    with pytest.raises(NeedsInformation) as failure:
+        company.engine.preview(["contradictory-fulfilled"])
+    assert failure.value.issues[0]["field"] == field
+    assert source.id in failure.value.issues[0]["reusable_sources"]
+    with company.engine.store.connection(read_only=True) as connection:
+        assert company.engine.store.epochs(connection) == epochs
+        assert connection.execute("SELECT count(*) FROM calculation").fetchone()[0] == calculations
+        assert connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0] == vouchers
+
+
+@pytest.mark.parametrize("supplied,field", [("explicit", "tax_obligation_date"),
+                                          ("basis", "tax_point_basis")])
+def test_already_taxed_fulfillment_does_not_invent_an_adopted_actual_day(company, supplied, field):
+    from tax_point_fixture import contract_tax_basis
+
+    source, month, _ = adopted_advance_tax(company, "direct", with_day=False)
+    fields = dict(period="2026-05", advance_id="inherited-advance", fulfilled_gross_fen=50500)
+    if supplied == "explicit":
+        fields.update(tax_obligation_period=month, tax_obligation_date="2026-01-05")
+    else:
+        contract_tax_basis(company.engine, "advance_fulfillment", "invented-day",
+                           business_period="2026-05", contract_period=month,
+                           contract_date="2026-01-05")
+    save_explicit_tax_fact(company, transactions.AdvanceFulfillment, "invented-day", **fields)
+    with pytest.raises(NeedsInformation) as failure:
+        company.engine.preview(["invented-day"])
+    assert failure.value.issues[0]["field"] == field
+    assert source.id in failure.value.issues[0]["reusable_sources"]
+    assert "day" in failure.value.issues[0]["allowed_precision"]
 
 
 @pytest.mark.parametrize("tax_origin", ["completion", "contract", "invoice"])
@@ -417,7 +721,7 @@ def test_missing_tax_month_and_partial_month_policy_need_actual_facts(company):
     )
     with pytest.raises(NeedsInformation) as error:
         company.engine.preview(["missing"])
-    assert error.value.issues[0]["field"] == "tax_point_basis"
+    assert error.value.issues[0]["field"] == "tax_obligation_period"
     company.save(
         taxes.VatPolicyFact,
         "partial-policy",
@@ -518,7 +822,7 @@ def test_untaxed_advance_requires_explicit_fulfillment_tax_point(company):
     )
     with pytest.raises(NeedsInformation) as error:
         company.engine.preview(["fulfilled"])
-    assert error.value.issues[0]["field"] == "tax_point_basis"
+    assert error.value.issues[0]["field"] == "vat_policy_id"
     company.save(
         transactions.AdvanceFulfillment,
         "fulfilled",

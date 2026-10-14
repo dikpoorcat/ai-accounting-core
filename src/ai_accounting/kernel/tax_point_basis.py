@@ -1,9 +1,10 @@
 """Evidence-bound VAT points, independent of payment calculations.
 
 2026 VAT Law article 28 and Implementation Regulations article 39.  Dates
-below describe confirmed source events; a caller cannot supply a chosen tax
-month.  One interval of a business's gross amount is taxed at its earliest
-established trigger, even when an invoice, contractual right and receipt overlap.
+below describe confirmed source events. Explicitly sourced tax dates and optional
+detailed evidence share this module. One interval of a business's gross amount
+is taxed at its earliest established trigger, even when an invoice, contractual
+right and receipt overlap.
 """
 
 from __future__ import annotations
@@ -14,8 +15,16 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from .contracts import Fact, NeedsInformation, Read, Registry
-from .types import ActualDate, EvidenceDigest, NonNegativeFen, PositiveFen, SubjectId, YearMonth
+from .contracts import Fact, KernelError, NeedsInformation, Read, Registry
+from .types import (
+    ActualDate,
+    EvidenceDigest,
+    NonNegativeFen,
+    PositiveFen,
+    SubjectId,
+    YearMonth,
+    sum_fen,
+)
 
 RULE_VERSION = "cn-vat-tax-point-2026-v1"
 RULE_SOURCES = (
@@ -573,6 +582,139 @@ def resolve_tax_point(ctx, kind, business_id, gross_fen, as_of):
             )
         )
     return TaxPointResolution(version.id, tuple(intervals), fact.service_pattern)
+
+
+def validate_confirmed_tax_dates(fact):
+    if fact.tax_obligation_date is not None and fact.tax_obligation_period is None:
+        raise NeedsInformation(
+            "tax_obligation_period",
+            "实际税点日须同时有明确税所属月，不能从日期补造税月",
+            sources=("original_document", "owner_confirmation"),
+            precision=("month",),
+        )
+    if (
+        fact.tax_obligation_date is not None
+        and fact.tax_obligation_date.period != fact.tax_obligation_period
+    ):
+        raise KernelError(
+            "tax_precision_conflict", "实际纳税义务日与税所属月不一致",
+            fact_issues=[{
+                "field": "tax_obligation_date", "message": "实际税点日须属于明确税所属月",
+                "semantics": "accounting", "allowed_precision": ["day"],
+                "reusable_sources": ["original_document", "owner_confirmation"],
+            }],
+        )
+
+
+def tax_obligation_period_field():
+    return Field(
+        default=None, description="有来源明确确认的纳税义务所属月；未知时不从收入或收款月份推定",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "accounting", "meaning": "confirmed_tax_obligation_period",
+            "reusable_sources": ["original_document", "owner_confirmation", "tax_point_basis"],
+            "constraint": "明确税所属月或有源税点依据；缺项不采用默认月份",
+        }},
+    )
+
+
+def tax_obligation_date_field():
+    return Field(
+        default=None, description="有来源的实际税点日；可省略，不补月末；提供时须属于税所属月",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "accounting", "meaning": "actual_tax_obligation_date",
+            "reusable_sources": ["original_document", "owner_confirmation", "tax_point_basis"],
+            "constraint": "仅在选择有效规则或核对实际先后需要日精度时必需；不推定实际日",
+        }},
+    )
+
+
+def resolve_business_tax_point(version, ctx, gross_fen, *, as_of=None):
+    """Use explicit sourced dates and verify any independently supplied basis."""
+    fact = version.fact
+    validate_confirmed_tax_dates(fact)
+    bases = ctx.select(tax_basis_reads(fact.kind, version.subject_id)[0])
+    if not bases:
+        return None
+    point = resolve_tax_point(
+        ctx, fact.kind, version.subject_id, gross_fen, as_of or fact.period
+    )
+    if fact.tax_obligation_period is not None:
+        if (sum_fen(i.gross_end_fen - i.gross_start_fen for i in point.intervals) != gross_fen
+                or any(i.period != fact.tax_obligation_period for i in point.intervals)):
+            raise NeedsInformation(
+                "tax_obligation_period", "明确税所属月与另一税点依据的金额范围或月份不一致",
+                sources=(version.subject_id, point.basis_id), precision=("month", "day"),
+            )
+        if fact.tax_obligation_date is not None and any(
+            i.actual_date != fact.tax_obligation_date for i in point.intervals
+        ):
+            raise NeedsInformation(
+                "tax_obligation_date", "明确实际税点日与另一税点依据不一致或依据仅有月精度",
+                sources=(version.subject_id, point.basis_id), precision=("day",),
+            )
+    return point
+
+
+def verify_inherited_advance_tax_point(version, ctx, source, advance_tax, earlier_used):
+    fact = version.fact
+    point = resolve_business_tax_point(version, ctx, fact.fulfilled_gross_fen)
+    if fact.tax_obligation_period is None and point is None:
+        return
+    adopted = advance_tax or source
+    public = adopted.values.get("tax_point_basis")
+    evidence_sources = (source.subject_id, source.fact_id, adopted.id)
+    if public is not None:
+        intervals = public["intervals"]
+        evidence_sources += (public["basis_fact_id"],)
+    else:
+        original = ctx.one("advance", f"@{fact.advance_id}")
+        adopted_period = original.fact.tax_obligation_period
+        if original.id != source.fact_id or adopted_period is None:
+            raise NeedsInformation(
+                "tax_obligation_period", "需复用原预收已采用的明确税点来源，不能补造税月",
+                sources=evidence_sources, precision=("month", "day"),
+            )
+        intervals = [{
+            "gross_start_fen": 0, "gross_end_fen": source.values["gross_fen"],
+            "period": str(adopted_period), "actual_date": original.fact.tax_obligation_date,
+        }]
+    end = sum_fen((earlier_used, fact.fulfilled_gross_fen))
+    known = [
+        (max(i["gross_start_fen"], earlier_used) - earlier_used,
+         min(i["gross_end_fen"], end) - earlier_used, i["period"], i["actual_date"])
+        for i in intervals if i["gross_start_fen"] < end and i["gross_end_fen"] > earlier_used
+    ]
+    if sum_fen(right - left for left, right, _, _ in known) != fact.fulfilled_gross_fen:
+        raise NeedsInformation("tax_point_basis", "已采用税点范围未完整覆盖本次履约",
+                               sources=evidence_sources)
+    if fact.tax_obligation_period is not None and any(
+        month != fact.tax_obligation_period for _, _, month, _ in known
+    ):
+        raise NeedsInformation(
+            "tax_obligation_period", "履约所填税月与原预收已采用税点不一致",
+            sources=evidence_sources, precision=("month",),
+        )
+    if fact.tax_obligation_date is not None and any(
+        day != fact.tax_obligation_date for _, _, _, day in known
+    ):
+        raise NeedsInformation(
+            "tax_obligation_date", "履约实际税点日与已采用来源不一致或原来源仅有月精度",
+            sources=evidence_sources, precision=("day",),
+        )
+    if point is None:
+        return
+    boundaries = sorted({0, fact.fulfilled_gross_fen,
+        *(x for left, right, _, _ in known for x in (left, right)),
+        *(x for i in point.intervals for x in (i.gross_start_fen, i.gross_end_fen))})
+    for left, right in zip(boundaries, boundaries[1:], strict=False):
+        old = [i for i in known if i[0] <= left and i[1] >= right]
+        new = [i for i in point.intervals if i.gross_start_fen <= left and i.gross_end_fen >= right]
+        if (len(old) != 1 or len(new) != 1 or old[0][2] != new[0].period
+                or new[0].actual_date is not None and old[0][3] != new[0].actual_date):
+            raise NeedsInformation(
+                "tax_point_basis", "履约独立税点依据与原预收已采用的完整范围、税月或实际日不一致",
+                sources=(*evidence_sources, point.basis_id), precision=("month", "day"),
+            )
 
 
 def register(registry: Registry):

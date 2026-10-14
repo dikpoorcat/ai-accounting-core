@@ -479,6 +479,7 @@ class TaxFilingData:
     def _pending_source_periods(self, reads, version, end):
         """Known intervals, or None when the source cannot yet rule out a range."""
         from .tax_point_basis import (
+            resolve_business_tax_point,
             resolve_tax_point,
             tax_basis_reads,
             tax_basis_source_reads,
@@ -504,12 +505,21 @@ class TaxFilingData:
             )
             selections.update(self.store.select_many(reads.connection, dependencies))
             try:
-                resolution = resolve_tax_point(
-                    Context(selections), fact.kind, version.subject_id, gross, max(end, fact.period)
-                )
+                context = Context(selections)
+                if fact.kind == "asset_disposal":
+                    resolution = resolve_tax_point(
+                        context, fact.kind, version.subject_id, gross, max(end, fact.period)
+                    )
+                else:
+                    resolution = resolve_business_tax_point(
+                        version, context, gross, as_of=max(end, fact.period)
+                    )
             except NeedsInformation:
                 # An unresolved tax point is not proof that a pending source is irrelevant.
                 return None
+            if resolution is None:
+                tax_period = fact.tax_obligation_period
+                return (tax_period,) if tax_period is not None else None
             return tuple(interval.period for interval in resolution.intervals)
         if hasattr(fact, "allocations") and fact.kind in {
             "payment", "cash_payment", "platform_payment", "payroll_reserve_payment"

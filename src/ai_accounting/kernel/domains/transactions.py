@@ -107,16 +107,6 @@ def outcome(
     )
 
 
-def _reject_chosen_tax_dates(fact):
-    if fact.tax_obligation_period is not None or fact.tax_obligation_date is not None:
-        raise NeedsInformation(
-            "tax_point_basis",
-            "新登记须引用有源税点依据；税月份和税日期由内核解析，不能自由指定",
-            sources=("tax_point_basis",),
-            precision=("month", "day"),
-        )
-
-
 class ServiceSale(Fact):
     kind: ClassVar[str] = "service_sale"
     customer_id: Identifier
@@ -126,23 +116,15 @@ class ServiceSale(Fact):
     )
     vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
-    tax_obligation_period: YearMonth | None = Field(
-        default=None,
-        description="仅用于解读已保存历史正文；新登记不填写，税月由tax_point_basis及规则解析",
-        json_schema_extra={"readOnly": True},
-    )
-    tax_obligation_date: ActualDate | None = Field(
-        default=None,
-        description="仅用于解读已保存历史正文；新登记不填写，实际税点日由精确来源解析",
-        json_schema_extra={"readOnly": True},
-    )
+    tax_obligation_period: YearMonth | None = tax_point_basis.tax_obligation_period_field()
+    tax_obligation_date: ActualDate | None = tax_point_basis.tax_obligation_date_field()
 
     def scopes(self):
         return (str(self.period), f"customer:{self.customer_id}", f"tax:{self.period}")
 
     def validate_registration(self):
         super().validate_registration()
-        _reject_chosen_tax_dates(self)
+        tax_point_basis.validate_confirmed_tax_dates(self)
 
     def reads(self):
         return (Read("fact", "vat_policy", f"@{self.vat_policy_id}"),) if self.vat_policy_id else ()
@@ -164,7 +146,7 @@ def calculate_sale(version: FactVersion, ctx: Context) -> Outcome:
         )
     if fact.exemption_eligible is None:
         raise NeedsInformation("exemption_eligible", "需要确认本项销售的免税适用事实")
-    point = _business_tax_point(version, ctx, fact.gross_fen)
+    point = tax_point_basis.resolve_business_tax_point(version, ctx, fact.gross_fen)
     if point is None and fact.tax_obligation_period is None:
         raise NeedsInformation(
             "tax_obligation_period", "需要明确纳税义务所属月", precision=("month", "day")
@@ -178,7 +160,8 @@ def calculate_sale(version: FactVersion, ctx: Context) -> Outcome:
     policy_fact = ctx.one("vat_policy", f"@{fact.vat_policy_id}")
     policy: VatPolicy = policy_fact.fact.policy
     if point is None:
-        _tax_policy_for_month(policy, fact.tax_obligation_period, fact.tax_obligation_date)
+        _tax_policy_for_month(policy, fact.tax_obligation_period, fact.tax_obligation_date,
+                              source_subject_id=version.subject_id)
     else:
         for interval in point.intervals:
             _tax_policy_for_month(
@@ -231,15 +214,6 @@ def calculate_sale(version: FactVersion, ctx: Context) -> Outcome:
     )
 
 
-def _business_tax_point(version, ctx, gross_fen, *, as_of=None):
-    """Keep saved historical bodies readable; current writes reject chosen months."""
-    if getattr(version.fact, "tax_obligation_period", None) is not None:
-        return None
-    return tax_point_basis.resolve_tax_point(
-        ctx, version.fact.kind, version.subject_id, gross_fen, as_of or version.fact.period
-    )
-
-
 def _tax_interval_amounts(intervals, rate, period, *, cap=None):
     net, vat = 0, 0
     for interval in intervals:
@@ -258,7 +232,8 @@ def _tax_interval_amounts(intervals, rate, period, *, cap=None):
 
 
 def _tax_policy_for_month(
-    policy, period: YearMonth, actual: ActualDate | None, *, point=None, interval=None
+    policy, period: YearMonth, actual: ActualDate | None, *, point=None, interval=None,
+    source_subject_id=None,
 ):
     if actual is not None:
         if actual.period != period:
@@ -284,7 +259,7 @@ def _tax_policy_for_month(
                 if point is not None and interval is not None
                 else (point.basis_id,)
                 if point is not None
-                else ()
+                else (source_subject_id,) if source_subject_id is not None else ()
             ),
             precision=("day",),
         ) from error
@@ -644,20 +619,12 @@ class Advance(Fact):
     vat_due_on_advance: StrictBool | None = None
     vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
-    tax_obligation_period: YearMonth | None = Field(
-        default=None,
-        description="历史正文只读税月；新登记由tax_point_basis解析",
-        json_schema_extra={"readOnly": True},
-    )
-    tax_obligation_date: ActualDate | None = Field(
-        default=None,
-        description="历史正文只读税日；新登记由精确来源解析",
-        json_schema_extra={"readOnly": True},
-    )
+    tax_obligation_period: YearMonth | None = tax_point_basis.tax_obligation_period_field()
+    tax_obligation_date: ActualDate | None = tax_point_basis.tax_obligation_date_field()
 
     def validate_registration(self):
         super().validate_registration()
-        _reject_chosen_tax_dates(self)
+        tax_point_basis.validate_confirmed_tax_dates(self)
 
     def scopes(self):
         return (
@@ -691,17 +658,18 @@ def calculate_advance(version: FactVersion, ctx: Context) -> Outcome:
     amount = fact.amount_fen
     net, vat, rate, policy_version = amount, 0, None, None
     point = None
-    if fact.side == "customer" and fact.tax_obligation_period is None:
-        point = tax_point_basis.resolve_tax_point(
-            ctx, fact.kind, version.subject_id, amount, fact.period
-        )
+    if fact.side == "customer":
+        point = tax_point_basis.resolve_business_tax_point(version, ctx, amount)
+    derived_due = None
+    if point is not None:
         derived_due = any(i.period == fact.period for i in point.intervals)
-        if derived_due != fact.vat_due_on_advance:
-            raise NeedsInformation(
-                "vat_due_on_advance",
-                "预收税点声明与有源规则结果不符",
-                sources=(version.subject_id,),
-            )
+    elif fact.side == "customer" and fact.tax_obligation_period is not None:
+        derived_due = fact.tax_obligation_period <= fact.period
+    if derived_due is not None and derived_due != fact.vat_due_on_advance:
+        raise NeedsInformation(
+            "vat_due_on_advance", "预收是否计税的声明与明确税期或有源税点结果不符",
+            sources=(version.subject_id,),
+        )
     if fact.side == "customer" and fact.vat_due_on_advance:
         for field in (
             "vat_policy_id",
@@ -714,7 +682,8 @@ def calculate_advance(version: FactVersion, ctx: Context) -> Outcome:
             raise KernelError("advance_tax_period", "预收税点须属于本次预收确认的纳税义务月")
         policy = ctx.one("vat_policy", f"@{fact.vat_policy_id}").fact.policy
         if point is None:
-            _tax_policy_for_month(policy, fact.tax_obligation_period, fact.tax_obligation_date)
+            _tax_policy_for_month(policy, fact.tax_obligation_period, fact.tax_obligation_date,
+                                  source_subject_id=version.subject_id)
         else:
             for interval in point.intervals:
                 _tax_policy_for_month(
@@ -811,20 +780,12 @@ class AdvanceFulfillment(Fact):
     fulfillment_date: ActualDate | None = None
     vat_policy_id: SubjectId | None = None
     exemption_eligible: StrictBool | None = None
-    tax_obligation_period: YearMonth | None = Field(
-        default=None,
-        description="历史正文只读税月；新登记由tax_point_basis解析",
-        json_schema_extra={"readOnly": True},
-    )
-    tax_obligation_date: ActualDate | None = Field(
-        default=None,
-        description="历史正文只读税日；新登记由精确来源解析",
-        json_schema_extra={"readOnly": True},
-    )
+    tax_obligation_period: YearMonth | None = tax_point_basis.tax_obligation_period_field()
+    tax_obligation_date: ActualDate | None = tax_point_basis.tax_obligation_date_field()
 
     def validate_registration(self):
         super().validate_registration()
-        _reject_chosen_tax_dates(self)
+        tax_point_basis.validate_confirmed_tax_dates(self)
 
     @property
     def source_scope(self):
@@ -839,6 +800,7 @@ class AdvanceFulfillment(Fact):
     def reads(self):
         return (
             Read("calculation", "advance", f"@{self.advance_id}"),
+            Read("fact", "advance", f"@{self.advance_id}"),
             _through_month(
                 "calculation", "service_tax_point", f"advance-tax:{self.advance_id}", self.period
             ),
@@ -907,12 +869,15 @@ def calculate_advance_fulfillment(version: FactVersion, ctx: Context) -> Outcome
     advance_tax = _adopted_advance_tax(ctx, source, fact.period)
     already_taxed = source.values["vat_due_on_advance"] or advance_tax is not None
     if already_taxed:
+        tax_point_basis.verify_inherited_advance_tax_point(
+            version, ctx, source, advance_tax, earlier_used,
+        )
         adopted = advance_tax.values if advance_tax is not None else source.values
         rate = Decimal(adopted["rate_percent"])
         eligible = adopted["exemption_eligible"]
         policy_version = adopted["policy_version"]
     else:
-        point = _business_tax_point(version, ctx, fact.fulfilled_gross_fen)
+        point = tax_point_basis.resolve_business_tax_point(version, ctx, fact.fulfilled_gross_fen)
         for field in (
             "vat_policy_id",
             "exemption_eligible",
@@ -924,7 +889,8 @@ def calculate_advance_fulfillment(version: FactVersion, ctx: Context) -> Outcome
             raise NeedsInformation("tax_obligation_period", "此履约入口需要明确本期已到税点")
         policy = ctx.one("vat_policy", f"@{fact.vat_policy_id}").fact.policy
         if point is None:
-            _tax_policy_for_month(policy, fact.tax_obligation_period, fact.tax_obligation_date)
+            _tax_policy_for_month(policy, fact.tax_obligation_period, fact.tax_obligation_date,
+                                  source_subject_id=version.subject_id)
         else:
             if (
                 any(i.period != fact.period for i in point.intervals)

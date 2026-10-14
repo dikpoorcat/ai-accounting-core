@@ -9,6 +9,7 @@ from ai_accounting.kernel.domains import transactions
 from ai_accounting.kernel.materials import MaterialSource
 from ai_accounting.kernel.tax_point_basis import (
     TaxPointBasis,
+    resolve_business_tax_point,
     resolve_tax_point,
     tax_basis_reads,
     tax_basis_source_reads,
@@ -268,7 +269,7 @@ def test_partial_month_policy_requires_the_actual_source_date_field(origin, expe
     assert interval.actual_date is None
 
 
-def test_historical_tax_policy_precision_still_uses_the_saved_legacy_field():
+def test_explicit_tax_policy_precision_still_requires_the_actual_day_when_necessary():
     from test_business_domains import vat_policy
 
     policy = type(vat_policy()).model_validate_json(
@@ -456,11 +457,26 @@ def test_receipt_ranges_cannot_overlap_and_hide_the_second_real_receipt():
         (transactions.AdvanceFulfillment, {"advance_id": "advance", "fulfilled_gross_fen": 10100}),
     ],
 )
-def test_new_registration_rejects_chosen_tax_month_but_history_remains_decodable(model, fields):
+@pytest.mark.parametrize("tax_date", [None, "2026-04-02"])
+def test_registration_accepts_explicit_source_tax_month_without_contract_or_invoice_basis(
+    model, fields, tax_date
+):
     fact = model.model_validate_json(
-        json.dumps({"period": "2026-03", "tax_obligation_period": "2026-04", **fields})
+        json.dumps(
+            {
+                "period": "2026-03",
+                "tax_obligation_period": "2026-04",
+                "tax_obligation_date": tax_date,
+                **fields,
+            }
+        )
     )
+    fact.validate_registration()
     assert fact.tax_obligation_period == "2026-04"
-    with pytest.raises(NeedsInformation) as error:
-        fact.validate_registration()
-    assert error.value.issues[0]["field"] == "tax_point_basis"
+    assert fact.tax_obligation_date == tax_date
+    version = FactVersion("business-f1", "business", 1, fact, (EVIDENCE,))
+    context_without_basis = Context({tax_basis_reads(fact.kind, version.subject_id)[0]: ()})
+    assert resolve_business_tax_point(version, context_without_basis, 10100) is None
+    schema = model.model_json_schema()["properties"]
+    assert not schema["tax_obligation_period"].get("readOnly", False)
+    assert not schema["tax_obligation_date"].get("readOnly", False)
