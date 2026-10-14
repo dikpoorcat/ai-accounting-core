@@ -628,6 +628,9 @@ onBeforeUnmount(() => {
                 </span>
               </h2>
               <p class="dashboard-hero-note">{{ reportNextStep }}</p>
+              <p v-if="report.income_tax_source === 'provisional' || report.income_tax_source === 'mixed'" class="dashboard-hero-note">
+                所得税含暂计金额，收到实际税额后由 AI 会计调整。
+              </p>
             </div>
             <div class="report-actions">
               <button class="secondary" type="button" :disabled="loading" @click="refresh">

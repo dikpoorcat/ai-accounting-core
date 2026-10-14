@@ -4,6 +4,7 @@ export namespace DashboardQuarterlyReportContract {
   export type SchemaVersion = 5;
   export type CloseState = "open" | "closed";
   export type ReadinessState = "ready" | "blocked";
+  export type IncomeTaxSource = "provisional" | "actual" | "mixed" | "unestablished";
   export type Status = "ready" | "blocked" | "in_progress" | "not_applicable" | "error";
   export type StatusLabel = string;
   export type Headline = string;
@@ -51,6 +52,7 @@ export namespace DashboardQuarterlyReportContract {
     schema_version: SchemaVersion;
     close_state: CloseState;
     readiness_state: ReadinessState;
+    income_tax_source?: IncomeTaxSource;
     status: Status;
     status_label: StatusLabel;
     headline: Headline;

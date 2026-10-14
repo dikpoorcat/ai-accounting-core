@@ -165,6 +165,9 @@ class TaxFilingData:
             issues = ([_issue("income_tax_assessment", "所得税实际来源或原事实变化，须复核后采用",
                               subject_id=calculation["subject_id"])]
                       if calculation["subject_id"] in pending else [])
+            from .income_tax_snapshot import assessment_issues
+
+            issues.extend(assessment_issues(self.engine, reads, calculation, source=source))
             reference = values.get("calculated_assessment") or values
             result.append({
                 "assessment_id": calculation["subject_id"], "calculation_id": calculation["id"],

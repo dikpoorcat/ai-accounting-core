@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 28,
+    "version": 29,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -29,7 +29,8 @@ OPERATING_PROTOCOL = {
                 "第3步核对社保公积金实际承担额、申报及缴款；"
                 "第4步核对本次工资、奖金、劳务、报销及代付款范围，在本步补齐事实与必要核算，"
                 "接续银行代发表预览、确认、任务核验和交付；实际付款按发生月份另行办理。"
-                "第5步包括普通业务、资产、融资及影响报表的税费计提。银行、工资、普通业务、"
+                "第5步包括普通业务、资产、融资及影响报表的税费计提；季度所得税按有据政策、"
+                "预缴依据和内核共享税前结果计算并正式采用暂计。银行、工资、普通业务、"
                 "税务、资产、融资六类仅为资料与核算完整性维度，不作为办事推进顺序。"
                 "用户明确插办某项时先处理该项，保留原工作月份、阶段及接续位置，结束后返回原进度。"
             ),
@@ -53,7 +54,10 @@ OPERATING_PROTOCOL = {
                 "与银行代发无关，不作为代发前置条件，不设置等待后续核算再回补代发的安排。"
                 "第1步收集、归期并识别流水，后续业务的核算细节保留原行引用并到所属阶段处理；"
                 "第8步再核对完整覆盖、匹配和余额，不要求第1步完成最终对账。"
-                "财报先完成核算与报表检查，可在开放期冻结导出并记录真实报送，最后关账；"
+                "财报先完成核算与报表检查，所得税已有正式采用的季度暂计结果时不等待实际申报"
+                "税额或重复报表所得税确认，也不等待后续税务资料覆盖；可在开放期冻结导出并"
+                "记录真实报送。第7步取得税务实际结果后沿原所得税事项复核、调整并正式采用，"
+                "第8步再收尾关账；暂计、实际申报和缴款分别说明，缺项保留对应阶段待办。"
                 "先办后关是默认工作安排，不新增外部办理或核对的关账硬门槛。"
                 "实际报送快照、原采用依据与回执保持不可变，后续变更重新核对，不覆盖原报送。"
                 "当前阶段同项查证、依赖准备、登记、预览及发布连续完成，不逐笔增设审批。"
@@ -265,7 +269,16 @@ OPERATING_PROTOCOL = {
                     "按适用表单固定业务范围、核算期或税期、含税或不含税、本期或累计及舍入规则。"
                     "复用正式核算结果的精确来源与版本；tax_filing_data是可选取数入口，"
                     "AI不得另行汇总计税收入、自行选择纳税月份、重新拆税或手算税额。"
-                    "个税和企业所得税继续采用有据的已确认税额；不存在自动所得税计算能力。"
+                    "个税采用有据的已确认税额。季度企业所得税支持查账征收按实际利润预缴，"
+                    "通过income_tax_policy和income_tax_prepayment_basis保存适用政策、资格、"
+                    "预缴方式及弥补亏损依据，income_tax_assessment使用assessment_basis="
+                    "computed_provision并引用policy_id、basis_id，由内核读取同一税前"
+                    "财报快照计算暂计，仍通过preview/confirm正式采用；AI不手算或提交计算金额。"
+                    "损益来源变化时先正式采用上游业务，再单独预览、采用所得税暂计；"
+                    "自动接续不把暂计强塞进上游同批计算，未重算的暂计及其后续事项保持待处理。"
+                    "普通税率及有据的小型微利企业政策按生效版本采用，资格和必要调整事实未知"
+                    "时返回缺项，不推定享受优惠；弥补亏损为零及没有其他特殊调整、优惠也须有据"
+                    "明确，不能默认填零或空列表。年度汇算或其他预缴方式仍须有据的确认金额。"
                 ),
                 "tax_point": (
                     "普通服务收入、客户预收及履约可登记业务来源明确确认的tax_obligation_period/date。"
@@ -284,10 +297,14 @@ OPERATING_PROTOCOL = {
                 "readiness": (
                     "同公司、同期间、同含义字段由统一来源取数。字段缺项按fact_issues及可复用来源处理，"
                     "未知不写零，未支持表式不由AI补数。税前收入、成本和利润不等待所得税确认；"
-                    "完整财报及有关税费仍须满足其必要条件。来源变化重新准备并复核同一版本，"
+                    "完整财报可以采用有效的季度所得税暂计结果，包括有据的零结果，不另建重复"
+                    "report_income_tax_confirmation；仍核对所得税账面金额与精确采用版本。"
+                    "财报导出不以税务清单覆盖为前置，其他资料、核算和既有银行转账检查仍有效；"
+                    "税务资料缺项继续在workflow与关账检查保留，不改记无税务业务或已完成。"
+                    "有关税费仍须满足其必要条件。来源变化重新准备并复核同一版本，"
                     "不能以负责人确认绕过缺少的核算事实。实际申报、缴款及原报送资料独立保全，"
                     "external_completion保存真实办理版本；税费核算有实际来源时优先实际值，"
-                    "未取得实际结果允许暂估，计算结果只保留作参考，不因计算差异拒绝实际税额。"
+                    "未取得实际结果允许暂估，取得实际后计算结果只保留作参考，不因计算差异拒绝实际税额。"
                     "增值税及附加登记vat_declaration_actual，所得税登记income_tax_declaration_actual，"
                     "以assessment_id绑定原事项、准确覆盖税期及已登记filing_evidence；零额逐项明确。"
                     "实际来源缺少入账必需字段或版本冲突时按fact_issues处理，不退回计算值。"
@@ -663,7 +680,9 @@ OPERATING_PROTOCOL = {
                 ),
                 "boundary": (
                     "当前项或明确交办范围内可先登记真实报税、社保办理，再核对账务；"
-                    "财报先完成覆盖期核算与报表检查，开放期可冻结导出并记录真实报送，最后关账。"
+                    "财报先完成覆盖期核算与报表检查，可采用已正式发布的季度所得税暂计结果，"
+                    "开放期冻结导出并记录真实报送；收到实际税额后沿原事项调整并采用，再收尾关账。"
+                    "导出不等待后续实际税额和税务清单覆盖，暂计不冒充实际申报或缴款完成。"
                     "财报实际提交用external_completion.adopted_evidence_digests保全系统导出任务"
                     "的原manifest.json与XLSX，回执独立。完整复核需原提交manifest、XLSX及本次"
                     "经验证的manifest；依据未变复用原manifest，变化后重新导出并保全再核对。"
@@ -705,11 +724,13 @@ OPERATING_PROTOCOL = {
 
 TOPIC_SELECTORS = {
     "tax_reporting": {
-        "commands": ["tax_filing_data", "report", "preview_report_export"],
+        "commands": ["tax_filing_data", "report", "preview_report_export",
+                     "confirm_report_export", "confirm_browser_report_export"],
         "facts": ["tax_point_basis", "tax_assessment", "vat_declaration_actual", "service_sale",
                   "service_tax_point", "advance", "asset_disposal", "income_tax_assessment",
-                  "income_tax_declaration_actual"],
-        "responses": ["tax_filing_data"],
+                  "income_tax_declaration_actual", "income_tax_policy",
+                  "income_tax_prepayment_basis", "report_income_tax_confirmation"],
+        "responses": ["tax_filing_data", "report_", "dashboard_quarterly_report"],
     },
     "workflow": {
         "commands": ["workflow"],

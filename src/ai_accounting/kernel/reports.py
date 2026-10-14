@@ -1079,7 +1079,9 @@ class Reports:
         reads=None,
         _issues_only=False,
         _pre_tax_fields_only=False,
+        _income_tax_basis=False,
     ):
+        _pre_tax_fields_only = _pre_tax_fields_only or _income_tax_basis
         start, end, year_start = _periods(year, quarter)
         if through_period is not None:
             end = through_period
@@ -1249,7 +1251,7 @@ class Reports:
             from .report_flow import read_report_flow
 
             frozen_flows = {}
-            if party_position_lines is not None and not unknown_accounts:
+            if party_position_lines is not None and not unknown_accounts and not _income_tax_basis:
                 for month in sorted(closes):
                     if year_start.ordinal <= month <= end.ordinal:
                         flow = read_report_flow(connection, month, reads=reads)
@@ -1723,21 +1725,14 @@ class Reports:
                         statements, carry, opening_rows, start, book_start, problems
                     )
             confirmations = [f for f in facts if f.fact.kind == ReportIncomeTaxConfirmation.kind]
+            from .income_tax_snapshot import adopted_assessments, assessment_issues
+
+            tax_sources = set()
             for q in (() if _pre_tax_fields_only else range(
                 (int(max(book_start, year_start)[5:]) - 1) // 3 + 1, quarter + 1
             )):
                 month = YearMonth(f"{year:04d}-{q * 3:02d}")
                 selected = [f for f in confirmations if f.fact.period == month]
-                if len(selected) != 1:
-                    problems.append(
-                        issue(
-                            "report_income_tax_confirmation",
-                            "该季度需要唯一的所得税不适用、零或已核算确认",
-                            period=str(month),
-                        )
-                    )
-                    continue
-                confirmed = selected[0].fact
                 assessed = sum_fen(
                     r["amount"]
                     for r in rows
@@ -1759,6 +1754,41 @@ class Reports:
                             ),
                         )
                     )
+                # A later open-month adjustment must not replace an earlier
+                # quarter's frozen tax basis when checking cumulative amounts.
+                adopted_tax, tax_selection_issues = adopted_assessments(
+                    self.engine, reads, year, month, source,
+                )
+                if tax_selection_issues:
+                    problems.extend(tax_selection_issues)
+                    continue
+                adopted = adopted_tax.get(str(month), [])
+                if adopted:
+                    if len(adopted) != 1:
+                        problems.append(issue("income_tax_assessment", "季度所得税须有唯一采用结果",
+                                              period=str(month)))
+                        continue
+                    calculation_tax = adopted[0]
+                    values = calculation_tax["outcome"]["values"]
+                    if assessed != values["cumulative_assessed_fen"]:
+                        problems.append(issue("cumulative_assessed_fen",
+                                              "所得税采用结果与账面累计所得税费用不一致",
+                                              period=str(month)))
+                    problems.extend(assessment_issues(
+                        self.engine, reads, calculation_tax, source=source,
+                    ))
+                    tax_sources.add(values.get("amount_source", "provisional"))
+                    continue
+                if len(selected) != 1:
+                    problems.append(issue(
+                        "report_income_tax_confirmation",
+                        "该季度需要正式采用所得税暂计或实际结果；不适用须有明确依据",
+                        period=str(month),
+                    ))
+                    continue
+                confirmed = selected[0].fact
+                if confirmed.treatment != "not_applicable":
+                    tax_sources.add("provisional")
                 if assessed != confirmed.cumulative_assessed_fen:
                     problems.append(
                         issue(
@@ -1813,6 +1843,14 @@ class Reports:
                             "pending", "报表范围内存在尚未处理的事实或更正", subject_id=pending[0]
                         )
                     )
+            tax_snapshot = None
+            if _income_tax_basis:
+                from .income_tax_snapshot import build_basis
+
+                tax_snapshot = build_basis(
+                    reads, year, quarter, rows, facts, references, statements,
+                    opening_source=opening_source,
+                )
             if not external_connection:
                 connection.commit()
         checks = _checks(statements)
@@ -1830,6 +1868,9 @@ class Reports:
         plan = {
             "status": "needs_information" if problems else "ready",
             "source": source,
+            "income_tax_source": (
+                "mixed" if len(tax_sources) > 1 else next(iter(tax_sources), "unestablished")
+            ),
             "company_id": self.store.company_id,
             "database_id": self.store.database_id,
             "organization": {
@@ -1864,6 +1905,8 @@ class Reports:
                 "source_url": ACCOUNTING_RULE_SOURCE_URL,
             },
         }
+        if tax_snapshot is not None:
+            plan["income_tax_snapshot"] = tax_snapshot | {"fact_issues": problems}
         return plan | {"digest": digest({k: v for k, v in plan.items() if k != "epochs"}).hex()}
 
     def preview_export(self, year: int, quarter: int, *, carry_forward_fact_id: str | None = None):
@@ -1924,6 +1967,7 @@ class Reports:
                         _inspection_cache=inspection,
                         _reuse_closed_materials=True,
                         _query_reads=reads,
+                        purpose="financial_report",
                     )
                     problems.extend({"period": month, **item} for item in checked["issues"])
         problems = list({canonical(item): item for item in problems}.values())

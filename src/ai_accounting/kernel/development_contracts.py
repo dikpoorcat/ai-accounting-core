@@ -20,13 +20,18 @@ TAX_DECLARATION_SOURCE_FINGERPRINT = TAX_POINT_TARGET_FINGERPRINT
 TAX_DECLARATION_TARGET_FINGERPRINT = (
     "5e180a0299af6797b2e83383345085924d8d177729ef593a1cc8e9bbe5607b69"
 )
+INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT = TAX_DECLARATION_TARGET_FINGERPRINT
+INCOME_TAX_COMPUTATION_TARGET_FINGERPRINT = (
+    "4ac19c9f5bff28f19be40b620e8e1c23515b72c471d7a77720ee7fa2bae05099"
+)
 CATALOG_SOURCE24_FINGERPRINT = "b484d315272bb64de3856b458f04d2d4881da05db7552250864260916c69a4ee"
 CATALOG_PRIOR_FINGERPRINT = "0ec502b9c9ca75f97097da3abb496b779d325e6afc4210577755d52b7b75060e"
 CATALOG_HISTORY_FINGERPRINT = "42f63ac448d8a7f840a39fac8704680877a3e96e26668c197800b7c224bff35c"
 DEVELOPMENT_SOURCES = {
     "company": (REMUNERATION_SOURCE_FINGERPRINT, REMUNERATION_TARGET_FINGERPRINT,
                 SOURCE24_FINGERPRINT, SOURCE24_BASELINE_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT,
-                TAX_POINT_SOURCE_FINGERPRINT, TAX_DECLARATION_SOURCE_FINGERPRINT),
+                TAX_POINT_SOURCE_FINGERPRINT, TAX_DECLARATION_SOURCE_FINGERPRINT,
+                INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT),
     "catalog": (CATALOG_SOURCE24_FINGERPRINT, CATALOG_PRIOR_FINGERPRINT),
 }
 DEVELOPMENT_TRANSITIONS = {
@@ -38,7 +43,9 @@ DEVELOPMENT_TRANSITIONS = {
                 (REMUNERATION_TARGET_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT),
                 (HISTORY_PRIOR_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
                 (TAX_POINT_SOURCE_FINGERPRINT, TAX_POINT_TARGET_FINGERPRINT),
-                (TAX_DECLARATION_SOURCE_FINGERPRINT, TAX_DECLARATION_TARGET_FINGERPRINT)),
+                (TAX_DECLARATION_SOURCE_FINGERPRINT, TAX_DECLARATION_TARGET_FINGERPRINT),
+                (INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT,
+                 INCOME_TAX_COMPUTATION_TARGET_FINGERPRINT)),
     "catalog": ((CATALOG_SOURCE24_FINGERPRINT, CATALOG_HISTORY_FINGERPRINT),
                 (CATALOG_PRIOR_FINGERPRINT, CATALOG_HISTORY_FINGERPRINT)),
 }
@@ -69,10 +76,13 @@ def remuneration_source_registry(registry):
             "income_tax_declaration_actual",
         }:
             continue
-        result.register(
-            original.get(kind, model),
-            registry.evaluators.get(kind) if kind not in original else None,
-        )
+        if kind in original:
+            result.register(original[kind])
+        else:
+            result.register(
+                model, registry.evaluators.get(kind), table=registry.current_table(kind),
+                historical=registry.fact_bodies(kind)[1:],
+            )
     result.historical_only = registry.historical_only | original.keys()
     # Integrity-only source reads do not install old payroll calculators.
     result.accounting_projectors = dict(registry.accounting_projectors)

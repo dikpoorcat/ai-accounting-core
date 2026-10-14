@@ -434,6 +434,8 @@ class Context:
         *,
         report_snapshot: dict | None = None,
         report_reads: tuple[Read, ...] = (),
+        income_tax_snapshot: dict | None = None,
+        income_tax_reads: tuple[Read, ...] = (),
     ):
         self._selections = MappingProxyType(
             {read: tuple(items) for read, items in selections.items()}
@@ -443,6 +445,10 @@ class Context:
         self.accounting = accounting
         self.report_snapshot = freeze(report_snapshot) if report_snapshot is not None else None
         self.report_reads = tuple(report_reads)
+        self.income_tax_snapshot = (
+            freeze(income_tax_snapshot) if income_tax_snapshot is not None else None
+        )
+        self.income_tax_reads = tuple(income_tax_reads)
 
     @property
     def used(self) -> frozenset[Read]:

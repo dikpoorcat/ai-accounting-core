@@ -511,3 +511,48 @@ def test_work_draft_selection_keeps_question_disposition_semantics(contracts, co
     assert "field必填" in content
     assert "不从外围工作期补值" in content
     assert "不代替正式事实、批准或来源核验" in content
+
+
+@pytest.mark.parametrize(
+    "command", ["report", "preview_report_export", "confirm_report_export",
+                "confirm_browser_report_export"]
+)
+def test_report_entrypoints_include_income_tax_provision_rules(contracts, command):
+    selected = discover(contracts, view="selected", commands=[command])
+    rules = selected["agent_operating_rules"]["tax_reporting"]["rules"]
+    assert selected["agent_operating_protocol_version"] == 29
+    assert "computed_provision" in rules["single_source"]
+    assert "不另建重复" in rules["readiness"]
+    assert "财报导出不以税务清单覆盖为前置" in rules["readiness"]
+    assert "既有银行转账检查仍有效" in rules["readiness"]
+    assert "税务资料缺项继续在workflow与关账检查保留" in rules["readiness"]
+
+
+@pytest.mark.parametrize(
+    "kind", ["income_tax_policy", "income_tax_prepayment_basis",
+             "income_tax_assessment", "income_tax_declaration_actual",
+             "report_income_tax_confirmation"]
+)
+def test_income_tax_facts_select_provision_and_actual_adjustment_rules(contracts, kind):
+    selected = discover(contracts, view="selected", fact_kinds=[kind], commands=["save_fact"])
+    rules = selected["agent_operating_rules"]["tax_reporting"]["rules"]
+    assert "AI不手算或提交计算金额" in rules["single_source"]
+    assert "税费核算有实际来源时优先实际值" in rules["readiness"]
+    assert "对原tax_assessment或income_tax_assessment重新preview/confirm采用" in rules["readiness"]
+
+
+def test_runtime_sequence_keeps_provisional_report_and_actual_adjustment_separate(contracts):
+    sequence = discover(contracts)["agent_operating_protocol"]["core"]["work_entry"]["sequence"]
+    assert "不等待实际申报税额或重复报表所得税确认" in sequence
+    assert "不等待后续税务资料覆盖" in sequence
+    assert "第7步取得税务实际结果后沿原所得税事项复核、调整并正式采用" in sequence
+    assert "第8步再收尾关账" in sequence
+
+
+@pytest.mark.parametrize(
+    "response", ["tax_filing_data", "dashboard_quarterly_report",
+                 "report_export_receipt", "report_export_status"]
+)
+def test_report_response_discovery_also_includes_tax_provision_rules(contracts, response):
+    selected = discover(contracts, view="selected", response_types=[response])
+    assert "tax_reporting" in selected["agent_operating_rules"]

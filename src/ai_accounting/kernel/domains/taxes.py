@@ -40,6 +40,8 @@ from ..types import (
     sum_fen,
 )
 from .money import ACTUAL_PAYMENT_KINDS
+from . import income_tax
+from .income_tax import IncomeTaxAssessment
 
 Money = NonNegativeFen
 VAT_CALCULATION_KINDS = (
@@ -863,7 +865,7 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
     )
 
 
-class IncomeTaxAssessment(Fact):
+class HistoricalIncomeTaxAssessment(Fact):
     """Confirmed cumulative enterprise-income-tax assessment, not an inferred rate."""
 
     kind: ClassVar[str] = "income_tax_assessment"
@@ -906,6 +908,8 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
         YearMonth(f"{fact.year:04d}-12")
         if fact.assessment_basis == "annual_settlement" else fact.period
     )
+    calculated = None
+    reference_issue = None
     cumulative = fact.cumulative_assessed_fen
     if actual is not None:
         if actual.fact.year != fact.year or actual.fact.tax_period_end != tax_period_end:
@@ -919,6 +923,20 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
             raise NeedsInformation("income_tax_declaration_actual.tax_due_fen",
                                    "实际累计应纳、预缴与应补退金额不一致，须核对原件字段",
                                    sources=(actual.subject_id,), precision=("integer_fen",))
+    if fact.assessment_basis == "computed_provision":
+        try:
+            calculated = income_tax.calculate_computed_provision(version, ctx)
+        except NeedsInformation as error:
+            if actual is None:
+                raise
+            reference_issue = error.response()
+        if actual is None:
+            cumulative = calculated["cumulative_assessed_fen"]
+    else:
+        calculated = {"cumulative_assessed_fen": fact.cumulative_assessed_fen}
+    if cumulative is None:
+        raise NeedsInformation("cumulative_assessed_fen", "需要明确的累计所得税确认额",
+                               precision=("integer_fen",))
     earlier = ctx.select(Read("calculation", fact.kind, f"income-tax:{fact.year}", fact.period))
     same_month = [
         item
@@ -929,6 +947,10 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
         raise KernelError("duplicate_tax_assessment", "同月所得税采用原身份修订，不重复计提")
     previous = max(earlier, key=lambda item: item.period, default=None)
     opening = previous.values["cumulative_assessed_fen"] if previous else 0
+    if calculated is not None:
+        calculated = calculated | {
+            "change_fen": sum_fen((calculated["cumulative_assessed_fen"], -opening)),
+        }
     difference = sum_fen((cumulative, -opening))
     if difference > 0:
         lines = (Line("5801", debit=difference), Line("222106", credit=difference))
@@ -957,10 +979,8 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
             "obligations": [obligation],
             "amount_source": "actual" if actual is not None else "provisional",
             "actual_declaration": _declaration_basis(actual) if actual is not None else None,
-            "calculated_assessment": {
-                "cumulative_assessed_fen": fact.cumulative_assessed_fen,
-                "change_fen": sum_fen((fact.cumulative_assessed_fen, -opening)),
-            },
+            "calculated_assessment": calculated,
+            **({"calculation_reference_issue": reference_issue} if reference_issue else {}),
             **({"prepaid_tax_fen": actual.fact.prepaid_tax_fen,
                 "tax_due_fen": actual.fact.tax_due_fen,
             } if actual is not None else {}),
@@ -1250,6 +1270,11 @@ def register(registry: Registry) -> None:
     registry.register(UsedAssetVatPolicyFact)
     registry.register(VatDeclarationActual)
     registry.register(IncomeTaxDeclarationActual)
+    income_tax.register(registry)
     registry.register(TaxAssessment, calculate_tax_assessment)
-    registry.register(IncomeTaxAssessment, calculate_income_tax_assessment)
+    registry.register(
+        IncomeTaxAssessment, calculate_income_tax_assessment,
+        table="fact_income_tax_assessment_computed",
+        historical=((HistoricalIncomeTaxAssessment, "fact_income_tax_assessment"),),
+    )
     registry.register(TaxCreditConfirmation, calculate_tax_credit_confirmation)

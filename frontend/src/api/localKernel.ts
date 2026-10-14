@@ -62,6 +62,8 @@ export const localBusinessNames: Record<string, string> = {
   tax_assessment: "增值税及附加税费确认",
   vat_declaration_actual: "增值税及附加税费实际申报",
   income_tax_assessment: "企业所得税确认",
+  income_tax_policy: "企业所得税政策",
+  income_tax_prepayment_basis: "企业所得税季度预缴依据",
   income_tax_declaration_actual: "企业所得税实际申报",
   tax_credit_confirmation: "税额抵减与退税确认",
   payroll_contribution_policy: "社保公积金规则",

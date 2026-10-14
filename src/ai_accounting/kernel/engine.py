@@ -76,6 +76,14 @@ class Prepared:
 
 
 class Engine:
+    @staticmethod
+    def _income_tax_reads(snapshot):
+        if snapshot is None:
+            return ()
+        from .income_tax_snapshot import dependency_reads
+
+        return dependency_reads(snapshot)
+
     _allows_asset_graph = False
 
     def _reads(self, version, selections=None):
@@ -773,6 +781,7 @@ class Engine:
             connection.execute("BEGIN")
             epochs = self.store.epochs(connection)
             subjects = set(subjects)
+            requested_subjects = frozenset(subjects)
             queue = list(subjects)
             facts = {}
             while queue:
@@ -799,8 +808,20 @@ class Engine:
                 for new in extra - subjects:
                     subjects.add(new)
                     queue.append(new)
+            # A provision uses already published report inputs, not this batch's
+            # in-memory overlays. Keep its exact dependency (and pending status),
+            # but let the changed source publish before preparing the provision.
+            deferred_tax = {
+                sid for sid, version in facts.items()
+                if sid not in requested_subjects
+                and version.fact.kind == "income_tax_assessment"
+                and version.fact.assessment_basis == "computed_provision"
+            }
+            deferred = self._descendants(connection, deferred_tax) if deferred_tax else set()
             facts = {
-                sid: v for sid, v in facts.items() if v.fact.kind in self.store.registry.evaluators
+                sid: v for sid, v in facts.items()
+                if v.fact.kind in self.store.registry.evaluators
+                and (sid not in deferred or sid in requested_subjects)
             }
             from .entity_references import validate_registration_entities
 
@@ -860,6 +881,15 @@ class Engine:
             from .report_snapshot import prepare_review_snapshots
 
             report_snapshots = prepare_review_snapshots(self, connection, facts.values())
+            from .income_tax_snapshot import dependency_reads, prepare_snapshots
+
+            income_tax_snapshots = prepare_snapshots(self, connection, facts.values())
+            tax_reads = {
+                read for snapshot in income_tax_snapshots.values()
+                for read in dependency_reads(snapshot)
+            }
+            if tax_reads:
+                selections.update(self.store.select_many(connection, sorted(tax_reads, key=repr)))
             connection.commit()
         return (
             epochs,
@@ -871,6 +901,7 @@ class Engine:
             accounting,
             publications,
             report_snapshots,
+            income_tax_snapshots,
         )
 
     def _evaluate(self, version, context):
@@ -887,6 +918,7 @@ class Engine:
             accounting,
             publications,
             report_snapshots,
+            income_tax_snapshots,
         ) = self._snapshot(subjects)
         if not facts:
             raise KernelError("no_calculations", "没有可发布的业务计算")
@@ -896,6 +928,7 @@ class Engine:
                     (
                         *self._reads(version, selections),
                         *self._final_reads(version, selections),
+                        *self._income_tax_reads(income_tax_snapshots.get(version.id)),
                     )
                 )
             )
@@ -983,6 +1016,8 @@ class Engine:
                 accounting=accounting.signature,
                 report_snapshot=report_snapshots.get(version.id),
                 report_reads=report_reads,
+                income_tax_snapshot=income_tax_snapshots.get(version.id),
+                income_tax_reads=self._income_tax_reads(income_tax_snapshots.get(version.id)),
             )
             if dependencies[sid] & blocked:
                 error = compatibility(previous[sid], "upstream_comparison_unavailable")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import uuid
@@ -21,9 +20,12 @@ from .contracts import KernelError
 from .development_contracts import (
     HISTORY_PRIOR_FINGERPRINT,
     HISTORY_TARGET_FINGERPRINT,
+    INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT,
+    INCOME_TAX_COMPUTATION_TARGET_FINGERPRINT,
     REMUNERATION_SOURCE_FINGERPRINT,
     REMUNERATION_TARGET_FINGERPRINT,
     TAX_DECLARATION_SOURCE_FINGERPRINT,
+    TAX_DECLARATION_TARGET_FINGERPRINT,
     TAX_POINT_SOURCE_FINGERPRINT,
     TAX_POINT_TARGET_FINGERPRINT,
     get_contract_sha,
@@ -54,6 +56,13 @@ READ_MODEL_SOURCE_FINGERPRINT = INDEX_TARGET_FINGERPRINT
 READ_MODEL_TARGET_FINGERPRINT = "0c8abb83f06fa66266ba5802f5d70cabed3b861015a977757e0538f14a8ee2e7"
 FUND_DETAIL_SOURCE_FINGERPRINT = READ_MODEL_TARGET_FINGERPRINT
 FUND_DETAIL_TARGET_FINGERPRINT = "cdbdfa36c6513d7c2168edbeb2780692efe883ce7e5b59b63e87702288d79efa"
+_COMPANY_SOURCE_FINGERPRINTS = frozenset({
+    SOURCE_FINGERPRINT, INDEX_SOURCE_FINGERPRINT, READ_MODEL_SOURCE_FINGERPRINT,
+    FUND_DETAIL_SOURCE_FINGERPRINT, REMUNERATION_SOURCE_FINGERPRINT,
+    REMUNERATION_TARGET_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT,
+    TAX_POINT_SOURCE_FINGERPRINT, TAX_DECLARATION_SOURCE_FINGERPRINT,
+    INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT,
+})
 _DIRECT_ADOPTION_SQL = (
     "CREATE INDEX close_reference_direct_adoption ON close_reference(\n"
     " reference_type,reference_id,path,close_period,position)\n"
@@ -78,57 +87,29 @@ def _quote(name):
 def source_bundle(bundle, source_fingerprint=SOURCE_FINGERPRINT):
     """Decode the preserved exact source with the unchanged existing fact types."""
     source = get_contract_sha(bundle, "company", source_fingerprint)
-    if source is None or source_fingerprint not in (
-        SOURCE_FINGERPRINT,
-        INDEX_SOURCE_FINGERPRINT,
-        READ_MODEL_SOURCE_FINGERPRINT,
-        FUND_DETAIL_SOURCE_FINGERPRINT,
-        REMUNERATION_SOURCE_FINGERPRINT,
-        REMUNERATION_TARGET_FINGERPRINT,
-        HISTORY_PRIOR_FINGERPRINT,
-        TAX_POINT_SOURCE_FINGERPRINT,
-        TAX_DECLARATION_SOURCE_FINGERPRINT,
-    ):
+    if source is None or source_fingerprint not in _COMPANY_SOURCE_FINGERPRINTS:
         raise KernelError("migration_not_declared", "开发升级来源未明确声明")
-    if source_fingerprint == REMUNERATION_SOURCE_FINGERPRINT:
-        return replace(
-            bundle,
-            registry=remuneration_source_registry(bundle.registry),
-            contracts=MappingProxyType(
-                {**bundle.contracts, "company": MappingProxyType({0: source})}
-            ),
-        )
-    if source_fingerprint in {
-        REMUNERATION_TARGET_FINGERPRINT, HISTORY_PRIOR_FINGERPRINT,
-        TAX_POINT_SOURCE_FINGERPRINT,
-        TAX_DECLARATION_SOURCE_FINGERPRINT,
-    }:
-        from .contracts import Registry
+    from .contracts import Registry
 
-        tables = {item["name"] for item in source["objects"] if item["type"] == "table"}
-        registry = Registry()
-        for kind in bundle.registry.models:
-            bodies = tuple((model, table) for model, table in bundle.registry.fact_bodies(kind)
-                           if table in tables)
-            if not bodies:
-                continue
-            model, table = bodies[0]
-            registry.register(model, bundle.registry.evaluators.get(kind),
-                              table=table, historical=bodies[1:])
-        registry.historical_only = bundle.registry.historical_only & registry.models.keys()
-        registry.accounting_projectors = dict(bundle.registry.accounting_projectors)
-        registry.accounting_consumers = dict(bundle.registry.accounting_consumers)
-        registry.readiness = dict(bundle.registry.readiness)
-        registry.snapshot_readiness = dict(bundle.registry.snapshot_readiness)
-        return replace(bundle, registry=registry, contracts=MappingProxyType(
-            {**bundle.contracts, "company": MappingProxyType({0: source})}
-        ))
-    registry = copy.copy(bundle.registry)
-    registry.models = dict(registry.models)
-    registry.evaluators = dict(registry.evaluators)
-    if source_fingerprint == SOURCE_FINGERPRINT:
-        registry.models.pop("managed_reserve_internal_movement", None)
-        registry.evaluators.pop("managed_reserve_internal_movement", None)
+    original = (
+        remuneration_source_registry(bundle.registry)
+        if source_fingerprint == REMUNERATION_SOURCE_FINGERPRINT else bundle.registry
+    )
+    tables = {item["name"] for item in source["objects"] if item["type"] == "table"}
+    registry = Registry()
+    for kind in original.models:
+        bodies = tuple((model, table) for model, table in original.fact_bodies(kind)
+                       if table in tables)
+        if not bodies:
+            continue
+        model, table = bodies[0]
+        registry.register(model, original.evaluators.get(kind),
+                          table=table, historical=bodies[1:])
+    registry.historical_only = original.historical_only & registry.models.keys()
+    registry.accounting_projectors = dict(original.accounting_projectors)
+    registry.accounting_consumers = dict(original.accounting_consumers)
+    registry.readiness = dict(original.readiness)
+    registry.snapshot_readiness = dict(original.snapshot_readiness)
     return replace(
         bundle,
         registry=registry,
@@ -283,6 +264,11 @@ def _remuneration_changes(bundle):
         TAX_POINT_SOURCE_FINGERPRINT, TAX_DECLARATION_SOURCE_FINGERPRINT,
     }:
         changes += (_tax_declaration_changes(bundle),)
+    if bundle.current("company")["sha256"] not in {
+        TAX_POINT_SOURCE_FINGERPRINT, TAX_DECLARATION_SOURCE_FINGERPRINT,
+        INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT,
+    }:
+        changes += (_income_tax_computation_changes(bundle),)
     return changes
 
 
@@ -395,15 +381,14 @@ def _tax_point_changes(bundle):
 def _tax_declaration_changes(bundle):
     """Add actual declaration facts without replacing any existing tax body."""
     from .contracts import Registry
-    from .development_contracts import TAX_DECLARATION_TARGET_FINGERPRINT
     from .schema import fact_ddl, schema_sql
     from .versions import contract
 
     source = get_contract_sha(bundle, "company", TAX_DECLARATION_SOURCE_FINGERPRINT)
-    target = bundle.current("company")
+    target = get_contract_sha(bundle, "company", TAX_DECLARATION_TARGET_FINGERPRINT)
     kinds = ("vat_declaration_actual", "income_tax_declaration_actual")
     if (
-        bundle.status != "draft" or source is None
+        bundle.status != "draft" or source is None or target is None
         or target["sha256"] != TAX_DECLARATION_TARGET_FINGERPRINT
         or (TAX_DECLARATION_SOURCE_FINGERPRINT, target["sha256"])
         not in bundle.draft_transitions.get("company", ())
@@ -427,7 +412,8 @@ def _tax_declaration_changes(bundle):
     }
     old_seal = next(item["sql"] for item in source["objects"]
                     if item["name"] == "fact_seal_shape")
-    new_seal = next(item["sql"] for item in contract(schema_sql(bundle.registry))
+    historical_registry = source_bundle(bundle, TAX_DECLARATION_TARGET_FINGERPRINT).registry
+    new_seal = next(item["sql"] for item in contract(schema_sql(historical_registry))
                     if item["name"] == "fact_seal_shape")
     original_seal = new_seal
     for kind in kinds:
@@ -449,7 +435,74 @@ def _tax_declaration_changes(bundle):
     return source, target, differences
 
 
-def _apply_tax_declaration_step(connection, differences, *, fault=None):
+def _income_tax_computation_changes(bundle):
+    """Add evidenced computation inputs and retain the original assessment body."""
+    from .contracts import Registry
+    from .schema import fact_ddl, schema_sql
+    from .versions import contract
+
+    source = get_contract_sha(bundle, "company", INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT)
+    target = bundle.current("company")
+    if (
+        bundle.status != "draft" or source is None
+        or target["sha256"] != INCOME_TAX_COMPUTATION_TARGET_FINGERPRINT
+        or (source["sha256"], target["sha256"])
+        not in bundle.draft_transitions.get("company", ())
+    ):
+        raise KernelError("migration_not_declared", "所得税计算结构调整须有精确来源和目标")
+    added = Registry()
+    for kind in ("income_tax_policy", "income_tax_prepayment_basis", "income_tax_assessment"):
+        table = "fact_" + kind + ("_computed" if kind == "income_tax_assessment" else "")
+        if kind not in bundle.registry.models or bundle.registry.current_table(kind) != table:
+            raise KernelError("migration_not_declared", "所得税计算须使用独立的新正文")
+        bodies = bundle.registry.fact_bodies(kind)
+        expected_tables = (
+            (table, "fact_income_tax_assessment")
+            if kind == "income_tax_assessment" else (table,)
+        )
+        if tuple(name for _, name in bodies) != expected_tables:
+            raise KernelError("migration_not_declared", "所得税计算正文未完整保留原核算格式")
+        added.register(bundle.registry.models[kind], table=table)
+    expected = {
+        (item["type"], item["name"]): dict(
+            type=item["type"], name=item["name"], old_sql=None, new_sql=item["sql"],
+        )
+        for item in contract(fact_ddl(added))
+    }
+    old_seal = next(item["sql"] for item in source["objects"]
+                    if item["name"] == "fact_seal_shape")
+    new_seal = next(item["sql"] for item in contract(schema_sql(bundle.registry))
+                    if item["name"] == "fact_seal_shape")
+    previous_seal = new_seal
+    for kind in ("income_tax_policy", "income_tax_prepayment_basis"):
+        fragment = (f" WHEN '{kind}' THEN EXISTS(SELECT 1 FROM "
+                    f"fact_{kind} t WHERE t.revision_id=f.id)")
+        if previous_seal.count(fragment) != 1:
+            raise KernelError("migration_not_declared", "所得税计算封存缺少唯一的新来源正文")
+        previous_seal = previous_seal.replace(fragment, "")
+    original = (
+        " WHEN 'income_tax_assessment' THEN EXISTS(SELECT 1 FROM "
+        "fact_income_tax_assessment t WHERE t.revision_id=f.id)"
+    )
+    replacement = (
+        " WHEN 'income_tax_assessment' THEN ((SELECT count(*) FROM "
+        "fact_income_tax_assessment_computed t WHERE t.revision_id=f.id)+"
+        "(SELECT count(*) FROM fact_income_tax_assessment t WHERE t.revision_id=f.id))=1"
+    )
+    if previous_seal.count(replacement) != 1 or (
+        previous_seal.replace(replacement, original) != old_seal
+    ):
+        raise KernelError("migration_not_declared", "所得税计算封存改变了原有正文规则")
+    expected[("trigger", "fact_seal_shape")] = dict(
+        type="trigger", name="fact_seal_shape", old_sql=old_seal, new_sql=new_seal,
+    )
+    differences = diff_contracts(source, target)
+    if differences != [expected[key] for key in sorted(expected)]:
+        raise KernelError("migration_not_declared", "所得税计算结构调整超出新增正文和封存检查")
+    return source, target, differences
+
+
+def _apply_typed_fact_step(connection, differences, *, object_stage, fault=None):
     for kind in ("table", "index", "trigger"):
         for item in differences:
             if item["type"] != kind:
@@ -458,31 +511,31 @@ def _apply_tax_declaration_step(connection, differences, *, fault=None):
                 connection.execute("DROP TRIGGER fact_seal_shape")
             connection.execute(item["new_sql"])
             if fault:
-                fault("after_tax_declaration_object:" + kind + ":" + item["name"])
+                fault(object_stage + ":" + kind + ":" + item["name"])
+
+
+def _apply_income_tax_computation_step(connection, differences, *, fault=None):
+    _apply_typed_fact_step(
+        connection, differences, object_stage="after_income_tax_computation_object", fault=fault,
+    )
+
+
+def _apply_tax_declaration_step(connection, differences, *, fault=None):
+    _apply_typed_fact_step(
+        connection, differences, object_stage="after_tax_declaration_object", fault=fault,
+    )
 
 
 def _apply_tax_point_step(connection, differences, *, fault=None):
-    for kind in ("table", "index", "trigger"):
-        for item in differences:
-            if item["type"] != kind:
-                continue
-            if item["name"] == "fact_seal_shape":
-                connection.execute("DROP TRIGGER fact_seal_shape")
-            connection.execute(item["new_sql"])
-            if fault:
-                fault("after_tax_point_object:" + kind + ":" + item["name"])
+    _apply_typed_fact_step(
+        connection, differences, object_stage="after_tax_point_object", fault=fault,
+    )
 
 
 def _apply_remuneration_step(connection, differences, *, fault=None):
-    for kind in ("table", "index", "trigger"):
-        for item in differences:
-            if item["type"] != kind:
-                continue
-            if item["name"] == "fact_seal_shape":
-                connection.execute("DROP TRIGGER fact_seal_shape")
-            connection.execute(item["new_sql"])
-            if fault:
-                fault("after_remuneration_object:" + kind + ":" + item["name"])
+    _apply_typed_fact_step(
+        connection, differences, object_stage="after_remuneration_object", fault=fault,
+    )
 
 
 def _all_existing_rows(connection, source_contract):
@@ -686,7 +739,9 @@ def upgrade_company(
             step_rows = (
                 original_rows if step_index == 0 else _all_existing_rows(connection, step_source)
             )
-            if step_source["sha256"] == TAX_DECLARATION_SOURCE_FINGERPRINT:
+            if step_source["sha256"] == INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT:
+                _apply_income_tax_computation_step(connection, differences, fault=fault)
+            elif step_source["sha256"] == TAX_DECLARATION_SOURCE_FINGERPRINT:
                 _apply_tax_declaration_step(connection, differences, fault=fault)
             elif step_source["sha256"] == TAX_POINT_SOURCE_FINGERPRINT:
                 _apply_tax_point_step(connection, differences, fault=fault)
@@ -712,6 +767,8 @@ def upgrade_company(
                     if step_source["sha256"] == TAX_POINT_SOURCE_FINGERPRINT
                     else "after_tax_declaration_ddl"
                     if step_source["sha256"] == TAX_DECLARATION_SOURCE_FINGERPRINT
+                    else "after_income_tax_computation_ddl"
+                    if step_source["sha256"] == INCOME_TAX_COMPUTATION_SOURCE_FINGERPRINT
                     else "after_read_model_ddl"
                 )
             if (
@@ -773,17 +830,7 @@ def _company_bundle(connection, bundle):
     if actual == bundle.current("company")["sha256"]:
         verify_schema(connection, bundle=bundle)
         return bundle
-    if actual in (
-        SOURCE_FINGERPRINT,
-        INDEX_SOURCE_FINGERPRINT,
-        READ_MODEL_SOURCE_FINGERPRINT,
-        FUND_DETAIL_SOURCE_FINGERPRINT,
-        REMUNERATION_SOURCE_FINGERPRINT,
-        REMUNERATION_TARGET_FINGERPRINT,
-        HISTORY_PRIOR_FINGERPRINT,
-        TAX_POINT_SOURCE_FINGERPRINT,
-        TAX_DECLARATION_SOURCE_FINGERPRINT,
-    ):
+    if actual in _COMPANY_SOURCE_FINGERPRINTS:
         previous = source_bundle(bundle, actual)
         verify_schema(connection, bundle=previous)
         return previous

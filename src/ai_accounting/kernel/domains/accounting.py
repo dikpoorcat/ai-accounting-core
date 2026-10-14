@@ -490,6 +490,8 @@ def project_tax_assessment(version, outcome, refs):
     fact = version.fact.model_dump(mode="json")
     if version.fact.kind == "income_tax_assessment":
         fact["cumulative_assessed_fen"] = values["cumulative_assessed_fen"]
+        fact.pop("policy_id", None)
+        fact.pop("basis_id", None)
     else:
         # The exact policy references remain in facts and dependencies. Their
         # accounting effect is already represented by the adopted tax result.

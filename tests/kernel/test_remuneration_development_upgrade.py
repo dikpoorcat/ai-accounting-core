@@ -167,7 +167,7 @@ def test_forward_adjustment_preserves_all_original_rows_sql_and_frozen_history(p
         ] == [
             (REMUNERATION_SOURCE_FINGERPRINT.upper(),),
         ]
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 4
+        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 5
         verify_schema(connection, bundle=target)
         store = Store(path, target, "synthetic-co", "synthetic-db")
         assert store.fact_data(connection, fact_id) == profile.model_dump(mode="json")
@@ -224,7 +224,7 @@ def test_prior_confirmed_shape_moves_forward_by_adding_empty_history_bodies(tmp_
     with closing(connect(path)) as connection:
         before = connection.execute("SELECT * FROM schema_history").fetchall()
         result = development.upgrade_company(connection, target)
-        assert len(result["steps"]) == 3
+        assert len(result["steps"]) == 4
         assert result["source_fingerprint"] == REMUNERATION_TARGET_FINGERPRINT
         assert connection.execute("SELECT * FROM schema_history").fetchall() == before
         assert connection.execute(
@@ -287,7 +287,7 @@ def test_prior_history_source_index_upgrade_runs_through_real_cli(tmp_path):
     assert response["status"] == "upgraded"
     assert response["companies"][0]["source_fingerprint"] == HISTORY_PRIOR_FINGERPRINT
     assert response["companies"][0]["target_fingerprint"] == target.current()["sha256"]
-    assert len(response["companies"][0]["steps"]) == 3
+    assert len(response["companies"][0]["steps"]) == 4
     with closing(connect(path)) as connection:
         assert connection.execute("SELECT * FROM schema_history").fetchall() == original_history
         verify_schema(connection, bundle=target)

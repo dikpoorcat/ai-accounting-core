@@ -648,6 +648,29 @@
             },
             "title": "Fact Issues",
             "type": "array"
+          },
+          "value_source": {
+            "enum": [
+              "accounting",
+              "calculated",
+              "actual",
+              "mixed"
+            ],
+            "title": "Value Source",
+            "type": "string"
+          },
+          "calculated_value_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculated Value Fen"
           }
         },
         "required": [
@@ -661,7 +684,9 @@
           "status",
           "source_basis",
           "source_basis_digest",
-          "fact_issues"
+          "fact_issues",
+          "value_source",
+          "calculated_value_fen"
         ],
         "title": "TaxFilingField",
         "type": "object"
@@ -713,6 +738,164 @@
         "title": "TaxFilingFieldDefinition",
         "type": "object"
       },
+      "TaxFilingIncomeTaxAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_id": {
+            "title": "Assessment Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "tax_period_end": {
+            "title": "Tax Period End",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "cumulative_assessed_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Assessed Fen"
+          },
+          "current_change_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Change Fen"
+          },
+          "prepaid_tax_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prepaid Tax Fen"
+          },
+          "tax_due_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Due Fen"
+          },
+          "amount_source": {
+            "enum": [
+              "actual",
+              "provisional"
+            ],
+            "title": "Amount Source",
+            "type": "string"
+          },
+          "reference_cumulative_assessed_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Cumulative Assessed Fen"
+          },
+          "reference_change_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Change Fen"
+          },
+          "source_basis": {
+            "items": {
+              "$ref": "#/$defs/SourceReference"
+            },
+            "title": "Source Basis",
+            "type": "array"
+          },
+          "settlement_reconciliation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TaxSettlementReconciliation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assessment_id",
+          "calculation_id",
+          "year",
+          "tax_period_end",
+          "status",
+          "cumulative_assessed_fen",
+          "current_change_fen",
+          "prepaid_tax_fen",
+          "tax_due_fen",
+          "amount_source",
+          "reference_cumulative_assessed_fen",
+          "reference_change_fen",
+          "source_basis",
+          "settlement_reconciliation",
+          "fact_issues"
+        ],
+        "title": "TaxFilingIncomeTaxAssessment",
+        "type": "object"
+      },
       "TaxFilingMapping": {
         "additionalProperties": false,
         "properties": {
@@ -740,6 +923,134 @@
           "source_url"
         ],
         "title": "TaxFilingMapping",
+        "type": "object"
+      },
+      "TaxFilingVatSettlement": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment_id": {
+            "title": "Assessment Id",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "tax_name": {
+            "enum": [
+              "vat",
+              "surtax"
+            ],
+            "title": "Tax Name",
+            "type": "string"
+          },
+          "source_basis": {
+            "items": {
+              "$ref": "#/$defs/SourceReference"
+            },
+            "title": "Source Basis",
+            "type": "array"
+          },
+          "reconciliation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TaxSettlementReconciliation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "assessment_id",
+          "calculation_id",
+          "tax_name",
+          "source_basis",
+          "reconciliation"
+        ],
+        "title": "TaxFilingVatSettlement",
+        "type": "object"
+      },
+      "TaxSettlementReconciliation": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "unestablished",
+              "matched",
+              "different"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "actual_due_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Due Fen"
+          },
+          "book_due_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Due Fen"
+          },
+          "settlement_as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement As Of"
+          },
+          "book_settled_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Settled Fen"
+          },
+          "settlement_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Settlement Fact Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "actual_due_fen",
+          "book_due_fen",
+          "settlement_as_of",
+          "book_settled_fen",
+          "settlement_fact_ids"
+        ],
+        "title": "TaxSettlementReconciliation",
         "type": "object"
       }
     },
@@ -791,6 +1102,20 @@
         "title": "Fields",
         "type": "array"
       },
+      "income_tax_assessments": {
+        "items": {
+          "$ref": "#/$defs/TaxFilingIncomeTaxAssessment"
+        },
+        "title": "Income Tax Assessments",
+        "type": "array"
+      },
+      "vat_settlement_reconciliations": {
+        "items": {
+          "$ref": "#/$defs/TaxFilingVatSettlement"
+        },
+        "title": "Vat Settlement Reconciliations",
+        "type": "array"
+      },
       "source_basis_digest": {
         "title": "Source Basis Digest",
         "type": "string"
@@ -812,6 +1137,8 @@
       "source",
       "mapping_versions",
       "fields",
+      "income_tax_assessments",
+      "vat_settlement_reconciliations",
       "source_basis_digest",
       "fact_issues"
     ],
@@ -10235,6 +10562,16 @@
               "blocked"
             ],
             "title": "Readiness State",
+            "type": "string"
+          },
+          "income_tax_source": {
+            "enum": [
+              "provisional",
+              "actual",
+              "mixed",
+              "unestablished"
+            ],
+            "title": "Income Tax Source",
             "type": "string"
           },
           "status": {
@@ -25530,6 +25867,16 @@
           "blocked"
         ],
         "title": "Readiness State",
+        "type": "string"
+      },
+      "income_tax_source": {
+        "enum": [
+          "provisional",
+          "actual",
+          "mixed",
+          "unestablished"
+        ],
+        "title": "Income Tax Source",
         "type": "string"
       },
       "status": {

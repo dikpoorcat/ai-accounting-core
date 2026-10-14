@@ -2664,6 +2664,7 @@ class DashboardQuarterlyReportResponse(ResponseObject):
     schema_version: Version5
     close_state: Literal["open", "closed"]
     readiness_state: Literal["ready", "blocked"]
+    income_tax_source: NotRequired[Literal["provisional", "actual", "mixed", "unestablished"]]
     status: Literal["ready", "blocked", "in_progress", "not_applicable", "error"]
     status_label: str
     headline: str

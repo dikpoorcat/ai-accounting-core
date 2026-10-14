@@ -2294,6 +2294,7 @@ def check_completeness_many(
     _source_ids=None,
     _inventory_months=None,
     _evidence_digests=None,
+    _required_inventory_categories=None,
 ) -> dict[int, dict]:
     """Check review months, optionally starting from exact related original sources.
 
@@ -2492,6 +2493,9 @@ def check_completeness_many(
     ]
     for row in inventory_rows.values():
         if row["expected"] > row["received"] and (
+            _required_inventory_categories is None
+            or row["category"] in _required_inventory_categories
+        ) and (
             source_scope is None
             or row["category"] == "payroll" and row["period"] in inventory_months
         ):
@@ -3513,6 +3517,7 @@ def read_completeness_summary(
     closed_through=_CURRENT_CLOSED_THROUGH,
     _inspection_cache=None,
     _query_reads=None,
+    _required_inventory_categories=None,
 ) -> MaterialReadSummary:
     """Same issue rules as full completeness, with bounded frozen source reads."""
     return check_completeness_many(
@@ -3522,6 +3527,7 @@ def read_completeness_summary(
         closed_through=closed_through,
         _inspection_cache=_inspection_cache,
         _query_reads=_query_reads,
+        _required_inventory_categories=_required_inventory_categories,
         _allow_frozen_reuse=True,
         _summary_only=True,
     )[month]
@@ -3536,6 +3542,7 @@ def check_completeness(
     _inspection_cache=None,
     _allow_frozen_reuse=False,
     _query_reads=None,
+    _required_inventory_categories=None,
 ) -> dict:
     """Read one bound snapshot; the returned digest belongs in the close manifest."""
     return check_completeness_many(
@@ -3546,6 +3553,7 @@ def check_completeness(
         _inspection_cache=_inspection_cache,
         _allow_frozen_reuse=_allow_frozen_reuse,
         _query_reads=_query_reads,
+        _required_inventory_categories=_required_inventory_categories,
     )[month]
 
 

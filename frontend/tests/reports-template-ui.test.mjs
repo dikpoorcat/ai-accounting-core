@@ -59,6 +59,14 @@ test("report template renders the switch, organization, all rows and three origi
     assert.doesNotMatch(html, /class="tax-template-sheet/);
     assert.match(html, /税务局模板格式/);
     assert.doesNotMatch(html, /合成项目32/);
+    for (const source of ["provisional", "mixed", "actual", "unestablished"]) {
+      globalThis.reportTemplateUi.income_tax_source = source;
+      server.moduleGraph.invalidateAll();
+      const withTaxSource = await render();
+      const provisionalNotice = /所得税含暂计金额，收到实际税额后由 AI 会计调整。/;
+      if (["provisional", "mixed"].includes(source)) assert.match(withTaxSource, provisionalNotice);
+      else assert.doesNotMatch(withTaxSource, provisionalNotice);
+    }
   } finally {
     await server.close();
     delete globalThis.reportTemplateUi;

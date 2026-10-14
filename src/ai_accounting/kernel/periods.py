@@ -17,6 +17,7 @@ from .types import (
 )
 
 MATERIAL_CATEGORIES = ("transactions", "payroll", "bank", "tax", "assets", "financing")
+ReadinessPurpose = Literal["period_close", "financial_report"]
 READINESS_WORK_AREAS = {
     "bank_accounts": "bank",
     "platform_movements": "transactions",
@@ -24,6 +25,14 @@ READINESS_WORK_AREAS = {
 }
 ASSET_FINANCING_READINESS_FIELDS = {"loan_drawdown", "loan_interest"}
 _CURRENT_CLOSE = object()
+
+
+def _inventory_coverage_categories(purpose: ReadinessPurpose):
+    if purpose == "period_close":
+        return MATERIAL_CATEGORIES
+    if purpose == "financial_report":
+        return tuple(category for category in MATERIAL_CATEGORIES if category != "tax")
+    raise ValueError("unsupported readiness purpose")
 
 
 class InventoryInput(BaseModel):
@@ -239,7 +248,11 @@ class Periods:
         )
 
     @staticmethod
-    def completeness(connection, month, registry, *, material_coverage=None):
+    def completeness(
+        connection, month, registry, *, material_coverage=None,
+        purpose: ReadinessPurpose = "period_close",
+    ):
+        required_categories = _inventory_coverage_categories(purpose)
         inventories = {
             row["category"]: row
             for row in connection.execute(
@@ -249,7 +262,7 @@ class Periods:
             )
         }
         issues = []
-        for category in MATERIAL_CATEGORIES:
+        for category in required_categories:
             row = inventories.get(category)
             if row is None:
                 issues.append(
@@ -261,7 +274,10 @@ class Periods:
         from .materials import MaterialReadSummary, check_completeness
 
         if material_coverage is None:
-            material_coverage = check_completeness(connection, month, registry)
+            material_coverage = check_completeness(
+                connection, month, registry,
+                _required_inventory_categories=required_categories,
+            )
         issues.extend(
             material_coverage.issues
             if isinstance(material_coverage, MaterialReadSummary)
@@ -585,6 +601,7 @@ class Periods:
         connection,
         period: str,
         *,
+        purpose: ReadinessPurpose = "period_close",
         closed_through=_CURRENT_CLOSE,
         _inspection_cache=None,
         _allow_frozen_materials=False,
@@ -593,6 +610,7 @@ class Periods:
     ):
         """Collect current issues without interpreting a historical close boundary."""
 
+        required_categories = _inventory_coverage_categories(purpose)
         month = YearMonth(period).ordinal
         kinds = sorted(
             kind
@@ -612,6 +630,7 @@ class Periods:
         material_options = {
             "_inspection_cache": _inspection_cache,
             "_query_reads": _query_reads,
+            "_required_inventory_categories": required_categories,
         }
         if _reuse_closed_materials and not _allow_frozen_materials:
             material_options["_allow_frozen_reuse"] = True
@@ -632,7 +651,8 @@ class Periods:
             )
         )
         inventories, material_issues, unpublished = self.completeness(
-            connection, month, self.store.registry, material_coverage=material_coverage
+            connection, month, self.store.registry, material_coverage=material_coverage,
+            purpose=purpose,
         )
         issues = list(material_issues)
         readiness = {}

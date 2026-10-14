@@ -35,7 +35,7 @@ from ai_accounting.kernel.versions import fingerprint, objects, verify_schema
 
 @pytest.fixture
 def preserved_declaration_book(tmp_path):
-    target = production_bundle()
+    target = development.source_bundle(production_bundle(), TAX_DECLARATION_TARGET_FINGERPRINT)
     source = development.source_bundle(target, TAX_DECLARATION_SOURCE_FINGERPRINT)
     path = tmp_path / "preserved-tax-declaration-source.sqlite"
     engine = previous_book(path, source)
@@ -153,7 +153,7 @@ def test_actual_declaration_adjustment_rejects_extra_source_sql_without_writes(
 def test_root_actual_declaration_upgrade_checks_backups_before_ddl_and_preserves_owner(
     tmp_path, monkeypatch,
 ):
-    target = production_bundle()
+    target = development.source_bundle(production_bundle(), TAX_DECLARATION_TARGET_FINGERPRINT)
     source = development.source_bundle(target, TAX_DECLARATION_SOURCE_FINGERPRINT)
     root = ensure_private_directory(tmp_path / "actual-declaration-root")
     catalog = ensure_catalog(root, bundle=source)
@@ -228,7 +228,7 @@ def test_historical_tax_point_target_remains_a_valid_isolated_upgrade_endpoint(t
     assert verify_file(path, _bundle=historical_target)["verification"]["status"] == "verified"
 
 
-class ArchivedIncomeTaxAssessment(taxes.IncomeTaxAssessment):
+class ArchivedIncomeTaxAssessment(taxes.HistoricalIncomeTaxAssessment):
     """The unchanged source body with its pre-declaration read grammar."""
 
     def reads_for(self, subject_id):
