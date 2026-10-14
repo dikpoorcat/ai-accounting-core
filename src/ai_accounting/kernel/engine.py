@@ -565,6 +565,19 @@ class Engine:
                 # Previously published gross accruals have no tax-scope edge yet.
                 # Seed only the named source, then reuse ordinary descendant invalidation.
                 affected.add(fact.source_id)
+            declaration_targets = {
+                "vat_declaration_actual": "tax_assessment",
+                "income_tax_declaration_actual": "income_tax_assessment",
+            }
+            if kind in declaration_targets and connection.execute(
+                "SELECT 1 FROM subject s JOIN calculation_current c ON c.subject_id=s.id "
+                "WHERE s.id=? AND s.kind=?",
+                (fact.assessment_id, declaration_targets[kind]),
+            ).fetchone():
+                # Preserved tax publications predate the actual-source read scope.
+                # Bind only the typed named assessment; its descendants follow
+                # the existing dependency graph inside this same transaction.
+                affected.add(fact.assessment_id)
             affected = self._descendants(connection, affected)
             connection.executemany(
                 "INSERT INTO pending VALUES(?,?) ON CONFLICT DO NOTHING",

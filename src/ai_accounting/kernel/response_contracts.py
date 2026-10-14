@@ -3272,6 +3272,43 @@ class TaxFilingField(ResponseObject):
     source_basis: list[SourceReference]
     source_basis_digest: str
     fact_issues: list[ReadinessIssue]
+    value_source: Literal["accounting", "calculated", "actual", "mixed"] = "accounting"
+    calculated_value_fen: WireFen | None = None
+
+
+class TaxSettlementReconciliation(ResponseObject):
+    status: Literal["unestablished", "matched", "different"]
+    actual_due_fen: WireFen | None
+    book_due_fen: WireFen | None
+    settlement_as_of: str | None
+    book_settled_fen: WireFen | None = None
+    settlement_fact_ids: list[str] = Field(default_factory=list)
+
+
+class TaxFilingIncomeTaxAssessment(ResponseObject):
+    assessment_id: str
+    calculation_id: str
+    year: int
+    tax_period_end: str
+    status: Literal["ready", "needs_information"]
+    cumulative_assessed_fen: WireFen | None
+    current_change_fen: WireFen | None
+    prepaid_tax_fen: WireFen | None
+    tax_due_fen: WireFen | None
+    amount_source: Literal["actual", "provisional"]
+    reference_cumulative_assessed_fen: WireFen | None
+    reference_change_fen: WireFen | None
+    source_basis: list[SourceReference]
+    settlement_reconciliation: TaxSettlementReconciliation | None
+    fact_issues: list[ReadinessIssue]
+
+
+class TaxFilingVatSettlement(ResponseObject):
+    assessment_id: str
+    calculation_id: str
+    tax_name: Literal["vat", "surtax"]
+    source_basis: list[SourceReference]
+    reconciliation: TaxSettlementReconciliation | None
 
 
 class TaxFilingDataResponse(ResponseObject):
@@ -3283,6 +3320,8 @@ class TaxFilingDataResponse(ResponseObject):
     source: Literal["open", "closed"]
     mapping_versions: list[TaxFilingMapping]
     fields: list[TaxFilingField]
+    income_tax_assessments: list[TaxFilingIncomeTaxAssessment] = Field(default_factory=list)
+    vat_settlement_reconciliations: list[TaxFilingVatSettlement] = Field(default_factory=list)
     source_basis_digest: str
     fact_issues: list[ReadinessIssue]
 

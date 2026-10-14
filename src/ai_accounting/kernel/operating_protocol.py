@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 25,
+    "version": 26,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -280,11 +280,18 @@ OPERATING_PROTOCOL = {
                     "未知不写零，未支持表式不由AI补数。税前收入、成本和利润不等待所得税确认；"
                     "完整财报及有关税费仍须满足其必要条件。来源变化重新准备并复核同一版本，"
                     "不能以负责人确认绕过缺少的核算事实。实际申报、缴款及原报送资料独立保全，"
-                    "external_completion保存办理结果，不修改税费计提。差异先按同含义字段核对："
-                    "增值税及附加查税期、政策、税点和业务来源，通过原tax_assessment重算，"
-                    "不为凑申报金额改政策或来源；所得税cumulative_assessed_fen接收有来源的本年"
-                    "累计确认税额，本期计提由内核计算，不能把本期应补或已预缴金额直接填入累计字段。"
-                    "确需采用的实际结果无对应字段或核算能力时，指出具体缺口及未处理差异。"
+                    "external_completion保存真实办理版本；税费核算有实际来源时优先实际值，"
+                    "未取得实际结果允许暂估，计算结果只保留作参考，不因计算差异拒绝实际税额。"
+                    "增值税及附加登记vat_declaration_actual，所得税登记income_tax_declaration_actual，"
+                    "以assessment_id绑定原事项、准确覆盖税期及已登记filing_evidence；零额逐项明确。"
+                    "实际来源缺少入账必需字段或版本冲突时按fact_issues处理，不退回计算值。"
+                    "对原tax_assessment或income_tax_assessment重新preview/confirm采用，"
+                    "开放期保留编号，闭期指定开放月关联冲正，不覆盖冻结历史。"
+                    "所得税cumulative_assessed_fen是本年累计应纳，本期计提由内核扣除此前已计提；"
+                    "应纳、预缴及应补退分别核对，不能把应补额填成累计税额或本期费用。"
+                    "tax_filing_data区分value_source、calculated_value_fen及income_tax_assessments；"
+                    "settlement_as_of只用原件明确的结算核对日，省略不补日，付款须正式采用才作账内核对。"
+                    "申报调整不推定免税、不改收入成本工资和真实扣税收付款；其业务差异修正原事实及依赖链。"
                 ),
             },
         },
@@ -693,8 +700,9 @@ OPERATING_PROTOCOL = {
 TOPIC_SELECTORS = {
     "tax_reporting": {
         "commands": ["tax_filing_data", "report", "preview_report_export"],
-        "facts": ["tax_point_basis", "tax_assessment", "service_sale", "service_tax_point",
-                  "advance", "asset_disposal", "income_tax_assessment"],
+        "facts": ["tax_point_basis", "tax_assessment", "vat_declaration_actual", "service_sale",
+                  "service_tax_point", "advance", "asset_disposal", "income_tax_assessment",
+                  "income_tax_declaration_actual"],
         "responses": ["tax_filing_data"],
     },
     "workflow": {

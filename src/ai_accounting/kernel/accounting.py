@@ -34,6 +34,14 @@ class AccountingRecord:
     calculation_ids: frozenset[str]
 
 
+@dataclass(frozen=True)
+class AccountingProjection:
+    """A domain's validated comparison view; never written back to frozen facts or results."""
+
+    fact: dict
+    outcome: dict
+
+
 class AccountingReferences:
     """Exact recorded dependencies, not the current heads of their subjects."""
 
@@ -175,8 +183,13 @@ class AccountingBook:
             ):
                 raise compatibility(calculation_id, "required_outcome_structure_missing")
             projector, _ = self.registry.accounting_projectors.get(calculation.kind, (None, None))
+            fact_payload = version.fact.model_dump(mode="json")
             if projector is not None:
-                outcome = projector(version, outcome, AccountingReferences(self, record))
+                projection = projector(version, outcome, AccountingReferences(self, record))
+                if isinstance(projection, AccountingProjection):
+                    fact_payload, outcome = projection.fact, projection.outcome
+                else:
+                    outcome = projection
             result = freeze({
                 "contract": contract,
                 "digest": digest({
@@ -184,7 +197,7 @@ class AccountingBook:
                     "subject_id": version.subject_id,
                     "kind": version.fact.kind,
                     "period": str(version.fact.period),
-                    "fact": version.fact.model_dump(mode="json"),
+                    "fact": fact_payload,
                     "outcome": outcome,
                 }).hex(),
             })

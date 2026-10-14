@@ -76,5 +76,7 @@ def filing_field(field_id, section, period_basis, start, end, value, sources, is
         "value_fen": None if issues else checked(value),
         "status": "needs_information" if issues else "ready",
         "fact_issues": issues,
+        "value_source": "accounting",
+        "calculated_value_fen": None,
     }
     return field | {"source_basis_digest": digest(field).hex()}

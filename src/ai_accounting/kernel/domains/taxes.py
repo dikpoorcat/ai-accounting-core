@@ -163,10 +163,10 @@ class VatAssessment(TaxInput):
     education_tax_fen: Money
     local_education_tax_fen: Money
     surtax_fen: Money
-    vat_policy_version: str
-    surtax_policy_version: str
-    taxable_sales_fen: Money
-    exempt_sales_fen: Money
+    vat_policy_version: str | None
+    surtax_policy_version: str | None
+    taxable_sales_fen: Money | None
+    exempt_sales_fen: Money | None
     rounding_adjustment_fen: Fen
     filing_fields: dict[str, int]
     filing_mapping_version: str
@@ -341,6 +341,242 @@ class UsedAssetVatPolicyFact(Fact):
     policy: UsedAssetVatPolicy
 
 
+def _declared_field(meaning: str, *, default=..., precision=("integer_fen",), **constraints):
+    return Field(default=default, **constraints, json_schema_extra={"x-accounting-fact": {
+        "role": "accounting", "meaning": meaning,
+        "allowed_precision": list(precision),
+        "reusable_sources": ["filed_tax_return", "tax_authority_assessment"],
+        "constraint": "采用原件中同一税期、同一含义的实际值；明确零额有效，不用计算值补缺",
+    }})
+
+
+def declaration_scope(kind: str, subject_id: str) -> str:
+    return f"tax-declaration:{kind}:{subject_id}"
+
+
+class VatDeclarationActual(Fact):
+    """Observed filed VAT and surtax amounts, independent of policy calculations."""
+
+    kind: ClassVar[str] = "vat_declaration_actual"
+    business_activity: ClassVar[bool] = False
+    identity_fields: ClassVar[tuple[str, ...]] = ("assessment_id", "period_start", "period_end")
+    assessment_id: SubjectId = _declared_field(
+        "referenced_vat_and_surtax_assessment", precision=("subject_id",)
+    )
+    period_start: ActualDate = _declared_field("filed_tax_period_start", precision=("day",))
+    period_end: ActualDate = _declared_field("filed_tax_period_end", precision=("day",))
+    filing_evidence: EvidenceDigest = _declared_field(
+        "actual_tax_original_evidence", precision=("evidence_digest",)
+    )
+    basis_type: Literal["filed_return", "tax_authority_assessment"] = _declared_field(
+        "actual_tax_source_type", precision=("source_type",)
+    )
+    settlement_as_of: ActualDate | None = Field(
+        default=None, description="原件应补退金额对应的结算核对日；未知不补日",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "management", "meaning": "observed_tax_settlement_cutoff",
+            "allowed_precision": ["day"], "reusable_sources": ["filed_tax_return"],
+        }},
+    )
+    assessed_vat_fen: Money | None = _declared_field("actual_vat_row_20", default=None)
+    urban_tax_fen: Money | None = _declared_field("actual_assessed_urban_tax", default=None)
+    education_tax_fen: Money | None = _declared_field("actual_assessed_education_tax", default=None)
+    local_education_tax_fen: Money | None = _declared_field(
+        "actual_assessed_local_education_tax", default=None
+    )
+    prepaid_vat_fen: Money | None = _declared_field("actual_vat_row_21", default=None)
+    vat_due_fen: Fen | None = _declared_field("actual_vat_row_22", default=None)
+    urban_due_fen: Fen | None = _declared_field("actual_urban_tax_row_23", default=None)
+    education_due_fen: Fen | None = _declared_field("actual_education_tax_row_24", default=None)
+    local_education_due_fen: Fen | None = _declared_field(
+        "actual_local_education_tax_row_25", default=None
+    )
+    row_15_fen: Money | None = _declared_field("actual_vat_row_15", default=None)
+    row_16_fen: Money | None = _declared_field("actual_vat_row_16", default=None)
+    row_17_fen: Money | None = _declared_field("actual_vat_row_17", default=None)
+    row_18_fen: Money | None = _declared_field("actual_vat_row_18", default=None)
+    exemption_relief_fen: Money | None = _declared_field(
+        "original_accrued_vat_released_by_confirmed_exemption", default=None
+    )
+
+    @model_validator(mode="after")
+    def filed_period(self):
+        if self.period_start > self.period_end or self.period_end.period > self.period:
+            raise ValueError("actual declaration must cover an elapsed tax period")
+        if self.settlement_as_of is not None and self.settlement_as_of.period > self.period:
+            raise ValueError("settlement cutoff cannot be after the observation month")
+        return self
+
+    def scopes(self):
+        return (str(self.period), declaration_scope("tax_assessment", self.assessment_id))
+
+    def reads(self):
+        return (Read("fact", "tax_assessment", "@" + self.assessment_id),)
+
+
+class IncomeTaxDeclarationActual(Fact):
+    """Actual cumulative income tax; the amount due is a separate settlement field."""
+
+    kind: ClassVar[str] = "income_tax_declaration_actual"
+    business_activity: ClassVar[bool] = False
+    identity_fields: ClassVar[tuple[str, ...]] = ("assessment_id", "year")
+    assessment_id: SubjectId = _declared_field(
+        "referenced_income_tax_assessment", precision=("subject_id",)
+    )
+    year: int = _declared_field("actual_income_tax_year", precision=("year",), ge=1, le=9999)
+    tax_period_end: YearMonth = _declared_field(
+        "actual_income_tax_coverage_end", precision=("month",)
+    )
+    filing_evidence: EvidenceDigest = _declared_field(
+        "actual_tax_original_evidence", precision=("evidence_digest",)
+    )
+    basis_type: Literal["filed_return", "tax_authority_assessment"] = _declared_field(
+        "actual_tax_source_type", precision=("source_type",)
+    )
+    settlement_as_of: ActualDate | None = Field(
+        default=None, description="原件应补退金额对应的结算核对日；未知不补日",
+        json_schema_extra={"x-accounting-fact": {
+            "role": "management", "meaning": "observed_tax_settlement_cutoff",
+            "allowed_precision": ["day"], "reusable_sources": ["filed_tax_return"],
+        }},
+    )
+    cumulative_assessed_fen: Money | None = _declared_field(
+        "actual_cumulative_assessed_income_tax", default=None
+    )
+    prepaid_tax_fen: Money | None = _declared_field(
+        "actual_cumulative_prepaid_income_tax", default=None
+    )
+    tax_due_fen: Fen | None = _declared_field("actual_income_tax_due_or_refund", default=None)
+
+    @model_validator(mode="after")
+    def filed_period(self):
+        if int(self.tax_period_end[:4]) != self.year or self.tax_period_end > self.period:
+            raise ValueError("income tax coverage must belong to its year and precede observation")
+        if self.settlement_as_of is not None and self.settlement_as_of.period > self.period:
+            raise ValueError("settlement cutoff cannot be after the observation month")
+        return self
+
+    def scopes(self):
+        return (str(self.period), declaration_scope("income_tax_assessment", self.assessment_id))
+
+    def reads(self):
+        return (Read("fact", "income_tax_assessment", "@" + self.assessment_id),)
+
+
+def _actual_declaration(version, ctx, model):
+    sources = ctx.facts(model.kind, declaration_scope(version.fact.kind, version.subject_id))
+    if len(sources) > 1:
+        raise NeedsInformation(
+            model.kind, "同一核算事项存在多个实际申报来源，须明确唯一采用版本",
+            sources=tuple(source.id for source in sources),
+        )
+    if not sources:
+        return None
+    source = sources[0]
+    if source.fact.filing_evidence not in source.evidence:
+        raise NeedsInformation(
+            model.kind + ".filing_evidence", "实际申报原件须作为该事实的已登记证据",
+            sources=(source.subject_id,), precision=("evidence_digest",),
+        )
+    return source
+
+
+def _declared_amount(source, field):
+    amount = getattr(source.fact, field)
+    if amount is None:
+        raise NeedsInformation(
+            source.fact.kind + "." + field,
+            "实际申报来源缺少该含义的税额，不能用计算值或应补额代替",
+            sources=(source.subject_id, source.fact.filing_evidence), precision=("integer_fen",),
+        )
+    return amount
+
+
+def _declaration_basis(source):
+    return {"subject_id": source.subject_id, "fact_id": source.id,
+            "filing_evidence": source.fact.filing_evidence, "basis_type": source.fact.basis_type}
+
+
+def _actual_vat_assessment(source, fact, sales, calculated, vat_policy, surtax_policy):
+    declared = source.fact
+    for field in ("period_start", "period_end"):
+        if getattr(declared, field) != getattr(fact, field):
+            raise NeedsInformation(
+                "vat_declaration_actual." + field, "实际申报税期与核算覆盖期不符",
+                sources=(source.subject_id,), precision=("day",),
+            )
+    amounts = {name: _declared_amount(source, name) for name in (
+        "assessed_vat_fen", "urban_tax_fen", "education_tax_fen", "local_education_tax_fen"
+    )}
+    vat = amounts["assessed_vat_fen"]
+    if declared.prepaid_vat_fen is not None and declared.vat_due_fen is not None and (
+        sum_fen((vat, -declared.prepaid_vat_fen)) != declared.vat_due_fen
+    ):
+        raise NeedsInformation("vat_declaration_actual.vat_due_fen",
+                               "原件应纳、预缴与应补退金额不一致，须核对同含义字段",
+                               sources=(source.subject_id,), precision=("integer_fen",))
+    if declared.row_15_fen is not None and declared.row_16_fen is not None and (
+        sum_fen((declared.row_15_fen, -declared.row_16_fen)) != vat
+    ):
+        raise NeedsInformation("vat_declaration_actual.row_15_fen",
+                               "实际第15、16与20栏不一致，须核对同一申报原件",
+                               sources=(source.subject_id,), precision=("integer_fen",))
+    net = sum_fen(row.net_sales_fen for row in sales)
+    accrued = sum_fen(row.accrued_vat_fen for row in sales)
+    if min(net, accrued) < 0:
+        raise NeedsInformation("tax_credit_disposition", "净退回仍须有明确的原税期退抵处理")
+    # Only an explicitly identified exemption is classified as exemption income.
+    # The remaining declaration variance is an adjustment, never inferred relief.
+    relief = declared.exemption_relief_fen if declared.exemption_relief_fen is not None else 0
+    if relief > accrued:
+        raise NeedsInformation("vat_declaration_actual.exemption_relief_fen",
+                               "实际免税转回不能超过原业务已计提税额",
+                               sources=(source.subject_id,), precision=("integer_fen",))
+    filing = {"net_sales_fen": net, "row_20_fen": vat}
+    if calculated is not None:
+        filing.update({name: amount for name, amount in calculated.filing_fields.items()
+                       if name in {"taxable_sales_fen", "exempt_sales_fen", "row_1_fen",
+                                   "row_9_fen", "row_10_fen"}})
+    actual_fields = {"payable_vat_fen", "urban_tax_fen", "education_tax_fen",
+                     "local_education_tax_fen", "surtax_fen", "row_20_fen"}
+    optional = {"prepaid_vat_fen": "row_21_fen", "vat_due_fen": "row_22_fen",
+                "urban_due_fen": "row_23_fen", "education_due_fen": "row_24_fen",
+                "local_education_due_fen": "row_25_fen",
+                **{f"row_{row}_fen": f"row_{row}_fen" for row in (15, 16, 17, 18)}}
+    issues = []
+    for name, target in optional.items():
+        amount = getattr(declared, name)
+        if amount is None:
+            issues.append({"field": "vat_declaration_actual." + name, "amount_field": target,
+                           "message": "实际来源未明确该申报栏，不用计算值补缺"})
+        else:
+            filing[target] = amount
+            actual_fields.add(target)
+    if declared.exemption_relief_fen is not None:
+        actual_fields.add("relief_fen")
+    end = date.fromisoformat(fact.period_end)
+    assessment = VatAssessment(
+        net_sales_fen=net, accrued_vat_fen=accrued, relief_fen=relief,
+        payable_vat_fen=vat, **{name: amounts[name] for name in (
+            "urban_tax_fen", "education_tax_fen", "local_education_tax_fen"
+        )}, surtax_fen=sum_fen(amounts[name] for name in (
+            "urban_tax_fen", "education_tax_fen", "local_education_tax_fen"
+        )), vat_policy_version=vat_policy.version if vat_policy is not None else None,
+        surtax_policy_version=surtax_policy.version if surtax_policy is not None else None,
+        taxable_sales_fen=calculated.taxable_sales_fen if calculated is not None else None,
+        exempt_sales_fen=calculated.exempt_sales_fen if calculated is not None else None,
+        rounding_adjustment_fen=sum_fen((vat, relief, -accrued)), filing_fields=filing,
+        filing_mapping_version=("cn-small-scale-vat-2026-no6" if end >= date(2026, 2, 1)
+                                else "cn-small-scale-vat-2021-no20"),
+        filing_source_url=("https://fgk.chinatax.gov.cn/zcfgk/c100012/c5247507/content.html"
+                           if end >= date(2026, 2, 1)
+                           else "https://12366.chinatax.gov.cn/bzds/003/003.html"),
+        filing_effective_from="2026-02-01" if end >= date(2026, 2, 1) else "2021-08-01",
+        filing_issues=tuple(issues),
+    )
+    return assessment, sorted(actual_fields)
+
+
 class TaxAssessment(Fact):
     kind: ClassVar[str] = "tax_assessment"
     identity_fields: ClassVar[tuple[str, ...]] = ("period_start", "period_end")
@@ -393,11 +629,23 @@ class TaxAssessment(Fact):
             ),
         )
 
+    def reads_for(self, subject_id):
+        return self.reads() + (Read("fact", VatDeclarationActual.kind,
+                                    declaration_scope(self.kind, subject_id)),)
 
 def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
     fact: TaxAssessment = version.fact
-    vat_version = ctx.one("vat_policy", f"@{fact.vat_policy_id}")
-    surtax_version = ctx.one("surtax_policy", f"@{fact.surtax_policy_id}")
+    actual = _actual_declaration(version, ctx, VatDeclarationActual)
+    if actual is None:
+        vat_version = ctx.one("vat_policy", f"@{fact.vat_policy_id}")
+        surtax_version = ctx.one("surtax_policy", f"@{fact.surtax_policy_id}")
+    else:
+        vat_sources = ctx.facts("vat_policy", f"@{fact.vat_policy_id}")
+        surtax_sources = ctx.facts("surtax_policy", f"@{fact.surtax_policy_id}")
+        vat_version = vat_sources[0] if vat_sources else None
+        surtax_version = surtax_sources[0] if surtax_sources else None
+    vat_policy = vat_version.fact.policy if vat_version is not None else None
+    surtax_policy = surtax_version.fact.policy if surtax_version is not None else None
     for month in fact.tax_months():
         if any(
             other.subject_id != version.subject_id
@@ -437,7 +685,7 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
                 source_calculation_ids.add(row.id)
                 if kind in ACTUAL_PAYMENT_KINDS:
                     for item in row.values.get("tax_sales", ()):
-                        if item.get("rate_percent") is None and (
+                        if actual is None and item.get("rate_percent") is None and (
                             item["net_sales_fen"] or item["accrued_vat_fen"]
                         ):
                             raise NeedsInformation(
@@ -470,8 +718,9 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
                             "跨税期退回需要原申报和税务确认的退抵结果",
                             sources=(row.subject_id,),
                         )
-                if kind != "asset_disposal" and row.values.get("rate_percent") is None and (
-                    row.values["net_sales_fen"] or row.values["accrued_vat_fen"]
+                if (actual is None and kind != "asset_disposal"
+                        and row.values.get("rate_percent") is None
+                        and (row.values["net_sales_fen"] or row.values["accrued_vat_fen"])
                 ):
                     raise NeedsInformation(
                         "tax_source.rate_percent", "计税来源缺少明确征收率",
@@ -486,13 +735,38 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
                         rate_percent=row.values.get("rate_percent"),
                     )
                 )
-    assessment = calculate_vat_period(
-        sales=tuple(sales),
-        start=date.fromisoformat(fact.period_start),
-        end=date.fromisoformat(fact.period_end),
-        vat_policy=vat_version.fact.policy,
-        surtax_policy=surtax_version.fact.policy,
-    )
+    calculated, reference_issue = None, None
+    if actual is not None:
+        # Validate the authoritative source before attempting optional reference arithmetic.
+        _actual_vat_assessment(actual, fact, sales, None,
+                               vat_policy, surtax_policy)
+    try:
+        if vat_policy is None or surtax_policy is None:
+            raise NeedsInformation(
+                "calculation_policy", "计算参考缺少政策来源，不影响已明确实际税额"
+            )
+        if actual is not None and any(row.rate_percent is None and (
+            row.net_sales_fen or row.accrued_vat_fen
+        ) and row.filing_bucket == "standard" for row in sales):
+            raise NeedsInformation("tax_source.rate_percent",
+                                   "计算参考缺少来源征收率，不采用推断性政策默认值")
+        calculated = calculate_vat_period(
+            sales=tuple(sales), start=date.fromisoformat(fact.period_start),
+            end=date.fromisoformat(fact.period_end), vat_policy=vat_policy,
+            surtax_policy=surtax_policy,
+        )
+    except (NeedsInformation, ValueError) as error:
+        if actual is None:
+            raise
+        reference_issue = (
+            error.response() if isinstance(error, KernelError) else {"message": str(error)}
+        )
+    if actual is not None:
+        assessment, actual_fields = _actual_vat_assessment(
+            actual, fact, sales, calculated, vat_policy, surtax_policy
+        )
+    else:
+        assessment, actual_fields = calculated, []
     lines = []
     exemption_profit_lines = []
     if assessment.rounding_adjustment_fen > 0:
@@ -518,7 +792,7 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
         ("vat", assessment.payable_vat_fen, "222101"),
         ("surtax", assessment.surtax_fen, "222102"),
     ):
-        if amount:
+        if amount or actual is not None:
             obligations.append(
                 {
                     "name": name,
@@ -570,9 +844,22 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
             "period_start": str(fact.period_start),
             "period_end": str(fact.period_end),
             "vat_exemption_profit_lines": exemption_profit_lines,
+            "amount_source": "actual" if actual is not None else "provisional",
+            "actual_declaration": _declaration_basis(actual) if actual is not None else None,
+            "actual_fields": actual_fields,
+            "calculated_assessment": calculated.model_dump(mode="json")
+            if calculated is not None else None,
+            "calculation_reference_issue": reference_issue,
+            "declaration_adjustment_fen": sum_fen((assessment.payable_vat_fen,
+                                                   -calculated.payable_vat_fen))
+            if actual is not None and calculated is not None else None,
+            "exemption_relief_confirmed": (
+                actual is None or actual.fact.exemption_relief_fen is not None
+            ),
         },
         tuple(BalanceEffect(o["key"], o["amount_fen"], o["category"]) for o in obligations),
-        ({"vat_policy_id": vat_version.id, "surtax_policy_id": surtax_version.id},),
+        ({"vat_policy_id": vat_version.id if vat_version is not None else None,
+          "surtax_policy_id": surtax_version.id if surtax_version is not None else None},),
     )
 
 
@@ -607,9 +894,31 @@ class IncomeTaxAssessment(Fact):
             Read("calculation", self.kind, f"income-tax:{self.year}", self.period),
         )
 
+    def reads_for(self, subject_id):
+        return self.reads() + (
+            Read("fact", IncomeTaxDeclarationActual.kind, declaration_scope(self.kind, subject_id)),
+        )
 
 def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
     fact: IncomeTaxAssessment = version.fact
+    actual = _actual_declaration(version, ctx, IncomeTaxDeclarationActual)
+    tax_period_end = (
+        YearMonth(f"{fact.year:04d}-12")
+        if fact.assessment_basis == "annual_settlement" else fact.period
+    )
+    cumulative = fact.cumulative_assessed_fen
+    if actual is not None:
+        if actual.fact.year != fact.year or actual.fact.tax_period_end != tax_period_end:
+            raise NeedsInformation("income_tax_declaration_actual.tax_period_end",
+                                   "实际所得税来源的年度或覆盖税期与核算事项不符",
+                                   sources=(actual.subject_id,), precision=("month",))
+        cumulative = _declared_amount(actual, "cumulative_assessed_fen")
+        if actual.fact.prepaid_tax_fen is not None and actual.fact.tax_due_fen is not None and (
+            sum_fen((cumulative, -actual.fact.prepaid_tax_fen)) != actual.fact.tax_due_fen
+        ):
+            raise NeedsInformation("income_tax_declaration_actual.tax_due_fen",
+                                   "实际累计应纳、预缴与应补退金额不一致，须核对原件字段",
+                                   sources=(actual.subject_id,), precision=("integer_fen",))
     earlier = ctx.select(Read("calculation", fact.kind, f"income-tax:{fact.year}", fact.period))
     same_month = [
         item
@@ -620,7 +929,7 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
         raise KernelError("duplicate_tax_assessment", "同月所得税采用原身份修订，不重复计提")
     previous = max(earlier, key=lambda item: item.period, default=None)
     opening = previous.values["cumulative_assessed_fen"] if previous else 0
-    difference = sum_fen((fact.cumulative_assessed_fen, -opening))
+    difference = sum_fen((cumulative, -opening))
     if difference > 0:
         lines = (Line("5801", debit=difference), Line("222106", credit=difference))
     elif difference < 0:
@@ -640,10 +949,21 @@ def calculate_income_tax_assessment(version: FactVersion, ctx: Context) -> Outco
     return Outcome(
         lines,
         {
-            "cumulative_assessed_fen": fact.cumulative_assessed_fen,
+            "cumulative_assessed_fen": cumulative,
             "assessment_basis": fact.assessment_basis,
+            "year": fact.year,
+            "tax_period_end": str(tax_period_end),
             "change_fen": difference,
             "obligations": [obligation],
+            "amount_source": "actual" if actual is not None else "provisional",
+            "actual_declaration": _declaration_basis(actual) if actual is not None else None,
+            "calculated_assessment": {
+                "cumulative_assessed_fen": fact.cumulative_assessed_fen,
+                "change_fen": sum_fen((fact.cumulative_assessed_fen, -opening)),
+            },
+            **({"prepaid_tax_fen": actual.fact.prepaid_tax_fen,
+                "tax_due_fen": actual.fact.tax_due_fen,
+            } if actual is not None else {}),
         },
         (BalanceEffect(obligation["key"], abs(difference), obligation["category"]),),
     )
@@ -781,6 +1101,11 @@ def calculate_tax_credit_confirmation(version: FactVersion, ctx: Context) -> Out
         if getattr(fact, field) not in version.evidence:
             raise NeedsInformation(field, "原申报和税务确认凭据须作为本事实的已登记证据")
     original = _tax_calculation(ctx, "tax_assessment", fact.original_assessment_id)
+    if original.values.get("exemption_relief_confirmed") is False:
+        raise NeedsInformation(
+            "original_exemption_relief", "原实际税额来源未明确免税转回，不能推定退抵税归属",
+            sources=(fact.original_assessment_id,), precision=("integer_fen",),
+        )
     if (
         original.values.get("period_start") != fact.original_period_start
         or original.values.get("period_end") != fact.original_period_end
@@ -839,7 +1164,8 @@ def calculate_tax_credit_confirmation(version: FactVersion, ctx: Context) -> Out
             raise KernelError("duplicate_tax_credit_return", "退回已有退抵税确认，不得重复确认")
         amount = -returned.values["accrued_vat_fen"]
         returned_vat = sum_fen((returned_vat, checked_fen(amount)))
-        if original.values["relief_fen"] and sale.values["exemption_eligible"]:
+        if (original.values.get("amount_source") != "actual"
+                and original.values["relief_fen"] and sale.values["exemption_eligible"]):
             previously_exempt = sum_fen((previously_exempt, amount))
         returns.append(
             {
@@ -850,6 +1176,21 @@ def calculate_tax_credit_confirmation(version: FactVersion, ctx: Context) -> Out
                 "original_sale_calculation": sale.id,
             }
         )
+    if original.values.get("amount_source") == "actual":
+        # The authority-confirmed reversal is the actual classification. A policy
+        # eligibility flag cannot reconstruct an actual filing's partial exemption.
+        previously_exempt = fact.exemption_reversal_fen
+        other_reversals = [
+            peer.fact.exemption_reversal_fen for peer in ctx.select(
+                _through_period(
+                    fact.kind, f"tax-credit-origin:{fact.original_assessment_id}", fact.period
+                )
+            ) if peer.subject_id != version.subject_id
+        ]
+        if any(amount is None for amount in other_reversals):
+            raise NeedsInformation("exemption_reversal_fen", "同原申报其他确认缺少实际免税转回金额")
+        if sum_fen((fact.exemption_reversal_fen, *other_reversals)) > original.values["relief_fen"]:
+            raise KernelError("tax_credit_exceeds_exemption", "累计免税转回不能超过原实际免税金额")
     if (
         fact.exemption_reversal_fen != previously_exempt
         or sum_fen(
@@ -907,6 +1248,8 @@ def register(registry: Registry) -> None:
     registry.register(VatPolicyFact)
     registry.register(SurtaxPolicyFact)
     registry.register(UsedAssetVatPolicyFact)
+    registry.register(VatDeclarationActual)
+    registry.register(IncomeTaxDeclarationActual)
     registry.register(TaxAssessment, calculate_tax_assessment)
     registry.register(IncomeTaxAssessment, calculate_income_tax_assessment)
     registry.register(TaxCreditConfirmation, calculate_tax_credit_confirmation)

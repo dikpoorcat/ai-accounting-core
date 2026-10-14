@@ -137,6 +137,37 @@ class CompanyWorkflowScope(Fact):
 
 def _basis_reads(kind, start, end):
     definition = OBLIGATION_DEFINITIONS[kind]
+    if kind in {"quarterly_tax", "annual_income_tax"}:
+        # Tax coverage and the month in which its assessment was posted are
+        # independent. Annual settlement commonly posts in the following year.
+        return tuple(dict.fromkeys(
+            (
+                *(
+                    Read(
+                        source, "tax_assessment", f"tax-assessment:{YearMonth.from_ordinal(month)}"
+                    )
+                    for month in range(start.ordinal, end.ordinal + 1)
+                    for source in ("fact", "calculation")
+                    if kind == "quarterly_tax"
+                ),
+                *(
+                    Read(
+                        source, "income_tax_assessment",
+                        f"income-tax:{YearMonth.from_ordinal(month)[:4]}:"
+                        f"{YearMonth.from_ordinal(month)}",
+                    )
+                    for month in range(start.ordinal, end.ordinal + 1)
+                    for source in ("fact", "calculation")
+                    if kind == "quarterly_tax"
+                ),
+                *(
+                    Read(source, "income_tax_assessment", f"income-tax:{year}")
+                    for year in range(int(start[:4]), int(end[:4]) + 1)
+                    for source in ("fact", "calculation")
+                    if kind == "annual_income_tax"
+                ),
+            )
+        ))
     return (
         *(
             Read(source, source_kind, str(YearMonth.from_ordinal(month)))
@@ -185,7 +216,21 @@ def _basis_reads_after(kind, start, end, select):
 def _basis_period(kind, calculation):
     if kind == "individual_income_tax":
         return calculation.values.get("tax_basis", {}).get("tax_period", calculation.period)
+    if kind in {"quarterly_tax", "annual_income_tax"}:
+        values = calculation.values
+        if calculation.kind == "tax_assessment" and values.get("period_end"):
+            return YearMonth(values["period_end"][:7])
+        if calculation.kind == "income_tax_assessment" and values.get("tax_period_end"):
+            return YearMonth(values["tax_period_end"])
     return calculation.period
+
+
+def _tax_fact_period(fact):
+    if fact.kind == "tax_assessment":
+        return fact.period_end.period
+    if fact.assessment_basis == "annual_settlement":
+        return YearMonth(f"{fact.year:04d}-12")
+    return fact.period
 
 
 class ExternalObligation(Fact):
@@ -241,6 +286,8 @@ class AdoptedSourceFact(BaseModel):
         description=(
             "实际申报资料的事实类型：个税使用payroll_tax_declaration_actual，"
             "社保使用含已申报明细的payroll_contribution_actual；"
+            "增值税及附加使用vat_declaration_actual，企业所得税使用"
+            "income_tax_declaration_actual，均引用实际采用的精确版本；"
             "工资等正式核算结果应引用accepted_calculations，不放入source_facts"
         ),
     )
@@ -261,7 +308,9 @@ class ExternalCompletion(Fact):
         default=(),
         description=(
             "实际采用的申报资料事实版本；个税只接受payroll_tax_declaration_actual，"
-            "社保只接受已申报的payroll_contribution_actual，其余义务此项为空。"
+            "社保接受已申报的payroll_contribution_actual；季度税务接受"
+            "vat_declaration_actual和income_tax_declaration_actual，年度所得税"
+            "接受income_tax_declaration_actual，其余义务此项为空。"
             "实际提交原件另由adopted_evidence_digests引用"
         ),
     )
@@ -318,6 +367,22 @@ class ExternalCompletion(Fact):
                 else ()
             ),
         )
+
+    def reads_after(self, subject_id, context):
+        accepted_subjects = {item.subject_id for item in self.accepted_calculations}
+        targets = []
+        for reference in self.source_facts:
+            if reference.kind not in {"vat_declaration_actual", "income_tax_declaration_actual"}:
+                continue
+            for source in context.facts(reference.kind, "#" + reference.fact_id):
+                if source.fact.assessment_id in accepted_subjects:
+                    continue
+                kind = (
+                    "tax_assessment" if reference.kind == "vat_declaration_actual"
+                    else "income_tax_assessment"
+                )
+                targets.append(Read("fact", kind, "@" + source.fact.assessment_id))
+        return tuple(dict.fromkeys(targets))
 
 
 def calculate_completion(version, context):
@@ -413,9 +478,9 @@ def _adopted_source_history(fact, select):
     allowed = {
         "individual_income_tax": {"payroll_tax_declaration_actual"},
         "contribution_declaration": {"payroll_contribution_actual"},
-        "quarterly_tax": set(),
+        "quarterly_tax": {"vat_declaration_actual", "income_tax_declaration_actual"},
         "quarterly_financial_report": set(),
-        "annual_income_tax": set(),
+        "annual_income_tax": {"income_tax_declaration_actual"},
         "annual_business_report": set(),
     }[fact.obligation_kind]
     sources = []
@@ -426,20 +491,88 @@ def _adopted_source_history(fact, select):
                 "source_facts", "需要确实存在的原采用资料版本", sources=(ref.subject_id,)
             )
         source = found[0]
-        source_period = getattr(source.fact, "tax_period", source.fact.period)
+        source_start = source_end = getattr(source.fact, "tax_period", source.fact.period)
+        if ref.kind == "vat_declaration_actual":
+            source_start = source.fact.period_start.period
+            source_end = source.fact.period_end.period
+        elif ref.kind == "income_tax_declaration_actual":
+            source_start = source_end = source.fact.tax_period_end
         if (
             source.subject_id != ref.subject_id
             or source.fact.kind != ref.kind
             or ref.kind not in allowed
-            or not fact.start_period <= source_period <= fact.end_period
+            or not fact.start_period <= source_start <= source_end <= fact.end_period
         ):
             raise KernelError("invalid_adopted_source", "原采用资料的身份、类型或期间与义务不符")
         if ref.kind == "payroll_contribution_actual" and not any(
             item.state == "declared" for item in source.fact.items
         ):
             raise KernelError("invalid_adopted_source", "未申报的社保明细不能作为已办理依据")
+        if ref.kind in {"vat_declaration_actual", "income_tax_declaration_actual"}:
+            _validate_tax_declaration_history(fact, source, select)
         sources.append(source)
     return tuple(sources)
+
+
+def _validate_tax_declaration_history(completion, source, select):
+    """Authenticate observed tax sources without turning a prior estimate into filing proof."""
+    fact = source.fact
+    if fact.filing_evidence not in source.evidence:
+        raise NeedsInformation(
+            "source_facts.filing_evidence", "实际申报来源须留存精确引用的原申报原件",
+            sources=(source.subject_id, fact.filing_evidence), precision=("evidence_digest",),
+        )
+    if fact.period > completion.period:
+        raise KernelError("invalid_adopted_source", "办理记录不能采用之后才记录的实际申报来源")
+    if fact.kind == "income_tax_declaration_actual" and (
+        int(fact.tax_period_end[:4]) != fact.year
+        or (completion.obligation_kind == "annual_income_tax" and
+            fact.tax_period_end != f"{fact.year:04d}-12")
+    ):
+        raise KernelError("invalid_adopted_source", "所得税实际申报年度与覆盖税期不符")
+    assessment_kind = (
+        "tax_assessment" if fact.kind == "vat_declaration_actual" else "income_tax_assessment"
+    )
+    references = [
+        item for item in completion.accepted_calculations
+        if item.subject_id == fact.assessment_id
+    ]
+    if not references:
+        targets = select(Read("fact", assessment_kind, "@" + fact.assessment_id))
+        if len(targets) != 1 or targets[0].fact.kind != assessment_kind:
+            raise NeedsInformation(
+                "source_facts.assessment_id", "实际申报来源须对应已经明确的同类税费核算事项",
+                sources=(fact.assessment_id,), precision=("registered_subject",),
+            )
+        target = targets[0].fact
+        if fact.kind == "vat_declaration_actual":
+            matches = (
+                (target.period_start, target.period_end) == (fact.period_start, fact.period_end)
+            )
+        else:
+            matches = target.year == fact.year and _tax_fact_period(target) == fact.tax_period_end
+        if not matches:
+            raise KernelError("invalid_adopted_source", "实际申报来源与所引用税费事项的覆盖期不符")
+    for reference in references:
+        candidates = select(Read("calculation", "*", "#" + reference.calculation_id))
+        if len(candidates) != 1:
+            raise NeedsInformation("accepted_calculations", "需要原采用税费核算的精确版本")
+        calculation = candidates[0]
+        if calculation.subject_id != fact.assessment_id or calculation.kind != assessment_kind:
+            raise KernelError("invalid_adopted_source", "实际申报来源与原采用税费事项不符")
+        if fact.kind == "vat_declaration_actual" and (
+            calculation.values.get("period_start") != fact.period_start
+            or calculation.values.get("period_end") != fact.period_end
+        ):
+            raise KernelError("invalid_adopted_source", "实际申报来源与原采用增值税覆盖期不符")
+        if fact.kind == "income_tax_declaration_actual" and (
+            _basis_period(completion.obligation_kind, calculation) != fact.tax_period_end
+            or calculation.values.get("year", fact.year) != fact.year
+        ):
+            raise KernelError("invalid_adopted_source", "实际申报来源与原采用所得税年度或税期不符")
+        # A genuine filing can precede replacing a provisional calculation. Its
+        # immutable original reference remains valid; the review compares the
+        # actual source and adopted result, including their exact source versions.
 
 
 def _accepted_history(fact, select):
@@ -571,6 +704,25 @@ def _basis_state(obligation, select):
             return obligation.start_period <= period <= obligation.end_period
 
         subjects = {subject for subject in facts.keys() | calculations.keys() if in_range(subject)}
+        facts = {subject: item for subject, item in facts.items() if subject in subjects}
+        calculations = {
+            subject: item for subject, item in calculations.items() if subject in subjects
+        }
+    elif obligation.obligation_kind in {"quarterly_tax", "annual_income_tax"}:
+        subjects = {
+            subject
+            for subject in facts.keys() | calculations.keys()
+            if obligation.start_period <= (
+                _basis_period(obligation.obligation_kind, calculations[subject])
+                if subject in calculations else _tax_fact_period(facts[subject].fact)
+            ) <= obligation.end_period
+            and not (
+                obligation.obligation_kind == "quarterly_tax"
+                and subject in facts
+                and facts[subject].fact.kind == "income_tax_assessment"
+                and facts[subject].fact.assessment_basis == "annual_settlement"
+            )
+        }
         facts = {subject: item for subject, item in facts.items() if subject in subjects}
         calculations = {
             subject: item for subject, item in calculations.items() if subject in subjects
@@ -842,6 +994,8 @@ def _compare_reported_sources(review, completion, current, context):
         if completion.no_reportable_activity_confirmed is True:
             return "different" if current else "matched"
         return None
+    if review.obligation_kind in {"quarterly_tax", "annual_income_tax"}:
+        return _compare_tax_declaration_sources(review, current, context)
     if review.obligation_kind not in {"individual_income_tax", "contribution_declaration"} or any(
         item.kind not in PAYROLL_KINDS for item in current
     ):
@@ -893,6 +1047,53 @@ def _compare_reported_sources(review, completion, current, context):
     if not current or set(reported) != set(adopted):
         return None
     return "matched" if reported == adopted else "different"
+
+
+def _compare_tax_declaration_sources(review, current, context):
+    """Tax agreement includes the exact actual version, not just an equal estimate."""
+    adopted = {item.subject_id: item for item in current}
+    targets, comparisons = set(), []
+    for reference in review.source_facts:
+        found = context.select(Read("fact", reference.kind, "#" + reference.fact_id))
+        if len(found) != 1 or found[0].subject_id != reference.subject_id:
+            raise KernelError("invalid_review_source", "核对引用的原申报税费版本不符")
+        source = found[0]
+        fact = source.fact
+        if fact.kind not in {"vat_declaration_actual", "income_tax_declaration_actual"}:
+            return "unestablished"
+        target = fact.assessment_id
+        if target in targets:
+            raise KernelError("duplicate_reported_source", "同一税费事项的实际申报来源不能重复")
+        targets.add(target)
+        calculation = adopted.get(target)
+        if calculation is None:
+            comparisons.append("unestablished")
+            continue
+        basis = calculation.values.get("actual_declaration") or {}
+        if (
+            basis.get("fact_id") != source.id
+            or basis.get("subject_id") != source.subject_id
+            or basis.get("filing_evidence") != fact.filing_evidence
+        ):
+            comparisons.append("different")
+            continue
+        field_pairs = (
+            (("assessed_vat_fen", "payable_vat_fen"),
+             ("urban_tax_fen", "urban_tax_fen"),
+             ("education_tax_fen", "education_tax_fen"),
+             ("local_education_tax_fen", "local_education_tax_fen"))
+            if fact.kind == "vat_declaration_actual" else
+            (("cumulative_assessed_fen", "cumulative_assessed_fen"),)
+        )
+        expected = [getattr(fact, field) for field, _ in field_pairs]
+        actual = [calculation.values.get(field) for _, field in field_pairs]
+        if any(type(value) is not int for value in (*expected, *actual)):
+            comparisons.append("unestablished")
+        else:
+            comparisons.append("matched" if expected == actual else "different")
+    if "different" in comparisons:
+        return "different"
+    return "matched" if comparisons and set(comparisons) == {"matched"} else "unestablished"
 
 
 def _payroll_population_issues(profiles, facts, start, end, *, additional_months=()):

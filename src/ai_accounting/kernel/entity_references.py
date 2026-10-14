@@ -176,6 +176,8 @@ BUSINESS_PATHS = {
     "annual_bonus": "bonus_policy_id income_tax_policy_id regular_payroll_id",
     "labor": "policy_id gross_payment_id",
     "tax_assessment": "vat_policy_id surtax_policy_id tax_credit_ids.*",
+    "vat_declaration_actual": "assessment_id",
+    "income_tax_declaration_actual": "assessment_id",
     "tax_credit_confirmation": (
         "original_assessment_id returns.*.return_id "
         "returns.*.original_advance_id returns.*.original_sale_id"

@@ -11,6 +11,7 @@ from .query_reads import QueryReads
 from .report_snapshot import snapshot_basis
 from .reporting_fields import PRE_TAX_PROFIT_FIELDS, filing_field, statement_amount
 from .reports import Reports, _periods
+from .tax_settlement_reconciliation import reconcile
 from .types import YearMonth, canonical, digest, sum_fen
 
 CIT_MAPPING = {
@@ -97,11 +98,15 @@ class TaxFilingData:
                 _pre_tax_fields_only=True,
             )
             fields, mappings = self._cit_fields(reads, report, start, end, year_start)
-            vat_fields, vat_mappings = self._vat_fields(reads, start, end, year_start, source)
+            vat_fields, vat_mappings, vat_settlements = self._vat_fields(
+                reads, start, end, year_start, source
+            )
             fields.extend(vat_fields)
             mappings.extend(vat_mappings)
+            income_taxes = self._income_tax_assessments(reads, start, end, source)
             issues = list({canonical(item): item for field in fields
                            for item in field["fact_issues"]}.values())
+            issues.extend(item for assessment in income_taxes for item in assessment["fact_issues"])
             result = {
                 "status": "needs_information" if issues else "ready",
                 "company_id": self.store.company_id,
@@ -111,9 +116,73 @@ class TaxFilingData:
                 "source": source,
                 "mapping_versions": list({canonical(item): item for item in mappings}.values()),
                 "fields": fields,
+                "income_tax_assessments": income_taxes,
+                "vat_settlement_reconciliations": vat_settlements,
                 "fact_issues": issues,
             }
             return result | {"source_basis_digest": digest(result).hex()}
+
+    def _income_tax_assessments(self, reads, start, end, source):
+        queries = BusinessQueries(self.engine, reads=reads)
+        pending = set()
+        if source == "open":
+            rows = reads.connection.execute(
+                "SELECT c.subject_id,EXISTS(SELECT 1 FROM pending p "
+                "WHERE p.subject_id=c.subject_id) pending FROM fact_scope f "
+                "JOIN fact_current c ON c.fact_id=f.fact_id "
+                "WHERE f.kind='income_tax_assessment' AND f.scope_key=?",
+                (f"income-tax:{int(end[:4])}",),
+            ).fetchall()
+            pending = {row["subject_id"] for row in rows if row["pending"]}
+            heads = queries._current_accounting_heads(
+                reads.connection, {row["subject_id"] for row in rows}, cutoff=None,
+                current_heads=True,
+            )
+            calculations = reads.calculations({row["id"] for row in heads}).values()
+        else:
+            selected = queries._selected_accounting(
+                reads.connection, None, str(end), kinds={"income_tax_assessment"},
+                include_lines=False,
+            )["through_period"]
+            events = (*selected["voucher_events"], *selected["state_results"])
+            directions = Counter()
+            for event in events:
+                if event["selection_source"] == "close_manifest":
+                    directions[event["calculation_id"]] += event.get("direction", 1)
+            calculations = reads.calculations({ident for ident, direction in directions.items()
+                                               if direction > 0}).values()
+        result = []
+        for calculation in calculations:
+            values = calculation["outcome"]["values"]
+            fact = calculation["fact_data"]
+            coverage = values.get("tax_period_end") or (
+                f"{fact['year']:04d}-12" if fact["assessment_basis"] == "annual_settlement"
+                else fact["period"]
+            )
+            if (fact["assessment_basis"] == "annual_settlement"
+                    or int(fact["year"]) != int(end[:4]) or not start <= coverage <= end):
+                continue
+            issues = ([_issue("income_tax_assessment", "所得税实际来源或原事实变化，须复核后采用",
+                              subject_id=calculation["subject_id"])]
+                      if calculation["subject_id"] in pending else [])
+            reference = values.get("calculated_assessment") or values
+            result.append({
+                "assessment_id": calculation["subject_id"], "calculation_id": calculation["id"],
+                "year": fact["year"], "tax_period_end": str(coverage),
+                "status": "needs_information" if issues else "ready",
+                "cumulative_assessed_fen": None if issues else values["cumulative_assessed_fen"],
+                "current_change_fen": None if issues else values["change_fen"],
+                "prepaid_tax_fen": None if issues else values.get("prepaid_tax_fen"),
+                "tax_due_fen": None if issues else values.get("tax_due_fen"),
+                "amount_source": values.get("amount_source", "provisional"),
+                "reference_cumulative_assessed_fen": reference.get("cumulative_assessed_fen"),
+                "reference_change_fen": reference.get("change_fen"),
+                "source_basis": _calculation_references(reads, [calculation]),
+                "settlement_reconciliation": reconcile(reads, calculation)
+                if not issues and source == "open" and values.get("actual_declaration") else None,
+                "fact_issues": issues,
+            })
+        return sorted(result, key=lambda item: (item["tax_period_end"], item["assessment_id"]))
 
     def _cit_fields(self, reads, report, start, end, year_start):
         issues = list(report["fact_issues"])
@@ -206,7 +275,7 @@ class TaxFilingData:
         calculations, selection_issues = self._tax_calculations(reads, end, source, candidates)
         pending = self._pending_vat_sources(reads, ranges) if source == "open" else {}
         range_results, references = {}, {}
-        fields, mappings = [], []
+        fields, mappings, settlements = [], [], []
         for dimension, first in (("current", start), ("year_to_date", year_start)):
             key = first, end
             if key not in range_results:
@@ -218,6 +287,15 @@ class TaxFilingData:
             amounts, sources, issues, selected, field_issues = range_results[key]
             for calculation in selected:
                 values = calculation["outcome"]["values"]
+                if dimension == "current" and values.get("actual_declaration"):
+                    for name in ("vat", "surtax"):
+                        settlements.append({
+                            "assessment_id": calculation["subject_id"],
+                            "calculation_id": calculation["id"], "tax_name": name,
+                            "source_basis": _calculation_references(reads, [calculation]),
+                            "reconciliation": reconcile(reads, calculation, tax_name=name)
+                            if not issues and source == "open" else None,
+                        })
                 if all(values.get(key) for key in (
                     "filing_mapping_version", "filing_source_url", "filing_effective_from"
                 )):
@@ -228,11 +306,34 @@ class TaxFilingData:
                         "source_url": values["filing_source_url"],
                     })
             for name in VAT_FIELDS:
-                fields.append(filing_field(
+                field = filing_field(
                     "vat_and_surtax." + name, "vat_and_surtax", dimension, first, end,
                     amounts.get(name), sources, issues + field_issues.get(name, []),
-                ))
-        return fields, mappings
+                )
+                modes, reference_amounts = set(), []
+                for calculation in selected:
+                    values = calculation["outcome"]["values"]
+                    modes.add("actual" if name in values.get("actual_fields", ()) else "calculated")
+                    reference = values.get("calculated_assessment")
+                    if reference is None and values.get("amount_source") != "actual":
+                        reference = values
+                    reference = reference or {}
+                    amount = reference.get("filing_fields", {}).get(name, reference.get(name))
+                    reference_amounts.append(amount)
+                field["value_source"] = (
+                    "accounting" if name in {"net_sales_fen", "accrued_vat_fen"}
+                    else "actual" if modes == {"actual"} else "mixed" if len(modes) > 1
+                    else "calculated"
+                )
+                field["calculated_value_fen"] = (
+                    sum_fen(reference_amounts) if reference_amounts
+                    and all(type(amount) is int for amount in reference_amounts)
+                    else None
+                )
+                field["source_basis_digest"] = digest({key: value for key, value in field.items()
+                                                      if key != "source_basis_digest"}).hex()
+                fields.append(field)
+        return fields, mappings, settlements
 
     def _tax_fact_candidates(self, reads, start, end):
         scopes = [f"tax-assessment:{YearMonth.from_ordinal(month)}"
@@ -322,6 +423,13 @@ class TaxFilingData:
             )):
                 issues.append(_issue("filing_mapping", "已采用税期结果缺少版本化申报表依据"))
             for name in VAT_FIELDS:
+                if (name == "relief_fen" and values.get("amount_source") == "actual"
+                        and name not in values.get("actual_fields", ())):
+                    field_issues.setdefault(name, []).append(_issue(
+                        "vat_declaration_actual.exemption_relief_fen",
+                        "实际免税转回金额未建立，不把税额调整推定为免税",
+                        amount_field=name, subject_id=calculation["subject_id"],
+                    ))
                 value = filing.get(name, values.get(name))
                 if type(value) is not int:
                     message = (

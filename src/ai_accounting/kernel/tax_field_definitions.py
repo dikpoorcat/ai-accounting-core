@@ -64,7 +64,8 @@ def field_definition(field_id):
         "rounding_rule": (
             "业务含税拆分与税期计算均使用Decimal四舍五入至分；"
             "1%业务第15栏按3%、第16栏按2%分别舍入，第20栏相减；"
-            "附加按该应纳增值税及已采用政策计算至分；取数直接复用结果"
+            "附加按该应纳增值税及已采用政策计算至分；"
+            "有实际来源的税额直接采用实际整数分，计算仅作参考；取数复用正式采用结果"
         ),
         "form_field": "small_scale_vat." + row if row else None,
     }

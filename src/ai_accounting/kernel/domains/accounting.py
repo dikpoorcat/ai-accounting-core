@@ -1,4 +1,4 @@
-"""Conservative accounting projections for the explicitly reviewed T1 paths.
+"""Conservative accounting projections for confirmed remuneration and tax sources.
 
 For payroll/payroll_bounded, validated monthly-plan or no-change confirmation
 provenance is normalized to a stable confirmed marker; its exact facts remain
@@ -9,15 +9,19 @@ The complete frozen withholding fact and stable business identity replace its
 revision ID. Other source and rule versions, contribution traces, unknown fields
 and tax states remain significant.
 
-Only wage allocations in payment/cash_payment/platform_payment/
+Wage and tax allocations in payment/cash_payment/platform_payment/
 payroll_reserve_payment settlements normalize source_calculation, after checking
-the typed allocation against the exact frozen wage and obligation. No other
-calculation pointers, evidence paths, tax transfers or domain outputs are exempt.
-The framework separately includes the complete owning fact payload.
+the typed allocation against its exact frozen source and obligation. Actual tax
+sources are verified before excluding reference arithmetic and submission-only
+metadata. Formal amounts, lines, balances and unknown fields remain significant.
+Other calculation pointers and tax transfers remain unchanged.
+The framework includes the owning fact payload; only explicitly declared tax
+reference inputs receive a detached comparison view after source validation.
 """
 
 from __future__ import annotations
 
+from ..accounting import AccountingProjection
 from ..contracts import FactVersion, KernelError, Read
 from ..types import digest
 from .money import SETTLEMENT_PAYMENT_KINDS
@@ -261,8 +265,8 @@ def project_payroll(version: FactVersion, outcome: dict, refs) -> dict:
     return outcome
 
 
-def _payroll_settlements(version, outcome):
-    allocations = [a for a in version.fact.allocations if a.source_kind in PAYROLL_KINDS]
+def _selected_settlements(version, outcome, kinds, label):
+    allocations = [a for a in version.fact.allocations if a.source_kind in kinds]
     if not allocations:
         return ()
     values = _mapping(outcome.get("values"), "payment_values_missing")
@@ -274,20 +278,31 @@ def _payroll_settlements(version, outcome):
             row for row in settlements if isinstance(row, dict) and row.get("obligation") == key
         ]
         if len(matching) != 1:
-            _incompatible("payroll_settlement_identity_mismatch")
+            _incompatible(label + "_settlement_identity_mismatch")
         row = matching[0]
         if type(row.get("amount_fen")) is not int or row["amount_fen"] != allocation.amount_fen:
-            _incompatible("payroll_settlement_amount_mismatch")
-        _pointer(row.get("source_calculation"), "payroll_settlement_source_missing")
+            _incompatible(label + "_settlement_amount_mismatch")
+        _pointer(row.get("source_calculation"), label + "_settlement_source_missing")
         selected.append((allocation, row))
     return tuple(selected)
+
+
+def _payroll_settlements(version, outcome):
+    return _selected_settlements(version, outcome, PAYROLL_KINDS, "payroll")
+
+
+def _tax_settlements(version, outcome):
+    return _selected_settlements(
+        version, outcome, ("tax_assessment", "income_tax_assessment"), "tax"
+    )
 
 
 def payment_references(version: FactVersion, outcome: dict) -> tuple[Read, ...]:
     return tuple(
         dict.fromkeys(
             Read("calculation", allocation.source_kind, "#" + row["source_calculation"])
-            for allocation, row in _payroll_settlements(version, outcome)
+            for allocation, row in (*_payroll_settlements(version, outcome),
+                                    *_tax_settlements(version, outcome))
         )
     )
 
@@ -297,7 +312,7 @@ def payment_comparison_reads(version: FactVersion) -> tuple[Read, ...]:
         dict.fromkeys(
             Read("calculation", allocation.source_kind, "@" + allocation.source_id)
             for allocation in version.fact.allocations
-            if allocation.source_kind in PAYROLL_KINDS
+            if allocation.source_kind in (*PAYROLL_KINDS, "tax_assessment", "income_tax_assessment")
         )
     )
 
@@ -368,7 +383,119 @@ def project_payment(version: FactVersion, outcome: dict, refs) -> dict:
         )
     for row, identity in replacements:
         row["source_calculation"] = identity
+    for allocation, row in _tax_settlements(version, outcome):
+        pointer = row["source_calculation"]
+        source = refs.calculation(pointer, allocation.source_kind)
+        if (source.subject_id != allocation.source_id or source.period > fact.period):
+            _incompatible("tax_settlement_source_identity_mismatch")
+        matching = [item for item in source.values.get("obligations", ())
+                    if item.get("name") == allocation.obligation
+                    and item.get("key") == row["obligation"]]
+        if len(matching) != 1:
+            _incompatible("tax_settlement_obligation_mismatch")
+        obligation = matching[0]
+        recipient = (allocation.recipient_id if fact.payment_method == "bank_batch"
+                     else fact.counterparty_id)
+        expected = "credit" if fact.direction == "outflow" else "debit"
+        if (not recipient or obligation.get("counterparty_id") not in (None, recipient)
+                or obligation.get("normal") != expected
+                or "payment" not in obligation.get("settlement_modes", ("payment", "offset"))):
+            _incompatible("tax_settlement_treatment_mismatch")
+        row["source_calculation"] = {
+            "kind": source.kind, "subject_id": source.subject_id,
+            "period": str(source.period), "signature": dict(refs.signature(pointer)),
+        }
     return outcome
+
+
+_TAX_REFERENCE_VALUES = frozenset({
+    "amount_source", "actual_declaration", "actual_fields", "calculated_assessment",
+    "calculation_reference_issue", "declaration_adjustment_fen", "exemption_relief_confirmed",
+    "vat_policy_version", "surtax_policy_version", "taxable_sales_fen", "exempt_sales_fen",
+    "filing_fields", "filing_mapping_version", "filing_source_url", "filing_effective_from",
+    "filing_issues", "prepaid_tax_fen", "tax_due_fen",
+})
+
+
+def tax_assessment_references(version, outcome):
+    values = _mapping(outcome.get("values"), "tax_assessment_values_missing")
+    basis = values.get("actual_declaration")
+    if basis is None:
+        if values.get("amount_source") == "actual":
+            _incompatible("actual_tax_source_missing")
+        return ()
+    basis = _mapping(basis, "actual_tax_source_invalid")
+    kind = (
+        "vat_declaration_actual" if version.fact.kind == "tax_assessment"
+        else "income_tax_declaration_actual"
+    )
+    return (Read("fact", kind, "#" + _pointer(basis.get("fact_id"), "actual_tax_fact_missing")),)
+
+
+def project_tax_assessment(version, outcome, refs):
+    """Reference arithmetic and submission metadata cannot change formal tax accounting."""
+    values = _mapping(outcome.get("values"), "tax_assessment_values_missing")
+    reads = tax_assessment_references(version, outcome)
+    extra_basis = None
+    if reads:
+        source = refs.fact(reads[0].key[1:], reads[0].kind)
+        basis = values["actual_declaration"]
+        if (
+            source.subject_id != basis.get("subject_id")
+            or source.fact.assessment_id != version.subject_id
+            or source.fact.filing_evidence != basis.get("filing_evidence")
+            or source.fact.filing_evidence not in source.evidence
+            or source.fact.basis_type != basis.get("basis_type")
+            or values.get("amount_source") != "actual"
+        ):
+            _incompatible("actual_tax_source_identity_mismatch")
+        if version.fact.kind == "tax_assessment":
+            if (source.fact.period_start, source.fact.period_end) != (
+                version.fact.period_start, version.fact.period_end
+            ):
+                _incompatible("actual_tax_source_period_mismatch")
+            fields = {"assessed_vat_fen": "payable_vat_fen", "urban_tax_fen": "urban_tax_fen",
+                      "education_tax_fen": "education_tax_fen",
+                      "local_education_tax_fen": "local_education_tax_fen"}
+        else:
+            if (source.fact.year != version.fact.year
+                    or str(source.fact.tax_period_end) != values.get("tax_period_end")):
+                _incompatible("actual_tax_source_period_mismatch")
+            fields = {"cumulative_assessed_fen": "cumulative_assessed_fen"}
+        if any(type(getattr(source.fact, field)) is not int
+               or getattr(source.fact, field) != values.get(target)
+               for field, target in fields.items()):
+            _incompatible("actual_tax_adopted_amount_mismatch")
+        extra_basis = {key: value for key, value in basis.items()
+                       if key not in {"subject_id", "fact_id", "filing_evidence", "basis_type"}}
+    outcome["values"] = {key: value for key, value in values.items()
+                         if key not in _TAX_REFERENCE_VALUES}
+    if extra_basis:
+        outcome["values"]["actual_declaration"] = extra_basis
+    if version.fact.kind == "income_tax_assessment":
+        outcome["values"].setdefault("year", version.fact.year)
+        outcome["values"].setdefault(
+            "tax_period_end", f"{version.fact.year:04d}-12"
+            if version.fact.assessment_basis == "annual_settlement" else str(version.fact.period),
+        )
+    explanation = []
+    for item in outcome["explanation"]:
+        if isinstance(item, dict):
+            item = {key: value for key, value in item.items()
+                    if key not in {"vat_policy_id", "surtax_policy_id"}}
+            if not item:
+                continue
+        explanation.append(item)
+    outcome["explanation"] = explanation
+    fact = version.fact.model_dump(mode="json")
+    if version.fact.kind == "income_tax_assessment":
+        fact["cumulative_assessed_fen"] = values["cumulative_assessed_fen"]
+    else:
+        # The exact policy references remain in facts and dependencies. Their
+        # accounting effect is already represented by the adopted tax result.
+        fact["vat_policy_id"] = "reference_only"
+        fact["surtax_policy_id"] = "reference_only"
+    return AccountingProjection(fact, outcome)
 
 
 def register(registry):
@@ -376,6 +503,8 @@ def register(registry):
         registry.register_accounting(kind, project_payroll, payroll_references)
     for kind in ("annual_bonus", "labor"):
         registry.register_accounting(kind, project_confirmed_tax, confirmed_tax_references)
+    for kind in ("tax_assessment", "income_tax_assessment"):
+        registry.register_accounting(kind, project_tax_assessment, tax_assessment_references)
     for kind in SETTLEMENT_PAYMENT_KINDS:
         registry.register_accounting(
             kind,

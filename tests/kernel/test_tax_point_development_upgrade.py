@@ -17,7 +17,10 @@ from ai_accounting.kernel.backup import (
 )
 from ai_accounting.kernel.catalog import ensure_catalog
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.development_contracts import TAX_POINT_SOURCE_FINGERPRINT
+from ai_accounting.kernel.development_contracts import (
+    TAX_POINT_SOURCE_FINGERPRINT,
+    TAX_POINT_TARGET_FINGERPRINT,
+)
 from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import Periods
@@ -27,6 +30,11 @@ from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security.service import SecurityService
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.versions import fingerprint, objects, verify_schema
+
+
+def tax_point_target():
+    """This historical migration has its own exact endpoint as later drafts evolve."""
+    return development.source_bundle(production_bundle(), TAX_POINT_TARGET_FINGERPRINT)
 
 
 def original_rows(connection, contract):
@@ -85,7 +93,7 @@ def previous_book(path, source, *, taxpayer_id="91310000123456789A"):
 
 @pytest.fixture
 def preserved_book(tmp_path):
-    target = production_bundle()
+    target = tax_point_target()
     source = development.source_bundle(target, TAX_POINT_SOURCE_FINGERPRINT)
     path = tmp_path / "original-tax-point-source.sqlite"
     engine = previous_book(path, source)
@@ -183,7 +191,7 @@ def test_tax_point_adjustment_rejects_extra_target_sql_even_with_registered_fing
 def test_root_tax_point_upgrade_verifies_backups_before_ddl_and_preserves_owner(
     tmp_path, monkeypatch,
 ):
-    target = production_bundle()
+    target = tax_point_target()
     source = development.source_bundle(target, TAX_POINT_SOURCE_FINGERPRINT)
     root = ensure_private_directory(tmp_path / "tax-point-root")
     catalog = ensure_catalog(root, bundle=source)
