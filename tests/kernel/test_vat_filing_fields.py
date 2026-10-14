@@ -192,7 +192,7 @@ def test_adopted_source_missing_rate_cannot_be_reinterpreted_by_period_policy(ki
         period="2026-01", period_start="2026-01-01", period_end="2026-01-31",
         vat_policy_id="vat", surtax_policy_id="surtax",
     )
-    selections = dict.fromkeys(fact.reads(), ())
+    selections = dict.fromkeys(fact.reads_for("assessment"), ())
     for model, subject, policy in (
         (taxes.VatPolicyFact, "vat", vat_policy()),
         (taxes.SurtaxPolicyFact, "surtax", surtax_policy()),

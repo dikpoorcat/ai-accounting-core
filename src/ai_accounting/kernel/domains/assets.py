@@ -27,7 +27,6 @@ from ai_accounting.fixed_assets import (
 )
 from ai_accounting.intangible_assets import calculate_straight_line_amortization
 
-from .. import tax_point_basis
 from ..contracts import (
     BalanceEffect,
     Context,
@@ -664,12 +663,6 @@ class AssetDisposal(Fact):
             reads.append(Read("fact", "used_asset_vat_policy", f"@{self.vat_policy_id}"))
         return tuple(reads)
 
-    def reads_for(self, subject_id):
-        return (*self.reads(), *tax_point_basis.tax_basis_reads(self.kind, subject_id))
-
-    def reads_after(self, subject_id, context):
-        return tax_point_basis.tax_basis_source_reads(context, self.kind, subject_id)
-
 
 def calculate_disposal(version: FactVersion, ctx: Context) -> Outcome:
     fact: AssetDisposal = version.fact
@@ -723,25 +716,7 @@ def calculate_disposal(version: FactVersion, ctx: Context) -> Outcome:
         if fact.exemption_eligible is None:
             raise NeedsInformation("exemption_eligible", "需要确认本项资产出售的免税适用事实")
         policy = ctx.one("used_asset_vat_policy", f"@{fact.vat_policy_id}").fact.policy
-        tax_point = tax_point_basis.resolve_tax_point(
-            ctx, fact.kind, version.subject_id, fact.gross_proceeds_fen, fact.period
-        )
-        if (
-            any(i.period != fact.period for i in tax_point.intervals)
-            or sum_fen(i.gross_end_fen - i.gross_start_fen for i in tax_point.intervals)
-            != fact.gross_proceeds_fen
-        ):
-            raise NeedsInformation(
-                "tax_point_basis",
-                "当前资产出售入口需有源全额本期税点；不把处置月冒充其他税月",
-                sources=(version.subject_id,),
-            )
-        from .transactions import _tax_policy_for_month
-
-        for interval in tax_point.intervals:
-            _tax_policy_for_month(
-                policy, interval.period, interval.actual_date, point=tax_point, interval=interval
-            )
+        policy.require_effective(date.fromisoformat(fact.disposal_date))
         with localcontext(DecimalContext(prec=80)):
             tax_sales = round_fen(
                 Decimal(fact.gross_proceeds_fen) * 100 / (100 + policy.tax_base_rate_percent)
@@ -789,11 +764,6 @@ def calculate_disposal(version: FactVersion, ctx: Context) -> Outcome:
             if fact.disposal_kind == "sale"
             else None,
             "carrying_fen": 0,
-            **(
-                {"tax_point_basis": tax_point.public()}
-                if fact.disposal_kind == "sale" and tax_point is not None
-                else {}
-            ),
         },
         obligations,
     )

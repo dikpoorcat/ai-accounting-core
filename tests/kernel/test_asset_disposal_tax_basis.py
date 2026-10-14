@@ -1,4 +1,4 @@
-"""Fictional asset-sale contracts exercise the real typed lifecycle graph."""
+"""Asset sales use explicit business facts without an extra source-review gate."""
 
 import pytest
 from entity_fixture import seed_entities
@@ -8,6 +8,8 @@ from test_asset_batches import asset_engine as asset_engine
 
 from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import NeedsInformation, Read
+from ai_accounting.kernel.integrity import verify_integrity
+from ai_accounting.kernel.types import canonical
 
 
 def sale_inputs(engine, proof):
@@ -35,13 +37,9 @@ def sale_inputs(engine, proof):
     return policy, sale
 
 
-def test_asset_sale_uses_explicit_contract_tax_period_and_exact_source_versions(asset_engine):
+def test_asset_sale_without_tax_point_basis_preserves_amounts_and_sources(asset_engine):
     engine, proof = asset_engine
     policy, sale = sale_inputs(engine, proof)
-    basis = contract_tax_basis(
-        engine, "asset_disposal", "sale-fixed", business_period="2026-02",
-        contract_period="2026-02", contract_date="2026-02-26", reviewed_through="2026-02",
-    )
     batches = AssetBatches(engine)
     options = {"period": "2026-02", "evidence": (proof,), "expected_revision": 1}
     preview = batches.prepare_consumption_month(**options)
@@ -64,29 +62,51 @@ def test_asset_sale_uses_explicit_contract_tax_period_and_exact_source_versions(
         )}
     assert calculated.values["accrued_vat_fen"] == 100
     assert calculated.values["net_sales_fen"] == 5000
+    assert calculated.values["rate_percent"] == "2"
     assert calculated.values["gain_loss_fen"] == -1618
     assert calculated.values["carrying_fen"] == 0
-    assert calculated.values["tax_point_basis"]["basis_fact_id"] == basis["fact_id"]
-    interval = calculated.values["tax_point_basis"]["intervals"][0]
-    assert interval["period"] == "2026-02"
-    assert interval["actual_date"] == "2026-02-26"
+    assert "tax_point_basis" not in calculated.values
     assert tuple(lines[0]) == ("1601", 0, 10001)
     assert tuple(lines[1]) == ("1602", 3333, 0)
     assert ("222101", 0, 100) in [tuple(line) for line in lines]
     assert sum(line["debit"] for line in lines) == sum(line["credit"] for line in lines)
-    assert {sale["fact_id"], policy["fact_id"], basis["fact_id"]} <= dependencies
+    assert {sale["fact_id"], policy["fact_id"]} <= dependencies
+    with engine.store.connection(read_only=True) as connection:
+        before = tuple(connection.iterdump())
+        verify_integrity(engine, connection)
+    traced = engine.trace(calculation_id=calculated.id)
+    assert canonical(traced["calculation"]["outcome"]["values"]) == canonical(calculated.values)
+    assert {sale["fact_id"], policy["fact_id"]} <= {fact["id"] for fact in traced["facts"]}
+    with engine.store.connection(read_only=True) as connection:
+        assert tuple(connection.iterdump()) == before
+        assert engine.store.select(
+            connection, Read("calculation", "asset_disposal", "@sale-fixed")
+        )[0].id == calculated.id
 
 
-def test_asset_sale_without_tax_point_basis_blocks_atomically(asset_engine):
+@pytest.mark.parametrize(
+    "field,expected_issue",
+    [("buyer_id", "buyer_id,vat_policy_id"),
+     ("vat_policy_id", "buyer_id,vat_policy_id"),
+     ("exemption_eligible", "exemption_eligible")],
+)
+def test_asset_sale_missing_required_facts_blocks_atomically(asset_engine, field, expected_issue):
     engine, proof = asset_engine
     sale_inputs(engine, proof)
+    with engine.store.connection(read_only=True) as connection:
+        data = engine.store.current_fact(connection, "sale-fixed").fact.model_dump(mode="json")
+    data[field] = None
+    engine.save_fact(
+        "asset_disposal", "sale-fixed", data, evidence=(proof,),
+        expected_revision=1, request_id="remove-" + field,
+    )
     with engine.store.connection(read_only=True) as connection:
         before = list(connection.iterdump())
     with pytest.raises(NeedsInformation) as failure:
         AssetBatches(engine).prepare_consumption_month(
             "2026-02", evidence=(proof,), expected_revision=1,
         )
-    assert failure.value.issues[0]["field"] == "tax_point_basis"
+    assert failure.value.issues[0]["field"] == expected_issue
     with engine.store.connection(read_only=True) as connection:
         assert list(connection.iterdump()) == before
         assert not connection.execute(
@@ -94,22 +114,27 @@ def test_asset_sale_without_tax_point_basis_blocks_atomically(asset_engine):
         ).fetchone()
 
 
-def test_reusing_identical_contract_preserves_exact_tax_basis_version(asset_engine):
+def test_asset_sale_requires_policy_effective_on_disposal_date_atomically(asset_engine):
     engine, proof = asset_engine
-    original = contract_tax_basis(
-        engine, "asset_disposal", "sale-fixed", business_period="2026-02",
-        contract_period="2026-02", contract_date="2026-02-26", reviewed_through="2026-02",
+    sale_inputs(engine, proof)
+    with engine.store.connection(read_only=True) as connection:
+        data = engine.store.current_fact(connection, "used-vat").fact.model_dump(mode="json")
+    data["policy"]["effective_to"] = "2026-02-27"
+    engine.save_fact(
+        "used_asset_vat_policy", "used-vat", data, evidence=(proof,),
+        expected_revision=1, request_id="expire-used-vat-policy",
     )
     with engine.store.connection(read_only=True) as connection:
         before = list(connection.iterdump())
-    reused = contract_tax_basis(
-        engine, "asset_disposal", "sale-fixed", business_period="2026-02",
-        contract_period="2026-02", contract_date="2026-02-26", reviewed_through="2026-02",
-    )
-    assert reused["fact_id"] == original["fact_id"]
-    assert reused["revision"] == original["revision"]
+    with pytest.raises(ValueError, match="TAX_POLICY_NOT_EFFECTIVE_FOR_WHOLE_PERIOD"):
+        AssetBatches(engine).prepare_consumption_month(
+            "2026-02", evidence=(proof,), expected_revision=1,
+        )
     with engine.store.connection(read_only=True) as connection:
         assert list(connection.iterdump()) == before
+        assert not connection.execute(
+            "SELECT 1 FROM calculation_current WHERE subject_id='sale-fixed'"
+        ).fetchone()
 
 
 def adopt_empty_quarter(engine, proof):
