@@ -1,6 +1,7 @@
 """Registered quarterly months cannot disappear behind derived locator damage."""
 
 import pytest
+from dashboard_model_fixture import produce
 from test_banking import book as book  # noqa: F401
 from test_banking import funding, opening
 from test_dashboard_model_transactions import state
@@ -14,25 +15,25 @@ from ai_accounting.kernel.dashboard import Dashboard
 def test_quarterly_registered_month_damage_refuses_native_fallback(book, monkeypatch, target):
     engine, save, publish, _ = book
     opening(save, publish, month="2026-01")
+    january_model = produce(engine, "2026-01")["model_version"]
+    produce(engine, "2026-03")
     funding(save, publish, amount=17, day="2026-03-01")
+    produce(engine, "2026-03")
     assert Dashboard(engine).quarterly_report(2026, 1)["period"]["quarter"] == 1
     with engine.store.connection(read_only=True) as connection:
-        march_receipts = [bytes(row[0]) for row in connection.execute(
-            "SELECT id FROM dashboard_read_model_commit WHERE period='2026-03' ORDER BY audit_id",
+        march_receipts = [row[0] for row in connection.execute(
+            "SELECT id FROM dashboard_projection_publication WHERE period='2026-03' ORDER BY rowid",
         )]
-        january = bytes(connection.execute(
-            "SELECT commit_id FROM dashboard_read_model_current WHERE period='2026-01'",
-        ).fetchone()[0])
     assert len(march_receipts) >= 2
     if target == "all_missing":
-        damage(engine, "dashboard_read_model_current", "DELETE FROM dashboard_read_model_current")
+        damage(engine, "dashboard_projection_current", "DELETE FROM dashboard_projection_current")
     elif target == "latest_missing":
-        damage(engine, "dashboard_read_model_current",
-               "DELETE FROM dashboard_read_model_current WHERE period='2026-03'")
+        damage(engine, "dashboard_projection_current",
+               "DELETE FROM dashboard_projection_current WHERE period='2026-03'")
     else:
-        wrong = march_receipts[0] if target == "old_receipt" else january
-        damage(engine, "dashboard_read_model_current",
-               "UPDATE dashboard_read_model_current SET commit_id=? WHERE period='2026-03'",
+        wrong = march_receipts[0] if target == "old_receipt" else january_model
+        damage(engine, "dashboard_projection_current",
+               "UPDATE dashboard_projection_current SET publication_id=? WHERE period='2026-03'",
                (wrong,))
     before = state(engine)
 

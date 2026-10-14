@@ -4,7 +4,8 @@ import sqlite3
 
 import pytest
 import test_cash as cash
-from test_dashboard_model_transactions import comparable, raw_read
+from dashboard_model_fixture import produce
+from test_dashboard_model_transactions import raw_read
 from test_engine import close, publish, save
 from test_engine import engine as engine  # noqa: F401
 from test_integrity_content import damage
@@ -14,6 +15,7 @@ from test_reimbursement_assets import book as _asset_book
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.dashboard_reads import metric_rows
 from ai_accounting.kernel.query_reads import selected_voucher_sql
 from ai_accounting.kernel.types import YearMonth, canonical
@@ -65,6 +67,8 @@ def test_actual_owner_amount_and_detail_routes_reject_changed_kind(book, entry):
     engine, save, publish, _ = book
     cash.expense(save)
     publish("expense")
+    if entry in {"brief", "quarterly_report"}:
+        produce(engine, "2026-09")
     dashboard = Dashboard(engine)
 
     def read():
@@ -75,10 +79,7 @@ def test_actual_owner_amount_and_detail_routes_reject_changed_kind(book, entry):
         return dashboard.brief("2026-09")
 
     def stable(value):
-        result = comparable(value)
-        if entry == "quarterly_report":
-            assert result.pop("checked_at")
-        return result
+        return stable_payload(value)
 
     before = read()
     with raw_read():

@@ -3,8 +3,8 @@
 Each month adds exact new expense/payment business facts in local pairs. The
 50 suppliers are registered entities, not label-only placeholders. All facts,
 publications, bank rows, material rows, monthly inventories and closes use the
-production kernel. This contrast sample does not replace the mixed payroll
-book used for owner-page acceptance.
+same fixed historical source contract as MixedBook. This contrast sample does
+not replace the mixed payroll book used for owner-page acceptance.
 """
 
 from __future__ import annotations
@@ -21,14 +21,15 @@ from pathlib import Path
 import stage9_book
 from stage9_book import MixedBook, month_at, synthetic_temporary
 from stage9_checkpoint import publish_checkpoint
+from stage9_historical_fixture import historical_bundle
 
 import ai_accounting
 from ai_accounting.kernel.catalog import Catalog
+from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.schema_bundle import production_bundle
 
 
 class IndependentBook(MixedBook):
@@ -46,7 +47,7 @@ class IndependentBook(MixedBook):
                 "funding/reserve plus expense/payment"
             )
         self.root = root
-        self.catalog = Catalog(root, production_bundle())
+        self.catalog = Catalog(root, historical_bundle())
         self.company = self.catalog.create_company("91310000123456789I", "阶段九合成独立业务企业")
         self.engine = Engine(self.catalog.bind(self.company["id"]))
         self.entities = Entities(self.engine)
@@ -81,6 +82,13 @@ class IndependentBook(MixedBook):
                     },
                 ),
                 self.item(
+                    "opening_package",
+                    "opening",
+                    {"period": month_at(0), "package_id": "opening",
+                     "counts": dict.fromkeys(CATEGORIES.values(), 0),
+                     "members": [], "completeness_confirmed": True},
+                ),
+                self.item(
                     "bank_opening",
                     "bank-start",
                     {
@@ -92,6 +100,7 @@ class IndependentBook(MixedBook):
                 ),
             ]
         )
+        self.publish(["opening"])
         self.publish(["bank-start"])
 
     def checkpoint(self):
@@ -126,7 +135,7 @@ class IndependentBook(MixedBook):
         state = json.loads((root / cls.CHECKPOINT).read_text(encoding="utf-8"))
         book = cls.__new__(cls)
         book.root = root
-        book.catalog = Catalog(root, production_bundle())
+        book.catalog = Catalog(root, historical_bundle())
         if book.catalog.companies() != [state["company"]]:
             raise ValueError("Independent company identity changed")
         if (

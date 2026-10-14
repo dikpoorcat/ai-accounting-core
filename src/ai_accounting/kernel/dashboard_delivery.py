@@ -1,6 +1,7 @@
 """One typed readiness boundary for owner native/HTTP/CLI/MCP reads."""
 
 from .contracts import KernelError
+from .dashboard_request import validate_request
 from .response_contracts import RESPONSE_ADAPTERS, validate_response
 
 
@@ -8,6 +9,10 @@ def deliver(service, command, payload, authority):
     from .dashboard import Dashboard
     from .dashboard_async import delivery_state
 
+    validate_request(
+        command.removeprefix("dashboard_"),
+        **{key: value for key, value in payload.items() if key != "company_id"},
+    )
     engine = service.engine(payload["company_id"], dashboard_read=True)
     engine.commit_guard = lambda: service._commit_authority(authority)
     period = payload.get("period")
@@ -25,6 +30,10 @@ def deliver(service, command, payload, authority):
     elif period is None:
         period = Dashboard(engine).context()["default_period"]
         external_period = period
+    if command != "dashboard_quarterly_report" and period is not None:
+        with engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            Dashboard._require_period(connection, period)
     envelope = {"schema_version": 6, "company_id": payload["company_id"], "period": external_period}
     if period is None:
         response = validate_response(

@@ -16,9 +16,8 @@ from .types import (
     sum_fen,
 )
 
-REMUNERATION_KINDS = (
-    "payroll", "payroll_bounded", "annual_bonus", "labor", "labor_accrual", "labor_project_cost"
-)
+REMUNERATION_TAX_REQUIRED_KINDS = ("payroll", "payroll_bounded", "annual_bonus", "labor")
+REMUNERATION_KINDS = (*REMUNERATION_TAX_REQUIRED_KINDS, "labor_accrual", "labor_project_cost")
 
 
 def tax_basis_scope(kind: str, subject_id: str) -> str:

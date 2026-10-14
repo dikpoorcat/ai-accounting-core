@@ -579,8 +579,7 @@ class PassThrough(Fact):
                 "meaning": "known_final_pass_through_beneficiary",
                 "reusable_sources": ["original_document", "owner_confirmation"],
                 "constraint": (
-                    "代收代付必须明确真实最终收款人，并引用其已具名对象；"
-                    "缺少时不能登记或核算"
+                    "代收代付必须明确真实最终收款人，并引用其已具名对象；缺少时不能登记或核算"
                 ),
                 "required_for_registration": True,
                 "requires_named_entity": True,

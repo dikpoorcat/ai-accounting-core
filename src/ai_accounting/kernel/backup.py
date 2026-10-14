@@ -1695,7 +1695,11 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1, _bundle=None) -> li
                         (lease_before, *attempted),
                     ).fetchone()
                     if job is None:
-                        connection.rollback()
+                        if exhausted:
+                            # Recovery is durable work even when no next job is claimable.
+                            connection.commit()
+                        else:
+                            connection.rollback()
                     else:
                         connection.execute(
                             "UPDATE jobs SET status='running',attempts=attempts+1,"

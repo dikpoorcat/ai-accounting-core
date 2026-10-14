@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from urllib.parse import quote
 
 import test_resident_service as resident_cases
+from dashboard_model_fixture import produce
 from entity_fixture import seed_entities
+from opening_fixture import adopt_empty_opening
 from pydantic import TypeAdapter
 from test_resident_service import PASSWORD, cookie_header
 
@@ -30,12 +32,30 @@ def authenticated(resident):
     return {"Cookie": cookie_header(cookies), "Origin": http.origin}, token
 
 
+def company_id(service, taxpayer_id, name, *, period="2026-09"):
+    identifier = service.catalog.create_company(taxpayer_id, name)["id"]
+    engine = service.engine(identifier)
+    adopt_empty_opening(engine, period=period)
+    produce(engine, period)
+    return identifier
+
+
+def page_response(value):
+    if "state" in value:
+        assert value["state"] == "ready", value
+        response = value["response"]
+        if "snapshot_version" in response:
+            assert value["model_version"] == response["snapshot_version"]
+        return response
+    return value
+
+
 def test_dashboard_internal_validation_failure_is_http_500_but_bad_query_is_400(
     resident, monkeypatch
 ):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "损坏内容状态码测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "损坏内容状态码测试企业")
 
     def corrupt_brief(*_args, **_kwargs):
         TypeAdapter(int).validate_python("corrupt stored amount")
@@ -43,10 +63,12 @@ def test_dashboard_internal_validation_failure_is_http_500_but_bad_query_is_400(
     monkeypatch.setattr(Dashboard, "brief", corrupt_brief)
     path = f"/api/dashboard/brief?company_id={company}&period=2026-09"
     status, _, _, internal = http.request(path, headers=headers)
+    internal = page_response(internal)
     assert status == 500
     assert internal["status"] == "rejected" and internal["code"] == "internal_error"
 
     status, _, _, invalid = http.request(path + "&limit=invalid", headers=headers)
+    invalid = page_response(invalid)
     assert status == 400
     assert invalid["status"] == "rejected" and invalid["code"] == "invalid_command"
 
@@ -54,7 +76,7 @@ def test_dashboard_internal_validation_failure_is_http_500_but_bad_query_is_400(
 def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "读参数状态码测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "读参数状态码测试企业")
     for route, query in (
         ("brief", "period=bad"),
         ("brief", "section=invalid"),
@@ -80,6 +102,7 @@ def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
         status, _, _, result = http.request(
             f"/api/dashboard/{route}?company_id={company}&{query}", headers=headers
         )
+        result = page_response(result)
         assert status == 400, (route, query, result)
         assert result["status"] == "rejected" and result["code"] == "invalid_command"
 
@@ -93,6 +116,7 @@ def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
         status, _, _, result = http.request(
             f"/api/local/{route}?company_id={company}&{query}", headers=headers
         )
+        result = page_response(result)
         assert status == 400, (route, query, result)
         assert result["status"] == "rejected" and result["code"] == "invalid_command"
 
@@ -100,7 +124,7 @@ def test_dashboard_explicit_bad_read_parameters_stay_http_400(resident):
 def test_complete_brief_exposes_earlier_open_period_as_typed_issue(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "跨月简报合同测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "跨月简报合同测试企业", period="2026-01")
     engine = service.engine(company)
     seed_entities(engine, [("supplier", "organization", None)])
     proof = engine.register_evidence(
@@ -122,13 +146,16 @@ def test_complete_brief_exposes_earlier_open_period_as_typed_issue(resident):
             request_id=f"save-{period}",
         )
 
+    produce(engine, "2026-03")
     status, _, _, context = http.request(
         f"/api/dashboard/context?company_id={company}", headers=headers
     )
+    context = page_response(context)
     assert status == 200 and context["default_period"] == "2026-03"
     status, _, _, brief = http.request(
         f"/api/dashboard/brief?company_id={company}&period=2026-03", headers=headers
     )
+    brief = page_response(brief)
     assert status == 200, brief
     assert "validation" not in brief["data"]
     assert "period_preparation" not in brief["data"]
@@ -148,6 +175,7 @@ def test_restored_routes_and_empty_authenticated_catalog(resident):
     assert http.request("/api/dashboard/context")[0] == 401
     headers, _ = authenticated(resident)
     status, _, _, context = http.request("/api/dashboard/context", headers=headers)
+    context = page_response(context)
     assert status == 200 and context["companies"] == []
     assert context["current_company"] is None
     assert http.request("/api/dashboard/missing", headers=headers)[0] == 404
@@ -157,7 +185,7 @@ def test_restored_routes_and_empty_authenticated_catalog(resident):
 def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(resident):
     service, _, capability, http, _ = resident
     headers, token = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "金额合同测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "金额合同测试企业")
     engine = service.engine(company)
     seed_entities(engine, [("supplier", "organization", None)])
     proof = engine.register_evidence(
@@ -181,6 +209,7 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
     engine.confirm(
         ["expense"], preview_digest=plan["digest"], epochs=plan["epochs"], request_id="publish"
     )
+    produce(engine, "2026-09")
     status, _, _, private = http.request(
         "/api/command",
         {"command": "overview", "payload": {"company_id": company, "period": "2026-09"}},
@@ -189,27 +218,26 @@ def test_browser_money_strings_do_not_change_private_cli_and_mcp_results(residen
             "Authorization": "Bearer " + token.get_secret_value(),
         },
     )
+    private = page_response(private)
     assert status == 200 and all(type(row["debit"]) is int for row in private["accounts"])
     assert sum(row["debit"] for row in private["accounts"]) == 123456
     status, _, _, browser = http.request(
         f"/api/dashboard/brief?company_id={company}&period=2026-09",
         headers=headers,
     )
+    browser = page_response(browser)
     assert status == 200 and browser["data"]["position"]["month_expense_fen"] == "123456"
 
 
 def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(
     resident, tmp_path, monkeypatch, capsys
 ):
-    from opening_fixture import adopt_empty_opening
-
     from ai_accounting.kernel import cli, mcp
 
     service, _, capability, http, _ = resident
     _, token = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "组命令传输测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "组命令传输测试企业")
     engine = service.engine(company)
-    adopt_empty_opening(engine, period="2026-09")
     amount = 9007199254740993
     _publish_expense(engine, "expense", amount)
     summary = Dashboard(engine).brief("2026-09")["data"]["collections"]["activity"]["items"][0]
@@ -229,6 +257,7 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(
                 "Authorization": "Bearer " + token.get_secret_value(),
             },
         )
+        response = page_response(response)
         assert status == 200, response
         return response
 
@@ -282,13 +311,14 @@ def test_brief_group_is_exposed_through_private_cli_and_mcp_commands(
 def test_dashboard_company_selection_query_contract_and_expiration(resident):
     service, _, _, http, _ = resident
     headers, token = authenticated(resident)
-    first = service.catalog.create_company("91310000123456789A", "测试甲公司")["id"]
-    second = service.catalog.create_company("91310000123456789B", "测试乙公司")["id"]
+    first = company_id(service, "91310000123456789A", "测试甲公司")
+    second = company_id(service, "91310000123456789B", "测试乙公司")
     for company in (first, second):
         status, _, _, context = http.request(
             f"/api/dashboard/context?company_id={company}",
             headers=headers,
         )
+        context = page_response(context)
         assert status == 200, context
         assert context["current_company"]["company_id"] == company
         assert {row["company_id"] for row in context["companies"]} == {first, second}
@@ -308,7 +338,7 @@ def test_dashboard_company_selection_query_contract_and_expiration(resident):
 def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "T4 合成业务查询企业")["id"]
+    company = company_id(service, "91310000123456789A", "T4 合成业务查询企业")
     engine = service.engine(company)
     seed_entities(engine, [("supplier", "organization", None)])
     evidence = engine.register_evidence(
@@ -332,12 +362,14 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
     engine.confirm(
         ["expense"], preview_digest=plan["digest"], epochs=plan["epochs"], request_id="t4-publish"
     )
+    produce(engine, "2026-09")
     path = (
         f"/api/dashboard/business-status?company_id={company}&period=2026-09"
         "&subject_id=expense&limit=1"
     )
     assert http.request(path)[0] == 401
     status, _, _, response = http.request(path, headers=headers)
+    response = page_response(response)
     assert status == 200, response
     assert response["schema_version"] == 10
     assert response["data"]["identity"]["subject_id"] == "expense"
@@ -354,7 +386,7 @@ def test_bounded_business_page_is_authenticated_typed_and_version_bound(resident
 def test_report_post_is_only_cookie_authenticated_same_origin_typed_export(resident):
     service, _, _, http, _ = resident
     headers, token = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "测试企业")
     payload = {
         "company_id": company,
         "year": 2026,
@@ -393,6 +425,7 @@ def test_report_post_is_only_cookie_authenticated_same_origin_typed_export(resid
         status, _, _, error = http.request(
             "/api/local/report-export", {**payload, **extra}, headers=headers
         )
+        error = page_response(error)
         assert status == 400 and error["code"] == "invalid_command"
     assert (
         http.request("/api/command", {"command": "companies", "payload": {}}, headers=headers)[0]
@@ -404,7 +437,7 @@ def test_report_post_is_only_cookie_authenticated_same_origin_typed_export(resid
 def test_download_cannot_read_unknown_or_other_company_jobs(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "测试企业")
     base = "/api/local/report-export/not-a-job/download"
     assert http.request(base + f"?company_id={company}")[0] == 401
     assert http.request(base + f"?company_id={company}", headers=headers)[0] == 404
@@ -445,13 +478,14 @@ def _publish_expense(
         epochs=plan["epochs"],
         request_id=f"publish-{subject}-{revision}",
     )
+    produce(engine, "2026-09")
     return engine.ledger("2026-09")[-1]
 
 
 def test_http_and_command_scope_select_same_category_by_exact_member_key(resident):
     service, _, capability, http, _ = resident
     headers, token = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "精确事项接口测试")["id"]
+    company = company_id(service, "91310000123456789A", "精确事项接口测试")
     engine = service.engine(company)
     for subject, nature, amount in (
         ("admin-a", "administration", 1000),
@@ -499,6 +533,7 @@ def test_http_and_command_scope_select_same_category_by_exact_member_key(residen
         epochs=plan["epochs"],
         request_id="scope-publication",
     )
+    produce(engine, "2026-09")
     dashboard = Dashboard(engine)
     with dashboard._snapshot("2026-09") as snap:
         parts = next(parts for parts in snap.activity_components.values() if len(parts) == 2)
@@ -512,6 +547,7 @@ def test_http_and_command_scope_select_same_category_by_exact_member_key(residen
     status, _, _, response = http.request(
         path + "&detail_scope_key=" + admin["key"], headers=headers
     )
+    response = page_response(response)
     assert status == 200 and response["schema_version"] == 10
     assert response["data"]["detail_scope"]["key"] == admin["key"]
     assert response["data"]["detail_scope"]["amount_fen"] == "700"
@@ -543,6 +579,7 @@ def test_http_and_command_scope_select_same_category_by_exact_member_key(residen
             "Authorization": "Bearer " + token.get_secret_value(),
         },
     )
+    native = page_response(native)
     assert status == 200 and native["data"]["detail_scope"]["amount_fen"] == 300
     assert native["data"]["detail_scope"]["key"] == sales["key"]
 
@@ -550,8 +587,8 @@ def test_http_and_command_scope_select_same_category_by_exact_member_key(residen
 def test_http_voucher_trace_is_company_bound_and_keeps_exact_money_strings(resident):
     service, _, _, http, _ = resident
     headers, token = authenticated(resident)
-    first = service.catalog.create_company("91310000123456789A", "追溯甲公司")["id"]
-    second = service.catalog.create_company("91310000123456789B", "追溯乙公司")["id"]
+    first = company_id(service, "91310000123456789A", "追溯甲公司")
+    second = company_id(service, "91310000123456789B", "追溯乙公司")
     engine = service.engine(first)
     amount = 9007199254740993
     voucher = _publish_expense(engine, "original", amount)
@@ -560,6 +597,7 @@ def test_http_voucher_trace_is_company_bound_and_keeps_exact_money_strings(resid
     query = f"/api/local/trace?company_id={first}&voucher_version_id={voucher['id']}"
     assert http.request(query)[0] == 401
     status, _, _, trace = http.request(query, headers=headers)
+    trace = page_response(trace)
     assert status == 200, trace
     assert trace["voucher"]["id"] == voucher["id"]
     assert trace["voucher"]["total"] == str(amount)
@@ -582,11 +620,13 @@ def test_http_voucher_trace_is_company_bound_and_keeps_exact_money_strings(resid
         status, _, _, error = http.request(
             f"/api/local/trace?company_id={second}&{field}={ident}", headers=headers
         )
+        error = page_response(error)
         assert status == 400 and error["code"] == error_code
         assert "calculation" not in error and "facts" not in error
     status, _, _, error = http.request(
         query + f"&calculation_id={unrelated['calculation_id']}", headers=headers
     )
+    error = page_response(error)
     assert status == 400 and error["code"] == "voucher_trace_mismatch"
     service.security.logout(token)
     assert http.request(query, headers=headers)[0] == 401
@@ -595,12 +635,13 @@ def test_http_voucher_trace_is_company_bound_and_keeps_exact_money_strings(resid
 def test_http_continuation_requires_the_same_published_snapshot(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "分页版本测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "分页版本测试企业")
     engine = service.engine(company)
     _publish_expense(engine, "first", 100, party="same-supplier")
     _publish_expense(engine, "second", 200, party="same-supplier")
     base = f"/api/dashboard/brief?company_id={company}&period=2026-09&limit=1"
     status, _, _, first = http.request(base, headers=headers)
+    first = page_response(first)
     assert status == 200
     group = first["data"]["collections"]["activity"]["items"][0]
     assert group["member_count"] == 2
@@ -609,17 +650,21 @@ def test_http_continuation_requires_the_same_published_snapshot(resident):
         f"&section=activity&group_key={group['group_key']}&limit=1"
     )
     status, _, _, members = http.request(member_base, headers=headers)
+    members = page_response(members)
     assert status == 200 and members["data"]["collections"]["members"]["page"]["has_more"]
     cursor = quote(members["data"]["collections"]["members"]["page"]["next_cursor"], safe="")
     following = member_base + f"&cursor={cursor}&expected_version={first['snapshot_version']}"
     status, _, _, page = http.request(following, headers=headers)
+    page = page_response(page)
     assert status == 200 and page["snapshot_version"] == first["snapshot_version"]
     assert len(page["data"]["collections"]["members"]["items"]) == 1
     _publish_expense(engine, "first", 150, revision=1, party="same-supplier")
     status, _, _, error = http.request(following, headers=headers)
+    error = page_response(error)
     assert status == 409 and error["code"] == "dashboard_snapshot_changed"
     assert "data" not in error
     status, _, _, refreshed = http.request(base, headers=headers)
+    refreshed = page_response(refreshed)
     assert status == 200 and refreshed["snapshot_version"] != first["snapshot_version"]
     assert refreshed["data"]["position"]["month_expense_fen"] == "350"
 
@@ -627,13 +672,14 @@ def test_http_continuation_requires_the_same_published_snapshot(resident):
 def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
-    company = service.catalog.create_company("91310000123456789A", "数字凭证深链测试企业")["id"]
+    company = company_id(service, "91310000123456789A", "数字凭证深链测试企业")
     engine = service.engine(company)
     _publish_expense(engine, "first", 100)
     target = _publish_expense(engine, "target", 200)
     base = f"/api/dashboard/brief?company_id={company}&period=2026-09&limit=1"
     numeric = base + f"&voucher_number={target['number']}"
     status, _, _, result = http.request(numeric, headers=headers)
+    result = page_response(result)
     assert status == 200, result
     assert result["data"]["focused_activity"]["subject_id"] == "target"
     assert result["data"]["focused_activity"]["amount_fen"] == "200"
@@ -648,9 +694,11 @@ def test_numeric_voucher_deep_link_survives_real_http_parsing(resident):
     status, _, _, exact = http.request(
         base + f"&voucher_version_id={target['id']}", headers=headers
     )
+    exact = page_response(exact)
     assert status == 200
     assert exact["data"]["focused_activity"] == result["data"]["focused_activity"]
     status, _, _, absent = http.request(base + "&voucher_number=10009", headers=headers)
+    absent = page_response(absent)
     assert status == 400 and absent["code"] == "dashboard_voucher_not_found"
     for suffix in (
         "&voucher_number=2.5",

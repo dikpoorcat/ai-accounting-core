@@ -559,8 +559,8 @@ def test_receipt_tax_point_once_across_media_and_recording_correction_preserves_
     assert current(engine, "tax_assessment", "vat-month").values["payable_vat_fen"] == 100
 
 
-def test_later_sale_return_reads_platform_tax_transfer(book):
-    engine, save, publish, _ = book
+def test_later_sale_return_reads_platform_tax_transfer(august_book):
+    engine, save, publish, _ = august_book
     save("vat_policy", "vat", {"period": "2026-01", "policy": vat_policy().model_dump(mode="json")})
     save(
         "service_sale",

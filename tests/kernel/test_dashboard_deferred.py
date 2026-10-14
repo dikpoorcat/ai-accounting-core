@@ -4,7 +4,9 @@ from urllib.parse import urlencode
 
 import pytest
 import test_reports as report_cases
+from dashboard_model_fixture import produce
 from entity_fixture import seed_entities
+from opening_fixture import adopt_empty_opening
 from test_dashboard_model_transactions import raw_read
 from test_dashboard_transport import _publish_expense, authenticated
 from test_integrity_content import damage
@@ -170,6 +172,7 @@ def test_deferred_report_keeps_open_and_closed_sources_and_export_contract(book,
     for closed in (False, True):
         if closed:
             report_cases.close_quarter(book)
+        produce(book[0], "2026-03")
         with monkeypatch.context() as guard:
             forbid_preparation(guard)
             complete = dashboard.quarterly_report(2026, 1, preparation="complete")
@@ -314,8 +317,10 @@ def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resi
     headers, token = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "分段合成公司")["id"]
     company_engine = service.engine(company)
+    adopt_empty_opening(company_engine, period="2026-09")
     seed_entities(company_engine, (("expense-supplier", "organization", None),))
     _publish_expense(company_engine, "expense", 12345)
+    produce(company_engine, "2026-09")
     schema = service.dispatch("schema", {"view": "full"})["command_schemas"]
     command = "dashboard_period_preparation"
     assert {"company_id", "period", "as_of", "expected_read_version"} <= set(
@@ -337,11 +342,13 @@ def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resi
         assert error.value.code == "invalid_command"
     with monkeypatch.context() as guard:
         forbid_preparation(guard)
-        brief = service.dispatch(
+        delivered = service.dispatch(
             "dashboard_brief",
             {"company_id": company, "period": "2026-09", "preparation": "deferred"},
             session_token=token,
         )
+        assert delivered["state"] == "ready", delivered
+        brief = delivered["response"]
         for endpoint, parameters in (
             ("brief", {"period": "2026-09"}),
             ("quarterly-report", {"year": 2026, "quarter": 3}),
@@ -351,7 +358,8 @@ def test_deferred_commands_and_authenticated_http_are_registered_and_strict(resi
                 "/api/dashboard/" + endpoint + "?" + query, headers=headers
             )
             assert status == 200, response
-            assert response["read_context"] == brief["read_context"]
+            assert response["state"] == "ready", response
+            assert response["response"]["read_context"] == brief["read_context"]
     payload = {
         "company_id": company,
         "period": "2026-09",

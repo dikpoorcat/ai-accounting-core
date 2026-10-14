@@ -39,8 +39,9 @@ def coordinates():
 
 def test_all_current_child_declarations_have_the_unique_integer_coordinate_contract(book):
     with book[0].store.connection(read_only=True) as connection:
-        assert len(CHILDREN) == 43
+        assert len(CHILDREN) == 44
         assert ("remuneration_tax_basis", "origin_references") in CHILDREN
+        assert ("tax_point_basis", "candidates") in CHILDREN
         assert ("payroll_plan_confirmation", "payroll") not in CHILDREN
         for kind, name in CHILDREN:
             table = f"{table_name(kind)}_{name}"

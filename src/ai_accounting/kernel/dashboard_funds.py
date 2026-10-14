@@ -197,6 +197,64 @@ def _sql_summary_page(
     return [dict(zip(summary_columns, values, strict=True)) for values in summary], rows, page
 
 
+def _empty_opening_witness_heads(snap):
+    """Keep a complete adopted empty opening while bounding later bank states."""
+    from .dashboard_reads import _adopted_heads_sql, verified_adopted_head_identities
+
+    kinds = {"opening_package", "opening_bank", "opening_cash"}
+    subjects = list(snap.connection.execute(
+        "SELECT id,kind FROM subject WHERE kind IN (SELECT value FROM json_each(?))",
+        (canonical(sorted(kinds)),),
+    ))
+    if not subjects:
+        return []
+    if any(row["kind"] != "opening_package" for row in subjects):
+        return None
+    verified_adopted_head_identities(snap, [], kinds=kinds)
+    query, parameters = _adopted_heads_sql(snap, kinds)
+    if snap.connection.execute(
+        query + "SELECT 1 FROM eligible WHERE mode='withdrawn' LIMIT 1", parameters,
+    ).fetchone():
+        return None
+    heads = [dict(row) for row in snap.connection.execute(
+        query + "SELECT subject_id,calculation_id id,posting_period,fact_id,kind,period,"
+        "current_missing FROM heads", parameters,
+    )]
+    if any(head["current_missing"] for head in heads):
+        raise KernelError("content_integrity_failed", "期初采用来源缺少正式发布")
+    if {head["subject_id"] for head in heads} != {row["id"] for row in subjects}:
+        # Draft or otherwise unestablished openings keep the original full route.
+        return None
+    by_period = {}
+    for head in heads:
+        by_period.setdefault(head["posting_period"], []).append(head)
+    for period, group in sorted(by_period.items()):
+        outcomes = {}
+        selected = snap.queries._selected_accounting(
+            snap.connection, {head["subject_id"] for head in group}, snap.period,
+            kinds=kinds, include_vouchers=False,
+            posting_period=str(YearMonth.from_ordinal(period)), _owner_outcomes=outcomes,
+        )["through_period"]
+        if selected["unestablished_state_selections"]:
+            return None
+        if {item["calculation_id"] for item in selected["state_results"]} != {
+            head["id"] for head in group
+        }:
+            return None
+        for head in group:
+            outcome = outcomes[head["id"]]
+            values = outcome.get("values", {})
+            if (outcome.get("opening") is not True or outcome.get("lines") != []
+                    or outcome.get("opening_lines") != [] or outcome.get("balances") != []
+                    or values.get("members") != [] or values.get("debit_fen") != 0
+                    or values.get("credit_fen") != 0 or not values.get("counts")
+                    or any(type(value) is not int or value != 0
+                           for value in values["counts"].values())):
+                # Actual opening money or member identities need complete funds scope.
+                return None
+    return heads
+
+
 def _bank_identity_witness_heads(snap):
     """Bound unused frozen bank states only after positive account coverage.
 
@@ -220,13 +278,10 @@ def _bank_identity_witness_heads(snap):
     # their exact bank scope is independently established, keep full selection.
     if connection.execute("SELECT 1 FROM identity_correction LIMIT 1").fetchone():
         return None
-    # Genuine monetary openings and their uncertainty retain full selection.
-    # A bank start is different: it has no balance effect, but its own exact
-    # independently adopted source must still be consumed by the funds page.
-    if connection.execute(
-        "SELECT 1 FROM subject WHERE kind IN "
-        "('opening_package','opening_bank','opening_cash') LIMIT 1"
-    ).fetchone():
+    # Formal empty formation packages remain complete adopted state consumers.
+    # Real monetary/member openings and uncertainty retain the original full route.
+    opening_heads = _empty_opening_witness_heads(snap)
+    if opening_heads is None:
         return None
     kinds = {"bank_opening", "bank_statement", "bank_reconciliation"}
     # A redirected current pointer can exclude its true terminal from the
@@ -306,7 +361,7 @@ def _bank_identity_witness_heads(snap):
         if bank not in witnessed:
             selected.add(head["id"])
             witnessed.add(bank)
-    return [head for ident, head in heads.items() if ident in selected]
+    return opening_heads + [head for ident, head in heads.items() if ident in selected]
 
 
 def _bank_identity_states(snap, *, outcomes):

@@ -28,12 +28,20 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
     _publish_filter_funding(engine, ["bank-a"] * 31)
     calls = Counter()
     line_batches = []
+    dependency_batches = []
+    with engine.store.connection(read_only=True) as connection:
+        opening_calculations = {row[0] for row in connection.execute(
+            "SELECT c.id FROM calculation_current h JOIN calculation c ON c.id=h.calculation_id "
+            "WHERE c.kind='opening_package'"
+        )}
     original = _PrivateConnection.execute
 
     def observed(connection, sql, *args, **kwargs):
         calls[" ".join(sql.split())] += 1
         if "JOIN voucher_line l ON l.version_id=ids.value" in sql:
             line_batches.append(set(json.loads(args[0][0])))
+        if "JOIN dependency_fact d ON d.calculation_id=ids.value" in sql:
+            dependency_batches.append(set(json.loads(args[0][0])))
         return original(connection, sql, *args, **kwargs)
 
     monkeypatch.setattr(_PrivateConnection, "execute", observed)
@@ -44,8 +52,10 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
         )
     page_calls = calls.copy()
     page_lines = list(line_batches)
+    page_dependencies = list(dependency_batches)
     calls.clear()
     line_batches.clear()
+    dependency_batches.clear()
     with raw_read():
         focused_response = Dashboard(engine).brief(
             "2026-09", limit=30, voucher_number=31, preparation="deferred",
@@ -121,14 +131,10 @@ def test_brief_voucher_page_and_distant_focus_batch_sql_without_losing_sources(
     assert focused_voucher["voucher_version_id"] in set().union(*line_batches)
     assert set().union(*page_lines, *line_batches) == month_versions
     assert len(month_versions) == 31
-    assert (
-        sum(
-            count
-            for sql, count in calls.items()
-            if "JOIN dependency_fact d ON d.calculation_id=ids.value" in sql
-        )
-        == 0
-    )
+    # The complete money overview proves the formal empty formation once.
+    # It must not expand any funding source's dependencies to do that.
+    assert page_dependencies == []
+    assert dependency_batches == [opening_calculations]
     # Exact party/source evidence is still available through the accountant contract.
     for index, item in enumerate([*page["items"], focused]):
         core = BusinessQueries(engine).business_status(item["subject_id"], "2026-09")

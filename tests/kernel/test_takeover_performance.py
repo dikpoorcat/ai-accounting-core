@@ -57,7 +57,13 @@ def test_batch_limit_rejects_before_mutation_and_publication_is_balanced(tmp_pat
     ledger = engine.ledger("2026-03", limit=100)
     assert len(ledger) == 12
     assert all(item["total"] == 100 for item in ledger)
-    assert verify_file(engine.store.path, _bundle=engine.store.bundle)["evidence_count"] == 1
+    # The separate formation statement is an actual second preserved source.
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM calculation_current h JOIN calculation c "
+            "ON c.id=h.calculation_id WHERE c.kind='opening_package'"
+        ).fetchone()[0] == 1
+    assert verify_file(engine.store.path, _bundle=engine.store.bundle)["evidence_count"] == 2
 
 
 def test_background_backup_preserves_overview_and_ready_quarterly_report(tmp_path):

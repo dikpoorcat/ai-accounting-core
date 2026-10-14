@@ -22,6 +22,7 @@ from pydantic import SecretStr
 from ai_accounting.kernel.build import calculator_build_id
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.domains.opening import CATEGORIES, OpeningPackage
 from ai_accounting.kernel.engine import PROGRAM_VERSION, Engine
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.http import create_server
@@ -274,6 +275,26 @@ def material_rejection(raw, spec):
 
 
 def batch_boundary(engine, evidence, count):
+    # This isolated scenario explicitly starts in January with zero assets,
+    # debts and equity. Capacity bytes do not serve as the formation statement.
+    opening_proof = engine.register_evidence(
+        b"Synthetic benchmark company: formed January 2026; all opening assets, "
+        b"liabilities and equity are zero; complete formation statement.",
+        "text/plain", "synthetic formation statement", request_id="benchmark-opening-proof",
+    )["digest"]
+    opening = OpeningPackage(
+        period="2026-01", package_id="benchmark-opening", members=(),
+        counts=dict.fromkeys(CATEGORIES.values(), 0), completeness_confirmed=True,
+    )
+    engine.save_fact(
+        opening.kind, "benchmark-opening", opening.model_dump(mode="json"),
+        evidence=(opening_proof,), expected_revision=0, request_id="benchmark-opening-save",
+    )
+    formation = engine.preview(["benchmark-opening"])
+    engine.confirm(
+        ["benchmark-opening"], preview_digest=formation["digest"], epochs=formation["epochs"],
+        request_id="benchmark-opening-adopt",
+    )
     # Distinct contributors make these equal cash receipts separate businesses.
     # Directory setup is outside the measured registration/publication workload.
     entities = Entities(engine)

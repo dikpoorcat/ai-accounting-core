@@ -237,16 +237,31 @@ def _owned_read_transaction_operation(connection, operation):
 
 
 @contextmanager
+def _preserve_failure_on_closed_cleanup(original):
+    """A closed resource cannot replace the failure that caused its cleanup."""
+    try:
+        yield
+    except sqlite3.ProgrammingError as error:
+        if original is None or str(error) != "Cannot operate on a closed database.":
+            raise
+
+
+@contextmanager
 def _owned_read_transaction(connection):
     """Keep the private native BEGIN/ROLLBACK allowance out of statement caching."""
     if connection.in_transaction:
         raise RuntimeConfigurationError("Owned read connection has an unfinished transaction")
+    original = None
     try:
         _owned_read_transaction_operation(connection, "BEGIN")
         yield connection
+    except BaseException as error:
+        original = error
+        raise
     finally:
-        if connection.in_transaction:
-            _owned_read_transaction_operation(connection, "ROLLBACK")
+        with _preserve_failure_on_closed_cleanup(original):
+            if connection.in_transaction:
+                _owned_read_transaction_operation(connection, "ROLLBACK")
 
 
 def _existing_sidecars(database: Path, *, tighten: bool = True) -> set[Path]:

@@ -441,17 +441,22 @@ def test_readiness_reuses_typed_facts_only_after_source_verification(tmp_path, m
             (month,),
         ).fetchone()[0]
 
-    def no_second_decode(_raw):
-        raise AssertionError("material and duplicate checks decoded the same fact twice")
+    checked_loads = []
+
+    def no_second_decode(_connection, checked):
+        checked_loads.append(set(checked))
+        assert not checked, "material and duplicate checks decoded the same fact twice"
+        return {}
 
     with QueryReads.snapshot(engine) as reads:
         reads.fact_versions(baseline[1])
         with monkeypatch.context() as patch:
-            patch.setattr(freeze_module, "_validation_json", no_second_decode)
+            patch.setattr(engine.store, "fact_versions_from_checked", no_second_decode)
             actual = freeze_module.narrowed_duplicate_candidates(
                 engine, reads.connection, month, query_reads=reads
             )
         assert actual == baseline
+        assert checked_loads == [set()]
     assert not reads._fact_versions
 
     damage(

@@ -26,12 +26,8 @@ bank_book = banking.book
 
 @pytest.fixture
 def investment_book(tmp_path):
-    from opening_fixture import adopt_empty_opening
-
-    book = investments.book.__wrapped__(tmp_path)
     # This scenario's first formally recorded subscriptions belong to December.
-    adopt_empty_opening(book[0], period="2025-12")
-    return book
+    return investments.book.__wrapped__(tmp_path, opening_period="2025-12")
 
 
 def prepared(book, *, closed=True):

@@ -163,8 +163,7 @@ def test_second_opening_confirm_rejects_hidden_existing_opening(opening_book):
         "members": [],
         "completeness_confirmed": True,
     }
-    # Finish legitimate setup before corruption: every typed write now also
-    # materializes its registered dashboard periods in the same transaction.
+    # Register the other source before damaging the already adopted result.
     save("opening_package", "second-opening", second_data)
     with engine.store.connection() as connection:
         calculation_id = connection.execute(
@@ -190,15 +189,39 @@ def test_second_opening_confirm_rejects_hidden_existing_opening(opening_book):
     with pytest.raises(KernelError) as second:
         publish("second-opening")
     assert second.value.code == "content_integrity_failed"
-    with pytest.raises(KernelError) as writing:
-        engine.save_fact(
-            "opening_package", "third-opening", {**second_data, "package_id": "third-opening"},
-            evidence=(proof,), expected_revision=0, request_id="cannot-write-over-corrupt-opening",
-        )
-    assert writing.value.code == "content_integrity_failed"
     with engine.store.connection(read_only=True) as connection:
-        # Includes facts, epochs, audit/request and derived model rows.
         assert tuple(connection.iterdump()) == before
+    # Independent fact registration does not read or adopt the damaged result.
+    # Publication must still authenticate it before any business mutation.
+    engine.save_fact(
+        "opening_package",
+        "third-opening",
+        {**second_data, "package_id": "third-opening"},
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="third-opening-source",
+    )
+    with engine.store.connection(read_only=True) as connection:
+        after_registration = tuple(connection.iterdump())
+        assert engine.store.current_fact(connection, "third-opening") is not None
+    with pytest.raises(KernelError) as preview:
+        engine.preview(["third-opening"])
+    assert preview.value.code == "content_integrity_failed"
+    with pytest.raises(KernelError) as third:
+        # Confirmation reconstructs the exact source graph before comparing a
+        # ticket; damaged adopted JSON must fail at that integrity boundary.
+        engine.confirm(
+            ["third-opening"],
+            preview_digest="0" * 64,
+            epochs={},
+            request_id="cannot-adopt-third-over-corrupt-opening",
+        )
+    assert third.value.code == "content_integrity_failed"
+    with engine.store.connection(read_only=True) as connection:
+        assert tuple(connection.iterdump()) == after_registration
+        with pytest.raises(KernelError) as complete:
+            verify_integrity(engine, connection)
+    assert complete.value.code == "content_integrity_failed"
 
 
 def test_duplicate_review_manifest_cannot_hide_strong_pair_from_readiness(duplicate_company):

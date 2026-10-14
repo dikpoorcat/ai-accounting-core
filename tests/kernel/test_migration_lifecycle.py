@@ -9,7 +9,11 @@ from test_remuneration_development_upgrade import create_archived_company
 from ai_accounting.kernel import offline_development_upgrade as development
 from ai_accounting.kernel.catalog import ensure_catalog
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.development_contracts import HISTORY_PRIOR_FINGERPRINT
+from ai_accounting.kernel.development_contracts import (
+    HISTORY_PRIOR_FINGERPRINT,
+    HISTORY_TARGET_FINGERPRINT,
+    TAX_POINT_TARGET_FINGERPRINT,
+)
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.offline_development_upgrade import _root_upgrade_failure
 from ai_accounting.kernel.permissions import ensure_private_directory
@@ -327,6 +331,10 @@ def test_real_root_retains_first_commit_rolls_back_second_and_retries_without_re
     ensure_catalog(root)
     companies = []
     originals = {}
+    expected_transitions = [
+        (HISTORY_PRIOR_FINGERPRINT, HISTORY_TARGET_FINGERPRINT),
+        (HISTORY_TARGET_FINGERPRINT, TAX_POINT_TARGET_FINGERPRINT),
+    ]
     for number in (1, 2):
         company_id, database_id = f"synthetic-co-{number}", f"synthetic-db-{number}"
         taxpayer_id = f"91310000123456789{number}"
@@ -374,7 +382,10 @@ def test_real_root_retains_first_commit_rolls_back_second_and_retries_without_re
         verify_schema(connection, bundle=target)
         first_committed = tuple(connection.iterdump())
         assert first_committed != originals[first_id]
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 1
+        assert [tuple(value.hex() for value in row) for row in connection.execute(
+            "SELECT source_fingerprint,target_fingerprint FROM schema_draft_history "
+            "ORDER BY sequence"
+        )] == expected_transitions
         assert connection.execute("SELECT name FROM evidence").fetchone()[0] == "original.txt"
     with closing(connect(second_path, read_only=True)) as connection:
         verify_schema(connection, bundle=source)
@@ -388,5 +399,8 @@ def test_real_root_retains_first_commit_rolls_back_second_and_retries_without_re
         assert tuple(connection.iterdump()) == first_committed
     with closing(connect(second_path, read_only=True)) as connection:
         verify_schema(connection, bundle=target)
-        assert connection.execute("SELECT count(*) FROM schema_draft_history").fetchone()[0] == 1
+        assert [tuple(value.hex() for value in row) for row in connection.execute(
+            "SELECT source_fingerprint,target_fingerprint FROM schema_draft_history "
+            "ORDER BY sequence"
+        )] == expected_transitions
         assert connection.execute("SELECT name FROM evidence").fetchone()[0] == "original.txt"

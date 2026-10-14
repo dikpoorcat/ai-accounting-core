@@ -2,6 +2,7 @@
 
 import pytest
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.command_schema import command_models
 from ai_accounting.kernel.contracts import KernelError
@@ -28,6 +29,7 @@ def book(tmp_path):
         request_id="proof",
     )["digest"]
     supporting_text(engine, proof)
+    adopt_empty_opening(engine, period="2026-09")
     return engine, proof
 
 

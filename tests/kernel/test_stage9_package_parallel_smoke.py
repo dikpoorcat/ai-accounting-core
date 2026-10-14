@@ -4,6 +4,8 @@ import copy
 import json
 
 import pytest
+from dashboard_model_fixture import produce
+from opening_fixture import adopt_empty_opening
 from pydantic import SecretStr
 from test_brief_parallel_integration import PERIOD, _fund
 
@@ -18,7 +20,10 @@ def resident_service(tmp_path):
     app.security.provision("owner", password)
     token = app.security.login("owner", password).session_token
     company = app.catalog.create_company("91310000123456789A", "合成包公司")
-    _fund(app.engine(company["id"]), "package-funding", 123456)
+    engine = app.engine(company["id"])
+    adopt_empty_opening(engine, period=PERIOD)
+    _fund(engine, "package-funding", 123456)
+    produce(engine, PERIOD)
     try:
         yield app, token, company
     finally:
@@ -28,7 +33,9 @@ def resident_service(tmp_path):
 def test_package_owner_smoke_validates_contract_scope_and_amount(resident_service, tmp_path):
     app, token, company = resident_service
     def call(command, payload):
-        return app.dispatch(command, payload, session_token=token)
+        delivered = app.dispatch(command, payload, session_token=token)
+        assert delivered["state"] == "ready", delivered
+        return delivered["response"]
     output = tmp_path / "owner-brief.json"
     response = verify_owner_brief(app, call, company["id"], PERIOD, output)
     proof = json.loads(output.read_text(encoding="utf-8"))
@@ -46,7 +53,9 @@ def test_package_owner_smoke_rejects_wrong_scope_or_business_amount(
 ):
     app, token, company = resident_service
     def call(command, payload):
-        result = copy.deepcopy(app.dispatch(command, payload, session_token=token))
+        delivered = app.dispatch(command, payload, session_token=token)
+        assert delivered["state"] == "ready", delivered
+        result = copy.deepcopy(delivered["response"])
         if fault == "company":
             result["read_context"]["company_id"] = "another-company"
         elif fault == "month":

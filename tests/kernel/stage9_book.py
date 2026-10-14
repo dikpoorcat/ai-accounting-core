@@ -1,7 +1,8 @@
-"""Reproducible mixed books made through production registration/publication APIs.
+"""Reproducible 2016–2025 mixed books under the fixed historical 041 contract.
 
-This is deliberately a test fixture, not an import or reconstruction facility.
-Policies and owner confirmations describe synthetic transactions only.
+Transactions, source checks and freezes use the real kernel; the private
+historical grammar and chosen synthetic tax results are not current policy.
+This is a test fixture, not an import or reconstruction facility.
 """
 
 from __future__ import annotations
@@ -15,13 +16,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from stage9_checkpoint import publish_checkpoint
+from stage9_historical_fixture import historical_bundle
 
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.types import YearMonth
 
 
@@ -78,7 +79,7 @@ class MixedBook:
         if distribution != "mixed_cumulative":
             raise ValueError("MixedBook provides only the mixed cumulative distribution")
         self.root = root
-        self.catalog = Catalog(root, production_bundle())
+        self.catalog = Catalog(root, historical_bundle())
         self.company = self.catalog.create_company("91310000123456789S", "阶段九合成规模企业")
         self.engine = Engine(self.catalog.bind(self.company["id"]))
         self.entities = Entities(self.engine)
@@ -132,7 +133,7 @@ class MixedBook:
         state = json.loads((root / "stage9-builder.json").read_text(encoding="utf-8"))
         book = cls.__new__(cls)
         book.root = root
-        book.catalog = Catalog(root, production_bundle())
+        book.catalog = Catalog(root, historical_bundle())
         companies = book.catalog.companies()
         matching = [company for company in companies if company["id"] == state["company"]["id"]]
         if len(matching) != 1 or matching[0] != state["company"]:

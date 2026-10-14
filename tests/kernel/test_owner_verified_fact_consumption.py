@@ -29,6 +29,7 @@ def original_owner_fixture(tmp_path, monkeypatch, *, mismatch=False):
     from ai_accounting.kernel.backup import verify_file
     from ai_accounting.kernel.engine import Engine
     from ai_accounting.kernel.entity_profile_history import PreEventProfile
+    from ai_accounting.kernel.offline_development_upgrade import upgrade_company
     from ai_accounting.kernel.schema_bundle import production_bundle
     from ai_accounting.kernel.source24_history import PayrollPlanPreRevision
     from ai_accounting.kernel.storage import Store
@@ -68,6 +69,7 @@ def original_owner_fixture(tmp_path, monkeypatch, *, mismatch=False):
     assert verify_file(path, _bundle=source)["verification"]["status"] == "verified"
     with constructor.store.connection() as connection:
         assert adjust_connection(connection, kind="company")["status"] == "adjusted"
+        assert upgrade_company(connection, production_bundle())["status"] == "upgraded"
     assert verify_file(path)["verification"]["status"] == "verified"
     engine = Engine(Store(path, production_bundle(), "synthetic-company", "synthetic-database"))
     return engine, saved

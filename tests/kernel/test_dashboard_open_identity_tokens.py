@@ -235,7 +235,8 @@ def test_record_group_proves_all_bodies_but_member_page_keeps_its_exact_scope(bo
         group = snap._open_group_data["ordered"][0]
         first = groups.open_group_members(snap, group, limit=1)
         unselected = next(row[0] for row in snap.connection.execute(
-            "SELECT calculation_id FROM calculation_current WHERE subject_id<>?",
+            "SELECT c.calculation_id FROM calculation_current c "
+            "JOIN subject s ON s.id=c.subject_id WHERE s.kind='expense' AND c.subject_id<>?",
             (first["items"][0]["subject_id"],),
         ))
     damage(engine, "calculation", "UPDATE calculation SET outcome=json_set("

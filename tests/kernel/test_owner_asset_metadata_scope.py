@@ -5,13 +5,14 @@ from contextlib import nullcontext
 
 import pytest
 from close_storage_fixture import replace_stored_manifest, stored_manifest
+from dashboard_model_fixture import produce
 from stage9_metrics import measure_work
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_batches import month
 from test_asset_owner_outcome_reads import complete_head_events
 from test_banking import book as _bank_book
 from test_banking import funding
-from test_dashboard_model_transactions import comparable, raw_read
+from test_dashboard_model_transactions import raw_read
 from test_engine import close as close_simple
 from test_engine import engine as _simple_engine
 from test_engine import evidence as simple_evidence
@@ -28,6 +29,7 @@ from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.domains.assets import AssetDisposal
 from ai_accounting.kernel.domains.transactions import ProjectCost
 from ai_accounting.kernel.maintenance import Maintenance
@@ -63,9 +65,7 @@ def closed_consumption(company, evidence):
 
 
 def comparable_owner_page(value):
-    value = comparable(value)
-    value.pop("checked_at", None)
-    return value
+    return stable_payload(value)
 
 
 @pytest.mark.parametrize("months", [1, 3])
@@ -102,6 +102,7 @@ def test_declared_frozen_owner_missing_source_is_never_absence(metadata_company,
     engine = company.engine
     closed_consumption(company, evidence)
     dashboard = Dashboard(engine)
+    produce(engine, "2026-03")
     expected_assets = dashboard.assets("2026-03", preparation="deferred")
     expected_overview = comparable_owner_page(dashboard.brief("2026-03"))
     assert expected_assets["data"]["month_charge_fen"] > 0
@@ -183,7 +184,10 @@ def test_declared_frozen_owner_missing_source_is_never_absence(metadata_company,
 
 @pytest.mark.parametrize("source", ["acquisition", "activation", "disposal", "project"])
 @pytest.mark.parametrize("damaged", ["outcome", "fact"])
-def test_displayed_asset_and_project_sources_are_still_raw_hits(metadata_company, source, damaged):
+@pytest.mark.parametrize("native", [False, True], ids=["published", "native"])
+def test_displayed_asset_and_project_sources_are_still_raw_hits(
+    metadata_company, source, damaged, native,
+):
     company, evidence = metadata_company
     engine = company.engine
     subject, period = {
@@ -208,6 +212,7 @@ def test_displayed_asset_and_project_sources_are_still_raw_hits(metadata_company
         ), subject)
         company.publish(subject)
     dashboard = Dashboard(engine)
+    produce(engine, period)
     before = dashboard.assets(period)
     if source == "project":
         assert [
@@ -234,10 +239,13 @@ def test_displayed_asset_and_project_sources_are_still_raw_hits(metadata_company
     with pytest.raises(KernelError):
         verify(engine)
     before_reads = database_snapshot(engine)
-    for options in ({}, exact):
-        with pytest.raises(KernelError) as rejected:
-            dashboard.assets(period, **options)
-        assert rejected.value.code == "content_integrity_failed"
+    with raw_read() if native else nullcontext():
+        for options in ({}, exact):
+            with pytest.raises(KernelError) as rejected:
+                dashboard.assets(period, **options)
+            assert rejected.value.code in {
+                "content_integrity_failed", "asset_batch_digest",
+            }
     assert database_snapshot(engine) == before_reads
 
 
@@ -343,6 +351,8 @@ def test_bad_frozen_directory_tail_publishes_no_member_or_body_proof(metadata_co
     closed_consumption(company, evidence)
     with engine.store.connection(read_only=True) as connection:
         manifest = stored_manifest(connection, "2026-03")
+    replace_stored_manifest(engine, manifest, preserve_journal_reference=True)
+    assert verify(engine, include_indexes=False)["status"] == "verified"
     assert len(manifest["asset_batch_adoptions"]) == 1
     if bad == "digest":
         manifest["asset_batch_adoptions"][-1]["membership_digest"] = "0" * 64
@@ -350,7 +360,7 @@ def test_bad_frozen_directory_tail_publishes_no_member_or_body_proof(metadata_co
         manifest["asset_batch_adoptions"] = []
     else:
         manifest["asset_batch_adoptions"].append(dict(manifest["asset_batch_adoptions"][0]))
-    replace_stored_manifest(engine, manifest)
+    replace_stored_manifest(engine, manifest, preserve_journal_reference=True)
     with Dashboard(engine)._snapshot("2026-03") as snap:
         with pytest.raises(KernelError):
             snap.queries._selected_asset_member_heads(
@@ -485,6 +495,7 @@ def test_missing_open_owner_voucher_pointer_is_not_empty_history(metadata_compan
     company.close("2026-02")
     month(engine, evidence, "2026-03", "consume-positive")
     dashboard = Dashboard(engine)
+    produce(engine, "2026-03")
     expected_assets = dashboard.assets("2026-03", preparation="deferred")
     expected_overview = comparable_owner_page(dashboard.brief("2026-03"))
     with engine.store.connection(read_only=True) as connection:
@@ -568,6 +579,12 @@ def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, dom
     else:
         assert baseline["current_voucher_version_id"] is not None
     dashboard = Dashboard(engine)
+    if consumer in {"funds", "quarterly_report", "brief_overview", "brief_vouchers", "brief_exact"}:
+        produce(engine, period)
+        if domain == "payroll" and consumer == "quarterly_report":
+            # This fixture also registers February. The quarter consumes that
+            # latest registered month's complete publication, even if pending.
+            produce(engine, "2026-02")
     with engine.store.connection(read_only=True) as connection:
         voucher = connection.execute(
             "SELECT p.voucher_id,v.version_id FROM calculation_current a "
@@ -577,7 +594,7 @@ def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, dom
 
     def page():
         if consumer == "funds":
-            return dashboard.funds(period)
+            return dashboard.funds(period, movement_account_selection="first")
         if consumer == "quarterly_report":
             return dashboard.quarterly_report(
                 int(period[:4]), (int(period[5:]) - 1) // 3 + 1, preparation="deferred",
@@ -617,6 +634,9 @@ def test_missing_current_voucher_pointer_shared_business_consumers(tmp_path, dom
         assert native_failure.value.code == "content_integrity_failed"
     elif consumer in {"funds", "quarterly_report", "brief_overview"}:
         assert comparable_owner_page(page()) == expected_page
+        with raw_read(), pytest.raises(KernelError) as native_failure:
+            page()
+        assert native_failure.value.code == "content_integrity_failed"
     elif consumer.startswith("brief_"):
         with pytest.raises(KernelError) as failure:
             page()

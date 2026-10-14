@@ -1,6 +1,7 @@
 """Named dashboard objects use one full-range pinyin order before paging."""
 
 from entity_fixture import save_entity_display_profile
+from opening_fixture import adopt_empty_opening
 from test_banking import book as _bank_book
 from test_banking import funding
 from test_investments import book as _investment_book
@@ -19,6 +20,7 @@ def named(engine, kind, ident, name):
             "kind": kind,
             "entity_id": ident,
             "display_name": name,
+            **({"display_number": ident} if kind == "asset" else {}),
             "source": "synthetic explicit object names",
         },
         expected_revision=0,
@@ -85,6 +87,7 @@ def test_money_fund_products_page_by_displayed_pinyin_name_before_internal_id(
     investment_book,
 ):
     engine, save, publish = investment_book
+    adopt_empty_opening(engine)
     for ident, name in (
         ("fund-a", "张三基金"), ("fund-b", "王五基金"), ("fund-c", "李四基金"),
     ):

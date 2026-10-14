@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,12 +23,15 @@ from test_resident_service import PASSWORD
 from test_resident_service import resident as resident_fixture
 
 from ai_accounting.kernel import backup, dashboard_model_reads
+from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError, Read
 from ai_accounting.kernel.dashboard_async import _produce, delivery_state
 from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.maintenance import Maintenance
+from ai_accounting.kernel.offline_development_upgrade import source_bundle, upgrade_company
 from ai_accounting.kernel.periods import Periods
+from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security.credentials import WindowsCredentialStore
 from ai_accounting.kernel.security.service import credential_target
@@ -184,9 +188,12 @@ def p1_transport_book(resident, tmp_path, monkeypatch, record_property):
     service, server, capability, _, _ = resident
     root = service.catalog.root
     assert root.is_relative_to(tmp_path) and server.server_port != 5173
-    assert production_bundle().database_format()["fingerprint"] == COMPANY_FP
-    company = service.catalog.create_company("91310000123456789A", "合成P1适配器企业")
-    engine = service.engine(company["id"])
+    target = production_bundle()
+    source = source_bundle(target, COMPANY_FP)
+    assert source.database_format()["fingerprint"] == COMPANY_FP
+    historical_catalog = Catalog(root, source)
+    company = historical_catalog.create_company("91310000123456789A", "合成P1适配器企业")
+    engine = Engine(historical_catalog.bind(company["id"]))
     adopt_empty_opening(engine, period="2026-08")
     proof = engine.register_evidence(
         b"synthetic P1 transport evidence", "text/plain", "fixture", request_id="p1-transport-proof"
@@ -219,6 +226,21 @@ def p1_transport_book(resident, tmp_path, monkeypatch, record_property):
     opening(save, publish, month="2026-08")
     funding(save, publish, subject="p1-history", amount=9, day="2026-08-01")
     funding(save, publish, subject="p1-current", amount=AMOUNT)
+    # Build the declared original source, then preserve it through the explicit
+    # structure transition before any current CLI/MCP/resident company access.
+    original_backup = backup.create_portable(
+        engine.store.path, tmp_path / "p1-source-backup", _bundle=source,
+    )
+    source_verification = backup.verify_portable(original_backup["path"], _bundle=source)
+    assert source_verification["verification"]["status"] == "verified"
+    with closing(connect(engine.store.path)) as connection:
+        upgrade = upgrade_company(connection, target, expected_source_fingerprint=COMPANY_FP)
+    assert upgrade["source_fingerprint"] == COMPANY_FP
+    assert upgrade["target_fingerprint"] == target.current("company")["sha256"]
+    assert upgrade["verification"]["status"] == "verified"
+    engine = service.engine(company["id"])
+    record_property("p1_adapter_source_transition", json.dumps(upgrade))
+    Maintenance(engine).rebuild_dashboard_read_model(MONTH, request_id="p1-current-model")
     publication = _produce(engine, MONTH)
     assert publication["status"] == "ready"
     assert delivery_state(engine, MONTH)["model_version"] == publication["model_version"]
@@ -336,8 +358,6 @@ def test_p1_real_cli_and_stdio_mcp_ready_five_pages(p1_transport_book, tmp_path)
                             amount = actual["response"]["data"]["funds_overview"]["bank_fen"]
                             assert type(amount) is int and amount == AMOUNT + 9
                 # The actual signature requires str, not a wire integer.
-                # Malformed string months have a separately recorded unresolved
-                # delivery-boundary defect; this test does not invent its rejection.
                 invalid = {"company_id": book["company"]["id"], "period": 7}
                 for actual in (
                     cli_call(book, tmp_path, "dashboard_brief", invalid),

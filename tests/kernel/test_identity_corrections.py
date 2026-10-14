@@ -40,6 +40,14 @@ def identity_engine(tmp_path):
 
 
 def expense(engine, evidence, party, subject="expense", amount=100):
+    from opening_fixture import adopt_empty_opening
+
+    with engine.store.connection(read_only=True) as connection:
+        has_opening = connection.execute(
+            "SELECT 1 FROM subject WHERE kind='opening_package' LIMIT 1"
+        ).fetchone() is not None
+    if not has_opening:
+        adopt_empty_opening(engine, period="2026-01")
     data = {
         "period": "2026-01",
         "counterparty_id": party,

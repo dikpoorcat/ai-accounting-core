@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 
 import pytest
+from dashboard_model_fixture import produce
 from stage9_metrics import measure_work
 from test_integrity_content import damage, verify
 from test_open_correction_source_heads import prepare
@@ -242,6 +243,7 @@ def test_real_cash_correction_deletion_rejects_hits_but_preserves_certified_aggr
         expected_revision=1, recording_error_confirmed=True, request_id="correct-capital",
     )
     confirm("capital", posting_period="2026-03")
+    produce(engine, "2026-03")
     dashboard = Dashboard(engine)
     assert [row["role"] for row in _accounting(engine)["period_events"]] == [
         "reversal", "replacement",

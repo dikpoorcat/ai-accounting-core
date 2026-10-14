@@ -9,6 +9,8 @@ from test_payroll_corrections import Company
 from ai_accounting.kernel.backup import BackupError, verify_file
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_async import _produce
+from ai_accounting.kernel.entities import Entities
 
 
 @pytest.mark.parametrize("gross_fen", [0, 1_000_000], ids=["old-zero-line", "old-posted"])
@@ -60,16 +62,35 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
         ),
     ):
         company.save(fact, fact_subject)
+    for employee in ("employee", "employee-a"):
+        proof = company.engine.register_evidence(
+            (f"Synthetic confirmation: {employee} was hired on 2026-01-01 "
+             "and remains employed.").encode(),
+            "text/plain", "synthetic workforce confirmation", request_id="hire-proof-" + employee,
+        )["digest"]
+        Entities(company.engine).register_worker(
+            {"display_name": employee, "action": "hire", "effective_date": "2026-01-01"},
+            entity_id=employee, expected_revision=1, evidence_digest=proof,
+            source="explicit synthetic workforce timeline", request_id="hire-" + employee,
+        )
     company.confirm_payroll("january-a", "january-b", "february-a", "february-b")
     for source in ("january-a", "january-b", "february-a", "february-b"):
         company.tax_basis(source, 0 if gross_fen == 0 else 12_600)
     company.publish("january-a", "january-b", "february-a", "february-b")
     company.close("2026-01")
     company.close("2026-02")
+    # Authoritative writes queue the asynchronous card; make its certified
+    # February overview available before testing that independent consumer.
+    produced = _produce(company.engine, "2026-02")
+    assert produced["status"] == "ready"
     dashboard = Dashboard(company.engine)
+    assert dashboard.employees("2026-02")["snapshot_version"] == produced["model_version"]
 
     def read(period="2026-02", **kwargs):
-        return dashboard.employees(period, preparation="deferred", employee_filter="all", **kwargs)
+        response = dashboard.employees(period, preparation="deferred", **kwargs)
+        # Native details and the certified default carry different version IDs.
+        response.pop("snapshot_version", None)
+        return response
 
     baseline = read()
     employees = baseline["data"]["collections"]["employees"]["items"]
@@ -84,9 +105,11 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
     focused = {"section": "employees", "employee_id": "employee-a"}
     baseline_a = read(**focused)
     assert len(baseline_a["data"]["collections"]["employees"]["items"]) == 1
+    baseline_all = read(employee_filter="all")
     with raw_read():
         assert read() == baseline
         assert read(**focused) == baseline_a
+        assert read(employee_filter="all") == baseline_all
     with company.engine.store.connection() as connection:
         row = connection.execute(
             "SELECT r.* FROM calculation_current h JOIN calculation c ON c.id=h.calculation_id "
@@ -115,21 +138,27 @@ def test_closed_historical_payroll_role_must_be_proved_before_employee_selection
                 (bad, original["fact_id"]),
             )
         try:
-            # The certified card retains the exact original payroll identity
-            # and money; this mutable role directory is not a model raw hit.
+            # The produced overview retains its exact original payroll identity
+            # and money; the mutable role directory is not a returned raw hit.
             assert read() == baseline
-            assert read(**focused) == baseline_a
             if subject == "january-a":
                 # February's native cohort does not use January's old role.
+                assert read(**focused) == baseline_a
+                assert read(employee_filter="all") == baseline_all
                 with raw_read():
                     assert read() == baseline
                     assert read(**focused) == baseline_a
                 selected_period = "2026-01"
             else:
                 selected_period = "2026-02"
+                # Focused cards remain bounded native reads and must authenticate
+                # the current month's role even beside an available overview.
+                with pytest.raises(KernelError) as failure:
+                    read(**focused)
+                assert failure.value.code == "entity_reference_corrupt"
             # Native selection of the damaged role's actual frozen month must
             # prove that role before assigning either list or focused card.
-            for kwargs in ({}, focused):
+            for kwargs in ({}, focused, {"employee_filter": "all"}):
                 with raw_read(), pytest.raises(KernelError) as failure:
                     read(selected_period, **kwargs)
                 assert failure.value.code == "entity_reference_corrupt"

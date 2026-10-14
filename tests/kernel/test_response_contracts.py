@@ -43,6 +43,30 @@ def prepare_http_delivery(service, company, payload):
         months = [f"{payload['year']:04d}-{month:02d}" for month in range(first, first + 3)]
     else:
         months = [payload["period"]]
+    # A projection request does not establish an actual company month. These
+    # transport-only empty-company scenarios explicitly declare their empty
+    # monthly transaction lists before recording the unchanged-business check.
+    from ai_accounting.kernel.periods import Periods
+    from ai_accounting.kernel.types import YearMonth
+
+    proof = None
+    for month in months:
+        with engine.store.connection(read_only=True) as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM fact_revision f JOIN fact_current c ON c.fact_id=f.id "
+                "WHERE f.period=? LIMIT 1", (YearMonth(month).ordinal,),
+            ).fetchone()
+        if exists is None:
+            if proof is None:
+                proof = engine.register_evidence(
+                    b"synthetic transport sample: empty monthly transaction lists confirmed",
+                    "text/plain", "synthetic empty month proof",
+                    request_id="response-contract-empty-month-proof",
+                )["digest"]
+            Periods(engine).inventory(
+                month, "transactions", evidence=[], expected=0, no_business=True,
+                confirmation_evidence=proof, request_id="response-contract-month-" + month,
+            )
     with engine.store.connection(read_only=True) as connection:
         before = tuple(connection.execute("SELECT * FROM state WHERE id=1").fetchone())
     for month in months:

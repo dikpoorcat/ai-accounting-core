@@ -64,7 +64,6 @@ def fork(
 
     from ai_accounting.kernel.backup import create_portable
     from ai_accounting.kernel.catalog import Catalog
-    from ai_accounting.kernel.schema_bundle import production_bundle
 
     checkpoint = (
         IndependentBook.CHECKPOINT
@@ -88,15 +87,16 @@ def fork(
     source_identity = _source_identity(book)
     company = dict(book.company)
     database = book.engine.store.path
+    source_bundle = book.engine.store.bundle
     del book
     archive = create_portable(
-        database, archive_directory, request_id="stage9-synthetic-prefix"
+        database, archive_directory, request_id="stage9-synthetic-prefix", _bundle=source_bundle,
     )
     # Reject concurrent fixture advancement before creating the new catalog.
     book_type.resume(source)
     if _file_digest(source / checkpoint) != before:
         raise ValueError("Synthetic source advanced while its backup was prepared")
-    catalog = Catalog(target, production_bundle())
+    catalog = Catalog(target, source_bundle)
     catalog.restore_company(
         archive["path"], taxpayer_id=company["taxpayer_id"], name=company["name"]
     )

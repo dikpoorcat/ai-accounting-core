@@ -56,6 +56,8 @@ def test_full_integrity_rejects_forged_card_adoption(closed_company, changed):
     engine = closed_company.engine
     with engine.store.connection(read_only=True) as connection:
         manifest = stored_manifest(connection)
+    replace_stored_manifest(engine, manifest, preserve_journal_reference=True)
+    assert verify(engine)["status"] == "verified"
     adoption = manifest["asset_card_adoptions"][0]
     if changed == "asset":
         adoption["asset_id"] = "unrelated-asset"
@@ -65,7 +67,7 @@ def test_full_integrity_rejects_forged_card_adoption(closed_company, changed):
         # A no-voucher card is a manifest member, but cannot stand in for its owner.
         adoption["acceptance_calculation_id"] = adoption["calculation_id"]
         adoption["acceptance_result_digest"] = adoption["result_digest"]
-    replace_stored_manifest(engine, manifest)
+    replace_stored_manifest(engine, manifest, preserve_journal_reference=True)
     with pytest.raises(KernelError) as failure:
         verify(engine, include_indexes=False)
     assert failure.value.code == "content_integrity_failed"

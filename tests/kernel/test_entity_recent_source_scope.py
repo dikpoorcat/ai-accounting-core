@@ -1,6 +1,7 @@
 """Recent entity use authenticates the exact current sources it displays."""
 
 import pytest
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
@@ -12,22 +13,31 @@ from ai_accounting.kernel.types import YearMonth
 
 @pytest.fixture
 def book(tmp_path):
-    engine = Engine(Store.create(
-        tmp_path / "entity-recent.sqlite", production_bundle(), "company",
-        "911100000000000001", "database",
-    ))
+    engine = Engine(
+        Store.create(
+            tmp_path / "entity-recent.sqlite",
+            production_bundle(),
+            "company",
+            "911100000000000001",
+            "database",
+        )
+    )
     return engine, Entities(engine)
 
 
 def person(directory, name, request, *, active=True):
     registered = directory.register_worker(
         {"display_name": name, "action": "hire", "effective_date": "2025-01"},
-        source="synthetic identity", request_id=request,
+        source="synthetic identity",
+        request_id=request,
     )
     if not active:
         directory.change_workforce_relationship(
-            registered["entity_id"], {"action": "depart", "effective_date": "2025-12"},
-            source="synthetic departure", expected_revision=1, request_id=request + "-depart",
+            registered["entity_id"],
+            {"action": "depart", "effective_date": "2025-12"},
+            source="synthetic departure",
+            expected_revision=1,
+            request_id=request + "-depart",
         )
     return registered["entity_id"]
 
@@ -37,10 +47,18 @@ def expense(engine, entity_id, subject, period):
         f"synthetic {subject}".encode(), "text/plain", "invoice", request_id=f"proof-{subject}"
     )["digest"]
     return engine.save_fact(
-        "expense", subject,
-        {"period": period, "counterparty_id": entity_id, "amount_fen": 100,
-         "expense_class": "administration", "creditor_kind": "employee"},
-        evidence=(proof,), expected_revision=0, request_id=f"save-{subject}",
+        "expense",
+        subject,
+        {
+            "period": period,
+            "counterparty_id": entity_id,
+            "amount_fen": 100,
+            "expense_class": "administration",
+            "creditor_kind": "employee",
+        },
+        evidence=(proof,),
+        expected_revision=0,
+        request_id=f"save-{subject}",
     )
 
 
@@ -59,11 +77,14 @@ def mutate_reference(engine, fact_id, field, value):
     return original
 
 
-@pytest.mark.parametrize("field,bad", [
-    ("period", YearMonth("2026-12").ordinal),
-    ("source_digest", b"\0" * 32),
-    ("kind", "payment"),
-])
+@pytest.mark.parametrize(
+    "field,bad",
+    [
+        ("period", YearMonth("2026-12").ordinal),
+        ("source_digest", b"\0" * 32),
+        ("kind", "payment"),
+    ],
+)
 def test_recent_positive_hit_rejects_damaged_winning_source(book, field, bad):
     engine, directory = book
     owner = person(directory, "Alpha", "alpha")
@@ -90,15 +111,18 @@ def test_tied_latest_sources_and_has_more_are_all_authenticated(book):
     second = person(directory, "Alpha Junior", "alpha-junior")
     person(directory, "Unused", "unused")
     directory.register_entity(
-        "organization", {"display_name": "Alpha"},
-        source="synthetic organization", request_id="alpha-organization",
+        "organization",
+        {"display_name": "Alpha"},
+        source="synthetic organization",
+        request_id="alpha-organization",
     )
     first_a = expense(engine, first, "first-a", "2026-02")
     first_b = expense(engine, first, "first-b", "2026-02")
     second_fact = expense(engine, second, "second", "2026-02")
     matching = directory.find_entities(query="Alp", kind="person")["items"]
     assert [item["recent_period"] for item in matching] == [
-        "2026-02", "2026-02",
+        "2026-02",
+        "2026-02",
     ]
     assert directory.find_entities(query="Unused")["items"][0]["recent_period"] is None
     assert directory.find_entities(query="Unused", used_from="2026-01")["items"] == []
@@ -145,16 +169,27 @@ def test_amended_current_source_replaces_old_revision_without_loading_old_index(
         b"synthetic corrected invoice", "text/plain", "invoice", request_id="amend-proof"
     )["digest"]
     engine.amend_fact(
-        "expense", "expense",
-        {"period": "2026-02", "counterparty_id": owner, "amount_fen": 100,
-         "expense_class": "administration", "creditor_kind": "employee"},
-        evidence=(new_proof,), expected_revision=1,
-        recording_error_confirmed=True, request_id="amend-expense",
+        "expense",
+        "expense",
+        {
+            "period": "2026-02",
+            "counterparty_id": owner,
+            "amount_fen": 100,
+            "expense_class": "administration",
+            "creditor_kind": "employee",
+        },
+        evidence=(new_proof,),
+        expected_revision=1,
+        recording_error_confirmed=True,
+        request_id="amend-expense",
     )
     with engine.store.connection(read_only=True) as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM fact_current WHERE fact_id=?", (old["fact_id"],)
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_current WHERE fact_id=?", (old["fact_id"],)
+            ).fetchone()[0]
+            == 0
+        )
     assert directory.find_entities(query="Amended")["items"][0]["recent_period"] == "2026-02"
 
 
@@ -162,36 +197,55 @@ def test_explicit_identity_correction_keeps_current_recency_at_new_owner(book):
     from ai_accounting.kernel.identity_corrections import IdentityCorrections
 
     engine, directory = book
+    adopt_empty_opening(engine, period="2026-01")
     first = person(directory, "Original", "original")
     second = person(directory, "Corrected", "corrected")
     proof = engine.register_evidence(
-        b"synthetic identity correction", "text/plain", "confirmation",
+        b"synthetic identity correction",
+        "text/plain",
+        "confirmation",
         request_id="correction-proof",
     )["digest"]
     original = {
-        "period": "2026-01", "counterparty_id": first, "amount_fen": 100,
-        "expense_class": "administration", "creditor_kind": "employee",
+        "period": "2026-01",
+        "counterparty_id": first,
+        "amount_fen": 100,
+        "expense_class": "administration",
+        "creditor_kind": "employee",
     }
     engine.save_fact(
-        "expense", "corrected-expense", original, evidence=(proof,),
-        expected_revision=0, request_id="save-corrected-expense",
+        "expense",
+        "corrected-expense",
+        original,
+        evidence=(proof,),
+        expected_revision=0,
+        request_id="save-corrected-expense",
     )
     publication = engine.preview(["corrected-expense"])
     engine.confirm(
-        ["corrected-expense"], preview_digest=publication["digest"],
-        epochs=publication["epochs"], request_id="publish-corrected-expense",
+        ["corrected-expense"],
+        preview_digest=publication["digest"],
+        epochs=publication["epochs"],
+        request_id="publish-corrected-expense",
     )
     kwargs = {
         "changes": [
-            {"subject_id": "corrected-expense", "expected_revision": 1,
-             "action": "reassign", "data": {**original, "counterparty_id": second}},
+            {
+                "subject_id": "corrected-expense",
+                "expected_revision": 1,
+                "action": "reassign",
+                "data": {**original, "counterparty_id": second},
+            },
         ],
-        "evidence": [proof], "reason": "synthetic confirmed identity correction",
+        "evidence": [proof],
+        "reason": "synthetic confirmed identity correction",
     }
     corrections = IdentityCorrections(engine)
     preview = corrections.preview_identity_correction(**kwargs)
     corrections.confirm_identity_correction(
-        **kwargs, preview_digest=preview["digest"], epochs=preview["epochs"],
+        **kwargs,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
         request_id="confirm-correction",
     )
     assert directory.find_entities(query="Original")["items"][0]["recent_period"] is None

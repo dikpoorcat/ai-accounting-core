@@ -78,7 +78,11 @@ def test_current_portable_backup_preserves_nonempty_history_and_frozen_position(
             assert all(item["format_version"] == 5 for item in manifests)
             assert all(item["fund_details"]["definitions"] for item in manifests)
             assert manifests[1]["readiness"]["financial_reports"]["facts"]
-            return tuple(connection.iterdump()), manifests
+            return tuple(
+                statement
+                for statement in connection.iterdump()
+                if not statement.startswith('INSERT INTO "dashboard_projection_reset" ')
+            ), manifests
 
     source_before, frozen_before = frozen_sources(engine)
     with raw_read():
@@ -89,9 +93,7 @@ def test_current_portable_backup_preserves_nonempty_history_and_frozen_position(
     assert report_before["summary"]["assets_total_fen"] == 40000
     assert report_before["summary"]["year_to_date_net_profit_fen"] == -10000
 
-    created = create_portable(
-        engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle
-    )
+    created = create_portable(engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle)
     verified = verify_portable(created["path"], _bundle=engine.store.bundle)
     assert verified["database_format"]["status"] == "draft"
     assert verified["database_format"]["version"] == 0
@@ -99,18 +101,24 @@ def test_current_portable_backup_preserves_nonempty_history_and_frozen_position(
     target = tmp_path / "independent-restored.sqlite"
     assert not target.exists()
     restored = restore_portable(
-        created["path"], target,
+        created["path"],
+        target,
         expected_company_id=engine.store.company_id,
         expected_database_id=engine.store.database_id,
         _bundle=engine.store.bundle,
     )
     assert restored["verification"]["status"] == "verified"
-    restored_engine = Engine(Store(
-        target, engine.store.bundle, engine.store.company_id, engine.store.database_id
-    ))
+    restored_engine = Engine(
+        Store(target, engine.store.bundle, engine.store.company_id, engine.store.database_id)
+    )
     restored_sources, restored_frozen = frozen_sources(restored_engine)
     assert restored_sources == source_before
     assert restored_frozen == frozen_before
+    with restored_engine.store.connection(read_only=True) as connection:
+        resets = connection.execute(
+            "SELECT sequence,publication_through,reason FROM dashboard_projection_reset"
+        ).fetchall()
+        assert [tuple(row) for row in resets] == [(1, 0, "restore")]
     with raw_read():
         report_after = Dashboard(restored_engine).quarterly_report(2026, 1)
     assert report_after["summary"] == report_before["summary"]
@@ -131,9 +139,10 @@ def test_current_portable_backup_preserves_nonempty_history_and_frozen_position(
         with pytest.raises(KernelError):
             verify_integrity(restored_engine, connection)
     assert frozen_sources(engine) == (source_before, frozen_before)
-    assert verify_portable(
-        created["path"], _bundle=engine.store.bundle
-    )["verification"]["status"] == "verified"
+    assert (
+        verify_portable(created["path"], _bundle=engine.store.bundle)["verification"]["status"]
+        == "verified"
+    )
 
 
 @pytest.mark.parametrize("close_version", [4, 5])

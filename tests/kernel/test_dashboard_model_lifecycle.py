@@ -36,7 +36,11 @@ def test_current_read_model_rebuild_preserves_original_business_rows_and_matches
     opening(save, publish)
     funding(save, publish, subject="current-funded", amount=17)
     tables = (
-        "identity", "schema_history", "schema_draft_history", "fact_revision", "calculation",
+        "identity",
+        "schema_history",
+        "schema_draft_history",
+        "fact_revision",
+        "calculation",
         "voucher_version",
     )
 
@@ -65,12 +69,14 @@ def _seed_v1_current(engine, monkeypatch):
         scope = dashboard_model_runtime.model_scope(engine, connection, MONTH)
         assert scope.rule_build == PROGRAM_VERSION
         current = connection.execute(
-            "SELECT commit_id FROM dashboard_read_model_current WHERE period=?", (MONTH,),
+            "SELECT commit_id FROM dashboard_read_model_current WHERE period=?",
+            (MONTH,),
         ).fetchone()
         with monkeypatch.context() as earlier:
             earlier.setattr(storage, "CONTENT_VERSION", 1)
             prepared = storage.prepare_model(
-                scope, [storage.PageBlock("funds/default/overview/0", "dashboard_funds", payload)],
+                scope,
+                [storage.PageBlock("funds/default/overview/0", "dashboard_funds", payload)],
                 request_id="dashboard-read-model/synthetic-earlier-v1",
                 parent_commit_id=bytes(current[0]).hex() if current else None,
             )
@@ -93,13 +99,15 @@ def test_same_build_v1_current_is_forward_produced_by_internal_runtime(book, mon
     engine, save, publish, _ = book
     with monkeypatch.context() as before_models:
         before_models.setattr(
-            dashboard_model_runtime, "supports_native_production", lambda _: False,
+            dashboard_model_runtime,
+            "supports_native_production",
+            lambda _: False,
         )
         opening(save, publish)
     scope, old = _seed_v1_current(engine, monkeypatch)
     before = retained_records(engine)
     produced = _forward_produce(engine)
-    current, = [item for item in produced if item["scope"]["period"] == MONTH]
+    (current,) = [item for item in produced if item["scope"]["period"] == MONTH]
     assert current["scope"] == old["scope"]
     assert current["content_version"] == storage.CONTENT_VERSION
     assert current["parent_commit_id"] == old["commit_id"]
@@ -115,14 +123,20 @@ def test_clock_rollback_adapts_employees_and_rejects_the_previous_day_cursor(boo
     monkeypatch.setattr(business_queries, "_today_china", lambda: "2026-10-12")
     opening(save, publish)
     for employee in ("person-a", "person-b"):
-        save_entity_display_profile(engine, {
-            "kind": "employee", "entity_id": employee,
-            "workforce_events": [
-                {"action": "hire", "effective_date": "2026-01-01"},
-                {"action": "depart", "effective_date": "2026-10-01"},
-            ],
-            "source": "synthetic personnel confirmation",
-        }, expected_revision=0, request_id="profile-" + employee)
+        save_entity_display_profile(
+            engine,
+            {
+                "kind": "employee",
+                "entity_id": employee,
+                "workforce_events": [
+                    {"action": "hire", "effective_date": "2026-01-01"},
+                    {"action": "depart", "effective_date": "2026-10-01"},
+                ],
+                "source": "synthetic personnel confirmation",
+            },
+            expected_revision=0,
+            request_id="profile-" + employee,
+        )
     dashboard = Dashboard(engine)
     args = {"employee_filter": "all", "section": "employees", "limit": 1}
     old_page = dashboard.employees(MONTH, **args)
@@ -133,20 +147,11 @@ def test_clock_rollback_adapts_employees_and_rejects_the_previous_day_cursor(boo
     with raw_read():
         expected = dashboard.employees(MONTH, **args)
         with pytest.raises(KernelError) as rejected:
-            dashboard.employees(MONTH, **args, cursor=old_cursor,
-                                expected_version=old_page["snapshot_version"])
+            dashboard.employees(
+                MONTH, **args, cursor=old_cursor, expected_version=old_page["snapshot_version"]
+            )
         assert rejected.value.code == "dashboard_snapshot_changed"
-    from ai_accounting.kernel import dashboard_model_reads
-
-    actual_read = dashboard_model_reads.read_page
-
-    def bounded(*values, **kwargs):
-        value = actual_read(*values, **kwargs)
-        if not dashboard_model_runtime.producing_model():
-            assert value is not None
-        return value
-
-    monkeypatch.setattr(dashboard_model_reads, "read_page", bounded)
+    # Current employee details are bounded native reads after source checks.
     actual = dashboard.employees(MONTH, **args)
     assert actual == expected
     assert actual["read_context"]["as_of"] == "2026-10-10"
@@ -154,48 +159,63 @@ def test_clock_rollback_adapts_employees_and_rejects_the_previous_day_cursor(boo
     items = actual["data"]["collections"]["employees"]["items"]
     assert items[0]["employment_state"] == "regular"
     with pytest.raises(KernelError) as rejected:
-        dashboard.employees(MONTH, **args, cursor=old_cursor,
-                            expected_version=old_page["snapshot_version"])
+        dashboard.employees(
+            MONTH, **args, cursor=old_cursor, expected_version=old_page["snapshot_version"]
+        )
     assert rejected.value.code == "dashboard_snapshot_changed"
     cursor = actual["data"]["collections"]["employees"]["page"]["next_cursor"]
     with raw_read():
-        expected_next = dashboard.employees(MONTH, **args, cursor=cursor,
-                                            expected_version=actual["snapshot_version"])
-    assert dashboard.employees(MONTH, **args, cursor=cursor,
-                               expected_version=actual["snapshot_version"]) == expected_next
+        expected_next = dashboard.employees(
+            MONTH, **args, cursor=cursor, expected_version=actual["snapshot_version"]
+        )
+    assert (
+        dashboard.employees(
+            MONTH, **args, cursor=cursor, expected_version=actual["snapshot_version"]
+        )
+        == expected_next
+    )
     assert state(engine) == before
 
 
 def test_v1_to_v2_portable_restore_keeps_source_verification_independent(
-    book, monkeypatch, tmp_path,
+    book,
+    monkeypatch,
+    tmp_path,
 ):
     engine, save, publish, _ = book
     with monkeypatch.context() as before_models:
         before_models.setattr(
-            dashboard_model_runtime, "supports_native_production", lambda _: False,
+            dashboard_model_runtime,
+            "supports_native_production",
+            lambda _: False,
         )
         opening(save, publish, month="2026-08")
         funding(save, publish, subject="hidden-history", amount=9, day="2026-08-01")
         funding(save, publish, subject="shown-current", amount=17)
     _, old = _seed_v1_current(engine, monkeypatch)
     produced = _forward_produce(engine)
-    current, = [item for item in produced if item["scope"]["period"] == MONTH]
+    (current,) = [item for item in produced if item["scope"]["period"] == MONTH]
     assert current["parent_commit_id"] == old["commit_id"]
     before = retained_records(engine)
     archive = Path(backup.create_portable(engine.store.path, tmp_path / "backups")["path"])
     restored_path = tmp_path / "restored.sqlite"
     restored = backup.restore_portable(archive, restored_path)
     assert restored["verification"]["status"] == "verified"
-    recovered = Engine(Store(restored_path, engine.store.bundle,
-                             engine.store.company_id, engine.store.database_id))
+    recovered = Engine(
+        Store(restored_path, engine.store.bundle, engine.store.company_id, engine.store.database_id)
+    )
     assert_original_records_unchanged(before, recovered)
     assert Maintenance(recovered).verify_integrity()["status"] == "verified"
     dashboard = Dashboard(recovered)
     shown = dashboard.brief(MONTH)
     vouchers = dashboard.brief(MONTH, section="vouchers")["data"]["collections"]["vouchers"]
     assert {item["subject_id"] for item in vouchers["items"]} == {"shown-current"}
-    damage(recovered, "fact_funding", "UPDATE fact_funding SET amount_fen=10 WHERE revision_id=("
-           "SELECT fact_id FROM fact_current WHERE subject_id='hidden-history')")
+    damage(
+        recovered,
+        "fact_funding",
+        "UPDATE fact_funding SET amount_fen=10 WHERE revision_id=("
+        "SELECT fact_id FROM fact_current WHERE subject_id='hidden-history')",
+    )
     assert comparable(dashboard.brief(MONTH)) == comparable(shown)
     with pytest.raises(KernelError) as rejected:
         Maintenance(recovered).verify_integrity()

@@ -11,6 +11,7 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.entities import Entities, WorkerRegistration
 from ai_accounting.kernel.entity_profile_history import PreEventProfile
+from ai_accounting.kernel.offline_development_upgrade import upgrade_company
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
@@ -52,6 +53,7 @@ def original_metadata(tmp_path, request):
     with closing(connect(path)) as connection:
         before = dict(connection.execute("SELECT * FROM entity_profile_revision").fetchone())
         adjust_connection(connection, kind="company")
+        upgrade_company(connection, production_bundle())
     current = Engine(Store(path, production_bundle(), "synthetic-company", "synthetic-database"))
     return current, saved, before, proof
 

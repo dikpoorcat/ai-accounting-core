@@ -160,10 +160,17 @@ def test_complete_card_response_and_work_with_object_and_profile_history_growth(
                 "SELECT id FROM calculation WHERE kind='asset_activation_batch'"
             ).fetchone()[0]
         selected_before = view.assets("2026-04", asset_id=identities[0])
+        assert selected_before["data"]["collections"]["assets"]["items"][0][
+            "asset_id"
+        ] == identities[0]
         damage(engine, "asset_batch_member",
                "DELETE FROM asset_batch_member WHERE owner_calculation_id=? AND asset_id=?",
                (owner, identities[-1]), foreign_keys=False)
-        assert view.assets("2026-04", asset_id=identities[0]) == selected_before
+        # Filtered reads use the complete native owner directory. A missing
+        # non-displayed member still invalidates that directory's source proof.
+        with pytest.raises(KernelError) as failure:
+            view.assets("2026-04", asset_id=identities[0])
+        assert failure.value.code == "asset_batch_digest"
         for read in (lambda: view.assets("2026-04", asset_id=identities[0]),
                      lambda: old_page(engine, "2026-04", asset_id=identities[0])):
             with raw_read(), pytest.raises(KernelError):
@@ -227,6 +234,7 @@ def test_failed_complete_activation_identity_never_publishes_selection_cache(
     engine = company.engine
     company.close("2026-02")
     before = Dashboard(engine).assets("2026-02", asset_id="computer")
+    assert before["data"]["collections"]["assets"]["items"][0]["asset_id"] == "computer"
     with engine.store.connection(read_only=True) as connection:
         owner = connection.execute(
             "SELECT id FROM calculation WHERE kind='asset_activation_batch'"
@@ -248,11 +256,11 @@ def test_failed_complete_activation_identity_never_publishes_selection_cache(
                 "asset_owner_identity_selection", "asset_activation_identity_events",
             }
                            for key in snap.reads._report_snapshot_cache)
-    if bad == "other_member":
-        assert Dashboard(engine).assets("2026-02", asset_id="computer") == before
-    else:
-        with pytest.raises(KernelError):
-            Dashboard(engine).assets("2026-02", asset_id="computer")
+    with pytest.raises(KernelError) as failure:
+        Dashboard(engine).assets("2026-02", asset_id="computer")
+    assert failure.value.code == (
+        "asset_batch_identity" if bad == "other_member" else "content_integrity_failed"
+    )
     with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-02", asset_id="computer")
 
@@ -264,6 +272,7 @@ def test_latest_member_body_remains_strict_and_failure_is_not_cached(activated_c
     month(engine, evidence, "2026-03", "consume-positive")
     company.close("2026-03")
     before = Dashboard(engine).assets("2026-03", asset_id="chair")
+    assert before["data"]["collections"]["assets"]["items"][0]["asset_id"] == "chair"
     with engine.store.connection(read_only=True) as connection:
         member = dict(connection.execute(
             "SELECT m.*,c.outcome FROM asset_batch_member m JOIN calculation o "
@@ -272,7 +281,9 @@ def test_latest_member_body_remains_strict_and_failure_is_not_cached(activated_c
         ).fetchone())
     damage(engine, "calculation", "UPDATE calculation SET outcome=? WHERE id=?",
            ('{"values":{},' + member["outcome"][1:], member["member_calculation_id"]))
-    assert Dashboard(engine).assets("2026-03", asset_id="chair") == before
+    with pytest.raises(KernelError) as failure:
+        Dashboard(engine).assets("2026-03", asset_id="chair")
+    assert failure.value.code == "content_integrity_failed"
     with raw_read(), pytest.raises(KernelError):
         Dashboard(engine).assets("2026-03", asset_id="chair")
     with Dashboard(engine)._snapshot("2026-03") as snap:

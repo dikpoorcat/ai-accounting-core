@@ -77,6 +77,36 @@ def remuneration_document(kind="payroll", tax_fen=0):
             },
             ["worker"],
         )
+    elif kind in {"labor_accrual", "labor_project_cost"}:
+        if kind == "labor_project_cost":
+            value["entities"].append(
+                {
+                    "key": "project",
+                    "kind": "project",
+                    "data": {"display_name": "Synthetic accepted project"},
+                    "sources": ["owner-original"],
+                }
+            )
+        data = {
+            "period": "2026-01",
+            "person_id": person,
+            "gross_fee_fen": 100_000,
+            "tax_treatment": "not_withheld_not_filed",
+        }
+        data |= (
+            {
+                "project_id": "$ref:project:entity_id",
+                "capitalization_conditions_confirmed": True,
+            }
+            if kind == "labor_project_cost"
+            else {"expense_class": "management"}
+        )
+        add(
+            "wage",
+            kind,
+            data,
+            ["worker", "project"] if kind == "labor_project_cost" else ["worker"],
+        )
     else:
         add(
             "wage",
@@ -116,7 +146,10 @@ def node(compiled, key):
     )
 
 
-@pytest.mark.parametrize("kind", ["payroll", "payroll_bounded", "annual_bonus", "labor"])
+@pytest.mark.parametrize(
+    "kind",
+    ["payroll", "payroll_bounded", "annual_bonus", "labor", "labor_accrual", "labor_project_cost"],
+)
 @pytest.mark.parametrize("tax_fen", [0, 500])
 def test_tax_basis_consumes_saved_version_and_precedes_adoption(kind, tax_fen):
     compiled = compile_document(remuneration_document(kind, tax_fen))
@@ -148,11 +181,12 @@ def test_tax_basis_consumes_saved_version_and_precedes_adoption(kind, tax_fen):
 
 
 @pytest.mark.parametrize("change", ["kind", "period", "exact_source", "missing", "duplicate"])
-def test_conflicting_or_missing_tax_basis_blocks_compilation(change):
-    value = remuneration_document()
+@pytest.mark.parametrize("kind", ["payroll", "payroll_bounded", "annual_bonus", "labor"])
+def test_conflicting_or_missing_tax_basis_blocks_compilation(change, kind):
+    value = remuneration_document(kind)
     tax = value["facts"][-1]
     if change == "kind":
-        tax["data"]["source_kind"] = "labor"
+        tax["data"]["source_kind"] = "payroll" if kind == "labor" else "labor"
     elif change == "period":
         tax["data"]["period"] = "2026-02"
     elif change == "exact_source":
@@ -233,30 +267,40 @@ def test_pooled_tax_waits_for_all_saved_sources_without_publication_cycle(wrong_
         assert node(compiled, "publication-confirm:peer")["step_id"] not in tax["depends_on"]
 
 
-def test_accrued_labor_does_not_require_or_become_a_tax_confirmed_payment():
-    value = document()
-    value["entities"] = [
-        {
-            "key": "worker",
-            "kind": "person",
-            "data": {"display_name": "Synthetic worker"},
-            "sources": ["owner-original"],
-        }
-    ]
-    value["facts"].append(
-        {
-            "key": "accrual",
-            "kind": "labor_accrual",
-            "data": {
-                "period": "2026-01",
-                "person_id": "$ref:worker:entity_id",
-                "expense_class": "management",
-                "gross_fee_fen": 100_000,
-                "tax_treatment": "not_withheld_not_filed",
-            },
-            "source_keys": ["owner-original"],
-            "depends_on": ["worker"],
-        }
-    )
+@pytest.mark.parametrize("kind", ["labor_accrual", "labor_project_cost"])
+def test_accrued_labor_does_not_require_or_become_a_tax_confirmed_payment(kind):
+    value = remuneration_document(kind)
+    value["facts"].pop()
     compiled = compile_document(value)
-    assert node(compiled, "fact-save:accrual")["payload"]["facts"][0]["kind"] == "labor_accrual"
+    saved = node(compiled, "fact-save:wage")["payload"]["facts"][0]
+    assert saved["kind"] == kind
+    assert saved["data"]["gross_fee_fen"] == 100_000
+    assert saved["data"]["tax_treatment"] == "not_withheld_not_filed"
+    assert "tax_amount_fen" not in saved["data"]
+    assert not any(
+        fact["kind"] == "remuneration_tax_basis"
+        for step in compiled["request"]["steps"]
+        if step["command"] == "save_facts"
+        for fact in step["payload"]["facts"]
+    )
+
+
+@pytest.mark.parametrize("kind", ["labor_accrual", "labor_project_cost"])
+@pytest.mark.parametrize("change", ["kind", "period", "exact_source", "duplicate"])
+def test_optional_accrual_tax_basis_still_requires_one_exact_valid_source(kind, change):
+    value = remuneration_document(kind, 500)
+    tax = value["facts"][-1]
+    if change == "kind":
+        tax["data"]["source_kind"] = "labor"
+    elif change == "period":
+        tax["data"]["period"] = "2026-02"
+    elif change == "exact_source":
+        tax["data"]["source_fact_id"] = "$ref:opening:zero:fact_id"
+    else:
+        value["facts"].append(copy.deepcopy(tax) | {"key": "second-tax"})
+    with pytest.raises(ReplayDocumentCompileError) as error:
+        compile_document(value)
+    assert {issue["code"] for issue in error.value.issues} & {
+        "remuneration_tax_source_conflict",
+        "ambiguous_remuneration_tax_basis",
+    }

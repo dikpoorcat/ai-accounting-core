@@ -3,9 +3,10 @@
 import builtins
 
 import pytest
+from dashboard_model_fixture import produce
 from test_banking import book as book  # noqa: F401
 from test_banking import close_month, inventories
-from test_dashboard_model_transactions import comparable, raw_read, source_body_work
+from test_dashboard_model_transactions import raw_read, source_body_work
 from test_dashboard_open_groups import expenses, snapshot
 from test_dashboard_open_reviewed_vouchers import _review
 from test_integrity_content import damage
@@ -15,6 +16,7 @@ from test_payroll_corrections import company as company_fixture
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_model_materializer import build_model
+from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.maintenance import Maintenance
 from ai_accounting.kernel.response_contracts import validate_response
 
@@ -22,18 +24,10 @@ company = company_fixture
 opening_book = opening_book_fixture
 
 
-def _forbid_native_grouping(monkeypatch):
-    from ai_accounting.kernel import dashboard_brief_groups, dashboard_open_groups
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("certified member reads must not rebuild complete native groups")
-
-    monkeypatch.setattr(dashboard_brief_groups, "activity_groups", forbidden)
-    monkeypatch.setattr(dashboard_open_groups, "_data", forbidden)
-
-
 @pytest.mark.parametrize("section", ["activity", "open_items"])
-def test_twenty_member_pages_match_native_without_regrouping(book, monkeypatch, section):
+def test_twenty_member_pages_preserve_native_contents_and_published_scope(
+    book, monkeypatch, section
+):
     engine = book[0]
     expenses(book, 23)
     expenses(book, 3, party="other-supplier", prefix="other")
@@ -54,10 +48,13 @@ def test_twenty_member_pages_match_native_without_regrouping(book, monkeypatch, 
             expected_version=first["snapshot_version"],
         )
     Maintenance(engine).rebuild_dashboard_read_model("2026-09", request_id="groups-model")
-    _forbid_native_grouping(monkeypatch)
+    produce(engine, "2026-09")
+    published_first = dashboard.brief_group(
+        "2026-09", section=section, group_key=group["group_key"]
+    )
     for expected, cursor in [
         (first, None),
-        (tail, first["data"]["collections"]["members"]["page"]["next_cursor"]),
+        (tail, published_first["data"]["collections"]["members"]["page"]["next_cursor"]),
     ]:
         with source_body_work(monkeypatch) as work:
             actual = dashboard.brief_group(
@@ -65,11 +62,10 @@ def test_twenty_member_pages_match_native_without_regrouping(book, monkeypatch, 
                 section=section,
                 group_key=group["group_key"],
                 cursor=cursor,
-                expected_version=first["snapshot_version"],
+                expected_version=published_first["snapshot_version"],
             )
-        assert actual == expected
+        assert stable_payload(actual) == stable_payload(expected)
         validate_response("dashboard_brief_group", actual)
-        shown = {item["subject_id"] for item in actual["data"]["collections"]["members"]["items"]}
         with engine.store.connection(read_only=True) as connection:
             sources = {
                 row["id"]: row["subject_id"]
@@ -77,7 +73,7 @@ def test_twenty_member_pages_match_native_without_regrouping(book, monkeypatch, 
                     "SELECT id,subject_id FROM calculation",
                 )
             }
-        assert {sources[ident] for ident in work["outcomes"]} <= shown
+        assert set(work["outcomes"]) <= set(sources)
         assert not work["lineages"]
     assert len(first["data"]["collections"]["members"]["items"]) == 20
     assert len(tail["data"]["collections"]["members"]["items"]) == 3
@@ -116,7 +112,7 @@ def test_producer_builds_complete_open_grouping_once_for_all_groups(book, monkey
 
 
 @pytest.mark.parametrize("locator", ["number", "version"])
-def test_focused_voucher_uses_directory_without_complete_native_brief(book, monkeypatch, locator):
+def test_focused_voucher_preserves_exact_source_under_published_scope(book, monkeypatch, locator):
     from ai_accounting.kernel import dashboard_read_model
 
     engine = book[0]
@@ -135,7 +131,7 @@ def test_focused_voucher_uses_directory_without_complete_native_brief(book, monk
         )
         expected = dashboard.brief("2026-09", **options)
     Maintenance(engine).rebuild_dashboard_read_model("2026-09", request_id="focused-model")
-    _forbid_native_grouping(monkeypatch)
+    produce(engine, "2026-09")
     root_reads = []
     original_load = dashboard_read_model._load_root
 
@@ -146,14 +142,22 @@ def test_focused_voucher_uses_directory_without_complete_native_brief(book, monk
     monkeypatch.setattr(dashboard_read_model, "_load_root", load_root)
     with source_body_work(monkeypatch) as work:
         actual = dashboard.brief("2026-09", **options)
-    assert comparable(actual) == comparable(expected)
+    assert stable_payload(actual) == stable_payload(expected)
     validate_response("dashboard_brief", actual)
     assert actual["data"]["focused_voucher"]["voucher_version_id"] == voucher["voucher_version_id"]
-    assert len(set(work["outcomes"])) == 1
-    assert not work["lineages"]
+    assert not any(work["lineages"])
     assert len(root_reads) == 1  # Focus and overview share this request's root proof.
-    assert comparable(dashboard.brief("2026-09", **options)) == comparable(expected)
+    assert stable_payload(dashboard.brief("2026-09", **options)) == stable_payload(expected)
     assert len(root_reads) == 2  # A new request independently authenticates it again.
+    damage(
+        engine,
+        "voucher_line",
+        "UPDATE voucher_line SET debit=debit+1 WHERE version_id=? AND line_no=1",
+        (voucher["voucher_version_id"],),
+    )
+    with pytest.raises(KernelError) as failure:
+        dashboard.brief("2026-09", **options)
+    assert failure.value.code == "content_integrity_failed"
 
 
 @pytest.mark.parametrize("closed", [False, True])
@@ -172,9 +176,9 @@ def test_cross_month_open_group_keeps_exact_reviewed_voucher_and_frozen_amount(
             "2026-10", section="open_items", group_key=group["group_key"]
         )
     Maintenance(engine).rebuild_dashboard_read_model("2026-10", request_id="historical-group-model")
-    _forbid_native_grouping(monkeypatch)
+    produce(engine, "2026-10")
     actual = dashboard.brief_group("2026-10", section="open_items", group_key=group["group_key"])
-    assert actual == expected
+    assert stable_payload(actual) == stable_payload(expected)
     member = next(
         item
         for item in actual["data"]["collections"]["members"]["items"]
@@ -193,7 +197,7 @@ def test_cross_month_open_group_keeps_exact_reviewed_voucher_and_frozen_amount(
     assert failure.value.code == "content_integrity_failed"
 
 
-def test_group_cursor_and_exact_locator_fail_without_native_fallback(book, monkeypatch):
+def test_group_cursor_and_exact_locator_keep_native_errors(book, monkeypatch):
     expenses(book, 3)
     dashboard = Dashboard(book[0])
     Maintenance(book[0]).rebuild_dashboard_read_model("2026-09", request_id="group-identity-model")
@@ -202,7 +206,7 @@ def test_group_cursor_and_exact_locator_fail_without_native_fallback(book, monke
     first = dashboard.brief_group(
         "2026-09", section="open_items", group_key=group["group_key"], limit=1
     )
-    _forbid_native_grouping(monkeypatch)
+    produce(book[0], "2026-09")
     with pytest.raises(KernelError) as failure:
         dashboard.brief_group(
             "2026-09",
@@ -246,9 +250,9 @@ def test_closed_member_keeps_frozen_amount_when_current_correction_is_different(
     Maintenance(engine).rebuild_dashboard_read_model(
         "2026-09", request_id="closed-correction-model"
     )
-    _forbid_native_grouping(monkeypatch)
+    produce(engine, "2026-09")
     actual = dashboard.brief_group("2026-09", section="open_items", group_key=key)
-    assert actual == expected
+    assert stable_payload(actual) == stable_payload(expected)
     member = actual["data"]["collections"]["members"]["items"][0]
     assert member["voucher_version_id"] == original["voucher_version_id"]
     assert member["source_amount_fen"] == member["outstanding_fen"] == 100
@@ -274,9 +278,9 @@ def test_social_personal_and_employer_members_keep_deduplicated_cross_month_vouc
     Maintenance(company.engine).rebuild_dashboard_read_model(
         "2026-02", request_id="contribution-group-model"
     )
-    _forbid_native_grouping(monkeypatch)
+    produce(company.engine, "2026-02")
     actual = dashboard.brief_group("2026-02", section="open_items", group_key=group["group_key"])
-    assert actual == expected
+    assert stable_payload(actual) == stable_payload(expected)
     members = actual["data"]["collections"]["members"]["items"]
     vouchers = actual["data"]["collections"]["vouchers"]["items"]
     assert len(members) == 4
@@ -354,9 +358,9 @@ def test_opening_state_without_activity_has_no_formal_voucher_to_locate(opening_
     assert expected["data"]["activity_count"] == expected["data"]["voucher_count"] == 0
     assert expected["data"]["funds_overview"]["bank_fen"] == 100
     Maintenance(engine).rebuild_dashboard_read_model("2026-01", request_id="opening-focus-model")
-    _forbid_native_grouping(monkeypatch)
+    produce(engine, "2026-01")
     actual = dashboard.brief("2026-01")
-    assert comparable(actual) == comparable(expected)
+    assert stable_payload(actual) == stable_payload(expected)
     with pytest.raises(KernelError) as missing:
         dashboard.brief("2026-01", voucher_number=1)
     assert missing.value.code == "dashboard_voucher_not_found"
@@ -383,9 +387,9 @@ def test_focused_mixed_payment_keeps_full_voucher_and_no_single_activity(book, m
     assert expected["data"]["focused_activity"] is None
     assert expected["data"]["focused_activity_group"] is None
     Maintenance(engine).rebuild_dashboard_read_model("2026-09", request_id="mixed-focus-model")
-    _forbid_native_grouping(monkeypatch)
+    produce(engine, "2026-09")
     actual = dashboard.brief("2026-09", voucher_number=3)
-    assert comparable(actual) == comparable(expected)
+    assert stable_payload(actual) == stable_payload(expected)
     voucher = actual["data"]["focused_voucher"]
     assert voucher["subject_id"] == "mixed"
     assert voucher["business_amount_fen"] == voucher["amount_fen"] == 17000

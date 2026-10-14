@@ -2,6 +2,8 @@
 
 import pytest
 import test_banking as banking
+from dashboard_model_fixture import produce
+from opening_fixture import adopt_empty_opening
 from stage9_metrics import measure_work
 from test_dashboard_funds_alignment import _publish_filter_funding
 from test_dashboard_transport import authenticated
@@ -115,16 +117,23 @@ def test_http_first_account_and_default_full_company_query(resident):
     service, _, _, http, _ = resident
     headers, _ = authenticated(resident)
     company = service.catalog.create_company("91310000123456789A", "自动账户测试")["id"]
-    _publish_filter_funding(service.engine(company), ["bank-b", "bank-a", "bank-a"])
+    engine = service.engine(company)
+    adopt_empty_opening(engine, period="2026-09")
+    _publish_filter_funding(engine, ["bank-b", "bank-a", "bank-a"])
+    produce(engine, "2026-09")
     query = f"/api/dashboard/funds?company_id={company}&period=2026-09"
     status, _, _, response = http.request(
         query + "&movement_account_selection=first", headers=headers
     )
     assert status == 200
+    assert response["state"] == "ready", response
+    response = response["response"]
     assert response["data"]["selected_movement_account"] == {"type": "bank", "account_id": "bank-a"}
     assert response["data"]["collections"]["movements"]["page"]["filtered_count"] == 2
     status, _, _, response = http.request(query, headers=headers)
     assert status == 200
+    assert response["state"] == "ready", response
+    response = response["response"]
     assert response["data"]["selected_movement_account"] is None
     assert response["data"]["collections"]["movements"]["page"]["filtered_count"] == 3
     status, _, _, response = http.request(

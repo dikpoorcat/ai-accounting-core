@@ -9,18 +9,19 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from dashboard_model_fixture import derived_connection, model_current, produce
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from opening_fixture import adopt_empty_opening
 from test_banking import funding, opening
-from test_dashboard_model_integrity import current_content
 from test_dashboard_model_transactions import raw_read, state
 from test_integrity_content import damage
 from test_resident_service import PASSWORD
 from test_resident_service import resident as resident_fixture
 
-from ai_accounting.kernel import dashboard_model_reads, dashboard_model_runtime
+from ai_accounting.kernel import dashboard_model_reads
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.entities import Entities
@@ -116,6 +117,7 @@ def transport_book(resident, tmp_path, monkeypatch):
     assert server.server_port != 5173
     company = service.catalog.create_company("91310000123456789A", "合成stdio读取企业")
     engine = service.engine(company["id"])
+    adopt_empty_opening(engine, period="2026-08")
     proof = engine.register_evidence(
         b"synthetic real transport evidence", "text/plain", "fixture", request_id="transport-proof"
     )["digest"]
@@ -137,7 +139,9 @@ def transport_book(resident, tmp_path, monkeypatch):
     opening(save, publish, month="2026-08")
     funding(save, publish, subject="hidden-history", amount=9, day="2026-08-01")
     funding(save, publish, subject="shown-current", amount=AMOUNT)
-    with engine.store.connection(read_only=True) as connection:
+    for period in ("2026-08", MONTH):
+        produce(engine, period)
+    with derived_connection(engine) as connection:
         assert {"2026-08", MONTH} <= {row[0] for row in connection.execute(
             "SELECT period FROM dashboard_read_model_current"
         )}
@@ -206,52 +210,70 @@ def test_real_cli_and_mcp_stdio_schema_and_five_registered_model_pages(transport
                         observed.clear()
                         value = (cli_call(root, tmp_path, command, payload) if call == "cli"
                                  else await mcp_call(session, command, payload))
-                        assert stable_payload(value) == expected[page]
+                        assert value["state"] == "ready", value
+                        assert stable_payload(value["response"]) == expected[page]
                         assert (page, True) in observed
                         if page == "brief":
-                            amount = value["data"]["funds_overview"]["bank_fen"]
+                            amount = value["response"]["data"]["funds_overview"]["bank_fen"]
                             assert type(amount) is int and amount == AMOUNT + 9
                 invalid = {"company_id": company["id"], "period": "bad"}
                 for value in (
                     cli_call(root, tmp_path, PAGES["brief"], invalid),
                     await mcp_call(session, PAGES["brief"], invalid),
                 ):
-                    assert value["status"] == "rejected" and value["code"] == "invalid_command"
+                    assert value.get("status") == "rejected", value
+                    assert value["code"] == "invalid_command"
                 assert state(engine) == before
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=180))
 
 
-def test_real_transports_fallback_readonly_and_keep_independent_damage_rejection(
-    transport_book, tmp_path, monkeypatch
+def test_real_transports_prepare_without_business_writes_and_keep_damage_rejection(
+    transport_book, tmp_path,
 ):
     _, engine, company, root, _, observed, save, publish = transport_book
-
-    # A legitimate earlier producer writes an ordinary typed fact in a new
-    # month without creating a model. A nonexistent month is not a page.
-    with monkeypatch.context() as earlier_writer:
-        earlier_writer.setattr(
-            dashboard_model_runtime, "supports_native_production", lambda _: False)
-        funding(save, publish, subject="unregistered-month", amount=1, day="2026-10-01")
+    funding(save, publish, subject="unproduced-month", amount=1, day="2026-10-01")
     with engine.store.connection(read_only=True) as connection:
         assert connection.execute(
-            "SELECT 1 FROM dashboard_read_model_current WHERE period='2026-10'"
+            "SELECT 1 FROM dashboard_projection_current WHERE period='2026-10'"
         ).fetchone() is None
 
-    async def pages(session, period, *, modeled):
-        expected = native_pages(engine, period)
-        before = state(engine)
+    def authority():
+        with engine.store.connection(read_only=True) as connection:
+            names = [row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"
+            ) if not row[0].startswith(("sqlite_", "dashboard_"))
+                and row[0] not in {"audit", "request", "operation_timing"}]
+            data = {name: tuple(tuple(row) for row in connection.execute(
+                f'SELECT * FROM "{name}" ORDER BY rowid'
+            )) for name in names}
+            data["business_audit"] = tuple(tuple(row) for row in connection.execute(
+                "SELECT * FROM audit WHERE action NOT LIKE 'dashboard_projection_%' ORDER BY id"
+            ))
+            data["business_requests"] = tuple(tuple(row) for row in connection.execute(
+                "SELECT * FROM request WHERE id IN(SELECT request_id FROM audit "
+                "WHERE action NOT LIKE 'dashboard_projection_%') ORDER BY id"
+            ))
+            return data
+
+    async def pages(session, period, *, ready):
+        expected = native_pages(engine, period) if ready else None
+        before = authority()
         for page, command in PAGES.items():
             payload = page_payload(company, page, period)
             for call in ("cli", "mcp"):
                 observed.clear()
                 value = (cli_call(root, tmp_path, command, payload) if call == "cli"
                          else await mcp_call(session, command, payload))
-                assert stable_payload(value) == expected[page]
-                assert (page, modeled) in observed
-                if not modeled:
-                    assert not any(used for _, used in observed)
-        assert state(engine) == before
+                if ready:
+                    assert value["state"] == "ready", value
+                    assert stable_payload(value["response"]) == expected[page]
+                    assert (page, True) in observed
+                else:
+                    assert value["state"] == "preparing", value
+                    assert "response" not in value and value["model_version"] is None
+                    assert observed == []
+        assert authority() == before
 
     async def scenario():
         async with stdio_client(stdio_parameters(root)) as streams:
@@ -259,31 +281,30 @@ def test_real_transports_fallback_readonly_and_keep_independent_damage_rejection
                 *streams, read_timeout_seconds=timedelta(seconds=30)
             ) as session:
                 await session.initialize()
-                await pages(session, "2026-10", modeled=False)
-                # A typed write by an earlier producer leaves an authentic,
-                # stale model. Readers must use native data without repairing it.
-                with monkeypatch.context() as earlier_writer:
-                    earlier_writer.setattr(
-                        dashboard_model_runtime, "supports_native_production", lambda _: False)
-                    Entities(engine).update_entity_profile(
-                        "bank-a", {"display_name": "明确变更后的合成账户"},
-                        source="synthetic explicit profile update", expected_revision=1,
-                        request_id="earlier-producer-profile")
-                await pages(session, MONTH, modeled=False)
-                Maintenance(engine).rebuild_dashboard_read_model(
-                    MONTH, request_id="current-producer-rebuild")
+                await pages(session, "2026-10", ready=False)
+                produce(engine, "2026-10")
+                await pages(session, "2026-10", ready=True)
+                Entities(engine).update_entity_profile(
+                    "bank-a", {"display_name": "明确变更后的合成账户"},
+                    source="synthetic explicit profile update", expected_revision=1,
+                    request_id="source-profile-change",
+                )
+                await pages(session, MONTH, ready=False)
+                produce(engine, MONTH)
+                await pages(session, MONTH, ready=True)
+                payload = page_payload(company, "brief")
                 observed.clear()
-                shown = cli_call(root, tmp_path, PAGES["brief"], page_payload(company, "brief"))
-                assert ("brief", True) in observed
+                shown = cli_call(root, tmp_path, PAGES["brief"], payload)
+                assert shown["state"] == "ready" and ("brief", True) in observed
                 damage(engine, "fact_funding", "UPDATE fact_funding SET amount_fen=10 WHERE "
                        "revision_id=(SELECT fact_id FROM fact_current "
                        "WHERE subject_id='hidden-history')")
                 before = state(engine)
-                payload = page_payload(company, "brief")
                 for call in ("cli", "mcp"):
                     value = (cli_call(root, tmp_path, PAGES["brief"], payload) if call == "cli"
                              else await mcp_call(session, PAGES["brief"], payload))
-                    assert stable_payload(value) == stable_payload(shown)
+                    assert value["state"] == "ready", value
+                    assert stable_payload(value["response"]) == stable_payload(shown["response"])
                     rejected = (cli_call(
                         root, tmp_path, "verify_integrity", {"company_id": company["id"]})
                                 if call == "cli" else await mcp_call(
@@ -291,16 +312,18 @@ def test_real_transports_fallback_readonly_and_keep_independent_damage_rejection
                     assert rejected["status"] == "rejected"
                     assert rejected["code"] == "content_integrity_failed"
                 assert state(engine) == before
-                _, root_digest, _ = current_content(engine)
-                damage(engine, "dashboard_read_model_block",
-                       "UPDATE dashboard_read_model_block SET payload='{}' WHERE digest=?",
-                       (root_digest,))
+                _, descriptor = model_current(engine, MONTH)
+                with derived_connection(engine, read_only=False) as connection:
+                    connection.execute(
+                        "UPDATE dashboard_read_model_block SET payload='{}' WHERE digest=?",
+                        (bytes.fromhex(descriptor["root_digest"]),),
+                    )
                 before = state(engine)
                 for call in ("cli", "mcp"):
-                    rejected = (cli_call(root, tmp_path, PAGES["brief"], payload) if call == "cli"
-                                else await mcp_call(session, PAGES["brief"], payload))
-                    assert rejected["status"] == "rejected"
-                    assert rejected["code"] == "content_integrity_failed"
+                    failed = (cli_call(root, tmp_path, PAGES["brief"], payload) if call == "cli"
+                              else await mcp_call(session, PAGES["brief"], payload))
+                    assert failed["state"] == "failed" and failed["reason"] == "corrupt"
+                    assert "response" not in failed and failed["model_version"] is None
                 assert state(engine) == before
 
-    asyncio.run(asyncio.wait_for(scenario(), timeout=180))
+    asyncio.run(asyncio.wait_for(scenario(), timeout=240))

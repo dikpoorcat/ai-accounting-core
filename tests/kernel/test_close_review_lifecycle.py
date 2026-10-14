@@ -59,10 +59,14 @@ def test_owner_review_releases_position_after_success_or_failure(
         monkeypatch.setattr(content_v1, "__file__", str(tmp_path / "content_v1.py"))
         content_v1.v1_registry.cache_clear()
         registry = content_v1.v1_registry()
-        selected_engine = Engine(Store(
-            engine.store.path, replace(engine.store.bundle, registry=registry),
-            engine.store.company_id, engine.store.database_id,
-        ))
+        selected_engine = Engine(
+            Store(
+                engine.store.path,
+                replace(engine.store.bundle, registry=registry),
+                engine.store.company_id,
+                engine.store.database_id,
+            )
+        )
         module, factory_name, position_name = position_v1, "PositionInputsV1", "position_v1"
         builder = close_review_integrity_v1.build_owner_review
     else:
@@ -100,19 +104,28 @@ def test_owner_review_releases_position_after_success_or_failure(
                 scope = historical_content(1)
             else:
                 from contextlib import nullcontext
+
                 scope = nullcontext()
             with scope:
                 if fail_position:
                     with pytest.raises(RuntimeError, match="synthetic position failure") as failure:
-                        builder(connection, selected_engine, manifest,
-                                _frozen_followups=expected["followup_summary"])
+                        builder(
+                            connection,
+                            selected_engine,
+                            manifest,
+                            _frozen_followups=expected["followup_summary"],
+                        )
                     # The exception traceback may legitimately retain the view object;
                     # its business graph must already be gone before that traceback dies.
                     assert observed[0]() is not None and observed[0]().__dict__ == {}
                     del failure
                 else:
-                    result = builder(connection, selected_engine, manifest,
-                                     _frozen_followups=expected["followup_summary"])
+                    result = builder(
+                        connection,
+                        selected_engine,
+                        manifest,
+                        _frozen_followups=expected["followup_summary"],
+                    )
                     assert result == expected, (
                         "release cannot alter current or frozen review values"
                     )
@@ -144,6 +157,7 @@ def test_position_constructor_source_failure_does_not_retain_a_read_graph(
 
     if not historical:
         from ai_accounting.kernel import dashboard
+
         original = dashboard.ClosedPeriods
 
         def closed_periods(snapshot):
@@ -170,9 +184,15 @@ def test_position_constructor_source_failure_does_not_retain_a_read_graph(
         connection.set_authorizer(deny_source)
         with pytest.raises(sqlite3.DatabaseError) as failure:
             if historical:
-                ObservedView(engine, connection, {
-                    "period": "2026-01", "trial_balance": [], "vouchers": [],
-                })
+                ObservedView(
+                    engine,
+                    connection,
+                    {
+                        "period": "2026-01",
+                        "trial_balance": [],
+                        "vouchers": [],
+                    },
+                )
             else:
                 ObservedView(engine, connection, "2026-01")
         assert denied_table in str(failure.value), "the original source failure must propagate"

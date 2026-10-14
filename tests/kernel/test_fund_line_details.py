@@ -3,6 +3,7 @@
 import sqlite3
 
 import pytest
+from opening_fixture import adopt_empty_opening
 from test_opening_continuation import book as _opening_book
 
 from ai_accounting.kernel import fund_line_details as details
@@ -143,6 +144,7 @@ def test_typed_publish_persists_details_and_exposes_preview(tmp_path):
             "database",
         )
     )
+    adopt_empty_opening(engine, period="2026-09")
     proof = engine.register_evidence(
         b"Synthetic bank identity", "text/plain", "identity", request_id="proof"
     )["digest"]
@@ -331,6 +333,7 @@ def test_fund_display_keeps_identity_separate_from_missing_management_name(
     from ai_accounting.kernel.fund_accounts import require_fund_account
 
     engine, save, publish, _, proof = opening_book
+    adopt_empty_opening(engine, period="2026-09")
     entities = Entities(engine)
     account = entities.register_entity(
         "fund_account", {"display_name": "Managed account alias", **identity},

@@ -1,6 +1,8 @@
 """Returned posting effects retain exact adoption and physical voucher duties."""
 
 import pytest
+from dashboard_model_fixture import produce
+from opening_fixture import adopt_empty_opening
 from test_asset_batch_reads import prepare_batch_assets
 from test_asset_batches import activate
 from test_asset_batches import asset_engine as asset_engine
@@ -38,6 +40,17 @@ def _reject(operation):
     with pytest.raises(KernelError) as failure:
         operation()
     assert failure.value.code == "content_integrity_failed"
+
+
+def _model_funds(engine, period, monkeypatch):
+    import ai_accounting.kernel.dashboard as dashboard_module
+
+    def no_fallback(*_args, **_kwargs):
+        pytest.fail("the model-hit assertion fell back to the native funds reader")
+
+    with monkeypatch.context() as guard:
+        guard.setattr(dashboard_module, "_funds", no_fallback)
+        return Dashboard(engine).funds(period, movement_account_selection="first")
 
 
 def _source(engine, subject):
@@ -100,12 +113,13 @@ def test_correction_only_and_replacement_only_hits_require_the_independent_rever
 
 
 @pytest.mark.parametrize("target", ["publication", "current", "voucher_current", "lines"])
-def test_actual_funds_hit_cannot_outlive_its_posting_proof(book, target):
+def test_actual_funds_hit_cannot_outlive_its_posting_proof(book, monkeypatch, target):
     engine, save, publish, _ = book
     opening(save, publish)
     funding(save, publish, subject="shown", amount=17)
+    produce(engine, "2026-09")
     ident = _source(engine, "shown")
-    assert Dashboard(engine).funds("2026-09", section="movements")["data"]["net_change_fen"] == 17
+    assert _model_funds(engine, "2026-09", monkeypatch)["data"]["net_change_fen"] == 17
     if target == "publication":
         damage(engine, "calculation_publication",
                "DELETE FROM calculation_publication WHERE calculation_id=?", (ident,),
@@ -120,7 +134,7 @@ def test_actual_funds_hit_cannot_outlive_its_posting_proof(book, target):
         damage(engine, "voucher_line", "UPDATE voucher_line SET credit=credit+1 "
                "WHERE credit>0 AND version_id IN(SELECT id FROM voucher_version "
                "WHERE calculation_id=?)", (ident,))
-    _reject(lambda: Dashboard(engine).funds("2026-09", section="movements", limit=1))
+    _reject(lambda: _model_funds(engine, "2026-09", monkeypatch))
 
 
 def test_zero_publication_and_future_unrelated_head_keep_their_actual_cutoff(book):
@@ -140,16 +154,18 @@ def test_zero_publication_and_future_unrelated_head_keep_their_actual_cutoff(boo
 def test_hit_adoption_work_does_not_expand_with_unreturned_postings(book, monkeypatch):
     engine = book[0]
     _publish_filter_funding(engine, ["bank-a"] * 3)
+    produce(engine, "2026-09")
 
     def read():
         with source_body_work(monkeypatch) as work:
-            response = Dashboard(engine).funds("2026-09", section="movements", limit=1)
-        assert len(work["outcomes"]) == len(work["facts"]) == 1
+            response = _model_funds(engine, "2026-09", monkeypatch)
+        assert len(work["outcomes"]) == len(work["facts"]) == 3
         assert work["lineages"] == []
         return response["data"]["collections"]["movements"]["items"], work
 
     before = read()
     _publish_filter_funding(engine, ["bank-a"] * 15, period="2026-08")
+    produce(engine, "2026-09")
     assert read() == before
 
 
@@ -160,6 +176,7 @@ def test_asset_member_hit_proves_its_exact_current_owner(asset_engine, target):
     engine, proof = asset_engine
     activate(engine, proof)
     Maintenance(engine).rebuild_dashboard_read_model("2026-01", request_id="member-model")
+    produce(engine, "2026-01")
     assert len(Dashboard(engine).assets("2026-01")["data"]["collections"]["assets"]["items"]) == 2
     if target == "owner_publication":
         damage(engine, "calculation_publication", "DELETE FROM calculation_publication "
@@ -192,14 +209,16 @@ def test_closed_asset_member_keeps_its_frozen_basis_after_a_new_owner_review(tmp
 
 
 def test_investment_confirmation_hit_keeps_physical_voucher_without_brief_card_fields(
-    investment_book,
+    investment_book, monkeypatch,
 ):
     engine, save, publish = investment_book
+    adopt_empty_opening(engine)
     save("money_fund_subscription", "buy", subscription())
     publish("buy")
+    produce(engine, "2026-01")
     dashboard = Dashboard(engine)
-    options = {"section": "investment_events", "limit": 1}
-    actual = dashboard.funds("2026-01", **options)
+    options = {"movement_account_selection": "first"}
+    actual = _model_funds(engine, "2026-01", monkeypatch)
     items = actual["data"]["collections"]["investment_events"]["items"]
     assert len(items) == 1 and items[0]["id"].endswith(":confirmation")
     assert "voucher_version_id" not in items[0] and "lines" not in items[0]
@@ -210,7 +229,7 @@ def test_investment_confirmation_hit_keeps_physical_voucher_without_brief_card_f
     damage(engine, "voucher_line", "UPDATE voucher_line SET credit=credit+1 "
            "WHERE credit>0 AND version_id IN(SELECT id FROM voucher_version "
            "WHERE calculation_id=?)", (ident,))
-    _reject(lambda: dashboard.funds("2026-01", **options))
+    _reject(lambda: _model_funds(engine, "2026-01", monkeypatch))
 
 
 @pytest.mark.parametrize("target", ["publication", "current"])
@@ -302,6 +321,7 @@ def test_real_withdrawal_removes_movement_but_retains_the_saved_historical_sourc
 
 def test_investment_settlement_binds_its_payment_voucher_and_exact_source(investment_book):
     engine, save, publish = investment_book
+    adopt_empty_opening(engine)
     save("funding", "capital", {
         "period": "2026-01", "owner_id": "owner", "amount_fen": 20000,
         "funding_kind": "capital", "actual_date": "2026-01-01", "bank_account_id": "bank",

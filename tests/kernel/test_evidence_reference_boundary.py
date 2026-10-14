@@ -7,6 +7,7 @@ from functools import partial
 from types import SimpleNamespace
 
 import pytest
+from opening_fixture import adopt_empty_opening
 from pydantic import TypeAdapter, ValidationError
 
 from ai_accounting.kernel.asset_batches import AssetBatches
@@ -307,6 +308,7 @@ def service(tmp_path_factory):
     company = app.dispatch(
         "create_company", {"taxpayer_id": "911100000000000001", "name": "Synthetic"}
     )["id"]
+    adopt_empty_opening(app.engine(company))
     return app, company
 
 

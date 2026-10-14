@@ -32,14 +32,26 @@ def isolated_stage9_source(monkeypatch):
     monkeypatch.setattr(sys, "path", sys.path.copy())
 
 
-def test_foreground_scope_is_owner_default_http_without_browser_rendering(monkeypatch):
+@pytest.mark.parametrize("changed", [None, "preparing", "wrong-company", "wrong-period"])
+def test_foreground_scope_is_owner_default_http_without_browser_rendering(monkeypatch, changed):
     recorded = {}
 
     class Response:
         status = 200
 
         def read(self):
-            return json.dumps({"data": {}, "selected_period": {"key": "2026-01"}}).encode()
+            response = {
+                "state": "ready", "company_id": "company-1", "period": "2026-01",
+                "response": {"data": {}, "selected_period": {"key": "2026-01"}},
+            }
+            if changed == "preparing":
+                response["state"] = "preparing"
+                response.pop("response")
+            elif changed == "wrong-company":
+                response["company_id"] = "another-company"
+            elif changed == "wrong-period":
+                response["response"]["selected_period"]["key"] = "2026-02"
+            return json.dumps(response).encode()
 
     class Connection:
         def __init__(self, host, port, timeout):
@@ -57,7 +69,11 @@ def test_foreground_scope_is_owner_default_http_without_browser_rendering(monkey
     monkeypatch.setattr(
         "scripts.benchmark_stage9_evidence.http.client.HTTPConnection", Connection
     )
-    assert read_default_brief_http(5000, "synthetic-token", "company-1", "2026-01") > 0
+    if changed is None:
+        assert read_default_brief_http(5000, "synthetic-token", "company-1", "2026-01") > 0
+    else:
+        with pytest.raises(AssertionError, match="wrong period"):
+            read_default_brief_http(5000, "synthetic-token", "company-1", "2026-01")
     query = urlsplit(recorded["path"])
     assert (recorded["host"], recorded["port"], recorded["method"]) == (
         "127.0.0.1", 5000, "GET"
@@ -202,6 +218,20 @@ def test_evidence_survives_production_verify_backup_and_restore(isolated_stage9_
         )
         assert report["static_runtime_prepared_before_business_root"] is True
         assert report["company_format"] == report["backup"]["database_format"]
+        from ai_accounting.kernel.development_contracts import (
+            HISTORY_TARGET_FINGERPRINT,
+        )
+        from ai_accounting.kernel.schema_bundle import production_bundle
+
+        historical = report["historical_construction"]
+        assert historical["source_fingerprint"] == HISTORY_TARGET_FINGERPRINT
+        assert historical["tax_filing_form"] is None
+        assert historical["preserves_historical_calculations"] is True
+        upgraded = historical["upgrade"]["companies"]
+        assert len(upgraded) == 1
+        assert upgraded[0]["source_fingerprint"] == HISTORY_TARGET_FINGERPRINT
+        assert upgraded[0]["target_fingerprint"] == production_bundle().current("company")["sha256"]
+        assert upgraded[0]["verification"]["status"] == "verified"
         assert report["source_inventory"]["status"] == "unsealed_working_tree"
         assert report["measurement_harness"]["separate_from_fixed_source"] is False
         assert report["resident_process_id"] == os.getpid()

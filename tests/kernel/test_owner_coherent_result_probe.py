@@ -5,6 +5,7 @@ import traceback
 from functools import partial
 
 import pytest
+from dashboard_model_fixture import produce
 from stage9_metrics import measure_work
 from test_dashboard_model_transactions import comparable, raw_read
 from test_integrity_content import damage
@@ -98,6 +99,7 @@ def require_native_rejection_with_sealed_aggregate(name, ident, before, request,
 @pytest.mark.parametrize("change", ["gross", "outside_kind"])
 def test_default_employee_current_result_coherent_probe(company, change, tmp_path):
     company.publish("january")
+    produce(company.engine, "2026-01")
     dashboard = Dashboard(company.engine)
     request = partial(dashboard.employees, "2026-01")
     before = request()
@@ -155,6 +157,7 @@ def test_default_assets_outside_domain_kind_probe(asset_book, tmp_path):
 
 def test_default_brief_activity_value_coherent_probe(company, tmp_path):
     company.publish("january")
+    produce(company.engine, "2026-01")
     dashboard = Dashboard(company.engine)
     request = partial(dashboard.brief, "2026-01")
     before = request()
@@ -170,6 +173,7 @@ def test_default_brief_activity_value_coherent_probe(company, tmp_path):
 def test_default_quarter_amount_coherent_probe(report_book, tmp_path):
     scenario(report_book)
     engine = report_book[0]
+    produce(engine, "2026-03")
     dashboard = Dashboard(engine)
     request = partial(dashboard.quarterly_report, 2026, 1)
     before = request()
@@ -191,6 +195,7 @@ def test_default_quarter_amount_coherent_probe(report_book, tmp_path):
 def test_default_brief_cross_month_payment_source_outside_kind_probe(report_book, tmp_path):
     scenario(report_book)
     engine = report_book[0]
+    produce(engine, "2026-03")
     dashboard = Dashboard(engine)
     request = partial(dashboard.brief, "2026-03")
     before = request()

@@ -15,7 +15,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cached_property
-from typing import Literal, get_args
+from typing import Literal
 
 from .account_definitions import (
     KNOWN_POSITION_ACCOUNTS,
@@ -49,6 +49,7 @@ from .dashboard_reads import (
     verified_payroll_heads,
     verified_scalar_facts,
 )
+from .dashboard_request import EmployeeFilter, validate_period, validate_request
 from .domains.money import ACTUAL_PAYMENT_KINDS, FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 from .provenance import recorded_times
 from .query_reads import QueryReads
@@ -56,17 +57,6 @@ from .query_semantics import classify_financial_position, report_party_splits
 from .reports import Reports, _workbook_name
 from .text_sort import pinyin_key
 from .types import ActualDate, YearMonth, canonical, digest
-
-EmployeeFilter = Literal[
-    "all",
-    "in_period",
-    "unknown",
-    "ended",
-    "employment_active",
-    "employment_unpaid_leave",
-    "employment_departed",
-    "employment_unknown",
-]
 
 KIND_NAMES = {
     "external_completion": "外部办理完成依据",
@@ -1749,6 +1739,25 @@ class Dashboard:
             for value in sorted(values, reverse=True)
         ]
 
+    @staticmethod
+    def _require_period(connection, period):
+        selected = validate_period(period)
+        assert selected is not None
+        month = YearMonth(selected).ordinal
+        exists = connection.execute(
+            "SELECT 1 FROM ("
+            "SELECT v.period FROM voucher_version v JOIN voucher_current c "
+            "ON c.version_id=v.id WHERE v.period=? UNION ALL "
+            "SELECT period FROM period_close WHERE period=? UNION ALL "
+            "SELECT f.period FROM fact_revision f JOIN fact_current c ON c.fact_id=f.id "
+            "WHERE f.period=? UNION ALL "
+            "SELECT period FROM material_revision WHERE period=?) LIMIT 1",
+            (month, month, month, month),
+        ).fetchone()
+        if exists is None and month not in _workforce_event_months(connection):
+            raise KernelError("dashboard_period_not_found", "没有找到所选会计月份")
+        return month
+
     @contextmanager
     def _snapshot(self, period):
         with QueryReads.snapshot(self.engine) as reads:
@@ -1757,22 +1766,7 @@ class Dashboard:
                 periods = self._periods(connection)
                 period = periods[0]["key"] if periods else None
             if period is not None:
-                try:
-                    month = YearMonth(period).ordinal
-                except ValueError as exc:
-                    raise KernelError("invalid_command", "会计月份格式不正确") from exc
-                exists = connection.execute(
-                    "SELECT 1 FROM ("
-                    "SELECT v.period FROM voucher_version v JOIN voucher_current c "
-                    "ON c.version_id=v.id WHERE v.period=? UNION ALL "
-                    "SELECT period FROM period_close WHERE period=? UNION ALL "
-                    "SELECT f.period FROM fact_revision f JOIN fact_current c ON c.fact_id=f.id "
-                    "WHERE f.period=? UNION ALL "
-                    "SELECT period FROM material_revision WHERE period=?) LIMIT 1",
-                    (month, month, month, month),
-                ).fetchone()
-                if exists is None and month not in _workforce_event_months(connection):
-                    raise KernelError("dashboard_period_not_found", "没有找到所选会计月份")
+                self._require_period(connection, period)
             snapshot = _Snapshot(self.engine, connection, period, reads) if period else None
             try:
                 yield snapshot
@@ -1921,17 +1915,12 @@ class Dashboard:
         voucher_number: int | None = None,
         preparation: Literal["complete", "deferred"] = "deferred",
     ):
-        # The owner brief is a business projection. Full preparation and its
-        # technical graphs belong to the separate AI-accountant read contract.
-        if preparation not in {"complete", "deferred"}:
-            raise KernelError("invalid_command", "不支持的准备检查投影")
-        validate_page("brief", section, cursor, limit)
-        if section is not None and (voucher_version_id is not None or voucher_number is not None):
-            raise KernelError("invalid_command", "精确业务定位不能与明细分区同时使用")
-        if voucher_version_id is not None and voucher_number is not None:
-            raise KernelError("invalid_command", "精确业务定位须只提供一个身份")
-        if voucher_number is not None and (type(voucher_number) is not int or voucher_number < 1):
-            raise KernelError("invalid_command", "业务编号须为正整数")
+        # Preparation remains a separate AI-accountant read contract.
+        validate_request(
+            "brief", period=period, limit=limit, section=section, cursor=cursor,
+            preparation=preparation, voucher_version_id=voucher_version_id,
+            voucher_number=voucher_number,
+        )
         with self._snapshot(period) as snap:
             if snap is None:
                 return {**self._response(None, None), "schema_version": 19,
@@ -2181,22 +2170,12 @@ class Dashboard:
         cursor: str | None = None,
         preparation: Literal["complete", "deferred"] = "deferred",
     ):
-        validate_page("funds", section, cursor, limit)
-        if preparation not in {"complete", "deferred"}:
-            raise KernelError("invalid_command", "不支持的准备检查投影")
-        if (movement_account_type is None) != (movement_account_id is None):
-            raise KernelError("invalid_command", "资金账户筛选须同时提供账户类别与账户标识")
-        if movement_account_type is not None and movement_account_type not in FUND_TYPES.values():
-            raise KernelError("invalid_command", "不支持的资金账户类别")
-        if movement_account_id == "" or statement_account_id == "":
-            raise KernelError("invalid_command", "资金账户标识不能为空")
-        if movement_account_selection not in {"all", "first"} or (
-            movement_account_selection == "first"
-            and (movement_account_type is not None or section is not None or cursor is not None)
-        ):
-            raise KernelError(
-                "invalid_command", "自动选择首个资金账户只适用于未指定账户的完整首屏请求"
-            )
+        validate_request(
+            "funds", period=period, limit=limit, section=section, cursor=cursor,
+            preparation=preparation, movement_account_type=movement_account_type,
+            movement_account_id=movement_account_id, statement_account_id=statement_account_id,
+            movement_account_selection=movement_account_selection,
+        )
         filters = {
             "movement_account_type": movement_account_type,
             "movement_account_id": movement_account_id,
@@ -2260,13 +2239,10 @@ class Dashboard:
         employee_id: str | None = None,
         preparation: Literal["complete", "deferred"] = "deferred",
     ):
-        validate_page("employees", section, cursor, limit)
-        if preparation not in {"complete", "deferred"}:
-            raise KernelError("invalid_command", "不支持的准备检查投影")
-        if employee_id == "":
-            raise KernelError("invalid_command", "须指定有效 employee_id")
-        if employee_filter not in get_args(EmployeeFilter):
-            raise KernelError("invalid_command", "不支持的员工筛选")
+        validate_request(
+            "employees", period=period, limit=limit, section=section, cursor=cursor,
+            preparation=preparation, employee_filter=employee_filter, employee_id=employee_id,
+        )
         filters = {"employee_filter": employee_filter, "employee_id": employee_id}
         with self._snapshot(period) as snap:
             if snap is None:
@@ -2314,13 +2290,11 @@ class Dashboard:
         project_id: str | None = None,
         preparation: Literal["complete", "deferred"] = "deferred",
     ):
-        validate_page("assets", section, cursor, limit)
-        if preparation not in {"complete", "deferred"}:
-            raise KernelError("invalid_command", "不支持的准备检查投影")
-        if asset_id == "" or project_id == "":
-            raise KernelError("invalid_command", "须指定有效 asset_id 或 project_id")
-        if asset_filter not in {"all", "active", "fixed", "intangible", "pending", "exited"}:
-            raise KernelError("invalid_command", "不支持的资产筛选")
+        validate_request(
+            "assets", period=period, limit=limit, section=section, cursor=cursor,
+            preparation=preparation, asset_filter=asset_filter, asset_id=asset_id,
+            project_id=project_id,
+        )
         filters = {"asset_filter": asset_filter, "asset_id": asset_id, "project_id": project_id}
         with self._snapshot(period) as snap:
             if snap is None:
@@ -2591,15 +2565,7 @@ class Dashboard:
     ):
         from .business_queries import _today_china
 
-        if (
-            type(year) is not int
-            or not 1 <= year <= 9999
-            or type(quarter) is not int
-            or quarter not in range(1, 5)
-        ):
-            raise KernelError("invalid_command", "报表年份或季度不正确")
-        if preparation not in {"complete", "deferred"}:
-            raise KernelError("invalid_command", "不支持的准备检查投影")
+        validate_request("quarterly_report", year=year, quarter=quarter, preparation=preparation)
 
         with QueryReads.snapshot(self.engine) as reads:
             connection = reads.connection
@@ -5106,6 +5072,9 @@ def _assets(
         for ident, calc in lookup.items()
         if ident in selected
     )
+    # A returned card exposes these exact acquisition/lifecycle sources even
+    # when its cost or date is read from the fact instead of the result body.
+    snap.reads.verify_selected_content({calc["id"] for calc in page_calculations})
     page_facts = snap.reads.facts({calc["fact_id"] for calc in page_calculations})
     source_subjects = set()
     for calc in page_calculations:
@@ -5118,6 +5087,9 @@ def _assets(
     source_calculations_by_subject = (
         snap.calculations.selected(subjects=source_subjects) if source_subjects else {}
     )
+    snap.reads.verify_selected_content({
+        calc["id"] for calc in source_calculations_by_subject.values()
+    })
     settlement_subjects = {
         calc["subject_id"] for ident, calc in acquisitions.items()
         if ident in selected and calc["kind"] != "opening_asset"

@@ -2,6 +2,9 @@
 
 Run with the repository virtual environment. Every run creates a new synthetic
 company below .tmp; no existing database or archive is opened for writing.
+The archived 2016 synthetic book is built under its explicit historical
+contract, then backed up and advanced to the current structure for resident
+reads. The upgrade preserves historical calculations without recalculating tax.
 Use --size-mib 240 and 1536 separately, with --profile mixed, compressible or
 incompressible. The report records actual unique evidence bytes and ZIP size.
 """
@@ -172,7 +175,10 @@ def read_default_brief_http(port, token, company_id, period):
         if response.status != 200:
             raise AssertionError(f"Foreground HTTP brief failed: status {response.status}")
         result = json.loads(body)
-        if result.get("data") is None or result.get("selected_period", {}).get("key") != period:
+        content = result.get("response", {})
+        if (result.get("state") != "ready" or result.get("company_id") != company_id
+                or result.get("period") != period or content.get("data") is None
+                or content.get("selected_period", {}).get("key") != period):
             raise AssertionError("Foreground HTTP brief returned the wrong period")
         return len(body)
     finally:
@@ -245,7 +251,12 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
     from stage9_book import MixedBook, month_at
 
     from ai_accounting.kernel import backup
+    from ai_accounting.kernel.catalog import Catalog
+    from ai_accounting.kernel.dashboard_async import _produce
+    from ai_accounting.kernel.engine import Engine
     from ai_accounting.kernel.http import create_server
+    from ai_accounting.kernel.offline_development_upgrade import upgrade_root
+    from ai_accounting.kernel.schema_bundle import production_bundle
     from ai_accounting.kernel.service import LocalService
     from ai_accounting.kernel.versions import database_format
 
@@ -254,8 +265,14 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
     book.add_month(0, close=False)
     open_snapshot = book.snapshots[month_at(0)]
     database = book.engine.store.path
+    historical_format = book.engine.store.bundle.current("company")["sha256"]
+    upgrade = upgrade_root(root)
+    if upgrade["companies"][0]["source_fingerprint"] != historical_format:
+        raise AssertionError("Synthetic historical upgrade used a different source")
+    book.catalog = Catalog(root, production_bundle())
+    book.engine = Engine(book.catalog.bind(book.company["id"]))
     with book.engine.store.connection(read_only=True) as connection:
-        company_format = database_format(connection, bundle=book.engine.store.bundle)
+        company_format = database_format(connection, bundle=production_bundle())
     report = {
         "status": "populating",
         "source": str(source),
@@ -279,6 +296,12 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         "platform": platform.platform(),
         "format": book.catalog.database_format(),
         "company_format": company_format,
+        "historical_construction": {
+            "source_fingerprint": historical_format,
+            "upgrade": upgrade,
+            "preserves_historical_calculations": True,
+            "tax_filing_form": None,
+        },
         "company": book.company,
         "phases": {},
         "foreground": {"scope": foreground_scope(foreground)},
@@ -443,6 +466,9 @@ def run(root, output, *, size_mib, profile, seed=9, chunk_mib=20, source=None,
         )
         identity = book.company["id"]
         book_company_name = book.company["name"]
+        model = _produce(book.engine, month_at(0))
+        if model["status"] != "ready":
+            raise AssertionError("Synthetic benchmark requires a fully produced owner model")
         del populate
         book = None  # Do not retain fixture objects during the foreground read loop.
         app = LocalService(

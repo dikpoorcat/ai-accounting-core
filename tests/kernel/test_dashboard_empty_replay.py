@@ -6,12 +6,14 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from dashboard_model_fixture import produce
 from entity_fixture import save_entity_display_profile
 from monthly_close_fixture import ready
 
 from ai_accounting.kernel.backup import verify_portable
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.display import Display
+from ai_accounting.kernel.domains.opening import CATEGORIES, OpeningPackage
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.schema_bundle import production_bundle
@@ -35,16 +37,55 @@ def authenticated(root: Path):
     return service, partial(service.dispatch, session_token=token)
 
 
-def company_call(dispatch, company_id):
+def company_call(service, dispatch, company_id):
     def call(command, **payload):
-        return dispatch(command, {"company_id": company_id, **payload})
+        result = dispatch(command, {"company_id": company_id, **payload})
+        if command in {"dashboard_brief", "dashboard_funds"}:
+            assert result["state"] == "ready", result
+            return result["response"]
+        return result
 
+    call.engine = service.engine(company_id)
     return call
 
 
 def replay_sources(call, prefix):
     """The private stable references are resolved before sending typed requests."""
     references = {key: f"{prefix}-{key}" for key in ("funding", "expense", "payment")}
+    if not call("find_facts", kind="opening_package", status="published")["items"]:
+        opening_evidence = call(
+            "evidence",
+            content_base64=base64.b64encode(
+                "合成公司于2026年1月开始记账，期初全部资产、负债和权益为零，资料完整。".encode()
+            ).decode(),
+            name="合成原件-建账零期初确认.txt",
+            media_type="text/plain",
+            request_id="source:opening:v1",
+        )["digest"]
+        opening = OpeningPackage(
+            period=PERIOD,
+            package_id=prefix + "-opening",
+            counts=dict.fromkeys(CATEGORIES.values(), 0),
+            members=(),
+            completeness_confirmed=True,
+        )
+        call(
+            "save_fact",
+            kind=opening.kind,
+            subject_id=opening.package_id,
+            data=opening.model_dump(mode="json"),
+            evidence=[opening_evidence],
+            expected_revision=0,
+            request_id="fact:opening:v1",
+        )
+        call(
+            "confirm",
+            **reviewed_confirmation(
+                call,
+                [opening.package_id],
+                "publish:opening:v1",
+            ),
+        )
     evidence = call(
         "evidence",
         content_base64=base64.b64encode(SOURCE_TEXT.encode("utf-8")).decode("ascii"),
@@ -189,6 +230,7 @@ def finish_payment(call, references, evidence):
 
 
 def assert_dashboard(call, references):
+    produce(call.engine, PERIOD)
     brief = call("dashboard_brief", period=PERIOD)["data"]
     brief.pop("generated_at")
     assert brief["activity_count"] == 3
@@ -200,7 +242,9 @@ def assert_dashboard(call, references):
         item
         for group in brief["collections"]["activity"]["items"]
         for item in call(
-            "dashboard_brief_group", period=PERIOD, section="activity",
+            "dashboard_brief_group",
+            period=PERIOD,
+            section="activity",
             group_key=group["group_key"],
         )["data"]["collections"]["members"]["items"]
     ]
@@ -233,9 +277,9 @@ def test_empty_replay_resumes_lost_confirmation_and_preserves_dashboard_in_porta
     tmp_path,
 ):
     root = tmp_path / "replay"
-    _, dispatch = authenticated(root)
+    service, dispatch = authenticated(root)
     company = dispatch("create_company", {"taxpayer_id": TAXPAYER, "name": COMPANY_NAME})
-    call = company_call(dispatch, company["id"])
+    call = company_call(service, dispatch, company["id"])
     references, evidence, saved = replay_sources(call, "target-a")
     assert replay_sources(call, "target-a") == (references, evidence, saved)
     confirmation = reviewed_confirmation(
@@ -251,9 +295,9 @@ def test_empty_replay_resumes_lost_confirmation_and_preserves_dashboard_in_porta
         encoding="utf-8",
     )
     published = call("confirm", **confirmation)
-    _, resumed_dispatch = authenticated(root)
+    resumed_service, resumed_dispatch = authenticated(root)
     state = json.loads(checkpoint.read_text(encoding="utf-8"))
-    resumed = company_call(resumed_dispatch, state["company_id"])
+    resumed = company_call(resumed_service, resumed_dispatch, state["company_id"])
     assert resumed("confirm", **state["confirmation"]) == published
     assert replay_sources(resumed, "target-a") == (references, evidence, saved)
     finish_payment(resumed, references, evidence)
@@ -283,12 +327,12 @@ def test_empty_replay_resumes_lost_confirmation_and_preserves_dashboard_in_porta
     verified = verify_portable(archive)
     assert verified["identity"]["company_id"] == company["id"]
 
-    _, restored_dispatch = authenticated(tmp_path / "restored")
+    restored_service, restored_dispatch = authenticated(tmp_path / "restored")
     restoration = {"archive": str(archive), "taxpayer_id": TAXPAYER, "name": COMPANY_NAME}
     restored_company = restored_dispatch("restore_company", restoration)
     assert restored_dispatch("restore_company", restoration) == restored_company
     assert restored_company["id"] == company["id"]
-    restored = company_call(restored_dispatch, restored_company["id"])
+    restored = company_call(restored_service, restored_dispatch, restored_company["id"])
     assert assert_dashboard(restored, references) == before
 
 
@@ -297,9 +341,9 @@ def test_new_empty_target_remaps_ids_and_rejects_old_commentary_context(tmp_path
     companies = []
     fact_ids = []
     for prefix in ("target-a", "target-b"):
-        _, dispatch = authenticated(tmp_path / prefix)
+        service, dispatch = authenticated(tmp_path / prefix)
         company = dispatch("create_company", {"taxpayer_id": TAXPAYER, "name": COMPANY_NAME})
-        call = company_call(dispatch, company["id"])
+        call = company_call(service, dispatch, company["id"])
         references, evidence, saved = replay_sources(call, prefix)
         confirmation = reviewed_confirmation(
             call, [references["funding"], references["expense"]], "publish:initial:v1"

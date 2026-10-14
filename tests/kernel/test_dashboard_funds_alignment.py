@@ -9,6 +9,7 @@ import test_opening_continuation as openings
 import test_payroll_reserve_payment as reserve_payroll
 import test_platforms as platforms
 from entity_fixture import seed_entities
+from opening_fixture import adopt_empty_opening
 from test_dashboard_transport import authenticated
 from test_resident_service import resident as resident_fixture
 
@@ -71,6 +72,12 @@ def test_brief_skips_absent_investment_details_but_checks_actual_sources(
 
 
 def _publish_filter_funding(engine, accounts, *, period="2026-09"):
+    with engine.store.connection(read_only=True) as connection:
+        has_opening = connection.execute(
+            "SELECT 1 FROM subject WHERE kind='opening_package' LIMIT 1"
+        ).fetchone() is not None
+    if not has_opening:
+        adopt_empty_opening(engine, period=period)
     contents = [
         f"Synthetic funds filter evidence {period} {index}".encode()
         for index in range(len(accounts))

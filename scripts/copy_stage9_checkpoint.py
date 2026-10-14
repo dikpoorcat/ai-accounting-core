@@ -254,7 +254,12 @@ def copy_checkpoint(
     from ai_accounting.kernel.versions import verify_schema
 
     require_source_module(schema_bundle, source, "src/ai_accounting/kernel/schema_bundle.py")
-    bundle = schema_bundle.production_bundle()
+    import stage9_historical_fixture
+
+    require_source_module(
+        stage9_historical_fixture, source, "tests/kernel/stage9_historical_fixture.py"
+    )
+    bundle = stage9_historical_fixture.historical_bundle()
     report_sha = _sha(source_report)
     report = _json(source_report)
     _require(

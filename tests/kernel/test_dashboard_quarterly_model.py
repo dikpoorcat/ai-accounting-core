@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 import pytest
 import test_reports as report_cases
+from dashboard_model_fixture import derived_connection, produce
 from test_dashboard_model_transactions import raw_read, source_body_work, state
 from test_integrity_content import damage, verify
 
@@ -34,10 +35,19 @@ def comparable(value):
 
 def bootstrap(engine, period="2026-02", request="quarter-model"):
     Maintenance(engine).rebuild_dashboard_read_model(period, request_id=request)
+    with engine.store.connection(read_only=True) as connection:
+        periods = [
+            row[0]
+            for row in connection.execute(
+                "SELECT period FROM dashboard_projection_request ORDER BY period"
+            )
+        ]
+    for month in periods:
+        produce(engine, month)
 
 
 def quarterly_digest(engine):
-    with engine.store.connection(read_only=True) as connection:
+    with derived_connection(engine) as connection:
         descriptor = loads_unique(
             connection.execute(
                 "SELECT c.descriptor FROM dashboard_read_model_current p "
@@ -65,6 +75,8 @@ def test_complete_owner_quarter_matches_native_ready_and_blocked_response(
 ):
     report_cases.scenario(book, classification=classification)
     engine = book[0]
+    if classification:
+        report_cases.close_quarter(book)
     dashboard = Dashboard(engine)
     bootstrap(engine)
     with raw_read():
@@ -88,19 +100,20 @@ def test_quarter_model_uses_latest_registered_month_and_reads_no_raw_ancestors(b
     before = state(engine)
     with engine.store.connection(read_only=True) as connection:
         latest = connection.execute(
-            "SELECT max(period) FROM dashboard_read_model_current "
+            "SELECT max(period) FROM dashboard_projection_current "
             "WHERE period BETWEEN '2026-01' AND '2026-03'",
         ).fetchone()[0]
     assert latest == "2026-03"  # scenario contains actual March facts/publications.
     selected, snapshots = [], []
-    from ai_accounting.kernel import dashboard_model_reads
 
-    original_load = dashboard_model_reads.load_model
+    from ai_accounting.kernel import dashboard_async
+
+    original_load = dashboard_async.load_for_snapshot
     original_snapshot = QueryReads.snapshot
 
-    def load(connection, scope):
-        selected.append(scope.period)
-        return original_load(connection, scope)
+    def load(engine, snap):
+        selected.append(snap.period)
+        return original_load(engine, snap)
 
     @contextmanager
     def snapshot(engine):
@@ -112,7 +125,7 @@ def test_quarter_model_uses_latest_registered_month_and_reads_no_raw_ancestors(b
         raise AssertionError("certified quarterly aggregate rebuilt raw statements")
 
     with monkeypatch.context() as scope:
-        scope.setattr(dashboard_model_reads, "load_model", load)
+        scope.setattr(dashboard_async, "load_for_snapshot", load)
         scope.setattr(QueryReads, "snapshot", snapshot)
         scope.setattr(Reports, "_report", unexpected)
         with source_body_work(monkeypatch) as work:
@@ -130,7 +143,7 @@ def test_quarter_model_uses_latest_registered_month_and_reads_no_raw_ancestors(b
 
 
 @pytest.mark.parametrize("period", ("2026-01", "2026-02", "2026-03"))
-def test_model_producer_builds_native_quarter_in_its_guarded_writer_snapshot(
+def test_model_producer_builds_native_quarter_in_an_owned_read_snapshot(
     book,
     monkeypatch,
     period,
@@ -142,7 +155,7 @@ def test_model_producer_builds_native_quarter_in_its_guarded_writer_snapshot(
         registered = sorted(
             row[0]
             for row in connection.execute(
-                "SELECT DISTINCT period FROM dashboard_read_model_commit",
+                "SELECT period FROM dashboard_projection_request",
             )
         )
     assert registered == ["2026-01", "2026-02", "2026-03"]
@@ -151,9 +164,9 @@ def test_model_producer_builds_native_quarter_in_its_guarded_writer_snapshot(
 
     original_build = dashboard_model_materializer.build_model
 
-    def observed_build(dashboard, requested_period):
+    def observed_build(dashboard, requested_period, **options):
         base_periods.append(requested_period)
-        return original_build(dashboard, requested_period)
+        return original_build(dashboard, requested_period, **options)
 
     def observed(self, year, quarter, *, connection, reads, as_of):
         assert producing_model()
@@ -177,7 +190,7 @@ def test_model_producer_builds_native_quarter_in_its_guarded_writer_snapshot(
     # Unchanged exact scopes need no second production after the business audit.
     assert Counter(base_periods) == Counter(registered)
     assert calls == [(2026, 1)] * len(registered)
-    assert len({id(connection) for connection in writers}) == 1
+    assert len(writers) == len(registered)
     dashboard = Dashboard(engine)
     with raw_read():
         expected = dashboard.quarterly_report(2026, 1)
@@ -223,6 +236,7 @@ def test_closed_quarter_model_retains_exact_frozen_figures_and_export_preview(bo
     with raw_read():
         refreshed_native = dashboard.quarterly_report(2026, 1)
     refreshed_plan = report.preview_export(2026, 1)
+    bootstrap(engine, "2026-03", "post-April-quarter-refresh")
 
     def unexpected(*_args, **_kwargs):
         raise AssertionError("closed quarterly owner default bypassed its certified aggregate")
@@ -257,13 +271,13 @@ def test_corrupt_quarterly_block_is_rejected_without_native_fallback(book, monke
         report_cases.close_quarter(book)
     engine = book[0]
     bootstrap(engine)
-    damage(
-        engine,
-        "dashboard_read_model_block",
-        "UPDATE dashboard_read_model_block SET payload=json_set("
-        "payload,'$.payload.summary.assets_total_fen',123) WHERE digest=?",
-        (quarterly_digest(engine),),
-    )
+    block_digest = quarterly_digest(engine)
+    with derived_connection(engine, read_only=False) as connection:
+        connection.execute(
+            "UPDATE dashboard_read_model_block SET payload=json_set("
+            "payload,'$.payload.summary.assets_total_fen',123) WHERE digest=?",
+            (block_digest,),
+        )
 
     def unexpected(*_args, **_kwargs):
         raise AssertionError("damaged quarterly production was silently recomputed")
@@ -307,7 +321,7 @@ def test_raw_aggregate_ancestor_damage_is_caught_by_independent_full_verificatio
     assert failure.value.code == "content_integrity_failed"
 
 
-def test_new_date_keeps_model_and_unregistered_quarter_uses_native_snapshot(book, monkeypatch):
+def test_new_date_and_unregistered_quarter_use_current_native_snapshots(book, monkeypatch):
     from ai_accounting.kernel import business_queries
 
     report_cases.scenario(book)
@@ -330,7 +344,7 @@ def test_new_date_keeps_model_and_unregistered_quarter_uses_native_snapshot(book
     monkeypatch.setattr(Dashboard, "_quarterly_report_in_snapshot", native)
     value = dashboard.quarterly_report(2026, 1)
     other = dashboard.quarterly_report(2026, 2)
-    assert calls == [(2, "2099-01-01")]
+    assert calls == [(1, "2099-01-01"), (2, "2099-01-01")]
     assert comparable(value) == comparable(expected)
     assert comparable(other) == comparable(expected_other)
     assert value["read_context"]["as_of"] == "2099-01-01"
@@ -338,39 +352,45 @@ def test_new_date_keeps_model_and_unregistered_quarter_uses_native_snapshot(book
     assert state(engine) == before
 
 
-def test_quarterly_production_failure_rolls_back_business_write_and_all_model_receipts(
+def test_quarterly_production_failure_preserves_committed_source_and_previous_publication(
     book,
     monkeypatch,
 ):
     report_cases.scenario(book)
     engine = book[0]
     bootstrap(engine)
-    before = state(engine)
     original = Dashboard._quarterly_report_in_snapshot
 
     def failure(self, *args, **kwargs):
         original(self, *args, **kwargs)
         raise RuntimeError("synthetic quarterly production interruption")
 
+    request = {
+        "source": "synthetic owner update",
+        "expected_revision": 1,
+        "request_id": "retry-quarterly-write",
+    }
     with monkeypatch.context() as scope:
         scope.setattr(Dashboard, "_quarterly_report_in_snapshot", failure)
+        result = Entities(engine).update_entity_profile(
+            "cash",
+            {"display_name": "synthetic quarterly account update"},
+            **request,
+        )
+        assert result["revision"] == 2
+        committed_source = state(engine)
         with pytest.raises(RuntimeError, match="synthetic quarterly production interruption"):
+            produce(engine, "2026-03")
+        assert state(engine) == committed_source
+        assert (
             Entities(engine).update_entity_profile(
                 "cash",
                 {"display_name": "synthetic quarterly account update"},
-                source="synthetic owner update",
-                expected_revision=1,
-                request_id="retry-quarterly-write",
+                **request,
             )
-    assert state(engine) == before
-    result = Entities(engine).update_entity_profile(
-        "cash",
-        {"display_name": "synthetic quarterly account update"},
-        source="synthetic owner update",
-        expected_revision=1,
-        request_id="retry-quarterly-write",
-    )
-    assert result["revision"] == 2
+            == result
+        )
+    bootstrap(engine, "2026-03", "retried-quarterly-production")
     dashboard = Dashboard(engine)
     with raw_read():
         expected = dashboard.quarterly_report(2026, 1)

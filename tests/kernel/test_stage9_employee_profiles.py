@@ -10,9 +10,14 @@ from stage9_employee_profiles import (
 )
 from test_dashboard_model_integrity import database_state
 
+from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.dashboard_async import _derived_store, delivery_state, run_pending
+from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.maintenance import Maintenance
+from ai_accounting.kernel.offline_development_upgrade import upgrade_root
+from ai_accounting.kernel.schema_bundle import production_bundle
 
 
 @pytest.fixture
@@ -25,9 +30,19 @@ def workforce_book(tmp_path, monkeypatch):
     book = MixedBook(tmp_path / "stage9-small-workforce", employees=50, businesses=124)
     book.add_month(0, close=True)
     book.add_month(1, close=False)
-    Maintenance(book.engine).rebuild_dashboard_read_model(
-        "2016-02", request_id="bootstrap-workforce"
-    )
+    # Historical construction retains its exact tax results. Current page
+    # production starts only after a backed, explicit structure transition.
+    upgrade = upgrade_root(book.root)
+    assert upgrade["companies"][0]["verification"]["status"] == "verified"
+    book.catalog = Catalog(book.root, production_bundle())
+    book.engine = Engine(book.catalog.bind(book.company["id"]))
+    for period in ("2016-01", "2016-02"):
+        Maintenance(book.engine).rebuild_dashboard_read_model(
+            period, request_id="bootstrap-workforce-" + period,
+        )
+    assert len(run_pending(book.engine, limit=2)) == 2
+    assert all(delivery_state(book.engine, period)["state"] == "ready"
+               for period in ("2016-01", "2016-02"))
     return book
 
 
@@ -39,6 +54,10 @@ def identity(book):
 
 
 def state_and_sources(engine):
+    with _derived_store(engine, create=False) as (derived, _):
+        commits = tuple(tuple(row) for row in derived.execute(
+            "SELECT period,request_id,audit_id FROM dashboard_read_model_commit ORDER BY rowid"
+        ))
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         return (
@@ -47,9 +66,7 @@ def state_and_sources(engine):
             tuple(tuple(row) for row in connection.execute(
                 "SELECT * FROM entity_profile_revision ORDER BY rowid"
             )),
-            tuple(tuple(row) for row in connection.execute(
-                "SELECT period,request_id,audit_id FROM dashboard_read_model_commit ORDER BY rowid"
-            )),
+            commits,
         )
 
 
@@ -69,6 +86,20 @@ def test_fifty_synthetic_profiles_produce_real_default_and_in_period_pages_once(
         engine, members, identity=identity(book), request_id="synthetic-workforce-batch"
     )
     assert len(result["results"]) == 50
+    # One authority transaction queues each registered model once; it does not
+    # build 50 models inside the employee loop or publish to the company tables.
+    queued = state_and_sources(engine)
+    assert queued[3] == before_commits
+    with engine.store.connection(read_only=True) as connection:
+        requests = [tuple(row) for row in connection.execute(
+            "SELECT period,status FROM dashboard_projection_request ORDER BY period"
+        )]
+        assert requests == [("2016-01", "pending"), ("2016-02", "pending")]
+        company_commits = connection.execute(
+            "SELECT count(*) FROM dashboard_read_model_commit"
+        ).fetchone()[0]
+        assert company_commits == 0
+    assert len(run_pending(engine, limit=2)) == 2
     after_state, after_sources, after_profiles, after_commits = state_and_sources(engine)
     assert after_state == (*before_state[:3], before_state[3] + 1, *before_state[4:])
     assert after_sources == before_sources
@@ -76,21 +107,23 @@ def test_fifty_synthetic_profiles_produce_real_default_and_in_period_pages_once(
     assert len(after_profiles) == len(before_profiles) + 50
     assert after_commits[:len(before_commits)] == before_commits
     new_commits = after_commits[len(before_commits):]
-    # One ordinary writer production refreshes each registered period, sharing
-    # one real producer receipt rather than refreshing after each employee.
+    # A worker pass publishes one certified sidecar model per registered period.
     assert sorted(row[0] for row in new_commits) == sorted({row[0] for row in before_commits})
-    assert len({row[1] for row in new_commits}) == 1
-    assert len({row[2] for row in new_commits}) == 1
-    with engine.store.connection(read_only=True) as connection:
-        audit = connection.execute(
-            "SELECT request_id,action FROM audit WHERE id=?", (new_commits[0][2],),
-        ).fetchone()
-        assert tuple(audit) == (new_commits[0][1], "dashboard_read_model")
-        assert connection.execute(
-            "SELECT count(*) FROM request WHERE id=?", (new_commits[0][1],),
-        ).fetchone()[0] == 1
+    assert len(new_commits) == len({row[1] for row in new_commits}) == 2
+    with _derived_store(engine, create=False) as (connection, _):
+        for commit in new_commits:
+            audit = connection.execute(
+                "SELECT request_id,action FROM audit WHERE id=?", (commit[2],),
+            ).fetchone()
+            assert tuple(audit) == (commit[1], "dashboard_read_model")
+            assert connection.execute(
+                "SELECT count(*) FROM request WHERE id=?", (commit[1],),
+            ).fetchone()[0] == 1
     for employee_filter in ("employment_active", "all", "in_period"):
         response = dashboard.employees("2016-02", employee_filter=employee_filter)
+        if employee_filter == "employment_active":
+            version = delivery_state(engine, "2016-02")["model_version"]
+            assert response["snapshot_version"] == version
         collection = response["data"]["collections"]["employees"]
         assert collection["page"]["total_count"] == 50
         assert collection["page"]["filtered_count"] == 50

@@ -8,6 +8,7 @@ from stage9_metrics import measure_work
 from test_dashboard_model_transactions import raw_read
 from test_funds_historical_account_identities import prepared, public, source
 from test_integrity_content import damage
+from test_opening_continuation import book as _opening_book
 
 from ai_accounting.kernel import dashboard_funds
 from ai_accounting.kernel.business_queries import BusinessQueries
@@ -15,6 +16,7 @@ from ai_accounting.kernel.content_history_context import historical_content
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.dashboard_funds import FundsRead
+from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.entities import Entities
 from ai_accounting.kernel.identity_corrections import IdentityCorrections
 from ai_accounting.kernel.integrity import verify_integrity
@@ -22,6 +24,8 @@ from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.types import YearMonth, canonical
 
 bank_book = banking.book
+unopened_bank_book = banking.unopened_book
+opening_book = _opening_book
 PERIOD = "2026-11"
 
 
@@ -69,8 +73,13 @@ def test_positive_witnesses_keep_zero_inactive_accounts_and_reduce_real_work(
     assert narrow["funds"]["data"]["bank_account_count"] == 2
     assert narrow["funds"]["data"]["bank_statement"]["missing_account_count"] == 2
     assert narrow["brief"]["data"]["funds_overview"]["bank_fen"] == 1000
-    assert len(narrow_states) == 4  # Complete two bank starts plus two exact witnesses.
-    assert len(full_states) == 10
+    # Formal empty formation plus two bank starts and two exact witnesses.
+    assert len(narrow_states) == 5
+    assert {item["subject_id"] for item in narrow_states.values()} == {
+        "synthetic-opening", "opening-bank-a", "opening-zero-bank",
+        "statement-bank-a", "statement-zero-bank",
+    }
+    assert len(full_states) == 11
     for counter in ("calculation_result_rows_loaded", "calculation_result_bytes_loaded",
                     "calculation_result_json_decodes", "returned_value_bytes"):
         assert narrow_work["counters"][counter] < full_work["counters"][counter]
@@ -78,6 +87,72 @@ def test_positive_witnesses_keep_zero_inactive_accounts_and_reduce_real_work(
         "narrow_states": len(narrow_states), "complete_states": len(full_states),
         "narrow": narrow_work["counters"], "complete": full_work["counters"],
     }, sort_keys=True))
+
+
+@pytest.mark.parametrize("change", ["result", "fact_seal", "publication"])
+def test_empty_formation_is_a_complete_adopted_source(bank_book, change):
+    engine, _, _ = history(bank_book)
+    row = source(engine, "synthetic-opening")
+    assert row["id"] in states(engine)
+    if change == "result":
+        damage(engine, "calculation", "UPDATE calculation SET outcome='{}' WHERE id=?",
+               (row["id"],))
+    else:
+        table, field, ident = (
+            ("fact_seal", "fact_id", row["fact_id"]) if change == "fact_seal"
+            else ("calculation_publication", "calculation_id", row["id"])
+        )
+        damage(engine, table, f"DELETE FROM {table} WHERE {field}=?", (ident,),
+               foreign_keys=False)
+    with raw_read(), pytest.raises(KernelError) as failure:
+        Dashboard(engine).funds(PERIOD)
+    assert failure.value.code == "content_integrity_failed"
+
+
+def test_unadopted_empty_formation_retains_complete_scope(unopened_bank_book, monkeypatch):
+    engine, save, _, _ = unopened_bank_book
+    save("opening_package", "unadopted-opening", {
+        "period": "2026-09", "package_id": "unadopted-opening",
+        "counts": dict.fromkeys(CATEGORIES.values(), 0), "members": [],
+        "completeness_confirmed": True,
+    })
+    with Dashboard(engine)._snapshot("2026-09") as snap:
+        assert dashboard_funds._bank_identity_witness_heads(snap) is None
+        assert FundsRead(snap).states == {}
+    actual = public(engine, "2026-09")
+    with raw_read(), monkeypatch.context() as complete:
+        full_scope(complete)
+        assert public(engine, "2026-09") == actual
+
+
+@pytest.mark.parametrize("kind", ["opening_bank", "opening_cash"])
+@pytest.mark.parametrize("balance", [0, 100])
+def test_actual_opening_members_keep_complete_funds_scope(
+    opening_book, monkeypatch, kind, balance,
+):
+    engine, save, publish, package, _ = opening_book
+    identity = "bank_account_id" if kind == "opening_bank" else "cash_account_id"
+    package([
+        (kind, "real-opening", {identity: "bank-a" if kind == "opening_bank" else "cash",
+                               "balance_fen": balance}),
+        ("opening_equity", "equity", {"equity_kind": "paid_in_capital",
+                                       "balance_fen": balance, "holder_or_basis_id": "owner"}),
+    ], period="2026-09")
+
+    def bank_save(kind, subject, data, revision=0):
+        return save(kind, subject, data, revision=revision)
+
+    banking.opening(bank_save, publish, amount=balance if kind == "opening_bank" else 0,
+                    basis="existing_ledger" if kind == "opening_bank" else "new_account")
+    with Dashboard(engine)._snapshot("2026-09") as snap:
+        assert dashboard_funds._bank_identity_witness_heads(snap) is None
+        read = FundsRead(snap)
+        assert "opening" in {row["subject_id"] for row in read.states.values()}
+    actual = public(engine, "2026-09")
+    assert actual["brief"]["data"]["funds_overview"]["total_fen"] == balance
+    with raw_read(), monkeypatch.context() as complete:
+        full_scope(complete)
+        assert public(engine, "2026-09") == actual
 
 
 @pytest.mark.parametrize("boundary", ["draft", "missing_role", "wrong_role", "unowned",
@@ -98,7 +173,7 @@ def test_incomplete_or_unowned_guards_retain_complete_scope(bank_book, monkeypat
     if boundary == "v1":
         with historical_content(1), Dashboard(engine)._snapshot(PERIOD) as snap:
             assert dashboard_funds._bank_identity_witness_heads(snap) is None
-            assert len(FundsRead(snap).states) == 10
+            assert len(FundsRead(snap).states) == 11
         return
     with Dashboard(engine)._snapshot(PERIOD) as snap:
         if boundary == "unowned":
@@ -108,7 +183,7 @@ def test_incomplete_or_unowned_guards_retain_complete_scope(bank_book, monkeypat
             snap.reads._snapshot_active = False
         assert dashboard_funds._bank_identity_witness_heads(snap) is None
         read = FundsRead(snap)
-        assert len(read.states) == 10
+        assert len(read.states) == 11
         read.account_summary()
         assert "draft-bank" not in {ident for _category, ident in read.account_rows}
     if boundary not in {"unowned", "disabled"}:
@@ -237,7 +312,7 @@ def test_real_bank_identity_correction_keeps_complete_scope_and_former_accounts(
     with Dashboard(engine)._snapshot(PERIOD) as snap:
         assert dashboard_funds._bank_identity_witness_heads(snap) is None
         read = FundsRead(snap)
-        assert len(read.states) == 10
+        assert len(read.states) == 11
         read.account_summary()
         assert {ident for category, ident in read.account_rows if category == "bank"} == {
             "bank-a", "zero-bank"
@@ -322,15 +397,20 @@ def test_positive_witness_selector_reads_only_exact_posting_nodes(bank_book, mon
     with Dashboard(engine)._snapshot(PERIOD) as snap:
         heads = dashboard_funds._bank_identity_witness_heads(snap)
         assert {head["subject_id"] for head in heads} == {
-            "opening-bank-a", "opening-zero-bank", "statement-bank-a", "statement-zero-bank",
+            "synthetic-opening", "opening-bank-a", "opening-zero-bank",
+            "statement-bank-a", "statement-zero-bank",
         }
         read = FundsRead(snap)
-        assert len(read.states) == 4
+        assert len(read.states) == 5
         assert set(snap.reads._close_accounting_slices) == {
             (head["posting_period"], frozenset(item["subject_id"] for item in heads))
             for head in heads
-        }
-    assert calls == [({head["subject_id"] for head in heads}, "2026-09")]
+        } | {(YearMonth("2026-09").ordinal, frozenset({"synthetic-opening"}))}
+    assert all(posting_period == "2026-09" for _, posting_period in calls)
+    assert {frozenset(subjects) for subjects, _ in calls} == {
+        frozenset({"synthetic-opening"}),
+        frozenset(head["subject_id"] for head in heads),
+    }
 
 
 @pytest.mark.parametrize("damage_head", ["redirected", "missing"])
@@ -414,8 +494,9 @@ def test_exact_identity_nodes_do_not_expand_with_empty_frozen_months(
         with monkeypatch.context() as complete:
             full_scope(complete)
             full_work, full = measure_work(engine, lambda period=period: selected_states(period))
-        typed_states = 2 + months * 4
-        assert len(narrow["states"]) == 4 and len(full["states"]) == typed_states
+        bank_states = 2 + months * 4
+        typed_states = 1 + bank_states  # Includes the independently adopted empty opening.
+        assert len(narrow["states"]) == 5 and len(full["states"]) == typed_states
         assert all(full["states"][ident] == value for ident, value in narrow["states"].items())
         assert narrow["accounting_periods"] == [first]
         assert full["accounting_periods"] == list(range(first, first + months))
@@ -423,7 +504,7 @@ def test_exact_identity_nodes_do_not_expand_with_empty_frozen_months(
             assert narrow_work["counters"].get(counter, 0) < full_work["counters"].get(counter, 0)
         role = [row for row in narrow_work["sql"]
                 if row["statement"] == " ".join(dashboard_funds._BANK_IDENTITY_SCALARS_SQL.split())]
-        assert len(role) == 1 and role[0]["calls"] == 1 and role[0]["returned_rows"] == typed_states
+        assert len(role) == 1 and role[0]["calls"] == 1 and role[0]["returned_rows"] == bank_states
         samples.append({
             "frozen_months": months, "typed_states": typed_states, "accounts": 2,
             "narrow": narrow_work["counters"], "complete": full_work["counters"],

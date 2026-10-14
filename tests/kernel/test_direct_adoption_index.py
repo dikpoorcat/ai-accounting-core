@@ -37,12 +37,13 @@ def test_cumulative_readiness_rows_do_not_expand_direct_adoption_seek_work(tmp_p
             "SELECT close_period,reference_type,reference_id FROM close_reference "
             "WHERE path='adopted_results[*].fact_id' OR path='adopted_results[*].calculation_id'"
         ))
-        for period, typ, ident in anchors:
+        for anchor_index, (period, typ, ident) in enumerate(anchors):
             copy.executemany(
                 "INSERT INTO close_reference("
                 "close_period,path,position,reference_type,reference_id) "
                 "VALUES(?,?,?,?,?)",
-                [(period, f"readiness.unrelated-{index % 7}.{typ}s[*]", str(index), typ, ident)
+                [(period, f"readiness.unrelated-{anchor_index}-{index % 7}.{typ}s[*]",
+                  str(index), typ, ident)
                  for index in range(1000)],
             )
         after, after_vm = _sql_vm_work(copy, query, parameters)

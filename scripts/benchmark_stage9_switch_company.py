@@ -1,8 +1,9 @@
 """Add a second, independent synthetic company to a Stage 9 browser book.
 
 Only an existing, complete Stage 9 primary root under .tmp is accepted. The
-company is registered and populated through the production kernel; the main
-book checkpoint and database are left intact.
+company is registered and populated under the primary book's exact historical
+synthetic contract; the main checkpoint and database are left intact. Current
+resident use requires the explicit structure transition after construction.
 """
 
 from __future__ import annotations
@@ -63,10 +64,10 @@ def verify_existing_switch(root, primary, source, *, creation_report=None):
     """Recheck a previously built switch fixture without opening a writable catalog."""
     from benchmark_stage9_browser import validate_book_report
     from stage9_book import MixedBook
+    from stage9_historical_fixture import historical_bundle
 
     from ai_accounting.kernel.catalog import Catalog
     from ai_accounting.kernel.engine import Engine
-    from ai_accounting.kernel.schema_bundle import production_bundle
 
     checkpoint_root = root / "stage9-switch-checkpoint"
     if checkpoint_root.resolve().parent != root:
@@ -81,7 +82,7 @@ def verify_existing_switch(root, primary, source, *, creation_report=None):
     # validated read-only connections and must never mutate the sample.
     catalog = Catalog.__new__(Catalog)
     catalog.root = root
-    catalog.bundle = production_bundle()
+    catalog.bundle = historical_bundle()
     catalog.path = root / "catalog.sqlite"
     companies = catalog.companies()
     switch = state["company"]
@@ -177,13 +178,13 @@ def main() -> None:
 
     from benchmark_stage9_browser import validate_book_report
     from stage9_book import MixedBook
+    from stage9_historical_fixture import historical_bundle
 
     from ai_accounting.kernel.catalog import Catalog
     from ai_accounting.kernel.engine import Engine
     from ai_accounting.kernel.entities import Entities
     from ai_accounting.kernel.materials import Materials
     from ai_accounting.kernel.periods import Periods
-    from ai_accounting.kernel.schema_bundle import production_bundle
 
     primary = json.loads(args.book_report.read_text(encoding="utf-8"))
     validate_book_report(primary, company_name="阶段九合成规模企业")
@@ -208,7 +209,7 @@ def main() -> None:
         )
         print(json.dumps({"status": "complete", "output": str(args.output)}), flush=True)
         return
-    bundle = production_bundle()
+    bundle = historical_bundle()
     catalog = Catalog(root, bundle)
     companies = catalog.companies()
     if (

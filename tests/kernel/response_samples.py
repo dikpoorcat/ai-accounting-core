@@ -13,7 +13,6 @@ import test_banking as banking
 from test_dashboard_bank_source_proof import closed_banks
 from test_dashboard_empty_replay import (
     authenticated,
-    company_call,
     finish_payment,
     replay_sources,
     reviewed_confirmation,
@@ -167,7 +166,10 @@ def native_samples(root):
 
     add("empty_context", "dashboard_context", dispatch("dashboard_context", {}))
     company = service.catalog.create_company("91310000123456789A", "合成合同测试公司")["id"]
-    call = company_call(dispatch, company)
+    def call(command, **payload):
+        return dispatch(command, {"company_id": company, **payload})
+
+    call.engine = service.engine(company)
     add("empty_workflow", "workflow", call("workflow", as_of="2026-02-25"))
     add(
         "empty_readiness",
@@ -182,43 +184,7 @@ def native_samples(root):
         call("dashboard_funds", movement_account_selection="first"),
     )
     references, evidence, _ = replay_sources(call, "contract")
-    opening_counts = dict.fromkeys(CATEGORIES.values(), 0)
-    opening_counts[CATEGORIES["opening_cash"]] = 1
-    call(
-        "save_facts",
-        facts=[
-            {
-                "kind": "opening_cash",
-                "subject_id": "opening-cash",
-                "data": {
-                    "period": "2026-01",
-                    "package_id": "opening",
-                    "cash_account_id": references["cash"],
-                    "balance_fen": 0,
-                },
-                "evidence": [evidence],
-                "expected_revision": 0,
-            },
-            {
-                "kind": "opening_package",
-                "subject_id": "opening",
-                "data": {
-                    "period": "2026-01",
-                    "package_id": "opening",
-                    "counts": opening_counts,
-                    "members": [{"kind": "opening_cash", "subject_id": "opening-cash"}],
-                    "completeness_confirmed": True,
-                },
-                "evidence": [evidence],
-                "expected_revision": 0,
-            },
-        ],
-        request_id="opening:snapshot:v1",
-    )
-    call(
-        "confirm",
-        **reviewed_confirmation(call, ["opening", "opening-cash"], "publish:opening:v1"),
-    )
+    # replay_sources formally adopted the evidenced zero opening exactly once.
     call(
         "confirm",
         **reviewed_confirmation(

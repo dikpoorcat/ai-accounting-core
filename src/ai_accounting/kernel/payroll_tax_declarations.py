@@ -16,6 +16,7 @@ from .remuneration_tax_basis import (
     _pool_allocation_data,
     remuneration_tax_period_scope,
 )
+from .reporting_fields import payroll_result_fields
 from .types import ActualDate, NonNegativeFen, YearMonth, sum_fen
 
 
@@ -255,6 +256,7 @@ def calculate_basis(version, context: Context):
             "payroll_id", "需要该工资来源当前已发布的正式计算", sources=(fact.payroll_id,)
         )
     wage = wages[0]
+    wage_fields = payroll_result_fields(wage.values)
     declaration = context.one(PayrollTaxDeclarationActual.kind, "@" + fact.declaration_id)
     declarations = context.facts(
         PayrollTaxDeclarationActual.kind, declaration_scope(fact.employee_id, fact.tax_period)
@@ -276,7 +278,7 @@ def calculate_basis(version, context: Context):
         for item in wage.values.get("obligations", ())
         if item["name"] == "net" and item["normal"] == "credit" and item["category"] == "payable"
     ]
-    if len(net) != 1 or net[0]["amount_fen"] != wage.values["net_fen"]:
+    if len(net) != 1 or net[0]["amount_fen"] != wage_fields["net_fen"]:
         raise KernelError("invalid_export_obligation", "工资没有唯一明确的净薪应付款")
     declared_for_source = _declared_for_source(
         context,
@@ -287,7 +289,7 @@ def calculate_basis(version, context: Context):
         fact.payroll_id,
         wage.values,
     )
-    difference = sum_fen((declared_for_source, -wage.values["tax_fen"]))
+    difference = sum_fen((declared_for_source, -wage_fields["tax_fen"]))
     target = sum_fen((net[0]["amount_fen"], -difference))
     if target < 0 or target > net[0]["amount_fen"]:
         raise NeedsInformation(
@@ -309,7 +311,7 @@ def calculate_basis(version, context: Context):
             "declaration_id": declaration.subject_id,
             "declaration_fact_id": declaration.id,
             "declaration_evidence": list(declaration.evidence),
-            "adopted_tax_fen": wage.values["tax_fen"],
+            "adopted_tax_fen": wage_fields["tax_fen"],
             "declared_tax_fen": declared_for_source,
             "declared_period_total_fen": declaration.fact.declared_tax_fen,
             "original_net_fen": net[0]["amount_fen"],
@@ -324,6 +326,7 @@ def export_disbursement(store, connection, calculation, values, remaining):
     """Check only this selected wage; the export snapshots every adopted version."""
     if calculation["kind"] not in PAYROLL_KINDS:
         return remaining, None
+    wage_fields = payroll_result_fields(values)
     subject = calculation["subject_id"]
     period = _tax_period(values, YearMonth.from_ordinal(calculation["period"]))
     declarations = store.select(
@@ -368,7 +371,7 @@ def export_disbursement(store, connection, calculation, values, remaining):
             values,
         )
     if not plans:
-        if declarations and declared_for_source != values["tax_fen"]:
+        if declarations and declared_for_source != wage_fields["tax_fen"]:
             raise NeedsInformation(
                 "disbursement_basis",
                 "该工资的实际申报税额与已采用扣税不同，需明确本人的代发差额口径",

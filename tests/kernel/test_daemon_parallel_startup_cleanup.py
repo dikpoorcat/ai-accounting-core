@@ -48,8 +48,9 @@ def test_daemon_cleans_partial_resident_startup(tmp_path, monkeypatch, failure):
             events.append("server.close")
 
     class FakeRunner:
-        def __init__(self, catalog):
+        def __init__(self, catalog, *, callbacks):
             assert catalog is not None
+            assert len(callbacks) == 1 and callable(callbacks[0])
             events.append("runner")
 
         def start(self):

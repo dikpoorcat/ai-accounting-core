@@ -207,11 +207,10 @@ def append_workforce_format(company, *, expected_employees):
     from ai_accounting.kernel.engine import Engine
     from ai_accounting.kernel.entities import Entities, WorkerRegistration, _profile_record
     from ai_accounting.kernel.entity_profile_history import retained_profile_ids
-    from ai_accounting.kernel.schema_bundle import production_bundle
     from ai_accounting.kernel.storage import Store
 
     adjustment, _, _, _, _, _, connect, _ = _runtime()
-    bundle = production_bundle()
+    bundle = adjustment.target_bundle()
     with closing(connect(company, read_only=True)) as connection:
         identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
         state_before = dict(connection.execute("SELECT * FROM state WHERE id=1").fetchone())
@@ -437,11 +436,9 @@ def run_sample(key, phase, output, *, fault=None, progress=lambda value: None):
             result["status"] = "planned"
             return result
         source_bundle = adjustment.source_bundle()
-        from ai_accounting.kernel.schema_bundle import production_bundle
-
         source_checks = verify_file(
             company,
-            _bundle=production_bundle()
+            _bundle=adjustment.target_bundle()
             if plans["company"]["status"] == "already_adjusted"
             else source_bundle,
         )
@@ -458,7 +455,9 @@ def run_sample(key, phase, output, *, fault=None, progress=lambda value: None):
         if all(plan["status"] == "already_adjusted" for plan in plans.values()):
             result["workforce_format"] = append_workforce_format(company, expected_employees=50)
             progress(result)
-            result["target_verification"] = verify_file(company)["verification"]
+            result["target_verification"] = verify_file(
+                company, _bundle=adjustment.target_bundle(),
+            )["verification"]
             progress(result)
             if (
                 result["target_verification"]["status"] != "verified"
@@ -524,7 +523,9 @@ def run_sample(key, phase, output, *, fault=None, progress=lambda value: None):
             progress(result)
         result["workforce_format"] = append_workforce_format(company, expected_employees=50)
         progress(result)
-        result["target_verification"] = verify_file(company)["verification"]
+        result["target_verification"] = verify_file(
+            company, _bundle=adjustment.target_bundle(),
+        )["verification"]
         progress(result)
         if (
             result["target_verification"]["status"] != "verified"

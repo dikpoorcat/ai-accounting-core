@@ -23,7 +23,7 @@ from .asset_batch_models import (
 from .contracts import FactVersion, KernelError, NeedsInformation, Read
 from .domains.assets import AssetActivation, AssetConsumption
 from .engine import Engine
-from .stored_json import load_outcome
+from .stored_json import load_outcome, verify_outcome_bytes
 from .types import EvidenceDigest, YearMonth, canonical, digest, sum_fen, validate_evidence_digests
 
 
@@ -166,7 +166,16 @@ def _validate_members(owner, member_rows, calculated_rows, require_seals, *, _ow
             raise KernelError("asset_batch_unsealed", "资产汇总成员尚未封印")
         if row["_foreign_owned"]:
             raise KernelError("asset_member_owned", "同一成员计算不得被不同批次采用")
-        result = load_outcome(calculated["outcome"])
+        result = verify_outcome_bytes(
+            calculated["outcome"], calculated["digest"], calculated["id"],
+        )
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("lines"), list)
+            or not isinstance(result.get("values"), dict)
+            or not isinstance(result.get("balances"), list)
+        ):
+            raise KernelError("asset_batch_digest", "资产汇总成员结果格式不完整")
         count = len(result["lines"])
         if (
             member["position"] != len(members) + 1

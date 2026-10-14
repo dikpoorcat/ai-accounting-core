@@ -14,6 +14,7 @@ from .runtime import (
     RuntimeConfigurationError,
     _install_owned_read_guard,
     _owned_read_transaction_operation,
+    _preserve_failure_on_closed_cleanup,
     _validate_reused_read_connection_at_private_path,
     connect,
     require_local_database,
@@ -149,26 +150,29 @@ class ResidentReadPool:
                 raise
             break
         discard = False
+        original = None
         try:
             yield entry.connection
-        except BaseException:
+        except BaseException as error:
+            original = error
             discard = True
             raise
         finally:
             try:
-                if not entry.owned_snapshot:
-                    entry.connection.set_authorizer(None)
-                entry.connection.set_trace_callback(None)
-                entry.connection.set_progress_handler(None, 0)
-                if entry.connection.in_transaction:
-                    if entry.owned_snapshot:
-                        # A failed snapshot must never return a connection to idle.
+                with _preserve_failure_on_closed_cleanup(original):
+                    if not entry.owned_snapshot:
+                        entry.connection.set_authorizer(None)
+                    entry.connection.set_trace_callback(None)
+                    entry.connection.set_progress_handler(None, 0)
+                    if entry.connection.in_transaction:
+                        if entry.owned_snapshot:
+                            # A failed snapshot must never return a connection to idle.
+                            discard = True
+                            _owned_read_transaction_operation(entry.connection, "ROLLBACK")
+                        else:
+                            entry.connection.rollback()
+                    if entry.connection.in_transaction:
                         discard = True
-                        _owned_read_transaction_operation(entry.connection, "ROLLBACK")
-                    else:
-                        entry.connection.rollback()
-                if entry.connection.in_transaction:
-                    discard = True
             except BaseException:
                 discard = True
                 raise

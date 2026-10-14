@@ -34,6 +34,7 @@ from .export_directories import (
     validate_export_parent,
 )
 from .payroll_confirmation import FactRevisionReference, revision_reference
+from .reporting_fields import payroll_import_fields
 from .types import NonNegativeFen, YearMonth, canonical, digest, sum_fen
 from .workflow import _payroll_population_issues
 
@@ -505,20 +506,21 @@ class TaxImport:
                     continue
                 detail, person = detail_version.fact, identity[0].fact
                 contributions = _contributions(basis, mappings[0].fact)
+                shared = payroll_import_fields(detail, contributions)
                 rows.append(
                     [
                         person.employee_code,
                         person.name,
                         person.document_type,
                         person.document_number,
-                        detail.tax_reported_salary_fen,
-                        detail.tax_exempt_income_fen,
-                        *contributions,
-                        *(detail.cumulative_special_fen[key] for key in SPECIAL_COLUMNS),
-                        detail.cumulative_personal_pension_fen,
-                        *(detail.current_other_fen[key] for key in OTHER_COLUMNS[1:]),
-                        detail.tax_relief_fen,
-                        detail.treaty_relief_fen,
+                        shared["tax_reported_salary_fen"],
+                        shared["tax_exempt_income_fen"],
+                        *shared["employee_contributions_fen"],
+                        *(shared["cumulative_special_fen"][key] for key in SPECIAL_COLUMNS),
+                        shared["cumulative_personal_pension_fen"],
+                        *(shared["current_other_fen"][key] for key in OTHER_COLUMNS[1:]),
+                        shared["tax_relief_fen"],
+                        shared["treaty_relief_fen"],
                         detail.remark,
                     ]
                 )

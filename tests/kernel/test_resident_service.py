@@ -460,16 +460,23 @@ def test_same_account_capability_reaches_password_and_bound_approval_without_rea
     with engine.store.connection(read_only=True) as connection:
         original_manifest = stored_manifest(connection)
 
+    replace_stored_manifest(engine, original_manifest, preserve_journal_reference=True)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        assert verify_integrity(engine, connection)["status"] == "verified"
     forged = json.loads(json.dumps(original_manifest))
     forged["approval"]["owner_id"] = "forged-owner"
-    replace_stored_manifest(engine, forged)
+    replace_stored_manifest(engine, forged, preserve_journal_reference=True)
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
         with pytest.raises(KernelError) as failure:
             verify_integrity(engine, connection)
     assert failure.value.details["reason"] == "close_approval_mismatch"
 
-    replace_stored_manifest(engine, original_manifest)
+    replace_stored_manifest(engine, original_manifest, preserve_journal_reference=True)
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        assert verify_integrity(engine, connection)["status"] == "verified"
     with engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         connection.execute(
@@ -582,7 +589,7 @@ def test_shutdown_requires_capability_and_valid_origin_without_owner_password(re
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows resident process and protected state")
-def test_stale_build_is_stopped_and_replaced_by_actual_resident_process(resident):
+def test_loaded_build_is_retained_until_explicit_stop_then_new_process_starts(resident):
     from ai_accounting.kernel.daemon import ensure_service, stop_service
     from ai_accounting.kernel.security.windows import write_protected_json
 
@@ -603,13 +610,21 @@ def test_stale_build_is_stopped_and_replaced_by_actual_resident_process(resident
     )
     metadata = None
     try:
+        retained = ensure_service(root)
+        assert retained["pid"] == os.getpid()
+        assert retained["build_id"] == "synthetic-previous-build"
+        assert retained["catalog_id"] == service.security.catalog_instance_id
+        assert not server._BaseServer__is_shut_down.is_set()
+        assert stop_service(root)["status"] == "stopping"
+        assert server._BaseServer__is_shut_down.wait(3)
+        server.server_close()
         metadata = ensure_service(root)
         assert metadata["pid"] != os.getpid()
         assert metadata["catalog_id"] == service.security.catalog_instance_id
         assert metadata["build_id"] != "synthetic-previous-build"
         assert server._BaseServer__is_shut_down.is_set()
     finally:
-        if metadata is not None:
+        if metadata is not None and metadata["pid"] != os.getpid():
             kernel = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
             kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
             kernel.OpenProcess.restype = ctypes.c_void_p
@@ -723,15 +738,42 @@ def test_background_failures_stop_after_three_attempts_across_restart(tmp_path):
     assert failed["result"] is None
 
 
-def test_interrupted_last_attempt_becomes_visible_failure_without_retry(tmp_path):
+@pytest.mark.parametrize("pending_job", [False, True])
+def test_interrupted_last_attempt_becomes_visible_failure_without_retry(tmp_path, pending_job):
     catalog, _, store = make_company(tmp_path / "root")
     schedule_backup(store, tmp_path / "backups", status="running", attempts=3)
+    if pending_job:
+        with store.connection() as connection:
+            connection.execute(
+                "INSERT INTO jobs(id,kind,payload,status,attempts) "
+                "VALUES('pending-next','portable_backup',?,'pending',0)",
+                (json.dumps({"directory": str(tmp_path / "next-backups")}),),
+            )
     JobRunner(catalog).run_once()
     failed = job(store)
     assert failed["status"] == "failed" and failed["attempts"] == 3
     assert failed["last_error"] == "interrupted_retry_exhausted"
     assert failed["error_code"] == "interrupted_retry_exhausted"
     assert not (tmp_path / "backups").exists()
+    with store.connection(read_only=True) as connection:
+        failures = list(connection.execute(
+            "SELECT attempt,event,error_code FROM backup_attempt_history "
+            "WHERE job_id='backup' ORDER BY id",
+        ))
+        if pending_job:
+            next_job = connection.execute(
+                "SELECT status,attempts,result FROM jobs WHERE id='pending-next'",
+            ).fetchone()
+            assert tuple(next_job[:2]) == ("succeeded", 1)
+            assert verify_portable(json.loads(next_job["result"])["path"])
+    assert [tuple(row) for row in failures] == [(3, "failed", "interrupted_retry_exhausted")]
+    JobRunner(catalog).run_once()
+    assert job(store) == failed
+    with store.connection(read_only=True) as connection:
+        assert list(map(tuple, connection.execute(
+            "SELECT attempt,event,error_code FROM backup_attempt_history "
+            "WHERE job_id='backup' ORDER BY id",
+        ))) == [tuple(row) for row in failures]
 
 
 def test_worker_does_not_mark_an_active_third_attempt_as_interrupted(tmp_path, monkeypatch):

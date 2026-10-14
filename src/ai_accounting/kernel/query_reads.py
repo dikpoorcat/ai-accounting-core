@@ -971,7 +971,7 @@ class QueryReads:
     def _reset(self):
         self._snapshot_active = False
         self._snapshot_token = object()
-        self._snapshot_changes = self.connection.total_changes
+        self._snapshot_changes = None
         self._verified_close_references = set()
         self._verified_close_storage_parts = {}
         self._verified_frozen_voucher_headers = {}
@@ -1028,6 +1028,23 @@ class QueryReads:
         self._jobs = {}
         self._asset_members = {}
         self.job_plans = {}
+        # Invalidate every proof even if the connection was closed by a failed caller.
+        self._snapshot_changes = self.connection.total_changes
+
+    def _release_snapshot(self, token, *, owned, original):
+        from .runtime import _preserve_failure_on_closed_cleanup
+
+        _active_fact_reads.reset(token)
+        try:
+            with _preserve_failure_on_closed_cleanup(original):
+                self._reset()
+        except BaseException as error:
+            original = error
+            raise
+        finally:
+            if not owned:
+                with _preserve_failure_on_closed_cleanup(original):
+                    self.connection.set_authorizer(None)
 
     @classmethod
     @contextmanager
@@ -1068,13 +1085,14 @@ class QueryReads:
             reads._snapshot_active = True
             reads._snapshot_changes = connection.total_changes
             token = _active_fact_reads.set(reads)
+            original = None
             try:
                 yield reads
+            except BaseException as error:
+                original = error
+                raise
             finally:
-                _active_fact_reads.reset(token)
-                reads._reset()
-                if not owned:
-                    connection.set_authorizer(None)
+                reads._release_snapshot(token, owned=owned, original=original)
 
     @classmethod
     @contextmanager
@@ -1104,13 +1122,14 @@ class QueryReads:
                 reads._snapshot_active = True
                 reads._snapshot_changes = connection.total_changes
                 token = _active_fact_reads.set(reads)
+                original = None
                 try:
                     yield reads
+                except BaseException as error:
+                    original = error
+                    raise
                 finally:
-                    _active_fact_reads.reset(token)
-                    reads._reset()
-                    if not owned:
-                        connection.set_authorizer(None)
+                    reads._release_snapshot(token, owned=owned, original=original)
 
     def verify_close_references(self, references):
         """Reuse exact successful leaf checks, never an independent adoption proof."""

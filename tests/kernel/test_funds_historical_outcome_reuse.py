@@ -5,12 +5,14 @@ import json
 
 import pytest
 import test_banking as banking
+from dashboard_model_fixture import produce
 from stage9_metrics import measure_work
 from test_dashboard_model_transactions import raw_read
 from test_funds_historical_account_identities import prepared, public, source
 from test_integrity_content import damage
 from test_payroll import profile
 
+from ai_accounting.kernel import dashboard_funds
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
@@ -266,7 +268,10 @@ def test_all_frozen_versions_of_one_subject_survive_local_carry(bank_book, monke
 def test_missing_historical_publication_keeps_original_selector_failure(bank_book, monkeypatch):
     engine, _, _ = prepared(bank_book)
     row = source(engine)
-    before = public(engine)
+    produced = produce(engine, "2026-10")
+    before = public(engine, default_model=True)
+    assert all(page["snapshot_version"] == produced["model_version"]
+               for page in before.values())
     with Dashboard(engine)._snapshot("2026-10") as snap:
         assert row["id"] in FundsRead(snap).states
     damage(engine, "calculation_publication",
@@ -281,11 +286,12 @@ def test_missing_historical_publication_keeps_original_selector_failure(bank_boo
     errors, omitted, amounts = [], [], []
     # The sealed model keeps its frozen money/identity source. Native source
     # selection independently requires the historical publication locator.
-    assert Dashboard(engine).funds("2026-10") == before["funds"]
+    assert Dashboard(engine).funds("2026-10", movement_account_selection="first") == before["funds"]
     for old in (False, True):
         with raw_read(), monkeypatch.context() as patch:
             if old:
                 patch.setattr(BusinessQueries, "_selected_accounting", old_selector)
+                patch.setattr(dashboard_funds, "_bank_identity_witness_heads", lambda _snap: None)
             try:
                 response = Dashboard(engine).funds("2026-10")
             except KernelError as error:

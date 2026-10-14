@@ -571,7 +571,7 @@ def _compile_publication(builder, key, *, prerequisites=()):
 
 def _compile_remuneration_tax_dependencies(builder, facts):
     """Tax confirmation consumes a saved revision before remuneration adoption."""
-    from .remuneration_tax_basis import REMUNERATION_KINDS
+    from .remuneration_tax_basis import REMUNERATION_KINDS, REMUNERATION_TAX_REQUIRED_KINDS
 
     def target(value, binding):
         if isinstance(value, str) and value.startswith("$ref:"):
@@ -627,7 +627,7 @@ def _compile_remuneration_tax_dependencies(builder, facts):
             continue
         key = fact["key"]
         sources = bases.get(key, [])
-        if len(sources) != 1:
+        if len(sources) > 1 or (not sources and fact["kind"] in REMUNERATION_TAX_REQUIRED_KINDS):
             builder.issue(
                 key,
                 "remuneration_tax_basis_missing"

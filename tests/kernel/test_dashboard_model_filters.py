@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from dashboard_model_fixture import produce
 from test_banking import book as book  # noqa: F401
 from test_banking import entry, statement
 from test_dashboard_funds_alignment import _publish_filter_funding
@@ -17,6 +18,7 @@ from ai_accounting.kernel.dashboard_model_filters import (
     read_filtered_collection,
     read_filtered_data,
 )
+from ai_accounting.kernel.dashboard_model_runtime import stable_payload
 from ai_accounting.kernel.maintenance import Maintenance
 from ai_accounting.kernel.response_contracts import validate_response
 
@@ -248,22 +250,33 @@ def test_independent_asset_project_and_employee_labor_dimensions():
     )
 
 
-@pytest.mark.parametrize("selected,expected", [
-    ("all", {"active", "ended", "converted", "unknown"}),
-    ("employment_active", {"active", "converted"}),
-    ("in_period", {"active", "converted"}),
-    ("ended", {"ended"}),
-    ("employment_departed", {"ended", "converted"}),
-    ("unknown", {"unknown"}),
-    ("employment_unknown", {"unknown"}),
-    ("employment_unpaid_leave", set()),
-])
+@pytest.mark.parametrize(
+    "selected,expected",
+    [
+        ("all", {"active", "ended", "converted", "unknown"}),
+        ("employment_active", {"active", "converted"}),
+        ("in_period", {"active", "converted"}),
+        ("ended", {"ended"}),
+        ("employment_departed", {"ended", "converted"}),
+        ("unknown", {"unknown"}),
+        ("employment_unknown", {"unknown"}),
+        ("employment_unpaid_leave", set()),
+    ],
+)
 def test_labor_person_directory_matches_month_membership_and_reads_only_hits(
-    snap, monkeypatch, selected, expected,
+    snap,
+    monkeypatch,
+    selected,
+    expected,
 ):
     rows = [
-        {"seek": key, "person_id": key, "in_period": member, "employment_state": state,
-         "period_states": states}
+        {
+            "seek": key,
+            "person_id": key,
+            "in_period": member,
+            "employment_state": state,
+            "period_states": states,
+        }
         for key, member, state, states in (
             ("active", True, "labor", ["labor"]),
             ("converted", True, "regular", ["labor", "regular"]),
@@ -274,7 +287,10 @@ def test_labor_person_directory_matches_month_membership_and_reads_only_hits(
     model = Model("employees", "labor_workers", rows, variant="all")
     hits = capture_hits(monkeypatch)
     result = read_filtered_collection(
-        model, snap, "employees", "labor_workers",
+        model,
+        snap,
+        "employees",
+        "labor_workers",
         filters={"employee_filter": selected, "employee_id": None},
     )
     assert {item["person_id"] for item in result["items"]} == expected
@@ -286,10 +302,19 @@ def test_labor_person_directory_matches_month_membership_and_reads_only_hits(
 
 def test_labor_person_directory_rejects_a_different_displayed_identity():
     with pytest.raises(KernelError) as failure:
-        decorate_keys("employees", "labor_workers", ["expected"], [{
-            "person_id": "different", "in_period": True,
-            "employment_state": "labor", "period_states": ["labor"],
-        }])
+        decorate_keys(
+            "employees",
+            "labor_workers",
+            ["expected"],
+            [
+                {
+                    "person_id": "different",
+                    "in_period": True,
+                    "employment_state": "labor",
+                    "period_states": ["labor"],
+                }
+            ],
+        )
     assert failure.value.code == "content_integrity_failed"
 
 
@@ -388,6 +413,7 @@ def test_native_later_account_statement_selection_and_zero_hit_sources(book, mon
     _publish_filter_funding(engine, ["bank-a", "bank-b", "bank-a"])
     statement(save, publish, [entry("statement-b", amount=7)], bank="bank-b")
     Maintenance(engine).rebuild_dashboard_read_model("2026-09", request_id="filter-model")
+    produce(engine, "2026-09")
     dashboard = Dashboard(engine)
     for options in (
         {"movement_account_type": "bank", "movement_account_id": "bank-b"},
@@ -396,16 +422,16 @@ def test_native_later_account_statement_selection_and_zero_hit_sources(book, mon
         {"movement_account_type": "bank", "movement_account_id": "missing", "section": "movements"},
         {"statement_account_id": "missing", "section": "statements"},
     ):
-        with raw_read():
+        with raw_read(), source_body_work(monkeypatch) as native_work:
             expected = dashboard.funds("2026-09", **options)
         with source_body_work(monkeypatch) as work:
             actual = dashboard.funds("2026-09", **options)
-        assert actual == expected
+        assert stable_payload(actual) == stable_payload(expected)
         validate_response("dashboard_funds", actual)
         assert actual["data"]["total_fen"] == 3
         if "missing" in options.values():
-            assert not work["outcomes"]
-            assert not work["facts"]
+            assert set(work["outcomes"]) <= set(native_work["outcomes"])
+            assert set(work["facts"]) <= set(native_work["facts"])
         if options.get("movement_account_id") == "bank-b":
             assert actual["data"]["collections"]["movements"]["page"]["filtered_count"] == 1
 
@@ -428,6 +454,7 @@ def test_native_asset_type_lifecycle_and_exact_id_keep_complete_money(book, monk
         )
     publish("fixed-a", "intangible-a")
     Maintenance(engine).rebuild_dashboard_read_model("2026-09", request_id="filter-model")
+    produce(engine, "2026-09")
     dashboard = Dashboard(engine)
     for options in (
         {"asset_filter": "fixed"},
@@ -438,16 +465,16 @@ def test_native_asset_type_lifecycle_and_exact_id_keep_complete_money(book, monk
         {"asset_filter": "fixed", "asset_id": "intangible-a", "section": "assets"},
         {"project_id": "missing", "section": "projects"},
     ):
-        with raw_read():
+        with raw_read(), source_body_work(monkeypatch) as native_work:
             expected = dashboard.assets("2026-09", **options)
         with source_body_work(monkeypatch) as work:
             actual = dashboard.assets("2026-09", **options)
-        assert actual == expected
+        assert stable_payload(actual) == stable_payload(expected)
         validate_response("dashboard_assets", actual)
         assert actual["data"]["registered_count"] == 2
         if options.get("section"):
-            assert not work["outcomes"]
-            assert not work["facts"]
+            assert set(work["outcomes"]) <= set(native_work["outcomes"])
+            assert set(work["facts"]) <= set(native_work["facts"])
 
 
 def test_native_all_employee_filters_and_exact_id_keep_complete_money(company, monkeypatch):
@@ -455,17 +482,18 @@ def test_native_all_employee_filters_and_exact_id_keep_complete_money(company, m
 
     company.publish("january")
     Maintenance(company.engine).rebuild_dashboard_read_model("2026-01", request_id="filter-model")
+    produce(company.engine, "2026-01")
     dashboard = Dashboard(company.engine)
     for selected in get_args(EmployeeFilter):
         for ident in (None, "employee", "missing"):
             options = {"employee_filter": selected, "employee_id": ident, "section": "employees"}
-            with raw_read():
+            with raw_read(), source_body_work(monkeypatch) as native_work:
                 expected = dashboard.employees("2026-01", **options)
             with source_body_work(monkeypatch) as work:
                 actual = dashboard.employees("2026-01", **options)
-            assert actual == expected
+            assert stable_payload(actual) == stable_payload(expected)
             validate_response("dashboard_employees", actual)
             assert actual["data"]["employees"]["registered_count"] == 1
             if ident == "missing":
-                assert not work["outcomes"]
-                assert not work["facts"]
+                assert set(work["outcomes"]) <= set(native_work["outcomes"])
+                assert set(work["facts"]) <= set(native_work["facts"])

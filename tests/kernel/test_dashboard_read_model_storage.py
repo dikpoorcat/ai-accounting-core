@@ -126,11 +126,23 @@ def test_native_responses_and_finite_source_sidecars_round_trip(database, native
 
 
 @pytest.mark.parametrize("native_contract", (False, True))
-@pytest.mark.parametrize("number", (
-    "NaN", "Infinity", "-Infinity", "1e400", "-1e400", "1e999", "-1e999",
-))
+@pytest.mark.parametrize(
+    "number",
+    (
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1e400",
+        "-1e400",
+        "1e999",
+        "-1e999",
+    ),
+)
 def test_decoded_block_rejects_nested_nonfinite_before_any_native_adapter(
-    native, monkeypatch, native_contract, number,
+    native,
+    monkeypatch,
+    native_contract,
+    number,
 ):
     from ai_accounting.kernel import dashboard_read_model as model
 
@@ -147,19 +159,34 @@ def test_decoded_block_rejects_nested_nonfinite_before_any_native_adapter(
         raise AssertionError("nonfinite reached the native adapter")
 
     monkeypatch.setattr(model, "_checked_payload", unexpected_native_adapter)
-    assert_corrupt(lambda: model._decode_block(
-        raw, reference, scope, native_contract=native_contract,
-    ))
-    assert_corrupt(lambda: model._decode_block_value(
-        model.loads_unique(raw), reference, scope, native_contract=native_contract,
-    ))
+    assert_corrupt(
+        lambda: model._decode_block(
+            raw,
+            reference,
+            scope,
+            native_contract=native_contract,
+        )
+    )
+    assert_corrupt(
+        lambda: model._decode_block_value(
+            model.loads_unique(raw),
+            reference,
+            scope,
+            native_contract=native_contract,
+        )
+    )
     direct = model.loads_unique(raw)
     direct["payload"]["historical_numeric"]["nested"] = tuple(
         direct["payload"]["historical_numeric"]["nested"]
     )
-    assert_corrupt(lambda: model._decode_block_value(
-        direct, reference, scope, native_contract=native_contract,
-    ))
+    assert_corrupt(
+        lambda: model._decode_block_value(
+            direct,
+            reference,
+            scope,
+            native_contract=native_contract,
+        )
+    )
 
 
 def test_historical_decoded_block_preserves_finite_json_values(native):
@@ -563,14 +590,24 @@ def test_binding_format_work_depends_on_unique_top_sources_not_item_reuse(monkey
 
 
 @pytest.mark.parametrize(
-    "directory", ("item_sources", "item_fact_sources", "item_voucher_version_ids"),
+    "directory",
+    ("item_sources", "item_fact_sources", "item_voucher_version_ids"),
 )
 @pytest.mark.parametrize(
     "defect",
     (
-        "directory_null", "directory_tuple", "missing_item", "extra_item",
-        "item_null", "item_tuple", "duplicate", "unknown", "missing_union",
-        "null_value", "wrong_type", "empty_value",
+        "directory_null",
+        "directory_tuple",
+        "missing_item",
+        "extra_item",
+        "item_null",
+        "item_tuple",
+        "duplicate",
+        "unknown",
+        "missing_union",
+        "null_value",
+        "wrong_type",
+        "empty_value",
     ),
 )
 def test_item_binding_shape_membership_and_complete_union_reject(directory, defect):
@@ -613,7 +650,8 @@ def test_item_binding_shape_membership_and_complete_union_reject(directory, defe
 
 @pytest.mark.parametrize("item_count", (1, 500))
 @pytest.mark.parametrize(
-    "directory", ("item_sources", "item_fact_sources", "item_voucher_version_ids"),
+    "directory",
+    ("item_sources", "item_fact_sources", "item_voucher_version_ids"),
 )
 def test_every_item_binding_is_checked_including_last_growing_item(directory, item_count):
     from ai_accounting.kernel.dashboard_read_model import _checked_metadata
@@ -676,7 +714,8 @@ def test_fact_digest_preserves_str_subclass_acceptance(top_subclass, item_subcla
 
 
 @pytest.mark.parametrize(
-    "directory", ("item_sources", "item_fact_sources", "item_voucher_version_ids"),
+    "directory",
+    ("item_sources", "item_fact_sources", "item_voucher_version_ids"),
 )
 def test_item_identifiers_still_reject_str_subclasses(directory):
     from ai_accounting.kernel.dashboard_read_model import _checked_metadata

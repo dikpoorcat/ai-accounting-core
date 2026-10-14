@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.engine import Engine
@@ -33,6 +34,7 @@ def reserve_book(tmp_path):
         request_id="evidence",
     )["digest"]
     supporting_text(engine, proof)
+    adopt_empty_opening(engine, period="2026-09")
     counter = itertools.count()
 
     def save(kind, subject, data):

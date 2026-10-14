@@ -90,6 +90,9 @@ def insert_closes(engine, rows):
             "SELECT period,digest FROM period_close ORDER BY period DESC LIMIT 1"
         ).fetchone()
         proof = connection.execute("SELECT digest FROM evidence LIMIT 1").fetchone()[0].hex()
+        highwater = connection.execute(
+            "SELECT coalesce(max(sequence),0) FROM calculation_publication"
+        ).fetchone()[0]
         for period, facts in rows:
             manifest = {
                 "format": CLOSE_FORMAT,
@@ -101,7 +104,7 @@ def insert_closes(engine, rows):
                 if previous
                 else None,
                 "previous_close_digest": previous[1].hex() if previous else None,
-                "publication_sequence": 0,
+                "publication_sequence": highwater,
                 "adopted_results": [],
                 "vouchers": [],
                 "opening_calculation_id": None,
@@ -131,14 +134,14 @@ def insert_closes(engine, rows):
             manifest["owner_review"] = build_owner_review(connection, engine, manifest)
             month = YearMonth(period).ordinal
             checksum = digest(manifest)
-            settlement = prepare_freeze_projection(connection, month, checksum, 0)
+            settlement = prepare_freeze_projection(connection, month, checksum, highwater)
             report = prepare_report_projection(engine, connection, month, manifest, checksum)
             semantics = prepare_report_semantics(engine, connection, month, report.rows, checksum)
             flow = prepare_report_flow(engine, connection, month, report, semantics)
             classifications = prepare_classification_directory(
                 connection, month, checksum, manifest, flow.content
             )
-            balances = prepare_balance_freeze(connection, month, checksum, 0)
+            balances = prepare_balance_freeze(connection, month, checksum, highwater)
             write_close(
                 connection,
                 month,

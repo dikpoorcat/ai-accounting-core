@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
+from dashboard_model_fixture import produce
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 from pydantic import SecretStr
 from test_dashboard_model_transactions import raw_read
 
@@ -20,12 +22,13 @@ PERIOD = "2026-09"
 def _without_generated(value):
     if isinstance(value, dict):
         return {
-            key: _without_generated(item) for key, item in value.items() if key != "generated_at"
+            key: _without_generated(item)
+            for key, item in value.items()
+            if key not in {"generated_at", "snapshot_version", "read_version"}
         }
     if isinstance(value, list):
         return [_without_generated(item) for item in value]
     return value
-
 
 
 def _fund(engine, label, amount, *, period=PERIOD):
@@ -86,7 +89,6 @@ def _fund(engine, label, amount, *, period=PERIOD):
     return bank
 
 
-
 @pytest.fixture
 def resident_service(tmp_path):
     root = tmp_path / "synthetic-owner-brief"
@@ -96,27 +98,35 @@ def resident_service(tmp_path):
     token = service.security.login("owner", password).session_token
     first = service.catalog.create_company("91310000123456789A", "合成甲")
     second = service.catalog.create_company("91310000123456789B", "合成乙")
+    adopt_empty_opening(service.engine(first["id"]), period=PERIOD)
+    adopt_empty_opening(service.engine(second["id"]), period=PERIOD)
     _fund(service.engine(first["id"]), "first-funding", 123456)
     _fund(service.engine(second["id"]), "second-funding", 987654)
+    produce(service.engine(first["id"]), PERIOD)
+    produce(service.engine(second["id"]), PERIOD)
     try:
         yield service, token, first, second
     finally:
         service.close()
 
 
-
 def _brief(service, token, company, **options):
-    return service.dispatch(
+    result = service.dispatch(
         "dashboard_brief",
         {"company_id": company["id"], "period": PERIOD, **options},
         session_token=token,
     )
+    assert result["state"] == "ready", result
+    return result["response"]
 
 
 def _native_brief(service, token, company, **options):
     with raw_read():
-        return _brief(service, token, company, **options)
-
+        return service._dispatch(
+            "dashboard_brief",
+            {"company_id": company["id"], "period": PERIOD, **options},
+            authority=service.security.authorize(token),
+        )
 
 
 def test_read_failure_discards_connection_and_recovers(resident_service, monkeypatch):
@@ -140,7 +150,6 @@ def test_read_failure_discards_connection_and_recovers(resident_service, monkeyp
     assert _brief(service, token, first)["data"]["funds_overview"]["bank_fen"] == 123456
 
 
-
 def test_client_cannot_supply_parallel_values(resident_service):
     service, token, first, _ = resident_service
     properties = service.command_models["dashboard_brief"].json_schema()["properties"]
@@ -148,7 +157,6 @@ def test_client_cannot_supply_parallel_values(resident_service):
     with pytest.raises(KernelError) as rejected:
         _brief(service, token, first, _parallel_attempt={"already_verified": True})
     assert rejected.value.code == "invalid_command"
-
 
 
 def test_resident_brief_matches_snapshot_company_and_http_amounts(resident_service):
@@ -163,16 +171,25 @@ def test_resident_brief_matches_snapshot_company_and_http_amounts(resident_servi
         assert actual["data"]["funds_overview"]["bank_fen"] == amount
         assert actual["data"]["activity_count"] == 1
     http = service.dispatch(
-        "dashboard_brief", {"company_id": first["id"], "period": PERIOD},
-        session_token=token, response_format="http_json",
+        "dashboard_brief",
+        {"company_id": first["id"], "period": PERIOD},
+        session_token=token,
+        response_format="http_json",
     )
-    assert json.loads(http)["data"]["funds_overview"]["bank_fen"] == "123456"
-    assert service.read_pool._total == 2
+    assert json.loads(http)["response"]["data"]["funds_overview"]["bank_fen"] == "123456"
+    assert service.read_pool._total == 4
+    assert {entry.path for entry in service.read_pool._idle} == {
+        service.engine(first["id"]).store.path,
+        service.engine(second["id"]).store.path,
+    }
+    assert all(not entry.connection.in_transaction for entry in service.read_pool._idle)
 
 
 def test_month_scope_and_empty_company_are_independent(resident_service):
     service, token, first, _ = resident_service
     _fund(service.engine(first["id"]), "october-funding", 333, period="2026-10")
+    produce(service.engine(first["id"]), PERIOD)
+    produce(service.engine(first["id"]), "2026-10")
     september = _brief(service, token, first)
     october = _brief(service, token, first, period="2026-10")
     assert september["selected_period"]["key"] == PERIOD
@@ -184,8 +201,9 @@ def test_month_scope_and_empty_company_are_independent(resident_service):
     assert september["data"]["activity_count"] == october["data"]["activity_count"] == 1
     empty = service.catalog.create_company("91310000123456789C", "合成空库")
     result = service.dispatch("dashboard_brief", {"company_id": empty["id"]}, session_token=token)
-    assert result["data"] is result["selected_period"] is None
-    assert result["read_context"]["company_id"] == empty["id"]
+    assert result["state"] == "ready"
+    assert result["response"]["data"] is result["response"]["selected_period"] is None
+    assert result["response"]["read_context"]["company_id"] == empty["id"]
 
 
 def test_concurrent_commit_keeps_snapshot_and_next_read_sees_commit(resident_service, monkeypatch):
@@ -214,6 +232,7 @@ def test_concurrent_commit_keeps_snapshot_and_next_read_sees_commit(resident_ser
                 committed.set()
             actual = reading.result(timeout=10)
     assert _without_generated(actual) == _without_generated(expected)
+    produce(service.engine(first["id"]), PERIOD)
     fresh = _brief(service, token, first)
     assert fresh["data"]["funds_overview"]["bank_fen"] == 123789
     assert fresh["data"]["activity_count"] == 2
@@ -225,17 +244,24 @@ def test_concurrent_commit_keeps_snapshot_and_next_read_sees_commit(resident_ser
 def test_client_cannot_supply_internal_checks(resident_service, marker, command):
     service, token, first, _ = resident_service
     with pytest.raises(KernelError) as rejected:
-        service.dispatch(command, {
-            "company_id": first["id"], "period": PERIOD, marker: {"verified": True},
-        }, session_token=token)
+        service.dispatch(
+            command,
+            {
+                "company_id": first["id"],
+                "period": PERIOD,
+                marker: {"verified": True},
+            },
+            session_token=token,
+        )
     assert rejected.value.code == "invalid_command"
 
 
 def test_company_identity_error_is_rejected(resident_service):
     service, token, first, _ = resident_service
     with service.catalog.connection() as connection:
-        connection.execute("UPDATE company SET taxpayer_id=? WHERE id=?",
-                           ("91310000123456789C", first["id"]))
+        connection.execute(
+            "UPDATE company SET taxpayer_id=? WHERE id=?", ("91310000123456789C", first["id"])
+        )
     with pytest.raises(KernelError) as rejected:
         _brief(service, token, first)
     assert rejected.value.code == "company_mismatch"

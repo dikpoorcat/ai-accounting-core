@@ -3,6 +3,7 @@ import sqlite3
 import uuid
 
 import pytest
+from opening_fixture import adopt_empty_opening
 
 import ai_accounting.kernel.duplicates as duplicate_module
 from ai_accounting.kernel.business_queries import BusinessQueries
@@ -38,7 +39,17 @@ def test_material_location_merge_keeps_resolution_identity_and_original_order(mo
     stored = [base, base | {"location": "sheet-1!row-3"}, base]
 
     class Connection:
-        def execute(self, sql, _parameters):
+        def execute(self, sql, _parameters=()):
+            if sql == (
+                "SELECT c.id FROM json_each(?) ids CROSS JOIN calculation c ON c.fact_id=ids.value"
+            ):
+                return [("calculation-business",)]
+            if sql.startswith('PRAGMA table_info("fact_material_resolution_v2_pre_reference'):
+                return []  # It declares only the current material body family.
+            if sql == 'PRAGMA table_info("fact_material_resolution_v2_links")':
+                return list(enumerate(
+                    ("revision_id", "item_no", "calculation_id", "amount_field", "amount_fen")
+                ))
             assert "fact_material_resolution_v2_links" in sql
             return actual
 
@@ -74,6 +85,7 @@ def company(tmp_path):
         "database-a",
     )
     engine = Engine(store)
+    adopt_empty_opening(engine, period="2026-01")
     counterparty = Entities(engine).register_entity(
         "organization",
         {"display_name": "供应商甲"},

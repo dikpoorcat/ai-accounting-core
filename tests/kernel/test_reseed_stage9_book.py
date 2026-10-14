@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel import schema, versions
 from ai_accounting.kernel.engine import Engine
@@ -168,6 +169,7 @@ def _real_company_pair(tmp_path, monkeypatch):
 
 
 def _real_closed_source(engine):
+    adopt_empty_opening(engine, period="2026-09")
     proof = engine.register_evidence(
         b"Synthetic reseed business evidence", "text/plain", "proof", request_id="proof"
     )["digest"]

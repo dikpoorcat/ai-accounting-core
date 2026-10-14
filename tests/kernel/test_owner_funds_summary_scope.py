@@ -260,6 +260,13 @@ def test_amount_only_avoids_historical_bank_identity_work_and_keeps_full_account
             for row in connection.execute("SELECT id FROM calculation WHERE kind='opening_package'")
         }
         assert len(bank_ids) == 10 and len(opening_ids) == 1
+        identity_ids = {
+            row[0] for row in connection.execute(
+                "SELECT id FROM calculation WHERE subject_id IN "
+                "('opening-bank-a','opening-zero-bank','statement-bank-a','statement-zero-bank')"
+            )
+        }
+        assert len(identity_ids) == 4 and identity_ids < bank_ids
 
     def account_amounts(*, amounts_only):
         with Dashboard(engine)._snapshot(period) as snap:
@@ -277,9 +284,12 @@ def test_amount_only_avoids_historical_bank_identity_work_and_keeps_full_account
                 )
                 assert not bank_ids & snap.reads._verified_sql_outcomes
             else:
-                # The required formation package keeps the guarded complete
-                # history path: every bank source and that exact zero opening.
-                assert set(read.states) == bank_ids | opening_ids
+                # Both registered banks retain their starts and exact first
+                # statement witnesses, alongside the fully proved zero opening.
+                assert set(read.states) == identity_ids | opening_ids
+                assert identity_ids <= snap.reads._verified_sql_outcomes
+                assert {read.state_selections[ident]["posting_period"]
+                        for ident in identity_ids} == {"2026-09"}
                 assert len(read.account_rows) == 2
             accounts = [*read.account_rows.values(), *read.omitted_account_rows.values()]
             return {
@@ -348,9 +358,11 @@ def test_amount_only_avoids_historical_bank_identity_work_and_keeps_full_account
             if "close_storage_subroot" in row["statement"]
         )
 
-    # Both readers prove the formation adoption across the two frozen months.
-    # The narrow route still avoids every bank source body and statement payload.
-    assert adopted_subroot_rows(narrow_work) == adopted_subroot_rows(complete_work) == 2
+    # The amount selector proves opening ownership through both closed nodes;
+    # positive bank identities authenticate only their exact September node.
+    # The amount route consumes no bank source body or statement payload.
+    assert adopted_subroot_rows(narrow_work) == 2
+    assert adopted_subroot_rows(complete_work) == 1
 
 
 @pytest.mark.parametrize("boundary", ["v1", "unowned", "disabled"])

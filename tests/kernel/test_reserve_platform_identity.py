@@ -1,6 +1,7 @@
 """Platform reserve money keeps one original row through identity correction."""
 
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.contracts import Read
 from ai_accounting.kernel.domains.platforms import movement_scope
@@ -22,6 +23,7 @@ def test_platform_account_correction_moves_reserve_money_and_keeps_one_consumer(
             "db",
         )
     )
+    adopt_empty_opening(engine)
     proof = engine.register_evidence(
         b"Synthetic platform row and account identity correction",
         "text/plain",

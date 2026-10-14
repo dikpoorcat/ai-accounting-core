@@ -214,10 +214,44 @@ def test_exact_source_adjusts_and_preserves_installation_ancestry(tmp_path, kind
         result = adjustment.adjust_connection(connection, kind=kind)
         assert result["status"] == "adjusted"
         assert connection.execute("SELECT * FROM schema_history").fetchall() == original_history
-        verify_schema(connection, bundle=production_bundle(), kind=kind)
+        verify_schema(connection, bundle=adjustment.target_bundle(), kind=kind)
         assert adjustment.adjust_connection(connection, kind=kind)["status"] == "already_adjusted"
     if kind == "company":
-        assert verify_file(path)["verification"]["status"] == "verified"
+        assert verify_file(path, _bundle=adjustment.target_bundle())["verification"]["status"] == (
+            "verified"
+        )
+
+
+def test_historical_adjustment_stops_at_its_original_contract_before_explicit_tax_point_upgrade(
+    tmp_path,
+):
+    from ai_accounting.kernel.development_contracts import (
+        HISTORY_TARGET_FINGERPRINT,
+        TAX_POINT_TARGET_FINGERPRINT,
+    )
+    from ai_accounting.kernel.offline_development_upgrade import upgrade_company
+
+    path = tmp_path / "historical-then-current.sqlite"
+    original_file(path, "company")
+    with closing(connect(path)) as connection:
+        installed = connection.execute("SELECT * FROM schema_history").fetchall()
+        result = adjustment.adjust_connection(connection, kind="company")
+        assert result["target_fingerprint"] == HISTORY_TARGET_FINGERPRINT
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='fact_tax_point_basis'"
+        ).fetchone() is None
+        assert connection.execute("SELECT * FROM schema_history").fetchall() == installed
+        verify_schema(connection, bundle=adjustment.target_bundle())
+        with pytest.raises(KernelError) as mismatch:
+            verify_schema(connection, bundle=production_bundle())
+        assert mismatch.value.code == "schema_fingerprint_mismatch"
+        separate = upgrade_company(connection, production_bundle())
+        assert separate["source_fingerprint"] == HISTORY_TARGET_FINGERPRINT
+        assert separate["target_fingerprint"] == TAX_POINT_TARGET_FINGERPRINT
+        assert len(separate["steps"]) == 1
+        assert connection.execute("SELECT count(*) FROM fact_tax_point_basis").fetchone()[0] == 0
+        assert connection.execute("SELECT * FROM schema_history").fetchall() == installed
+    assert verify_file(path)["verification"]["status"] == "verified"
 
 
 @pytest.mark.parametrize("phase", ["after_history_copy", "after_drop", "before_commit"])
@@ -415,7 +449,7 @@ def test_nonempty_original_wage_and_plan_keep_exact_fact_hashes(tmp_path, fault_
                 adjustment._row_digest(connection, name, adjustment._columns(connection, name))
                 == before
             )
-        store = Store(path, production_bundle(), "synthetic-company", "synthetic-database")
+        store = Store(path, adjustment.target_bundle(), "synthetic-company", "synthetic-database")
         assert [type(store.fact(connection, ident).fact) for ident in saved] == [
             PayrollPreRevision,
             PayrollPlanPreRevision,
@@ -425,7 +459,9 @@ def test_nonempty_original_wage_and_plan_keep_exact_fact_hashes(tmp_path, fault_
             connection.execute("SELECT count(*) FROM fact_remuneration_tax_basis").fetchone()[0]
             == 0
         )
-    assert verify_file(path)["verification"]["status"] == "verified"
+    assert verify_file(path, _bundle=adjustment.target_bundle())["verification"]["status"] == (
+        "verified"
+    )
     from scripts.adjust_stage9_samples import append_workforce_format
 
     with closing(connect(path, read_only=True)) as connection:
@@ -497,9 +533,5 @@ def test_new_synthetic_fund_source_and_audit_are_atomic(tmp_path, fault_phase):
                 .hex()
                 == proof["digest"]
             )
-    assert (
-        verify_file(path, _bundle=source if fault_phase else production_bundle())["verification"][
-            "status"
-        ]
-        == "verified"
-    )
+    expected_bundle = source if fault_phase else adjustment.target_bundle()
+    assert verify_file(path, _bundle=expected_bundle)["verification"]["status"] == "verified"

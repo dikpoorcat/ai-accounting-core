@@ -124,7 +124,21 @@ SOURCES = {
     ),
     "discovery": source("实际事实版本及当前头", "查找索引重建", "业务查找", "discovery_indexes"),
     "model": source(
-        "已验证当前／冻结来源快照", "读取模型生产", "实际页面命中及模型核验", "dashboard_read_model"
+        "已验证当前／冻结来源快照", "独立模型生产、发布及准备队列",
+        "实际页面命中及模型核验", "dashboard_read_model", "dashboard_async"
+    ),
+    "backup": source(
+        "精确来源版本的备份快照、验证封印及任务尝试历史",
+        "备份任务准备、验证与发布", "便携备份及恢复核验", "backup_tasks", "backup"
+    ),
+    "replay": source(
+        "明确绑定的合成重录计划及每步执行来源",
+        "重录计划登记与持久执行", "重录接续及源版本核验",
+        "replay_document", "replay_runner", "replay_continuation", "replay_schema"
+    ),
+    "timing": source(
+        "实际操作耗时观测；不作为核算或采用依据",
+        "运行入口耗时记录", "性能观测读取", "engine", "dashboard_async_schema"
     ),
     "material_watch": source(
         "冻结清单与追加来源变化", "资料变更检测目录", "变更复核", "material_watch"
@@ -150,11 +164,12 @@ SOURCES = {
         "实际来源写入所追加的变化", "来源变化触发器", "变更检测及复核", "change_journal"
     ),
     "catalog": source(
-        "公司目录及本地负责人安全生命周期",
+        "公司目录、结构身份及本地负责人安全生命周期",
         "目录／安全原子入口",
         "公司定位／负责人认证",
         "catalog",
         "security/schema",
+        "offline_development_upgrade",
     ),
     "draft": source("私有身份绑定工作稿", "save_work_draft", "读取／恢复工作稿", "work_drafts"),
 }
@@ -198,7 +213,14 @@ TABLE_FAMILIES = {
         "entity_reference_current entity_reference_recorded"
     ),
     "discovery": "discovery_fact_current discovery_fact_history",
-    "model": "dashboard_read_model_block dashboard_read_model_commit dashboard_read_model_current",
+    "model": (
+        "dashboard_read_model_block dashboard_read_model_commit dashboard_read_model_current "
+        "dashboard_projection_current dashboard_projection_publication "
+        "dashboard_projection_request dashboard_projection_reset"
+    ),
+    "backup": "backup_attempt_history backup_seal backup_snapshot",
+    "replay": "replay_binding replay_plan replay_run replay_step",
+    "timing": "operation_timing",
     "material_watch": "material_watch_bucket material_watch_directory material_watch_root",
     "duplicate": (
         "business_duplicate_check duplicate_freeze_bucket duplicate_freeze_directory "
@@ -210,10 +232,14 @@ TABLE_FAMILIES = {
         "identity audit request jobs state schema_meta schema_history schema_draft_history "
         "pending fact_current fact_scope calculation_current calculation_scope voucher_current"
     ),
-    "change": "source_change source_change_head",
+    "change": (
+        "source_change source_change_head source_change_retained_boundary "
+        "source_change_retained_record"
+    ),
 }
 CATALOG_TABLES = frozenset(
     "catalog_identity company company_operation company_setting schema_history schema_meta "
+    "schema_draft_history "
     "security_audit security_owner security_recovery security_session".split()
 )
 

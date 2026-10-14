@@ -76,14 +76,31 @@ def test_anchored_canonical_bytes_skip_unused_result_and_fact_decoding(book, mon
                 (storage.canonical(sorted(ids)),),
             )
         }
-        reads.fact_versions(fact_ids)
+        reads.verify_fact_versions(fact_ids)
+
+        original_raws = storage._snapshot_fact_raws
+        # The formally adopted empty opening has a structured counts body;
+        # retain its exact verification while scalar business bodies reuse bytes.
+        opening_ids = {
+            row[0] for row in reads.connection.execute(
+                "SELECT f.id FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+                "WHERE s.kind='opening_package'"
+            )
+        }
+        fallback = []
+
+        def source_raws(store, connection, identifiers):
+            assert set(identifiers) <= opening_ids, set(identifiers) - opening_ids
+            fallback.append(set(identifiers))
+            return original_raws(store, connection, identifiers)
 
         def unused(*_args, **_kwargs):
             raise AssertionError("canonical saved bytes should not be decoded a second time")
 
         monkeypatch.setattr(integrity, "_object", unused)
-        monkeypatch.setattr(storage, "_snapshot_fact_raws", unused)
+        monkeypatch.setattr(storage, "_snapshot_fact_raws", source_raws)
         assert ids <= read_open_contributions(engine, reads.connection, ids, reads=reads).keys()
+        assert len(fallback) <= 1
 
 
 def test_anchored_scalar_fact_uses_saved_json_without_python_hydration(book, monkeypatch):

@@ -8,6 +8,7 @@ from hashlib import sha256
 from threading import Event
 
 import pytest
+from dashboard_model_fixture import produce
 from monthly_close_fixture import ready
 from pydantic import SecretStr
 from test_dashboard_model_transactions import raw_read
@@ -38,6 +39,12 @@ def owner_book(tmp_path):
     ready(engine, proof, first=PERIOD, last=PERIOD)
 
     def execute(command, **payload):
+        if command == "dashboard_brief":
+            with raw_read():
+                return service._dispatch(
+                    command, {"company_id": company["id"], **payload},
+                    authority=service.security.authorize(token),
+                )
         return service.dispatch(
             command, {"company_id": company["id"], **payload}, session_token=token
         )
@@ -64,7 +71,7 @@ def advance(engine, lane):
 
 
 def test_only_exact_ready_intent_is_requested_and_wire_contract_matches(owner_book, monkeypatch):
-    service, _, company, _, token, _ = owner_book
+    service, engine, company, _, token, _ = owner_book
     assert brief(owner_book)["data"]["owner_review_request"] is None
     selected = preview(owner_book)
 
@@ -76,6 +83,7 @@ def test_only_exact_ready_intent_is_requested_and_wire_contract_matches(owner_bo
     assert response["schema_version"] == 19
     assert response["data"]["month_state"] == "open"
     assert response["data"]["owner_review_request"] == {"preview_digest": selected["digest"]}
+    produce(engine, PERIOD)
     for response_format in ("http", "http_json"):
         wire = service.dispatch(
             "dashboard_brief", {"company_id": company["id"], "period": PERIOD},
@@ -83,6 +91,8 @@ def test_only_exact_ready_intent_is_requested_and_wire_contract_matches(owner_bo
         )
         if response_format == "http_json":
             wire = json.loads(wire)
+        assert wire["state"] == "ready", wire
+        wire = wire["response"]
         assert wire["data"]["owner_review_request"] == response["data"]["owner_review_request"]
         assert wire["data"]["month_state"] == "open"
     malformed = {
@@ -223,6 +233,8 @@ def test_empty_brief_keeps_none_data_and_context_version(owner_book):
     service, _, _, _, token, _ = owner_book
     empty = service.catalog.create_company("91310000123456789B", "合成空企业")
     response = service.dispatch("dashboard_brief", {"company_id": empty["id"]}, session_token=token)
+    assert response["state"] == "ready", response
+    response = response["response"]
     assert response["schema_version"] == 19 and response["data"] is None
     context = service.dispatch(
         "dashboard_context", {"company_id": empty["id"]}, session_token=token

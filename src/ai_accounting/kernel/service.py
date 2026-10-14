@@ -33,7 +33,7 @@ from .replay_runner import ReplayCommands
 from .reports import Reports, run_report_jobs
 from .security import SecurityService, consume_close_approval
 from .tax_filing_data import TaxFilingData
-from .tax_import import TaxImport
+from .tax_import import TaxImport, run_tax_import_jobs
 from .workflow import Workflow
 
 _HTTP_DASHBOARD_COMMANDS = frozenset(
@@ -758,6 +758,7 @@ class LocalService:
                 "backups": run_backup_jobs(engine.store.path, _bundle=engine.store.bundle, **data),
                 "exports": run_export_jobs(engine, **data),
                 "reports": run_report_jobs(engine, **data),
+                "tax_imports": run_tax_import_jobs(engine, **data),
                 "dashboard": run_pending(engine, limit=worker_limit),
                 "replay": run_ready(self, company_id=company_id, limit=worker_limit),
             }

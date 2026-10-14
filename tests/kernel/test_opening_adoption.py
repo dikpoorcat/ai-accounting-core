@@ -163,6 +163,9 @@ def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, s
     assert verify(engine)["status"] == "verified"
     with engine.store.connection(read_only=True) as connection:
         manifest = stored_manifest(connection)
+    replace_stored_manifest(engine, manifest, preserve_journal_reference=True)
+    assert verify(engine)["status"] == "verified"
+    with engine.store.connection(read_only=True) as connection:
         assert manifest["opening_calculation_id"] != old["opening_package"]
         previous = connection.execute(
             "SELECT c.*,p.id publication_id FROM calculation c JOIN calculation_publication p "
@@ -179,7 +182,7 @@ def test_real_old_and_new_versions_require_exact_direct_adoption(opening_book, s
             result_digest=previous["digest"].hex(),
         )
         manifest["opening_calculation_id"] = previous["id"]
-    replace_stored_manifest(engine, manifest)
+    replace_stored_manifest(engine, manifest, preserve_journal_reference=True)
     with pytest.raises(KernelError) as failure:
         verify(engine, include_indexes=False)
     assert failure.value.details["reason"] == "direct_adoption_set_mismatch"

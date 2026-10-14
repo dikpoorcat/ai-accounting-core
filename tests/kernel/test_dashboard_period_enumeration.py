@@ -19,6 +19,8 @@ def database():
         "CREATE TABLE voucher_current(voucher_id TEXT PRIMARY KEY,version_id TEXT UNIQUE);"
         "CREATE TABLE period_close(period INTEGER PRIMARY KEY);"
         "CREATE TABLE material_revision(period INTEGER);"
+        "CREATE TABLE entity(id TEXT PRIMARY KEY,kind TEXT);"
+        "CREATE TABLE entity_profile_revision(entity_id TEXT,revision INTEGER);"
     )
     return connection
 

@@ -5,6 +5,7 @@ import itertools
 import pytest
 from entity_fixture import seed_registration_entities
 from material_fixture import supporting_text
+from opening_fixture import adopt_empty_opening
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.opening import CATEGORIES
@@ -19,7 +20,7 @@ CLASSIFICATION = "readily_redeemable_held_not_over_one_year"
 
 
 @pytest.fixture
-def book(tmp_path):
+def book(tmp_path, *, opening_period="2026-01"):
     engine = Engine(
         Store.create(
             tmp_path / "fund.sqlite",
@@ -36,6 +37,8 @@ def book(tmp_path):
         request_id="proof",
     )["digest"]
     supporting_text(engine, proof)
+    if opening_period is not None:
+        adopt_empty_opening(engine, period=opening_period)
     counter = itertools.count()
 
     def save(kind, subject, data, *, revision=0, evidence=True):
@@ -59,6 +62,11 @@ def book(tmp_path):
         )
 
     return engine, save, publish
+
+
+@pytest.fixture
+def unopened_book(tmp_path):
+    return book.__wrapped__(tmp_path, opening_period=None)
 
 
 def subscription(**updates):
@@ -367,8 +375,8 @@ def test_cost_allocation_includes_unpublished_peers_and_rejects_wrong_fund(book)
     assert exc.value.code == "money_fund_identity"
 
 
-def test_opening_cost_is_not_activity_and_loss_redemption_can_settle_later(book):
-    engine, save, publish = book
+def test_opening_cost_is_not_activity_and_loss_redemption_can_settle_later(unopened_book):
+    engine, save, publish = unopened_book
     counts = dict.fromkeys(CATEGORIES.values(), 0)
     counts.update(assets=1, equity=1)
     save(

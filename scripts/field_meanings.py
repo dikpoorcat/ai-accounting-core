@@ -1010,9 +1010,6 @@ _add(
     "ai_accounting.kernel.entities.PersonProfile",
     display_name="负责人或资料明确登记的对象显示名称，供查询展示；不取代正式身份",
     display_number="明确登记的管理显示编号，用于查找和展示；不是内核对象ID或自动顺序编号",
-    employment_end="有任职依据的管理离职月或实际日；不自动推定工资处理截至日",
-    employment_start="有任职依据的管理入职月或实际日；不是工资扣缴关系起点",
-    employment_status="明确登记的管理在册状态；查询历史人员范围使用此值和管理任职日期，不从当前employment_state反推历史",
     external_identifiers="按明确标识种类保存的外部身份或编号，不与管理显示编号机械合并",
     note="该对象或业务的管理备注；不作为会改变核算处理的正式事实依据",
 )

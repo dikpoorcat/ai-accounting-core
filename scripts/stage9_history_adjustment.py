@@ -9,7 +9,11 @@ from types import MappingProxyType
 
 from ai_accounting.kernel.backup import _retained_history_digest, _verify_connection
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.development_contracts import get_contract_sha
+from ai_accounting.kernel.development_contracts import (
+    CATALOG_HISTORY_FINGERPRINT,
+    HISTORY_TARGET_FINGERPRINT,
+    get_contract_sha,
+)
 from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.types import canonical, digest
 from ai_accounting.kernel.versions import fingerprint, objects, verify_schema
@@ -71,7 +75,7 @@ def _require(ok, message):
 
 
 def _contracts(kind):
-    bundle = production_bundle()
+    bundle = target_bundle()
     source = get_contract_sha(bundle, kind, COMPANY_SOURCE if kind == "company" else CATALOG_SOURCE)
     _require(source is not None, "缺少包内精确历史结构来源")
     target = bundle.current(kind)
@@ -81,6 +85,23 @@ def _contracts(kind):
         "历史调整来源和目标未在包内声明",
     )
     return bundle, source, target
+
+
+def target_bundle():
+    """The fixed historical endpoint, independent of later production drafts."""
+    from ai_accounting.kernel.offline_development_upgrade import (
+        source_bundle as declared_source_bundle,
+    )
+
+    current = production_bundle()
+    company = get_contract_sha(current, "company", HISTORY_TARGET_FINGERPRINT)
+    catalog = get_contract_sha(current, "catalog", CATALOG_HISTORY_FINGERPRINT)
+    _require(company is not None and catalog is not None, "缺少固定历史调整目标合同")
+    previous = declared_source_bundle(current, HISTORY_TARGET_FINGERPRINT)
+    return replace(previous, contracts=MappingProxyType({
+        "company": MappingProxyType({0: company}),
+        "catalog": MappingProxyType({0: catalog}),
+    }))
 
 
 def source_bundle():

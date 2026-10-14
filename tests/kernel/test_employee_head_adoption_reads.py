@@ -3,6 +3,8 @@
 import json
 
 import pytest
+from dashboard_model_fixture import produce
+from entity_fixture import save_entity_display_profile
 from test_dashboard_model_transactions import raw_read
 from test_integrity_content import damage, verify
 from test_payroll import actual, payroll
@@ -447,9 +449,16 @@ def test_model_wage_seals_bind_displayed_month_not_certified_history(company, mo
     """Model hits check their own seals; old aggregate ancestors need full proof."""
     company.publish("january", "february")
     engine = company.engine
+    save_entity_display_profile(engine, {
+        "kind": "employee", "entity_id": "employee",
+        "workforce_event": {"action": "hire", "effective_date": "2026-01-01"},
+        "source": "explicit synthetic hiring source for displayed wage proof",
+    }, expected_revision=0, request_id=company.request())
+    produce(engine, "2026-01")
+    produce(engine, "2026-02")
     dashboard = Dashboard(engine)
-    january = dashboard.employees("2026-01", employee_filter="all")
-    february = dashboard.employees("2026-02", employee_filter="all")
+    january = dashboard.employees("2026-01")
+    february = dashboard.employees("2026-02")
     assert january["data"]["employees"]["gross_salary_fen"] == 1_000_000
     assert february["data"]["employees"]["gross_salary_fen"] == 1_000_000
     assert february["data"]["employees"]["outstanding_net_fen"] == 1_814_800
@@ -470,11 +479,11 @@ def test_model_wage_seals_bind_displayed_month_not_certified_history(company, mo
         model.setattr(dashboard_module, "_employees", no_native_fallback)
         # February shows its own wage. January contributes only to the signed
         # aggregate, whose receipt does not re-read that private ancestor.
-        assert stable_payload(dashboard.employees("2026-02", employee_filter="all")) == (
+        assert stable_payload(dashboard.employees("2026-02")) == (
             stable_payload(february)
         )
         with pytest.raises(KernelError) as failure:
-            dashboard.employees("2026-01", employee_filter="all")
+            dashboard.employees("2026-01")
         assert failure.value.code == "content_integrity_failed"
     with raw_read(), pytest.raises(KernelError) as failure:
         dashboard.employees("2026-02", employee_filter="all")

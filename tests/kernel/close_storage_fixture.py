@@ -7,7 +7,8 @@ reach their original domain checker instead of failing on an obsolete encoding.
 import json
 
 from ai_accounting.kernel.close_storage import decode_close, write_close
-from ai_accounting.kernel.types import YearMonth
+from ai_accounting.kernel.types import YearMonth, canonical
+from ai_accounting.kernel.types import digest as storage_digest
 
 
 def use_v4_close_manifest(monkeypatch, *, source_version=None):
@@ -112,7 +113,7 @@ def stored_manifest(connection, period=None):
     return decode_close(connection, row)
 
 
-def replace_stored_manifest(engine, manifest):
+def replace_stored_manifest(engine, manifest, *, preserve_journal_reference=False):
     period = YearMonth(manifest["period"]).ordinal
     tables = (
         "close_storage_block",
@@ -130,17 +131,44 @@ def replace_stored_manifest(engine, manifest):
                 "SELECT manifest FROM period_close WHERE period=?", (period,)
             ).fetchone()[0]
         )
+        previous_digest = connection.execute(
+            "SELECT lower(hex(digest)) FROM period_close WHERE period=?", (period,),
+        ).fetchone()[0]
         roots = {key: bytes.fromhex(value) for key, value in root["derived_roots"].items()}
+        trigger_tables = tables + (("source_change",) if preserve_journal_reference else ())
         triggers = connection.execute(
             "SELECT name,sql FROM sqlite_schema WHERE type='trigger' "
             "AND tbl_name IN (SELECT value FROM json_each(?))",
-            (json.dumps(tables),),
+            (json.dumps(trigger_tables),),
         ).fetchall()
         for name, _ in triggers:
             connection.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
         for table in tables[:-1]:
             connection.execute(f"DELETE FROM {table} WHERE period=?", (period,))
         digest = write_close(connection, period, manifest, projection_roots=roots)
+        if preserve_journal_reference:
+            # Re-encoding a saved close must keep its original frozen journal
+            # cut; the current head also contains that close's later event.
+            replacement_root = json.loads(connection.execute(
+                "SELECT manifest FROM period_close WHERE period=?", (period,),
+            ).fetchone()[0])
+            replacement_root["source_changes"] = root["source_changes"]
+            connection.execute(
+                "UPDATE period_close SET manifest=? WHERE period=?",
+                (canonical(replacement_root), period),
+            )
+            connection.execute(
+                "UPDATE close_storage_root SET storage_digest=? WHERE period=?",
+                (storage_digest(replacement_root), period),
+            )
+            # Reseal only this synthetic close's exact existing journal source.
+            # Keep the event identity, sequence and all other source coverage.
+            changed = connection.execute(
+                "UPDATE source_change SET after_ref=? WHERE source='close' "
+                "AND target_id=? AND after_ref=?",
+                (digest.hex(), str(period), previous_digest),
+            )
+            assert changed.rowcount == 1, "expected one exact synthetic close journal reference"
         connection.execute(
             "UPDATE read_index_source SET source_digest=? "
             "WHERE source_kind='close' AND source_id=?",

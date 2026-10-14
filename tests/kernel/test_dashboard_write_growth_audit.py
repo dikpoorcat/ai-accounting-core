@@ -5,12 +5,12 @@ import re
 from contextlib import contextmanager
 
 import pytest
+from dashboard_model_fixture import model_current, produce
 from test_banking import book as book  # noqa: F401
 from test_banking import funding, opening
 from test_dashboard_model_transactions import raw_read, source_body_work, state
 
 from ai_accounting.kernel import dashboard_model_materializer as materializer
-from ai_accounting.kernel import dashboard_model_runtime
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.periods import Periods
 from ai_accounting.kernel.query_reads import QueryReads
@@ -117,21 +117,25 @@ def native_pages(engine, period):
 
 
 @pytest.mark.parametrize("months", [1, 3, 6])
-def test_same_unattached_evidence_reanchors_without_native_rebuilds(book, monkeypatch, months):
+def test_same_unattached_evidence_keeps_models_without_synchronous_rebuilds(
+    book, monkeypatch, months,
+):
     engine, save, publish, proof = book
-    # The shared book helper explicitly records a January supporting policy.
-    # Keep the actual registered total at 1/3/6 rather than adding an unnoticed
-    # extra January model to a September-based sample.
     opening(save, publish, month="2026-01")
     funding(save, publish, amount=17, day="2026-01-01")
     periods = [f"2026-{1 + index:02}" for index in range(months)]
     for period in periods[1:]:
-        Periods(engine).inventory(period, "payroll", evidence=[], expected=0, no_business=True,
-                                  confirmation_evidence=proof, request_id="register-" + period)
+        Periods(engine).inventory(
+            period, "payroll", evidence=[], expected=0, no_business=True,
+            confirmation_evidence=proof, request_id="register-" + period,
+        )
+    for period in periods:
+        produce(engine, period)
     before_business = {period: native_pages(engine, period) for period in periods}
-    build, frame = materializer.build_model, materializer._native_frame
+    before_models = {period: model_current(engine, period) for period in periods}
     work = {"periods": [], "frames": 0, "typed_facts": set(), "typed_calculations": set(),
             "decoded_outcomes": 0}
+    build, frame = materializer.build_model, materializer._native_frame
     stored_outcome = QueryReads._stored_outcome
 
     def observed_build(dashboard, period, **kwargs):
@@ -155,68 +159,41 @@ def test_same_unattached_evidence_reanchors_without_native_rebuilds(book, monkey
     monkeypatch.setattr(materializer, "build_model", observed_build)
     monkeypatch.setattr(materializer, "_native_frame", observed_frame)
     monkeypatch.setattr(QueryReads, "_stored_outcome", staticmethod(observed_outcome))
-    # Exercise the old unconditional builder on the same synthetic company,
-    # preserving every authentication step. Measure SQL data as well as hooks.
-    materialize = dashboard_model_runtime.materialize_models
-
-    def unconditional(*args, **kwargs):
-        return materialize(*args, **{**kwargs, "evidence_registration": False})
-
-    with monkeypatch.context() as baseline:
-        baseline.setattr(dashboard_model_runtime, "materialize_models", unconditional)
-        with (
-            source_body_work(monkeypatch) as bodies_before,
-            sql_data_work(engine, monkeypatch) as sql_before,
-        ):
-            engine.register_evidence(b"baseline independent new proof", "text/plain", "unattached",
-                                     request_id="baseline-proof")
-    assert sorted(work["periods"]) == sorted(periods)
-    assert work["frames"] == 22 * months
-    assert sql_before["source_rows"] > 0 and sql_before["source_value_bytes"] > 0
-    before_work = {"builds": len(work["periods"]), "native_frames": work["frames"],
-                   "sql": engine.last_metrics["sql_statements"],
-                   "fact_loads": len(bodies_before["facts"]),
-                   "outcome_loads": len(bodies_before["outcomes"]), **sql_before}
-    work["periods"].clear()
-    work["frames"] = work["decoded_outcomes"] = 0
-    work["typed_facts"].clear()
-    work["typed_calculations"].clear()
     with source_body_work(monkeypatch) as bodies, sql_data_work(engine, monkeypatch) as data_work:
-        result = engine.register_evidence(b"same independent new proof", "text/plain", "unattached",
-                                          request_id="independent-proof")
+        result = engine.register_evidence(
+            b"same independent new proof", "text/plain", "unattached",
+            request_id="independent-proof",
+        )
+    assert result["digest"]
     assert work["periods"] == [] and work["frames"] == 0
+    assert work["typed_facts"] == work["typed_calculations"] == set()
+    assert work["decoded_outcomes"] == 0 and bodies["facts"] == bodies["outcomes"] == []
     assert data_work["source_selects"] == data_work["source_rows"] == 0
     assert data_work["source_value_bytes"] == 0
-    assert data_work["model_rows"] > 0 and data_work["model_value_bytes"] > 0
-    assert data_work["vm_steps"] < sql_before["vm_steps"]
-    # Rebinding must decode existing certified UI bytes as well as the batch
-    # checks before/after publication. Total returned bytes may increase even
-    # when raw business SQL and native algorithms disappear; report that cost.
-    assert result["digest"]
-    sql = engine.last_metrics["sql_statements"]
-    print({"registered_months": months, "builds": len(work["periods"]),
-           "native_frames": work["frames"], "sql": sql,
-           "production_snapshot_typed_facts": len(work["typed_facts"]),
-           "production_snapshot_typed_calculations": len(work["typed_calculations"]),
-           "query_reads_outcome_decodes": work["decoded_outcomes"],
-           "fact_loads": len(bodies["facts"]), "unique_facts": len(set(bodies["facts"])),
-           "outcome_loads": len(bodies["outcomes"]),
-           "unique_outcomes": len(set(bodies["outcomes"])), **data_work,
-           "baseline": before_work})
+    # Evidence registration neither reads nor rewrites certified sidecar bytes.
+    # Source authority may inspect publication summaries for the known periods.
+    assert data_work["model_rows"] == data_work["model_value_bytes"] == 0
+    print({"registered_months": months, "builds": 0, "native_frames": 0,
+           "sql": engine.last_metrics["sql_statements"], **data_work})
+    assert {period: model_current(engine, period) for period in periods} == before_models
     assert {period: native_pages(engine, period) for period in periods} == before_business
+    assert {period: owner_pages(engine, period) for period in periods} == before_business
     before = state(engine)
     calls = list(work["periods"])
-    assert engine.register_evidence(b"same independent new proof", "text/plain", "unattached",
-                                    request_id="independent-proof") == result
+    assert engine.register_evidence(
+        b"same independent new proof", "text/plain", "unattached", request_id="independent-proof",
+    ) == result
     assert work["periods"] == calls and state(engine) == before
-    # The normal atomic write boundary remains in force with these observers.
-    def interrupted(stage, connection):
-        if stage == "dashboard_materialized":
-            raise RuntimeError("synthetic interrupted production")
-
+    # Independent projection production does not weaken the real evidence write.
     if months == 3:
+        def interrupted(stage, _connection):
+            if stage == "published":
+                raise RuntimeError("synthetic interrupted evidence write")
+
         monkeypatch.setattr(engine, "fault", interrupted)
-        with pytest.raises(RuntimeError, match="interrupted production"):
-            engine.register_evidence(b"failed independent proof", "text/plain", "unattached",
-                                     request_id="failed-proof")
+        with pytest.raises(RuntimeError, match="interrupted evidence write"):
+            engine.register_evidence(
+                b"failed independent proof", "text/plain", "unattached", request_id="failed-proof",
+            )
         assert state(engine) == before
+        assert {period: model_current(engine, period) for period in periods} == before_models

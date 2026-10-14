@@ -522,6 +522,7 @@ def _produce(engine, period, *, worker_id=None):
     from .dashboard_model_runtime import _producing, model_scope, stable_payload
     from .dashboard_read_model import PageBlock, persist_model, prepare_model
     from .query_reads import QueryReads
+    from .runtime import _preserve_failure_on_closed_cleanup
 
     statements = set()
     started = time.perf_counter()
@@ -562,12 +563,19 @@ def _produce(engine, period, *, worker_id=None):
 
         dashboard._snapshot = snapshot
         token = _producing.set(True)
-        connection.set_trace_callback(trace)
+        original = None
         try:
+            connection.set_trace_callback(trace)
             content = build_model(dashboard, period, default_only=True)
+        except BaseException as error:
+            original = error
+            raise
         finally:
-            connection.set_trace_callback(None)
-            _producing.reset(token)
+            try:
+                with _preserve_failure_on_closed_cleanup(original):
+                    connection.set_trace_callback(None)
+            finally:
+                _producing.reset(token)
         dependencies = [
             {
                 "sql": sql,

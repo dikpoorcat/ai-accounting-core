@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from opening_fixture import adopt_empty_opening
 from test_display import database_state, register_worker, save_commentary
 from test_exports import setup as setup  # noqa: F401
 from test_opening_continuation import book as book  # noqa: F401
@@ -29,6 +30,7 @@ def expense(period):
 
 def test_future_write_preserves_content_but_not_submission_and_relevant_sources_expire(book):
     engine, save, publish, _, proof = book
+    adopt_empty_opening(engine)
     # Establish the page's selected month through the same typed business API.
     save("expense", "baseline", expense("2026-01"))
     publish("baseline")
@@ -85,6 +87,7 @@ def test_future_write_preserves_content_but_not_submission_and_relevant_sources_
 
 def test_cross_month_pending_cause_is_not_filtered_out(book):
     engine, save, publish, _, _ = book
+    adopt_empty_opening(engine)
     agreement = {
         "period": "2026-01",
         "lender_id": "lender",

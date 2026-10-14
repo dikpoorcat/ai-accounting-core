@@ -99,8 +99,7 @@ def test_named_beneficiary_reuses_existing_sources_without_payer_name(book, sour
         ).fetchone()[0] == beneficiary
 
 
-def test_name_lookup_does_not_authenticate_unrelated_profiles(book, monkeypatch):
-    from ai_accounting.kernel import dashboard_model_runtime
+def test_name_lookup_does_not_authenticate_unrelated_profiles(book):
     from ai_accounting.kernel.entities import employee_entities
 
     engine, _, _, beneficiary = book
@@ -128,21 +127,16 @@ def test_name_lookup_does_not_authenticate_unrelated_profiles(book, monkeypatch)
         with pytest.raises(KernelError) as failure:
             employee_entities(connection, "2026-09", registry=engine.store.registry)
         assert failure.value.code == "entity_profile_corrupt"
-        before = {table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-                  for table in ("subject", "fact_revision", "request", "audit")}
-    # The ordinary writer also refreshes that complete page and must reject
-    # its corruption atomically; it has a broader scope than the name resolver.
-    with pytest.raises(KernelError) as failure:
-        register(book)
-    assert failure.value.code == "entity_profile_corrupt"
+    # Registration checks its own named beneficiary. Dashboard production is
+    # independently queued and cannot add an unrelated profile to that scope.
+    assert register(book)["status"] == "confirmed"
     with engine.store.connection(read_only=True) as connection:
-        assert {table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-                for table in before} == before
-    # Isolate only this registration's business-source validation from UI
-    # production, keeping the exact name resolver and its checks unchanged.
-    with monkeypatch.context() as setup:
-        setup.setattr(dashboard_model_runtime, "supports_native_production", lambda _engine: False)
-        assert register(book)["status"] == "confirmed"
+        assert bytes(connection.execute(
+            "SELECT digest FROM entity_profile_revision WHERE entity_id=?", (unrelated,),
+        ).fetchone()[0]) == bytes(32)
+        with pytest.raises(KernelError) as failure:
+            employee_entities(connection, "2026-09", registry=engine.store.registry)
+        assert failure.value.code == "entity_profile_corrupt"
 
 
 def test_prior_anonymous_id_cannot_be_newly_calculated(book):

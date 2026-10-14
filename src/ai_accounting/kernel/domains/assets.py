@@ -1405,9 +1405,11 @@ def register(registry: Registry) -> None:
         (LoanInterest, calculate_interest),
     ):
         registry.register(
-            model, evaluator,
+            model,
+            evaluator,
             historical=((LoanInterestPreReference, "fact_loan_interest_pre_reference"),)
-            if model is LoanInterest else (),
+            if model is LoanInterest
+            else (),
         )
     registry.register_readiness("assets_and_financing", required_reads, required_work)
     register_asset_batches(registry)
