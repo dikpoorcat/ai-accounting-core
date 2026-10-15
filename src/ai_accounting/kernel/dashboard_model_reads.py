@@ -33,7 +33,8 @@ def read_quarterly_report(dashboard, connection, year, quarter, *, as_of):
     if producing_model() or not supports_model(connection):
         return None
     start, end = f"{year:04d}-{quarter * 3 - 2:02d}", f"{year:04d}-{quarter * 3:02d}"
-    from .dashboard_async import supported, load_for_snapshot
+    from .dashboard_async import load_for_snapshot, supported
+
     if supported(connection):
         from .dashboard import _Snapshot
         from .storage import _active_fact_reads
@@ -49,43 +50,47 @@ def read_quarterly_report(dashboard, connection, year, quarter, *, as_of):
             if model is None:
                 return None
             block = model.read_page_block("quarterly_report/default/overview/0")
-            if block.sources or block.fact_sources or block.voucher_version_ids:
-                raise _invalid()
-            return {**block.payload, "checked_at": datetime.now(UTC).isoformat(),
-                    "read_context": dashboard._read_context(connection, as_of)}
         finally:
             snap.release()
-    # Registration belongs to immutable production receipts. A missing latest
-    # locator must reach load_model's corruption checks, not select an earlier
-    # month or disguise the damage as an unregistered-quarter native fallback.
-    registered = connection.execute(
-        "SELECT period FROM dashboard_read_model_commit WHERE period BETWEEN ? AND ? "
-        "ORDER BY period DESC LIMIT 1",
-        (start, end),
-    ).fetchone()
-    if registered is None:
-        return None
-    model = load_model(
-        connection,
-        model_scope(
-            dashboard.engine,
+    else:
+        # Registration belongs to immutable production receipts. A missing latest
+        # locator must reach load_model's corruption checks, not select an earlier
+        # month or disguise the damage as an unregistered-quarter native fallback.
+        registered = connection.execute(
+            "SELECT period FROM dashboard_read_model_commit WHERE period BETWEEN ? AND ? "
+            "ORDER BY period DESC LIMIT 1",
+            (start, end),
+        ).fetchone()
+        if registered is None:
+            return None
+        model = load_model(
             connection,
-            registered[0],
-            as_of=as_of,
-        ),
-    )
-    if model is None:
-        return None
-    key = "quarterly_report/default/overview/0"
-    if not model.has_block(key):
-        return None
-    block = model.read_page_block(key)
+            model_scope(
+                dashboard.engine,
+                connection,
+                registered[0],
+                as_of=as_of,
+            ),
+        )
+        if model is None:
+            return None
+        key = "quarterly_report/default/overview/0"
+        if not model.has_block(key):
+            return None
+        block = model.read_page_block(key)
     # Strict native payload and quarter identity were checked by the loader.
     # The complete financial statements contain aggregates, not raw hits.
     if block.sources or block.fact_sources or block.voucher_version_ids:
         raise _invalid()
+    export = dict(block.payload["export"])
+    if export["epochs"] is not None:
+        # Validated report inputs can outlive unrelated company writes. Bind the
+        # concurrency token to this source snapshot without altering the frozen
+        # block or digest; export still recomputes and checks the complete plan.
+        export["epochs"] = dashboard.store.epochs(connection)
     return {
         **block.payload,
+        "export": export,
         "checked_at": datetime.now(UTC).isoformat(),
         "read_context": dashboard._read_context(connection, as_of),
     }
