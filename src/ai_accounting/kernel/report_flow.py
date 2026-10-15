@@ -134,12 +134,14 @@ def _content(
     prepared_report,
     *,
     classification_refs=None,
+    profit_rules_version=2,
 ):
     from .query_reads import QueryReads
     from .report_projection import SOURCE_COLUMNS
     from .report_semantics import expand_line_fields
     from .reports import _cash_rows, _profit_rows, issue
 
+    _require_profit_rules_version(profit_rules_version)
     semantics = {(ident, line): json.loads(body) for _, ident, line, body in semantic_rows}
     selected = [
         dict(zip(SOURCE_COLUMNS, source, strict=True))
@@ -240,7 +242,7 @@ def _content(
         rows.append(row)
     if len(rows) != len(semantics):
         raise KernelError("content_integrity_failed", "报表月度汇总存在额外冻结语义行")
-    profit = _profit_rows(rows, period, period, problems)
+    profit = _profit_rows(rows, period, period, problems, rules_version=profit_rules_version)
     cash = _cash_rows(rows, period, period, problems)
     assessed = {}
     for row in rows:
@@ -249,6 +251,7 @@ def _content(
             assessed[str(tax_year)] = assessed.get(str(tax_year), 0) + row["amount"]
     return canonical(
         {
+            **({"profit_rules_version": profit_rules_version} if profit_rules_version == 2 else {}),
             "classification_refs": refs,
             "source_vouchers": sorted(selected_vouchers),
             "profit": {str(key): amount for key, amount in profit.items()},
@@ -410,15 +413,21 @@ def _flow_classification_headers_match_rows(connection, period, expected_refs, s
     return True
 
 
-def read_report_flow(connection, period, *, reads=None):
-    """Return authenticated monthly data, or None if classification selection changed."""
+def _require_profit_rules_version(version):
+    if type(version) is not int or version not in (1, 2):
+        raise KernelError("content_integrity_failed", "报表月度汇总利润规则版本无效")
+    return version
+
+
+def _authenticated_report_flow(connection, period, *, reads=None):
+    """Read the root-bound body independently of current management selection."""
 
     cache = (
         reads._report_snapshot_cache
         if reads is not None and reads._snapshot_active and reads.connection is connection
         else None
     )
-    cache_key = ("report_period_flow", period)
+    cache_key = ("report_period_flow_content", period)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
     close = connection.execute("SELECT * FROM period_close WHERE period=?", (period,)).fetchone()
@@ -446,6 +455,33 @@ def read_report_flow(connection, period, *, reads=None):
     # The private parent root binds this writer-produced string byte for byte.
     # Decode it after that proof; full comparison still rebuilds from sources.
     content = json.loads(stored["content"])
+    _require_profit_rules_version(content.get("profit_rules_version", 1))
+    content["root"] = source_root
+    if cache is not None:
+        cache[cache_key] = content
+    return content
+
+
+def read_report_profit_rules_version(connection, period, *, reads=None):
+    """Return the authenticated close's rules even when classifications changed."""
+
+    return _authenticated_report_flow(connection, period, reads=reads).get(
+        "profit_rules_version", 1
+    )
+
+
+def read_report_flow(connection, period, *, reads=None):
+    """Return authenticated monthly data, or None if classification selection changed."""
+
+    cache = (
+        reads._report_snapshot_cache
+        if reads is not None and reads._snapshot_active and reads.connection is connection
+        else None
+    )
+    cache_key = ("report_period_flow", period)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+    content = _authenticated_report_flow(connection, period, reads=reads)
     expected_refs = tuple(tuple(item) for item in content["classification_refs"])
     # The authenticated month root gives the exact adopted reference IDs.
     # Check every named immutable header and typed voucher binding, including
@@ -456,7 +492,6 @@ def read_report_flow(connection, period, *, reads=None):
         connection, period, expected_refs, content["source_vouchers"]
     ):
         return None
-    content["root"] = source_root
     if cache is not None:
         cache[cache_key] = content
     return content
@@ -597,23 +632,31 @@ def compare_report_flow(
             if row[8] in CASH_ACCOUNTS | set(PROFIT_ACCOUNTS)
         }
         refs = _refs_from_ids(connection, period, frozen_classification_refs, source_vouchers)
-        content = _content(
-            engine,
-            connection,
-            period,
-            source_rows,
-            prepared_semantics.rows,
-            prepared_report,
-            classification_refs=refs,
-        )
-        root = _root(
-            period,
-            close["digest"],
-            prepared_report.root_digest,
-            prepared_semantics.root_digest,
-            content,
-        )
-        if reader.derived_root(header, "report_flow") != root:
+        bound = reader.derived_root(header, "report_flow")
+        # The private parent commits the adopted rules. Reconstruct both known
+        # versions from original sources; a missing or damaged derived row must
+        # neither choose a version nor prevent restoration of the original one.
+        for profit_rules_version in (2, 1):
+            content = _content(
+                engine,
+                connection,
+                period,
+                source_rows,
+                prepared_semantics.rows,
+                prepared_report,
+                classification_refs=refs,
+                profit_rules_version=profit_rules_version,
+            )
+            root = _root(
+                period,
+                close["digest"],
+                prepared_report.root_digest,
+                prepared_semantics.root_digest,
+                content,
+            )
+            if bound == root:
+                break
+        else:
             raise KernelError("content_integrity_failed", "报表月度汇总与权威来源不一致")
         if (
             reader.derived_root(header, "report") != prepared_report.root_digest

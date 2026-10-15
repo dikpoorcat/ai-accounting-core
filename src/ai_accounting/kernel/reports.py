@@ -1248,7 +1248,7 @@ class Reports:
                         year_start.ordinal - 1: start_parties,
                         end.ordinal: end_parties,
                     }
-            from .report_flow import read_report_flow
+            from .report_flow import read_report_flow, read_report_profit_rules_version
 
             frozen_flows = {}
             if party_position_lines is not None and not unknown_accounts and not _income_tax_basis:
@@ -1404,7 +1404,11 @@ class Reports:
                 if year_start.ordinal <= month <= end.ordinal and month not in frozen_flows
             }
             frozen_semantics = {}
+            frozen_profit_rules = {}
             for month in sorted(semantic_months):
+                frozen_profit_rules[month] = read_report_profit_rules_version(
+                    connection, month, reads=reads
+                )
                 key = ("report_semantics", month)
                 if cache is not None and key in cache:
                     frozen_semantics[month] = cache[key]
@@ -1535,6 +1539,8 @@ class Reports:
 
             for row in rows:
                 row["amount"] = row["debit"] - row["credit"]
+                if row["period"] in frozen_profit_rules:
+                    row["profit_rules_version"] = frozen_profit_rules[row["period"]]
                 frozen = frozen_semantics.get(row["period"])
                 if frozen is not None and row["account"] in CASH_ACCOUNTS | set(PROFIT_ACCOUNTS):
                     selected_key = row["version_id"], row["line_no"]
@@ -2355,7 +2361,7 @@ def _apply_carry_forward(statements, fact, opening_rows, quarter_start, book_sta
                 )
 
 
-def _profit_rows(rows, begin, end, problems):
+def _profit_rows(rows, begin, end, problems, *, rules_version=2):
     result = {line: 0 for line in PROFIT_NAMES}
     for row in rows:
         if not begin <= row["period"] <= end or row["account"] not in PROFIT_ACCOUNTS:
@@ -2363,6 +2369,12 @@ def _profit_rows(rows, begin, end, problems):
         main, sign = PROFIT_ACCOUNTS[row["account"]]
         result[main] += row["amount"] * sign
         account, kind, fact = row["account"], row["kind"], row["fact"]
+        version = row.get("profit_rules_version", rules_version)
+        if type(version) is not int or version not in {1, 2}:
+            raise KernelError("content_integrity_failed", "利润表明细取数规则版本不受支持")
+        if account == "571103" and version == 2:
+            # This detail is already part of row 24; it never reduces profit again.
+            result[29] += row["amount"]
         automatic = account == "5603" and (
             kind in {"loan_interest", "bank_income"}
             or (kind == "expense" and getattr(fact, "expense_class", None) == "bank_fee")
