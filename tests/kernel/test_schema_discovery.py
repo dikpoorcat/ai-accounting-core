@@ -520,7 +520,7 @@ def test_work_draft_selection_keeps_question_disposition_semantics(contracts, co
 def test_report_entrypoints_include_income_tax_provision_rules(contracts, command):
     selected = discover(contracts, view="selected", commands=[command])
     rules = selected["agent_operating_rules"]["tax_reporting"]["rules"]
-    assert selected["agent_operating_protocol_version"] == 30
+    assert selected["agent_operating_protocol_version"] == 31
     assert "computed_provision" in rules["single_source"]
     assert "不另建重复" in rules["readiness"]
     assert "财报导出不以税务清单覆盖为前置" in rules["readiness"]

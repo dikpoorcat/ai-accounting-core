@@ -30,7 +30,11 @@ from ..contracts import (
     Registry,
 )
 from ..types import ActualDate, NonNegativeFen, PositiveFen, SubjectId, YearMonth, sum_fen
-from .money import ACTUAL_PAYMENT_KINDS, payment_funds_account
+from .money import (
+    ACTUAL_PAYMENT_KINDS,
+    payment_funds_account,
+    validate_transfer_material_direction,
+)
 from .taxes import VatPolicy, split_tax_inclusive
 
 Identifier = Annotated[
@@ -2118,6 +2122,31 @@ def calculate_sale_return(version: FactVersion, ctx: Context) -> Outcome:
 
 
 class FundsTransfer(Fact):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "x-material-amount-dimensions": {
+                "source": {
+                    "amount_field": "fact.source_amount_fen",
+                    "account_field": "fact.source_bank_account_id",
+                    "funds_direction": "outflow",
+                    "basis_field": "fact.amount_fen",
+                    "meaning": "转出账户侧原件额度，fact.amount_fen及result.amount_fen共用此额度",
+                },
+                "destination": {
+                    "amount_field": "fact.destination_amount_fen",
+                    "account_field": "fact.destination_bank_account_id",
+                    "funds_direction": "inflow",
+                    "basis_field": "fact.amount_fen",
+                    "meaning": "转入账户侧原件额度，由已确认金额派生，不新增事实、核算或凭证",
+                },
+            }
+        }
+    )
+    material_amount_aliases: ClassVar[dict[str, str]] = {
+        "fact.amount_fen": "fact.source_amount_fen",
+        "result.amount_fen": "fact.source_amount_fen",
+    }
+
     def scopes(self):
         return bank_scopes(
             self.period, self.source_bank_account_id, self.destination_bank_account_id
@@ -2129,6 +2158,28 @@ class FundsTransfer(Fact):
     source_bank_account_id: Identifier
     destination_bank_account_id: Identifier
     amount_fen: PositiveFen
+
+    @property
+    def source_amount_fen(self) -> int:
+        return self.amount_fen
+
+    @property
+    def destination_amount_fen(self) -> int:
+        return self.amount_fen
+
+    def validate_material_amount(
+        self, amount_field, amount_fen, *, source_amounts, source_directions=()
+    ):
+        if amount_field in {"fact.amount_fen", "result.amount_fen", "fact.source_amount_fen"}:
+            dimension, direction = "source", "outflow"
+        elif amount_field == "fact.destination_amount_fen":
+            dimension, direction = "destination", "inflow"
+        else:
+            return
+        validate_transfer_material_direction(
+            amount_fen, source_amounts=source_amounts, source_directions=source_directions,
+            dimension=dimension, expected_direction=direction,
+        )
 
     @model_validator(mode="after")
     def actual_funds(self):

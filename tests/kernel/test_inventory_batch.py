@@ -217,6 +217,63 @@ def test_second_row_cannot_omit_any_earlier_received_original_and_first_row_roll
     assert engine.request_result("must-not-hide-original")["status"] == "unknown"
 
 
+@pytest.mark.parametrize("batch", [False, True])
+def test_registration_preserves_corrected_inputs_without_reviving_old_mistake(book, batch):
+    engine, periods, (owner, first, second) = book
+    original = periods.inventory(
+        **declaration(owner, category="tax", evidence=[first, second],
+                      expected=2, no_business=False),
+        request_id="before-maintenance-correction",
+    )
+
+    def correction(connection):
+        # An authorized maintenance correction appends; it never edits the original.
+        row = connection.execute(
+            "INSERT INTO material_revision"
+            "(period,category,expected,received,no_business,evidence_digest) "
+            "VALUES(?,'tax',1,1,0,?) RETURNING id",
+            (YearMonth("2026-01").ordinal, bytes.fromhex(owner)),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO material_item VALUES(?,?)", (row[0], bytes.fromhex(second)),
+        )
+        return {"status": "corrected", "inventory_id": row[0]}
+
+    engine._write(
+        "maintenance-correction", digest(["correct", original["inventory_id"], first]),
+        epochs(engine), ("material",), "development_inventory_correction", correction,
+        _dashboard_periods=("2026-01",),
+    )
+    current = declaration(owner, category="tax", evidence=[second], expected=1, no_business=False)
+    if batch:
+        periods.inventory_batch([current], request_id="after-maintenance-correction")
+    else:
+        periods.inventory(**current, request_id="after-maintenance-correction")
+    with engine.store.connection(read_only=True) as connection:
+        assert {
+            row[0].hex() for row in connection.execute(
+                "SELECT evidence_digest FROM material_item WHERE inventory_id=?",
+                (original["inventory_id"],),
+            )
+        } == {first, second}
+        assert [
+            row[0].hex() for row in connection.execute(
+                "SELECT evidence_digest FROM material_item "
+                "WHERE inventory_id=(SELECT max(id) FROM material_revision)",
+            )
+        ] == [second]
+
+    before = snapshot(engine)
+    with pytest.raises(KernelError) as error:
+        missing = current | {"evidence": []}
+        if batch:
+            periods.inventory_batch([missing], request_id="cannot-omit-current-input")
+        else:
+            periods.inventory(**missing, request_id="cannot-omit-current-input")
+    assert error.value.code == "received_material_omitted"
+    assert snapshot(engine) == before
+
+
 @pytest.mark.parametrize("missing", ["evidence", "confirmation_evidence"])
 def test_unknown_second_row_evidence_rolls_back_all_inventory_and_receipt(book, missing):
     engine, periods, (owner, _, _) = book

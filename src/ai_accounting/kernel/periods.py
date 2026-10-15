@@ -165,13 +165,14 @@ class Periods:
         payload = [period, category, items, expected, no_business, confirmation_evidence]
 
         def operation(connection):
-            # An inventory revision cannot hide evidence that has already been received.
+            # Preserve current inputs without reviving mistakes retained in older revisions.
             previous = {
                 r[0].hex()
                 for r in connection.execute(
                     "SELECT i.evidence_digest FROM material_item i JOIN "
                     "material_revision m ON m.id=i.inventory_id "
-                    "WHERE m.period=? AND m.category=?",
+                    "WHERE m.id=(SELECT max(id) FROM material_revision "
+                    "WHERE period=? AND category=?)",
                     (month, category),
                 )
             }

@@ -108,45 +108,8 @@ class WorkDraft(DraftModel):
         return self
 
 
-# Existing typed business inputs only. Directory, credentials, closing approval,
-# background jobs and arbitrary journal entry operations are not working inputs.
-DRAFT_COMMANDS = frozenset(
-    {
-        "save_fact",
-        "amend_fact",
-        "save_facts",
-        "prepare_fact_registration",
-        "register_entity",
-        "update_entity_profile",
-        "register_worker",
-        "change_workforce_relationship",
-        "update_company_note",
-        "save_display_profile",
-        "receive_material",
-        "resolve_material",
-        "resolve_material_group",
-        "preview_material_allocation",
-        "confirm_material_allocation",
-        "preview",
-        "confirm",
-        "preview_delete",
-        "delete",
-        "save_payee",
-        "prepare_obligations",
-        "confirm_obligations",
-        "prepare_payroll",
-        "confirm_payroll_preparation",
-        "prepare_asset_activation_batch",
-        "confirm_asset_activation_batch",
-        "prepare_asset_consumption_month",
-        "confirm_asset_consumption_month",
-        "preview_identity_correction",
-        "confirm_identity_correction",
-        "preview_tax_import",
-        "confirm_tax_import",
-    }
-)
-
+# Typed company requests with durable receipts, including queuing file exports.
+# Directory, credentials, closing approval and job execution use their own recovery.
 PENDING_REQUEST_COMMANDS = frozenset(
     {
         "save_fact",
@@ -158,6 +121,9 @@ PENDING_REQUEST_COMMANDS = frozenset(
         "change_workforce_relationship",
         "update_company_note",
         "save_display_profile",
+        "management",
+        "update_period_commentary",
+        "correct_fund_account_identity",
         "receive_material",
         "resolve_material",
         "resolve_material_group",
@@ -171,6 +137,28 @@ PENDING_REQUEST_COMMANDS = frozenset(
         "confirm_asset_consumption_month",
         "confirm_identity_correction",
         "confirm_tax_import",
+        "confirm_export",
+        "confirm_report_export",
+        "confirm_browser_report_export",
+    }
+)
+
+# Every recoverable formal request is also a valid working candidate. Keep only
+# read-only preparation routes separate, so the two sections cannot drift apart.
+DRAFT_COMMANDS = PENDING_REQUEST_COMMANDS | frozenset(
+    {
+        "prepare_fact_registration",
+        "preview_material_allocation",
+        "preview",
+        "preview_delete",
+        "prepare_obligations",
+        "prepare_payroll",
+        "prepare_asset_activation_batch",
+        "prepare_asset_consumption_month",
+        "preview_identity_correction",
+        "preview_tax_import",
+        "preview_export",
+        "preview_report_export",
     }
 )
 

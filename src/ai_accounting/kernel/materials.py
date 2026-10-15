@@ -1712,7 +1712,7 @@ def _amount_basis(fact, calculation, path):
         return field
 
     requested = normalized(path.split(".")[1])
-    members = {}
+    members = {path: value}
     for prefix, values in (
         (
             "fact",

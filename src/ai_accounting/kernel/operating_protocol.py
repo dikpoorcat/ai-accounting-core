@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 30,
+    "version": 31,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -354,6 +354,14 @@ OPERATING_PROTOCOL = {
                     "可复用当前来源精确版本已有的no_accounting/not_company_business空金额处置；"
                     "须有明确理由且无核算链接，不能按签章关键词自动跳过真实金额、公式或隐藏内容。"
                     "原件保全、归期、事实登记和发布分别核对。"
+                ),
+                "internal_transfers": (
+                    "同一笔银行内部转账只记账一次，转出与转入两条真实流水分别核对。"
+                    "转出关联fact.source_amount_fen，转入关联fact.destination_amount_fen；"
+                    "两侧金额均由现有fact.amount_fen派生，不新增事实金额或重算凭证。"
+                    "fact.amount_fen与result.amount_fen共用转出侧额度；同侧重复仍须明确重复关系。"
+                    "核对原件账户、日期及原金额方向，正数支出列仍属转出；"
+                    "不得把两侧流水声称重复原件或统一翻倍业务额度。"
                 ),
                 "allocation": (
                     "跨月原件先核对逐项归属，再分别处理各月业务；归属不等于入账完成，"

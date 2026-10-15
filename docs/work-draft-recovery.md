@@ -30,6 +30,8 @@ MCP 使用 `finance_local_command(command=..., payload=...)`，CLI 使用 `finan
 
 保存只检查结构、合法JSON、目标业务入口和已提供的事实类型，不调用完整业务模型补默认值。通用候选不能绕过专用登记入口；类型尚不明确时保存问题和笔记。金额使用整数分，小数使用十进制字符串。候选仍未经过完整业务验证，不能成为登记或批准依据。
 
+财报导出（`confirm_report_export`、`confirm_browser_report_export`）、银行代发表导出（`confirm_export`）、业务归集管理、期间说明和资金账户身份更正均可保存为候选及待提交请求。导出提交会创建带持久回执的文件任务，完整原载荷和原请求编号必须能够恢复；排队成功仍须继续核验任务和成果。正式请求共用一份接纳集合，候选另加只读准备和预览入口；准备、预览不能充当有正式回执的待提交请求。
+
 问题的 `status` 可省略，提供时为 `pending`、`answered`、`resolved`、`withdrawn` 或 `deferred`。`answered` 仅表示已收到回答；核验来源、范围及实际处理条件后，问题确已解决才记 `resolved`。撤回问题记 `withdrawn`，后月份和后阶段待办记 `deferred`；可用非空字符串或 `null` 的 `disposition_reason` 记录原因。旧稿省略状态不自动视为待问或已解决，应结合原话和当前内核查证。这些状态不构成正式事实、批准或完成依据，也不由后端直接决定平台是否发问。
 
 可选 `target` 是严格对象：`field` 必填且非空；业务年月 `period`、`entity_id`、`subject_id`、`candidate_id`、`fact_kind` 可省略或为 `null`，不得从外围工作月份补值。尚未定位的范围先查证，不把一个对象的回答扩大到其他对象、字段或期间。该定位和复用规则适用于全部六类 `work_area`。

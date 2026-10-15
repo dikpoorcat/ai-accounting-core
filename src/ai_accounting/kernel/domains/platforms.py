@@ -19,7 +19,7 @@ from ..contracts import (
     Read,
 )
 from ..types import ActualDate, EvidenceDigest, PositiveFen, YearMonth, sum_fen
-from .money import payment_funds_account
+from .money import payment_funds_account, validate_transfer_material_direction
 from .transactions import (
     EXPENSE_ACCOUNTS,
     Allocation,
@@ -444,32 +444,10 @@ class BankPlatformTransfer(MovementConsumption):
             positive = self.direction == "bank_to_platform"
         else:
             return  # The common checker rejects fields that are not business amounts.
-        directions = source_directions or (None,) * len(source_amounts)
-        valid = bool(source_amounts) and len(directions) == len(source_amounts)
-        for amount, direction in zip(source_amounts, directions, strict=False):
-            if direction in {None, "signed_net"}:
-                normalized_positive = amount > 0
-            elif direction in {"inflow", "outflow"}:
-                valid = valid and amount >= 0
-                normalized_positive = direction == "inflow"
-            else:
-                valid = False
-                normalized_positive = None
-            valid = valid and amount != 0 and normalized_positive == positive
-        # Material links retain the original amount convention. Their sign must
-        # match every original member; column metadata supplies the funds direction.
-        valid = (
-            valid
-            and amount_fen != 0
-            and all((amount > 0) == (amount_fen > 0) for amount in source_amounts)
+        validate_transfer_material_direction(
+            amount_fen, source_amounts=source_amounts, source_directions=source_directions,
+            dimension=dimension, expected_direction="inflow" if positive else "outflow",
         )
-        if not valid:
-            raise KernelError(
-                "material_funds_direction_mismatch",
-                "内部划转资料须保留原金额并按明确列方向匹配账户侧；联合组不得混合收支",
-                dimension=dimension,
-                expected_direction="inflow" if positive else "outflow",
-            )
 
     def scopes(self):
         return (
