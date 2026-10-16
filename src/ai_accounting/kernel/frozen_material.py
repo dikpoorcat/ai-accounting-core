@@ -25,12 +25,13 @@ from .types import YearMonth, canonical, digest
 # 4 retains every transitive duplicate and competing-source read in the proof.
 # 5 accepts absent text-row amounts only through exact non-accounting dispositions.
 # 6 separates the evidenced source and destination capacities of internal bank transfers.
+# 7 accepts explicitly identified non-monetary literal cells and blank positions.
 # Earlier complete proofs were checked under different disposition semantics.
 # Their current reads must run the full checker, without rewriting old anchors.
 # An unknown rule falls back to the full checker; the identity never substitutes
 # for the manifest, current-source and evidence-content checks below.
 MATERIAL_COVERAGE_RULE_DIGEST = digest(
-    {"contract": "ai-accounting-kernel/2/material-coverage", "version": 6}
+    {"contract": "ai-accounting-kernel/2/material-coverage", "version": 7}
 )
 
 

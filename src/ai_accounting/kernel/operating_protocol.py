@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 OPERATING_PROTOCOL = {
-    "version": 31,
+    "version": 32,
     "core": {
         "schema_discovery": (
             "开始业务先读取finance_local_schema无参overview，遵守本协议及错误处理说明。"
@@ -353,6 +353,9 @@ OPERATING_PROTOCOL = {
                     "支持资料不能掩盖未处理行。可见文字签章页脚补造的空金额位置，"
                     "可复用当前来源精确版本已有的no_accounting/not_company_business空金额处置；"
                     "须有明确理由且无核算链接，不能按签章关键词自动跳过真实金额、公式或隐藏内容。"
+                    "金额列中的原始文字、选项或签章空格，经原件确认属于非金额内容时，"
+                    "使用no_accounting/non_monetary_content并保留空金额、空链接、理由和精确来源版本；"
+                    "该处置不能用于数值精度错误、未确认业务金额、公式、隐藏内容或控制合计。"
                     "原件保全、归期、事实登记和发布分别核对。"
                 ),
                 "internal_transfers": (

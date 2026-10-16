@@ -481,11 +481,27 @@ class MaterialResolution(Fact):
             "forecast",
             "balance_control",
             "not_company_business",
+            "non_monetary_content",
             "cancelled_before_recognition",
             "zero_amount",
         ]
         | None
-    ) = None
+    ) = Field(
+        default=None,
+        description=(
+            "不入账性质；non_monetary_content明确原位置是文字、选项或签章空格等非金额内容，"
+            "不用于未确认的金额、数值、公式或隐藏内容，须保留精确来源、空金额和明确理由。"
+        ),
+        json_schema_extra={
+            "x-accounting-fact": {
+                "role": "contextual",
+                "meaning": "original_material_disposition_nature",
+                "reusable_sources": [
+                    "current_material_source", "original_cell", "prior_resolution",
+                ],
+            }
+        },
+    )
 
     def scopes(self):
         return (
@@ -694,12 +710,14 @@ class _TableRow(dict):
     """Private original-cell properties, without adding material wire fields."""
 
     visible_text_only = False
+    non_monetary_columns = frozenset()
 
 
 class _TableInspection(dict):
     """Completeness-only provenance; JSON reading caches retain ordinary keys."""
 
     absent_text_amount_locations = frozenset()
+    non_monetary_candidate_locations = frozenset()
 
 
 def _plain_text(value):
@@ -715,21 +733,74 @@ def _plain_text(value):
     return False
 
 
+def _non_monetary_text_candidate(value):
+    """A literal text/blank candidate, never proof of its business meaning."""
+    return isinstance(value, str) and (not value.strip() or _plain_text(value))
+
+
+def _mapped_amount_columns(spec, sheet):
+    return frozenset(
+        column_index_from_string(item.column)
+        for item in spec.sheet_columns.get(sheet, spec.columns)
+        if item.role == "amount"
+    )
+
+
 def _csv_rows(raw, budget):
     try:
         raw.decode("utf-8-sig")
         encoding = "utf-8-sig"
     except UnicodeDecodeError:
         encoding = "gb18030"
+    amount_columns = _mapped_amount_columns(budget.spec, "CSV")
     with io.TextIOWrapper(io.BytesIO(raw), encoding=encoding, newline="") as source:
         for number, row in enumerate(csv.reader(source), 1):
             budget.dimensions("CSV", number, len(row))
-            cells = {
+            cells = _TableRow({
                 index: (value, False, False) for index, value in enumerate(row, 1) if value.strip()
-            }
+            })
+            cells.non_monetary_columns = frozenset(
+                column for column in amount_columns
+                if column > len(row) or _non_monetary_text_candidate(row[column - 1])
+            )
             budget.accept("CSV", number, cells)
             if cells:
                 yield "CSV", number, cells
+
+
+def _xls_formula_locations(book, sheet_index):
+    """Read BIFF formula coordinates; xlrd's cached TEXT type loses that origin."""
+    stream = book.mem
+    # BIFF 2-4.5 forces eager loading and releases this stream. Its amounts
+    # remain readable, but no non-monetary exemption can prove formula origin.
+    if stream is None:
+        return None
+    position = book._sh_abs_posn[sheet_index]
+    limit = min(len(stream), book.base + book.stream_len)
+    depth, locations = 0, set()
+    while position + 4 <= limit:
+        opcode = int.from_bytes(stream[position:position + 2], "little")
+        size = int.from_bytes(stream[position + 2:position + 4], "little")
+        first, end = position + 4, position + 4 + size
+        if end > limit:
+            raise ValueError("truncated BIFF worksheet record")
+        if opcode in {0x0009, 0x0209, 0x0409, 0x0809}:
+            depth += 1
+        elif opcode == 0x000A:
+            depth -= 1
+            if depth == 0:
+                return frozenset(locations)
+        elif depth == 1 and opcode in {0x0006, 0x0206, 0x0406}:
+            if size < 4:
+                raise ValueError("truncated BIFF formula coordinates")
+            locations.add((
+                int.from_bytes(stream[first:first + 2], "little"),
+                int.from_bytes(stream[first + 2:first + 4], "little"),
+            ))
+        if depth <= 0:
+            raise ValueError("invalid BIFF worksheet record nesting")
+        position = end
+    raise ValueError("BIFF worksheet end record is missing")
 
 
 def _xls_rows(raw, budget):
@@ -740,12 +811,33 @@ def _xls_rows(raw, budget):
         for sheet_index in range(book.nsheets):
             sheet = book.sheet_by_index(sheet_index)
             budget.dimensions(sheet.name, sheet.nrows, sheet.ncols)
+            formula_locations = _xls_formula_locations(book, sheet_index)
+            amount_columns = _mapped_amount_columns(budget.spec, sheet.name)
             for row in range(sheet.nrows):
                 cells = _TableRow()
                 text_only = True
+                non_monetary_columns = set()
                 row_info = sheet.rowinfo_map.get(row)
                 for column in range(sheet.ncols):
                     cell = sheet.cell(row, column)
+                    column_info = sheet.colinfo_map.get(column)
+                    hidden = bool(
+                        sheet.visibility
+                        or (row_info and row_info.hidden)
+                        or (column_info and column_info.hidden)
+                    )
+                    if (
+                        not hidden and formula_locations is not None
+                        and (row, column) not in formula_locations
+                        and (
+                            cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK)
+                            or (
+                                cell.ctype == xlrd.XL_CELL_TEXT
+                                and _non_monetary_text_candidate(cell.value)
+                            )
+                        )
+                    ):
+                        non_monetary_columns.add(column + 1)
                     if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
                         continue
                     value = str(cell.value)
@@ -755,18 +847,26 @@ def _xls_rows(raw, budget):
                         )
                     elif cell.ctype == xlrd.XL_CELL_ERROR:
                         value = None
-                    column_info = sheet.colinfo_map.get(column)
-                    hidden = bool(
-                        sheet.visibility
-                        or (row_info and row_info.hidden)
-                        or (column_info and column_info.hidden)
-                    )
                     text_only = text_only and (
                         cell.ctype == xlrd.XL_CELL_TEXT and _plain_text(value) and not hidden
+                        and formula_locations is not None
+                        and (row, column) not in formula_locations
                     )
                     cells[column + 1] = value, cell.ctype == xlrd.XL_CELL_ERROR, hidden
                 # xlrd exposes cached cell types, not complete formula provenance.
                 cells.visible_text_only = bool(cells) and text_only
+                if (
+                    formula_locations is not None and not sheet.visibility
+                    and not (row_info and row_info.hidden)
+                ):
+                    non_monetary_columns.update(
+                        column for column in amount_columns if column > sheet.ncols
+                        and not (
+                            sheet.colinfo_map.get(column - 1)
+                            and sheet.colinfo_map[column - 1].hidden
+                        )
+                    )
+                cells.non_monetary_columns = frozenset(non_monetary_columns)
                 budget.accept(sheet.name, row + 1, cells)
                 if cells:
                     yield sheet.name, row + 1, cells
@@ -987,6 +1087,7 @@ def _xlsx_rows(raw, budget):
                         row_hidden = node.get("hidden") in {"1", "true"}
                         cells = _XlsxRow()
                         text_only = True
+                        non_monetary_columns = set()
                         originals = {}
                         seen_columns = set()
                         for cell in node.findall(main + "c"):
@@ -1025,10 +1126,23 @@ def _xlsx_rows(raw, budget):
                                 )
                             missing = (formula and (value is None or value == "")) or kind == "e"
                             originals[column] = (value, template_formula, kind)
+                            hidden = sheet_hidden or row_hidden or column in hidden_columns
+                            if not formula and not hidden and (
+                                (
+                                    kind in {"s", "inlineStr", "str"}
+                                    and _non_monetary_text_candidate(
+                                        "" if value is None else value
+                                    )
+                                )
+                                or (
+                                    kind == "n" and value in (None, "")
+                                    and int(cell.get("s", "0")) not in date_styles
+                                )
+                            ):
+                                non_monetary_columns.add(column)
                             if value is None or not str(value).strip():
                                 if not missing:
                                     continue
-                            hidden = sheet_hidden or row_hidden or column in hidden_columns
                             text_only = text_only and (
                                 not formula and kind in {"s", "inlineStr", "str"}
                                 and _plain_text(value) and not hidden
@@ -1040,6 +1154,12 @@ def _xlsx_rows(raw, budget):
                             )
                         if cells:
                             cells.visible_text_only = text_only
+                            if not sheet_hidden and not row_hidden:
+                                non_monetary_columns.update(
+                                    _mapped_amount_columns(budget.spec, name)
+                                    - seen_columns - hidden_columns
+                                )
+                            cells.non_monetary_columns = frozenset(non_monetary_columns)
                             cells.verified_empty_template = _empty_xlsx_template(number, originals)
                             budget.accept(name, number, cells)
                             yield name, number, cells
@@ -1067,6 +1187,7 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
     mappings, issues, items, coverage, totals, sums = {}, [], [], [], [], {}
     known_periods = {}
     absent_text_amount_locations = set()
+    non_monetary_candidate_locations = set()
     grouped_locations = {item.location for item in spec.controls}
     for sheet, row, cells in rows:
         if sheet not in mappings:
@@ -1098,7 +1219,10 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
                 budget.cells += 1
                 if budget.cells > MAX_NONEMPTY_CELLS:
                     _too_large("原单元格与待补金额字段合计最多支持200万个")
-                if getattr(cells, "visible_text_only", False):
+                if (
+                    cells.visible_text_only
+                    and column in cells.non_monetary_columns
+                ):
                     absent_text_amount_locations.add(
                         f"{sheet}!{get_column_letter(column)}{row}"
                     )
@@ -1145,6 +1269,12 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
                 )
             if rule.role != "amount":
                 continue
+            if (
+                column in cells.non_monetary_columns
+                and row not in spec.total_rows.get(sheet, ())
+                and location not in grouped_locations
+            ):
+                non_monetary_candidate_locations.add(location)
             amount = None
             try:
                 amount = _amount(value)
@@ -1195,6 +1325,7 @@ def _inspect_bytes(raw: bytes, specification: Specification) -> dict:
         items=items, issues=issues, coverage=coverage, control_totals=totals
     )
     result.absent_text_amount_locations = frozenset(absent_text_amount_locations)
+    result.non_monetary_candidate_locations = frozenset(non_monetary_candidate_locations)
     return result
 
 
@@ -2761,7 +2892,12 @@ def check_completeness_many(
             and recovered_amount(source_id, item["location"]) is not None
         }
         non_accounting_text = set()
-        for location in getattr(inspection, "absent_text_amount_locations", ()):
+        absent_text = getattr(inspection, "absent_text_amount_locations", ())
+        non_monetary = getattr(inspection, "non_monetary_candidate_locations", ())
+        control_locations = {item["location"] for item in inspection["control_totals"]}
+        for location in set(absent_text) | set(non_monetary):
+            if location in control_locations:
+                continue
             matches = by_item.get((source_id, location), ())
             if len(matches) != 1:
                 continue
@@ -2769,7 +2905,16 @@ def check_completeness_many(
             if (
                 resolution.source_fact_id == by_id[source_id].id
                 and resolution.treatment == "no_accounting"
-                and resolution.non_accounting_reason == "not_company_business"
+                and (
+                    (
+                        location in absent_text
+                        and resolution.non_accounting_reason == "not_company_business"
+                    )
+                    or (
+                        location in non_monetary
+                        and resolution.non_accounting_reason == "non_monetary_content"
+                    )
+                )
                 and resolution.amount_fen is None
                 and (resolution.reason or "").strip()
                 and not resolution.links
@@ -2929,6 +3074,17 @@ def check_completeness_many(
             if fact.non_accounting_reason == "zero_amount" and amount != 0:
                 result.append(
                     _issue("material_zero_conflict", "非零业务不能按零金额跳过", location=key[1])
+                )
+            if fact.non_accounting_reason == "non_monetary_content" and (
+                fact.amount_fen is not None
+                or key[1] not in getattr(parsed[key[0]], "non_monetary_candidate_locations", ())
+            ):
+                result.append(
+                    _issue(
+                        "material_non_monetary_conflict",
+                        "非金额处置须对应可见的原始文字或空格，不能覆盖数值、公式或隐藏内容",
+                        location=key[1],
+                    )
                 )
             return result
         if fact.treatment == "control_total":
