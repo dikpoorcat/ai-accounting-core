@@ -585,7 +585,7 @@ def _recover_rollover(output: Path, taxpayer_id: str, bundle, identity_checks) -
         pending_state = _archive_state(pending)
         if pending_state[-1] != state["old_current"] or previous_digest != state["old_previous"]:
             raise _error("backup_target_changed", "Previous backup changed during rollover")
-        verify_portable(pending, _bundle=bundle, **identity_checks)
+        _verify_portable_archive(pending, bundle, retained_draft=True, **identity_checks)
         _replace_archive(
             pending,
             previous,
@@ -1035,7 +1035,40 @@ def _assert_supported_format(format_value: dict[str, Any], bundle) -> None:
         )
 
 
-def _read_manifest(archive: zipfile.ZipFile, maximum: int, bundle) -> dict[str, Any]:
+def _retained_archive_bundle(format_value: dict[str, Any], bundle):
+    """Bind a retained draft to its exact declared ancestor, without upgrading it."""
+    if (
+        bundle.status != "draft"
+        or format_value == bundle.database_format("company")
+        or format_value["family"] != bundle.family
+        or format_value["status"] != "draft"
+    ):
+        return bundle
+
+    source = format_value["fingerprint"]
+    target = bundle.current("company")["sha256"]
+    reachable, pending = set(), [source]
+    transitions = bundle.draft_transitions.get("company", ())
+    while pending:
+        current = pending.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        pending.extend(after for before, after in transitions if before == current)
+    if target not in reachable:
+        raise _error(
+            "backup_schema_unsupported",
+            "Retained draft has no declared path to the active contract",
+        )
+    from .offline_development_upgrade import source_bundle
+
+    try:
+        return source_bundle(bundle, source)
+    except KernelError as exc:
+        raise _error("backup_schema_unsupported", f"{exc.code}: {exc}") from exc
+
+
+def _read_manifest(archive: zipfile.ZipFile, maximum: int) -> dict[str, Any]:
     entries = archive.infolist()
     if len(entries) != 2 or {entry.filename for entry in entries} != {
         DATABASE_MEMBER,
@@ -1055,9 +1088,7 @@ def _read_manifest(archive: zipfile.ZipFile, maximum: int, bundle) -> dict[str, 
         manifest = json.loads(archive.read(MANIFEST_MEMBER))
     except (ValueError, UnicodeError) as exc:
         raise _manifest_invalid("Portable manifest is invalid JSON") from exc
-    result = _validate_manifest(manifest, member_size=archive.getinfo(DATABASE_MEMBER).file_size)
-    _assert_supported_format(result["database_format"], bundle)
-    return result
+    return _validate_manifest(manifest, member_size=archive.getinfo(DATABASE_MEMBER).file_size)
 
 
 def _unpack_verified(
@@ -1067,11 +1098,15 @@ def _unpack_verified(
     max_database_bytes: int,
     bundle,
     prepare_restore: bool = False,
+    retained_draft: bool = False,
     **identity_checks: Any,
 ) -> tuple[dict[str, Any], Path]:
     try:
         with zipfile.ZipFile(path) as archive:
-            manifest = _read_manifest(archive, max_database_bytes, bundle)
+            manifest = _read_manifest(archive, max_database_bytes)
+            if retained_draft:
+                bundle = _retained_archive_bundle(manifest["database_format"], bundle)
+            _assert_supported_format(manifest["database_format"], bundle)
             database = directory / DATABASE_MEMBER
             actual_size = 0
             create_private_file(database)
@@ -1213,6 +1248,25 @@ def verify_portable(
 ) -> dict[str, Any]:
     """Verify member paths, archive hashes, company identity and database contents."""
     bundle = _resolve_bundle(_bundle)
+    return _verify_portable_archive(
+        path,
+        bundle,
+        max_database_bytes=max_database_bytes,
+        expected_company_id=expected_company_id,
+        expected_taxpayer_id=expected_taxpayer_id,
+        expected_database_id=expected_database_id,
+    )
+
+
+def _verify_portable_archive(
+    path: str | Path,
+    bundle,
+    *,
+    max_database_bytes: int = DEFAULT_MAX_DATABASE_BYTES,
+    retained_draft: bool = False,
+    **identity_checks,
+) -> dict[str, Any]:
+    """Only rollover retention may bind an untouched archive to a declared draft ancestor."""
     require_supported_runtime()
     with private_temporary_directory(
         Path(tempfile.gettempdir()), prefix="company-verify-"
@@ -1222,9 +1276,8 @@ def verify_portable(
             directory,
             max_database_bytes=max_database_bytes,
             bundle=bundle,
-            expected_company_id=expected_company_id,
-            expected_taxpayer_id=expected_taxpayer_id,
-            expected_database_id=expected_database_id,
+            retained_draft=retained_draft,
+            **identity_checks,
         )
         return result
 
@@ -1280,7 +1333,9 @@ def _create_portable_unlocked(
     existing = None
     if final.exists():
         ensure_private_file(final)
-        existing = verify_portable(final, _bundle=bundle, **identity_checks)
+        existing = _verify_portable_archive(
+            final, bundle, retained_draft=rollover, **identity_checks
+        )
     if existing is not None:
         if (
             request_id is not None
