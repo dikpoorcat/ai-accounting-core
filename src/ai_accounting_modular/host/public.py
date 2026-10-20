@@ -121,6 +121,7 @@ def create_kernel(
         "backup": application.create_backup_producer(
             storage=storage, records=modules.records, verify_package=modules.verifier
         ),
+        "report_export": reading.create_report_producer(storage),
         **(file_producers or {}),
     }
     file_tasks = files.create_files(storage, producers)
@@ -134,7 +135,11 @@ def create_kernel(
         mark_reading_targets=mark_reading_targets,
     )
     read_models = reading.create_reading(
-        storage=storage, ledger=modules.ledger, records=modules.records, businesses=app
+        storage=storage,
+        ledger=modules.ledger,
+        records=modules.records,
+        businesses=app,
+        files=file_tasks,
     )
     return Kernel(
         storage,

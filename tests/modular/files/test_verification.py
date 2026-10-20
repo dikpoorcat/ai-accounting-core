@@ -74,22 +74,27 @@ def test_symlinked_task_root_is_rejected(file_case, tmp_path):
     assert list(target.iterdir()) == []
 
 
-def test_missing_or_tampered_download_never_delivers(file_case):
+@pytest.mark.parametrize("damage", ["tampered", "missing"])
+def test_missing_or_tampered_download_never_delivers(file_case, damage):
     _, (company, _), _, files = file_case
     plan = report_plan(company)
     task = files.ensure_current(plan, plan["scope_head"], "creator")
     done = files.run(company.company_id, task["task_id"])
     path = Path(done["path"])
-    path.write_bytes(b"not an xlsx")
+    if damage == "tampered":
+        path.write_bytes(b"not an xlsx")
+    else:
+        path.unlink()
     with pytest.raises(ContractError) as wrong:
         with files.verified_download(company.company_id, task["task_id"]):
             pytest.fail("corrupt bytes delivered")
     assert wrong.value.code == "file_invalid"
-    path.unlink()
-    with pytest.raises(ContractError) as missing:
-        with files.verified_download(company.company_id, task["task_id"]):
-            pytest.fail("missing bytes delivered")
-    assert missing.value.code == "file_invalid"
+    failed = files.get(company.company_id, task["task_id"])
+    assert failed["state"] == "failed" and failed["attempts"] == 1 and "path" not in failed
+    assert files.ensure_current(plan, plan["scope_head"], "creator") == failed
+    newer = files.ensure_current(plan, plan["scope_head"], "explicit regenerate")
+    assert newer["task_id"] != task["task_id"]
+    assert files.run(company.company_id, newer["task_id"])["state"] == "succeeded"
 
 
 def test_producer_semantic_verification_is_required_even_when_digest_matches(file_case):

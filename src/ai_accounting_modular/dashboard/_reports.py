@@ -81,6 +81,10 @@ def response(delivery, now):
     failed = [check["code"] for check in snapshot["checks"] if check["status"] == "fail"]
     if failed:
         messages.append("报表勾稽需要核对：" + "、".join(failed))
+    message = "；".join(messages) if partial else "报表按正式账务结果编制。"
+    export = delivery.payload["export"]
+    if export.get("reason"):
+        message += export["reason"]
     return {
         "schema_version": 5,
         "close_state": "closed" if closed else "open",
@@ -88,7 +92,7 @@ def response(delivery, now):
         "status": "blocked" if partial else "ready",
         "status_label": "资料待核对" if partial else "已准备好",
         "headline": "部分报表资料待核对" if partial else "季度财务报表",
-        "message": "；".join(messages) if partial else "报表按正式账务结果编制。",
+        "message": message,
         "checked_at": now.isoformat(),
         "organization": {
             "name": organization["name"],
@@ -112,12 +116,8 @@ def response(delivery, now):
         },
         "statements": statements,
         "draft": partial or not closed,
-        # Workbook export needs an installed producer and a real captured plan.
         "export": {
-            "available": False,
-            "file_name": f"{year}年第{quarter}季度财务报表.xlsx",
-            "preview_digest": None,
-            "epochs": None,
+            key: export[key] for key in ("available", "file_name", "preview_digest", "epochs")
         },
         "read_context": {
             "company_id": snapshot["company_id"],

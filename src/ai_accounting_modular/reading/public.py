@@ -3,9 +3,17 @@
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _context, _materials, _models
+from . import _context, _materials, _models, _report_exports
+from ._report_producer import create_report_producer
 from ._repository import ReadingRepository
-from ._types import BusinessReader, ModelDelivery, PeriodRange, ReadingImpact, SourceDownload
+from ._types import (
+    BusinessReader,
+    ModelDelivery,
+    PeriodRange,
+    ReadingImpact,
+    ReportDownload,
+    SourceDownload,
+)
 
 __all__ = [
     "BusinessReader",
@@ -13,8 +21,10 @@ __all__ = [
     "PeriodRange",
     "ReadingImpact",
     "SourceDownload",
+    "ReportDownload",
     "Reading",
     "create_reading",
+    "create_report_producer",
     "repository_factory",
     "reset_for_restore",
 ]
@@ -30,9 +40,10 @@ def reset_for_restore(uow) -> None:
 
 
 class Reading:
-    def __init__(self, *, storage, ledger, records, businesses: BusinessReader):
+    def __init__(self, *, storage, ledger, records, businesses: BusinessReader, files=None):
         self.storage, self.ledger = storage, ledger
         self.records, self.businesses = records, businesses
+        self.files = files
 
     def page(self, page_key, scope, query):
         if query:
@@ -55,6 +66,15 @@ class Reading:
     def source_content(self, query):
         return _materials.content(self, query)
 
+    def export_report(self, scope, head, request_id, *, epochs):
+        return _report_exports.export(self, scope, head, request_id, epochs=epochs)
+
+    def report_task(self, company_id, job_id):
+        return _report_exports.task(self, company_id, job_id)
+
+    def report_download(self, company_id, job_id):
+        return _report_exports.download(self, company_id, job_id)
+
     def mark_targets(self, impact: ReadingImpact, uow):
         return _models.mark_targets(impact, uow)
 
@@ -67,5 +87,7 @@ class Reading:
             unit.repository("reading").retry(_models.key(normalized), _models.FINANCIAL)
 
 
-def create_reading(*, storage, ledger, records, businesses):
-    return Reading(storage=storage, ledger=ledger, records=records, businesses=businesses)
+def create_reading(*, storage, ledger, records, businesses, files=None):
+    return Reading(
+        storage=storage, ledger=ledger, records=records, businesses=businesses, files=files
+    )

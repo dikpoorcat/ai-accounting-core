@@ -43,6 +43,8 @@ def semantic(snapshot):
 
 
 def _delivery(scope, state, row, payload, metadata):
+    from ._report_plans import preview
+
     if state["format_version"] != FORMAT_VERSION:
         raise ContractError("storage_corrupt", "读取组件格式尚未装配。")
     if state["state"] == "preparing":
@@ -78,6 +80,7 @@ def _delivery(scope, state, row, payload, metadata):
         {
             "snapshot": snapshot,
             "organization": organization,
+            "export": preview(snapshot, state, metadata),
         },
     )
 
@@ -115,6 +118,8 @@ def page(reader, scope):
     expected = scope.get("expected_head")
     if expected is not None and result.version != expected:
         raise ContractError("snapshot_changed", "所选报表范围已变化，请重新读取。")
+    if result.state == "ready" and reader.files is None:
+        result.payload["export"].update(available=False, preview_digest=None, epochs=None)
     return result
 
 

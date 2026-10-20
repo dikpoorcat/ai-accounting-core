@@ -38,11 +38,11 @@ def _validate(key, value):
         ) from error
 
 
-def _error(error):
+def _error(error, *, report=False):
     code = error.code
     if code in {"invalid_input", "invalid_contract"}:
         code = "invalid_command"
-    if code in {"conflict", "snapshot_changed"}:
+    if not report and code in {"conflict", "snapshot_changed"}:
         code = "dashboard_snapshot_changed"
     status = 500
     if code == "invalid_command":
@@ -52,9 +52,19 @@ def _error(error):
         "review_source_not_found",
         "not_found",
         "unknown_company",
+        "unknown_report_job",
     }:
         status = 404
-    elif code in {"dashboard_snapshot_changed", "source_unavailable", "source_content_mismatch"}:
+    elif code in {
+        "dashboard_snapshot_changed",
+        "source_unavailable",
+        "source_content_mismatch",
+        "preview_expired",
+        "report_job_not_ready",
+        "report_download_invalid",
+        "conflict",
+        "report_export_unavailable",
+    }:
         status = 409
     elif code in {"busy", "temporary_failure"}:
         status = 503
@@ -72,7 +82,25 @@ class Dashboard:
         """Keep this context open while sending a source's verified binary stream."""
         with ExitStack() as lifetime:
             try:
-                if path.startswith("/api/review/sources/") and path.endswith("/content"):
+                if path.startswith("/api/local/report-export/") and path.endswith("/download"):
+                    company_id, job_id = _requests.report_task(path, parameters, "/download")
+                    value = lifetime.enter_context(self.reading.report_download(company_id, job_id))
+                    response = HttpResponse(
+                        200,
+                        {
+                            "Content-Type": (
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            ),
+                            "Content-Disposition": "attachment; filename*=UTF-8''"
+                            + quote(value.file_name, safe=""),
+                            "Content-Length": str(value.byte_size),
+                            "X-Content-SHA256": value.sha256,
+                            "X-Content-Type-Options": "nosniff",
+                            "Cache-Control": "no-store",
+                        },
+                        value.stream,
+                    )
+                elif path.startswith("/api/review/sources/") and path.endswith("/content"):
                     token = path[len("/api/review/sources/") : -len("/content")]
                     source_id = unquote(token)
                     if not source_id or any(c in source_id for c in ("/", "\\", "\x00")):
@@ -102,10 +130,25 @@ class Dashboard:
                 else:
                     response = _json(self._get_json(path, parameters))
             except ContractError as error:
-                response = _error(error)
+                response = _error(error, report=path.startswith("/api/local/report-export/"))
             yield response
 
+    def post(self, path, body):
+        try:
+            if path != "/api/local/report-export":
+                raise ContractError("not_found", "此写入入口不存在。")
+            scope = _requests.report_export(body)
+            receipt = self.reading.export_report(
+                scope, body["preview_digest"], body["request_id"], epochs=body["epochs"]
+            )
+            return _json(_validate("report_export_receipt", receipt))
+        except ContractError as error:
+            return _error(error, report=True)
+
     def _get_json(self, path, parameters):
+        if path.startswith("/api/local/report-export/") and path.endswith("/status"):
+            company_id, job_id = _requests.report_task(path, parameters, "/status")
+            return _validate("report_export_status", self.reading.report_task(company_id, job_id))
         if path == "/api/dashboard/context":
             values = _requests.parameters(parameters, {"company_id"})
             if "company_id" in values:

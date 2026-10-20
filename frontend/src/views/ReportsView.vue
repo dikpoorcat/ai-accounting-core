@@ -414,8 +414,7 @@ async function exportReport() {
       const job = await fetchReportExportStatus(companyId, jobId, controller.signal);
       if (!isCurrent(generation, selection) || exportController !== controller) return;
       if (job.status === "succeeded") break;
-      if (job.status === "failed" && job.attempts >= 3) throw new DashboardApiError(409, "REPORT_JOB_FAILED", "原报表任务无法继续生成，请重新生成。");
-      if (job.status === "failed") exportNotice.value = "本次生成未成功，正在等待自动重试。";
+      if (job.status === "failed") throw new DashboardApiError(409, "REPORT_JOB_FAILED", "原报表任务无法继续生成，请重新生成。");
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
         const timer = setTimeout(() => { controller.signal.removeEventListener("abort", abort); resolve(); }, 1200);

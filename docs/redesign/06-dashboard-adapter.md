@@ -221,13 +221,13 @@ partial时export.available=false、preview_digest=null、epochs=null；不能创
 | epochs | `{accounting:非负安全整数, material:非负安全整数, management:非负安全整数}`，原样回传预览。 |
 | request_id | 非空不透明重试键，同一计划的重试使用同一键；不是老板批准。 |
 
-成功HTTP200，响应采用冻结Schema的`report_export_receipt`，精确字段为`status:"queued"、job_id:string、preview_digest:string`。queued表示任务已经登记，不保证尚未执行。当前同一计划已有pending/running/succeeded任务时，所有客户端直接复用原job_id，不因request_id不同替换或重复排队；同请求重试也返回它。同键不同计划返回conflict。只有已达自动重试上限的failed任务，新的显式生成请求才可替换；原失败请求重试仍返回原任务，不暗中重新执行。计划过期返回409/preview_expired，不创建第二份任务、不导出当前新结果冒充旧预览。
+成功HTTP200，响应采用冻结Schema的`report_export_receipt`，精确字段为`status:"queued"、job_id:string、preview_digest:string`。queued表示任务已经登记，不保证尚未执行。当前同一计划已有pending/running/succeeded任务时，所有客户端直接复用原job_id，不因request_id不同替换或重复排队；同请求重试也返回它。同键不同计划返回conflict。failed均为已经停止的任务，新的显式生成请求可以替换；原失败请求重试仍返回原任务，不暗中重新执行。计划过期返回409/preview_expired，不创建第二份任务、不导出当前新结果冒充旧预览。
 
 ### 8.2 单任务状态
 
 `GET /api/local/report-export/{job_id}/status?company_id=...`，只接受company_id查询参数，job_id为URL编码后的不透明身份，解码后非空且不含路径分隔符。
 
-响应使用冻结Schema的`report_export_status`：`schema_version:1、company_id、database_id、job_id、status:pending/running/succeeded/failed、attempts:非负整数、error_code:string|null、error_message:string|null`。只查询当前公司这个报表任务；不读取全公司任务、不展开来源和文件正文。失败最多自动尝试3次，最终失败由用户原按钮重新生成；刷新不重复排队。
+响应使用冻结Schema的`report_export_status`：`schema_version:1、company_id、database_id、job_id、status:pending/running/succeeded/failed、attempts:非负整数、error_code:string|null、error_message:string|null`。只查询当前公司这个报表任务；不读取全公司任务、不展开来源和文件正文。可自动重试的等待使用pending，最多实际尝试3次；failed始终表示已经停止，包括不能重试的错误，因此实际attempts可以小于3。页面收到failed即停止轮询，由用户原按钮重新生成；刷新不重复排队。
 
 现有前端每1200毫秒查询一次；公司、季度或刷新变化时取消轮询，迟到状态不能触发旧文件下载。轮询仅为观察任务，不是核算和文件重试命令。失效任务返回409/preview_expired，不把内部expired状态塞入不接受该枚举的旧Schema。
 
@@ -241,7 +241,7 @@ partial时export.available=false、preview_digest=null、epochs=null；不能创
 
 闭期计划以精确冻结结果为业务依据，不因无关开放期变化而失效；若实际采用的公司名称等当前补充资料变化，仍按计划真实依赖判断是否失效，不能把当前新显示套到旧计划。生成完成、发布前再次核对计划头；下载读取并核验完整文件后，在发送响应前最后核对计划头，已失效的不发送。该核对时点界定响应快照，之后的新业务使后续请求失效，不回收已经交付的字节。生成、文件读取及网络发送均不占用业务写事务。用户已下载到外部的文件不在程序自动删除范围内。
 
-源数据已正确保存而生成失败，只重试仍有效的计划，不重新记账；达到3次上限后明确失败，重新生成替换当前失败任务，不永久积累任务历史。过期文件清理失败保留当前待清理状态并禁止下载旧文件，每轮最多3次清理尝试，仍失败交由维护接续。导出计划和最小交付回执只服务当前有效交付，不成为开放期账务或纠错过程档案。
+源数据已正确保存而生成失败，只重试仍有效的计划，不重新记账；可重试错误最多尝试3次，不能重试的错误可以提前进入failed。已成功文件后来确定缺失或损坏时，任务也转为failed，保留原计划与实际尝试次数，由新的显式请求重新生成；不把仍有效的业务计划说成过期，也不改动外部有效备份或previous。暂时无法访问且不能确认损坏时，保留原交付供重试下载。过期文件清理失败保留当前待清理状态并禁止下载旧文件，每轮最多3次清理尝试，仍失败交由维护接续。导出计划和最小交付回执只服务当前有效交付，不成为开放期账务或纠错过程档案。
 
 ## 9. 明确的展开差异与用户说明
 

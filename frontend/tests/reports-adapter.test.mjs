@@ -217,6 +217,45 @@ test("a terminal failure creates a new task on explicit regeneration", async () 
   assert.equal(view.needsRegeneration.value, false);
 });
 
+test("a nonretryable first-attempt failure stops polling without downloading", { timeout: 10000 }, async () => {
+  const states = ["pending", "running", "failed"];
+  let reads = 0, downloads = 0;
+  const view = await reportView({
+    ...exportEnvironment(),
+    requestQuarterlyExport: async () => ({ job_id: "terminal-first-attempt" }),
+    fetchReportExportStatus: async () => {
+      assert.ok(reads < states.length, "终态后不再轮询");
+      return { status: states[reads++], attempts: 1 };
+    },
+    fetchQuarterlyWorkbook: async () => { downloads++; return new Blob(["unexpected"]); },
+  });
+  await view.exportReport();
+  assert.equal(reads, 3);
+  assert.equal(downloads, 0);
+  assert.equal(view.needsRegeneration.value, true);
+  assert.match(view.exportNotice.value, /重新生成/);
+  assert.doesNotMatch(view.exportNotice.value, /等待自动重试/);
+});
+
+test("retryable work stays pending and finishes on the same accepted task", { timeout: 10000 }, async () => {
+  const states = ["pending", "running", "pending", "succeeded"];
+  let requests = 0, reads = 0, downloads = 0;
+  const view = await reportView({
+    ...exportEnvironment(),
+    requestQuarterlyExport: async () => { requests++; return { job_id: "retrying-task" }; },
+    fetchReportExportStatus: async () => {
+      assert.ok(reads < states.length, "成功后不再轮询");
+      return { status: states[reads++], attempts: reads > 2 ? 2 : 1 };
+    },
+    fetchQuarterlyWorkbook: async () => { downloads++; return new Blob(["verified"]); },
+  });
+  await view.exportReport();
+  assert.equal(requests, 1);
+  assert.equal(reads, 4);
+  assert.equal(downloads, 1);
+  assert.equal(view.needsRegeneration.value, false);
+});
+
 test("damaged report output does not trap regeneration on the old job", async () => {
   const requests = [];
   const view = await reportView({

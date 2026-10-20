@@ -75,3 +75,32 @@ def materials(values, *, source_id=None):
             "invalid_command", "资料查阅请求的身份、结果定位或分页条件无效。"
         ) from error
     return query
+
+
+def report_export(body):
+    required = {"company_id", "year", "quarter", "preview_digest", "epochs", "request_id"}
+    if not isinstance(body, dict) or set(body) != required:
+        raise ContractError(
+            "invalid_command", "报表生成请求必须完整提供公司、季度、预览、版本和请求标识。"
+        )
+    if (
+        type(body["year"]) is not int
+        or not 1 <= body["year"] <= 9999
+        or type(body["quarter"]) is not int
+        or not 1 <= body["quarter"] <= 4
+        or not isinstance(body["request_id"], str)
+        or not 1 <= len(body["request_id"]) <= 500
+    ):
+        raise ContractError("invalid_command", "报表年份、季度或请求标识无效。")
+    return quarterly({name: str(body[name]) for name in ("company_id", "year", "quarter")})
+
+
+def report_task(path, values, suffix):
+    token = path[len("/api/local/report-export/") : -len(suffix)]
+    from urllib.parse import unquote
+
+    job_id = unquote(token)
+    if not job_id or any(char in job_id for char in ("/", "\\", "\x00")):
+        raise ContractError("invalid_command", "报表任务身份无效。")
+    selected = parameters(values, {"company_id"}, ("company_id",))
+    return company(selected["company_id"]), job_id

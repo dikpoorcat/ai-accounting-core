@@ -51,6 +51,20 @@ def _as_failure(exc):
     return FileFailure("file_generation_failed", "文件生成未完成，请接续当前任务。")
 
 
+def _transient_download_error(error):
+    while error is not None:
+        if isinstance(error, OSError):
+            return not isinstance(error, (FileNotFoundError, IsADirectoryError, NotADirectoryError))
+        if isinstance(error, ContractError) and error.code in {
+            "busy",
+            "temporary_failure",
+            "source_unavailable",
+        }:
+            return True
+        error = error.__cause__
+    return False
+
+
 class Files:
     def __init__(self, storage, producers: Mapping[str, FileProducer]):
         if not isinstance(producers, Mapping) or set(producers) - {"backup", "report_export"}:
@@ -305,9 +319,19 @@ class Files:
             self.recover(company_id)
         return metadata
 
-    def get(self, company_id, task_id):
-        self._metadata(company_id)
-        return self._receipt(company_id, self._row(company_id, task_id))
+    def get(self, company_id, task_id, *, check_current=False):
+        metadata = self._metadata(company_id)
+        row = self._row(company_id, task_id, plan=check_current)
+        if not check_current or row is None:
+            return self._receipt(company_id, row)
+        with locked(self._lock_path(metadata, row), 0):
+            row = self._row(company_id, task_id, plan=True)
+            if row is not None and row["state"] != "expired":
+                plan = self._plan(metadata, row)
+                context = self._context(metadata, task_id, row["capture_id"])
+                if not _plans.is_current(self._producer(row["kind"]), plan, context):
+                    row = self._expire(metadata, row, ExpireTask())
+            return self._receipt(company_id, row)
 
     def ensure_current(self, plan, head, request_id):
         validate_contract("core.schema.json", "Digest", head)
@@ -446,7 +470,7 @@ class Files:
             return stream, digest, size
         except BaseException as exc:
             stream.close()
-            if isinstance(exc, Exception) and not isinstance(exc, ContractError):
+            if isinstance(exc, Exception) and not isinstance(exc, (ContractError, OSError)):
                 raise ProductionError(
                     "file_invalid", "文件真实内容未通过生产者核验。", retryable=False
                 ) from exc
@@ -670,8 +694,24 @@ class Files:
                 try:
                     stream, digest, size = self._verify(producer, plan, context, path)
                 except (OSError, ContractError) as exc:
+                    if _transient_download_error(exc):
+                        raise ContractError(
+                            "temporary_failure", "交付文件暂时无法读取，请稍后重试下载。"
+                        ) from exc
+                    self._change(
+                        company_id,
+                        row,
+                        state="failed",
+                        error=("file_invalid", "已生成文件缺失或内容核验失败，需显式重新生成。"),
+                    )
                     raise ContractError("file_invalid", "交付文件缺失或内容核验失败。") from exc
                 if (digest, size) != (row["output_sha256"], row["output_bytes"]):
+                    self._change(
+                        company_id,
+                        row,
+                        state="failed",
+                        error=("file_invalid", "已生成文件字节与任务记录不一致，需显式重新生成。"),
+                    )
                     raise ContractError("file_invalid", "交付文件字节与任务保存结果不一致。")
                 if not _plans.is_current(producer, plan, context):
                     self._expire(metadata, row, ExpireTask())
