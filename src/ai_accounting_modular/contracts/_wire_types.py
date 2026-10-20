@@ -173,7 +173,7 @@ class Obligation(TypedDict):
     allowed_settlements: list[Literal['money', 'offset', 'transfer', 'agency']]
     business_period: Month
     due_on: NotRequired[Date]
-    cashflow_parts: NotRequired[list[ObligationCashflowPart]]
+    cashflow_weights: NotRequired[list[CashflowWeight]]
 
 class Settlement(TypedDict):
     settlement_id: Id
@@ -404,11 +404,6 @@ class AgencyProof(TypedDict):
     period: Month
     actual_on: NotRequired[Date]
 
-class ObligationCashflowPart(TypedDict):
-    category: CashflowCategory
-    amount_fen: PositiveFen
-    source_business_id: NotRequired[Id]
-
 class ObligationView(TypedDict):
     obligation: Obligation
     balance: ObligationBalance
@@ -565,6 +560,10 @@ class ErrorResponse(TypedDict):
     message: str
     fact_issues: NotRequired[list[FactIssue]]
     diagnostic_id: NotRequired[Id]
+
+class CashflowWeight(TypedDict):
+    category: CashflowCategory
+    weight: PositiveFen
 
 type SourceLocation = SourceLocator
 
@@ -10797,7 +10796,6 @@ __all__ = [
     'BackupFile',
     'BackupManifest',
     'AgencyProof',
-    'ObligationCashflowPart',
     'ObligationView',
     'CurrentObject',
     'CurrentNote',
@@ -10822,6 +10820,7 @@ __all__ = [
     'SchemaResult',
     'ReportRequest',
     'ErrorResponse',
+    'CashflowWeight',
     'SourceLocation',
     'AmountRange',
     'CostUse',

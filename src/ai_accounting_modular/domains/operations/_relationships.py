@@ -15,7 +15,8 @@ from ._common import (
     reject,
     sum_amounts,
 )
-from ._cumulative import Position, adopt_position, inherit_cashflow
+from ._cumulative import adopt_position, classification_weights, inherit_cashflow
+from ._overpayment_pool import pool_ranges
 
 
 def _resource(context, ref):
@@ -162,8 +163,6 @@ def reimbursement(fact, context):
             )
         if allocation["recipient_id"] != ob.get("party_id"):
             reject("原债实际收款人必须与原债权人一致。")
-        if ob["business_period"] > fact["period"]:
-            reject("转债月份不能早于原公司债务成立月。")
         _adopt_obligation(plan, definition)
         allocated = amount(allocation)
         line(
@@ -176,8 +175,10 @@ def reimbursement(fact, context):
         _transfer(
             plan, ref, {"business_id": fact["business_id"], "slot": "reimbursement"}, allocated
         )
-        if "cashflow_parts" in ob and len(ob["cashflow_parts"]) == 1:
-            parts.append({"category": ob["cashflow_parts"][0]["category"], "amount_fen": allocated})
+        if "cashflow_weights" in ob and len(ob["cashflow_weights"]) == 1:
+            parts.append(
+                {"category": ob["cashflow_weights"][0]["category"], "amount_fen": allocated}
+            )
     line(plan, "2241", credit=total, party=data["payer_id"], summary="确认对垫付人的偿还责任")
     obligation(
         plan,
@@ -195,10 +196,7 @@ def reimbursement(fact, context):
             grouped[part["category"]] = sum_amounts(
                 (grouped.get(part["category"], 0), part["amount_fen"])
             )
-        plan["obligations"][0]["cashflow_parts"] = [
-            {"category": category, "amount_fen": format_fen(value)}
-            for category, value in sorted(grouped.items())
-        ]
+        plan["obligations"][0]["cashflow_weights"] = classification_weights(grouped)
     return plan
 
 
@@ -232,12 +230,9 @@ def overpayment(fact, context):
     data, total = fact["data"], amount(fact["data"])
     original = _resource(context, data["source"])
     ob = original.value
-    if (
-        ob["direction"] != "payable"
-        or ob.get("party_id") != data["counterparty_id"]
-        or ob["business_period"] > fact["period"]
-    ):
-        reject("超付追收必须引用不晚于本月成立、属于同一交易方的原应付。")
+    if ob["direction"] != "payable" or ob.get("party_id") != data["counterparty_id"]:
+        reject("超付追收必须引用属于同一交易方的原应付。")
+    spans = pool_ranges(fact, context)[fact["business_id"]]
     plan = base_plan(
         fact,
         context,
@@ -263,11 +258,8 @@ def overpayment(fact, context):
         category="other",
         cashflow=None,
     )
-    if ob.get("cashflow_parts"):
-        original_amount = amount(ob)
-        end = sum_amounts((original_amount, total))
-        span = Position(original_amount, end, end)
-        inherit_cashflow(ob, plan["obligations"][0], span)
+    inherit_cashflow(ob, plan["obligations"][0], spans)
+    for span in spans:
         adopt_position(plan, data["source"], span)
     _transfer(
         plan,

@@ -13,7 +13,7 @@ _RESOURCE_COLUMNS = {
         "category",
         "amount_fen",
         "account_code",
-        "cashflow_parts_json",
+        "cashflow_weights_json",
         "allowed_settlements_json",
         "business_period",
         "due_on",
@@ -88,10 +88,8 @@ def _json(value, key):
     if key not in value:
         return None
     content = value[key]
-    if key == "cashflow_parts":
-        content = sorted(
-            content, key=lambda part: (part["category"], part.get("source_business_id", ""))
-        )
+    if key in ("cashflow_parts", "cashflow_weights"):
+        content = sorted(content, key=lambda part: part["category"])
     return canonical_json(content)
 
 
@@ -115,7 +113,7 @@ def resource_rows(result_id, plan):
                 o["category"],
                 parse_fen(o["amount_fen"]),
                 o["account_code"],
-                _json(o, "cashflow_parts"),
+                _json(o, "cashflow_weights"),
                 canonical_json(sorted(set(o["allowed_settlements"]))),
                 o["business_period"],
                 o.get("due_on"),

@@ -34,9 +34,50 @@ def test_real_expense_payment_clears_debt_and_never_books_expense_twice(ids):
 
 
 def test_missing_cashflow_classification_does_not_block_real_payment(ids):
-    plan = evaluate(ids, obligation=payable(ids, parts=False))
+    plan = evaluate(ids, obligation=payable(ids, weights=False))
     assert "cashflow_parts" not in plan["fund_movements"][0]
     assert plan["settlements"][0]["amount_fen"] == "100000"
+
+
+@pytest.mark.parametrize("nominal", ["0", "1"])
+def test_known_weights_classify_actual_payment_independently_of_nominal_amount(ids, nominal):
+    plan = evaluate(ids, obligation=payable(ids, nominal))
+    assert plan["fund_movements"][0]["cashflow_parts"] == [
+        {"category": "other_operating_payments", "amount_fen": "100000"}
+    ]
+
+
+def test_mixed_weights_use_the_actual_cumulative_payment_interval(ids):
+    ob = payable(ids, "1")
+    ob["cashflow_weights"] = [
+        {"category": "other_operating_payments", "weight": "1"},
+        {"category": "employee_payments", "weight": "1"},
+    ]
+    first = payment({**ids, "business": str(uuid4())}, "1", day="2026-01-10")
+    second = payment(ids, "1", day="2026-01-11")
+    assert evaluate(ids, first, ob)["fund_movements"][0]["cashflow_parts"] == [
+        {"category": "employee_payments", "amount_fen": "1"}
+    ]
+    assert evaluate(ids, second, ob, [first])["fund_movements"][0]["cashflow_parts"] == [
+        {"category": "other_operating_payments", "amount_fen": "1"}
+    ]
+
+
+def test_separate_source_obligations_in_one_category_produce_one_actual_part(ids):
+    fact = payment(ids, "3")
+    first, second = payable(ids, "1000"), payable({**ids, "expense": str(uuid4())}, "1")
+    fact["data"]["allocations"][0]["amount_fen"] = "2"
+    fact["data"]["allocations"].append(
+        {
+            "source": {"business_id": second["business_id"], "slot": "primary"},
+            "amount_fen": "1",
+        }
+    )
+    context = Context([fact], objects=objects(ids), obligations=[first, second])
+    plan = create_money().evaluate_slot(fact["business_id"], "main", context)
+    assert plan["fund_movements"][0]["cashflow_parts"] == [
+        {"category": "other_operating_payments", "amount_fen": "3"}
+    ]
 
 
 def test_expense_refund_is_real_inflow_against_a_receivable(ids):
@@ -52,10 +93,10 @@ def test_expense_refund_is_real_inflow_against_a_receivable(ids):
 
 def test_cumulative_mixed_classification_includes_current_other_payments_across_carriers(ids):
     ob = payable(ids, "3")
-    ob["cashflow_parts"] = [
-        {"category": "employee_payments", "amount_fen": "1"},
-        {"category": "asset_acquisition", "amount_fen": "1"},
-        {"category": "other_operating_payments", "amount_fen": "1"},
+    ob["cashflow_weights"] = [
+        {"category": "employee_payments", "weight": "1"},
+        {"category": "asset_acquisition", "weight": "1"},
+        {"category": "other_operating_payments", "weight": "1"},
     ]
     first = payment(ids, "1", day="2026-01-10")
     first["business_id"] = str(uuid4())

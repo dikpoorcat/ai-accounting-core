@@ -192,7 +192,9 @@ class Operations:
                             **edge,
                             "read_mode": "collection",
                             "period_from": "0001-01",
-                            "period_to": fact["period"],
+                            "period_to": "9999-12"
+                            if fact["kind"] == "operations.overpayment"
+                            else fact["period"],
                         }
                     )
                 if fact["kind"] in {

@@ -225,7 +225,7 @@ def _opening(person, fund):
         "account_code": "222103",
         "amount_fen": "10000",
         "business_period": "2025-12",
-        "cashflow_parts": [{"category": "tax_payments", "amount_fen": "10000"}],
+        "cashflow_weights": [{"category": "tax_payments", "weight": "1"}],
     }
     wage = {
         **base,
@@ -235,7 +235,7 @@ def _opening(person, fund):
         "account_code": "221101",
         "amount_fen": "90000",
         "business_period": "2025-12",
-        "cashflow_parts": [{"category": "employee_payments", "amount_fen": "90000"}],
+        "cashflow_weights": [{"category": "employee_payments", "weight": "1"}],
     }
     plan["obligations"] = [tax, wage]
     return change
@@ -359,7 +359,7 @@ def test_opening_cost_consumption_uses_boundary_and_its_own_known_day(store):
     plan["obligations"][0].update(
         direction="receivable", account_code="1221", category="investment", amount_fen="25000"
     )
-    plan["obligations"][0].pop("cashflow_parts")
+    plan["obligations"][0].pop("cashflow_weights")
     with store.write_unit(COMPANY) as uow:
         _object(uow, person, "person")
         _object(uow, fund, "investment_product")

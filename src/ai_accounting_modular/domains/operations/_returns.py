@@ -65,7 +65,7 @@ def expense_recovery(fact, context):
     line(plan, EXPENSE_ACCOUNTS[source["expense_class"]], credit=total, summary="冲减原性质费用")
     obligation(plan, "primary", data["counterparty_id"], "receivable", total, "1221", cashflow=None)
     original_ob = _resource(context, {"business_id": data["expense_id"], "slot": "primary"})
-    inherit_cashflow(original_ob.value, plan["obligations"][0], span)
+    inherit_cashflow(original_ob.value, plan["obligations"][0], [span])
     return plan
 
 

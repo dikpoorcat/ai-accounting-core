@@ -559,3 +559,484 @@ def test_separate_known_refund_days_use_receipts_available_at_each_day(system):
         command(company, later, first_receipt, first, later_receipt, original)
     )
     assert result.get("completion") == "complete", result
+
+
+def test_reimbursement_weights_use_transferred_amounts_and_single_category_is_one(system):
+    app, company, ids = system
+    first, second = expense(ids, 100), expense(ids, 1)
+    second["data"]["expense_class"] = "service"
+    payer_id = str(uuid4())
+    payer = {
+        "object_id": payer_id,
+        "kind": "person",
+        "name": "合成垫付人",
+        "expected_seq": 0,
+        "data": {},
+    }
+    accepted = fact(
+        ids,
+        "operations.reimbursement",
+        {
+            "type": "acceptance",
+            "payer_id": payer_id,
+            "payer_kind": "owner",
+            "sources": [
+                {
+                    "source": {"business_id": item["business_id"], "slot": "primary"},
+                    "amount_fen": item["data"]["amount_fen"],
+                    "recipient_id": ids["party"],
+                }
+                for item in (first, second)
+            ],
+        },
+    )
+    result = app.accounting_apply(command(company, accepted, second, first, objects=[payer]))
+    assert result["completion"] == "complete", result
+    with app.storage.read_unit(company) as read:
+        definitions = app.ledger.resource_definitions(
+            [
+                {"business_id": first["business_id"], "slot": "primary"},
+                {"business_id": second["business_id"], "slot": "primary"},
+                {"business_id": accepted["business_id"], "slot": "reimbursement"},
+            ],
+            "obligation",
+            read,
+        )
+        assert definitions[0].value["cashflow_weights"] == [
+            {"category": "other_operating_payments", "weight": "1"}
+        ]
+        assert definitions[1].value["cashflow_weights"] == [
+            {"category": "materials_services_payments", "weight": "1"}
+        ]
+        assert definitions[2].value["cashflow_weights"] == [
+            {"category": "materials_services_payments", "weight": "1"},
+            {"category": "other_operating_payments", "weight": "100"},
+        ]
+
+
+@pytest.mark.parametrize("consumer", ["overpayment", "reimbursement"])
+def test_resource_tax_period_does_not_delay_its_real_establishment(system, consumer):
+    app, company, ids = system
+    original = expense(ids, 80)
+    assert app.accounting_apply(command(company, original))["completion"] == "complete"
+
+    change, plan = expense_program_plan(original)
+    # Program-controlled formal resource: the label is a future tax period,
+    # while its actual production period remains January. No AI API accepts it.
+    plan["obligations"][0]["business_period"] = "2026-02"
+    with app.storage.write_unit(company) as unit:
+        app.ledger.adopt([{**change, "plans": [plan]}], unit)
+    if consumer == "overpayment":
+        paid = movement(ids, original, "primary", 100)
+        excess = recovery(ids, original, 20)
+        result = app.accounting_apply(command(company, excess, paid))
+    else:
+        payer_id = str(uuid4())
+        payer = {
+            "object_id": payer_id,
+            "kind": "person",
+            "name": "合成垫付人",
+            "expected_seq": 0,
+            "data": {},
+        }
+        accepted = fact(
+            ids,
+            "operations.reimbursement",
+            {
+                "type": "acceptance",
+                "payer_id": payer_id,
+                "payer_kind": "owner",
+                "sources": [
+                    {
+                        "source": {"business_id": original["business_id"], "slot": "primary"},
+                        "amount_fen": "80",
+                        "recipient_id": ids["party"],
+                    }
+                ],
+            },
+        )
+        result = app.accounting_apply(command(company, accepted, objects=[payer]))
+    assert result["completion"] == "complete", result
+
+
+def test_real_future_resource_cannot_explain_earlier_payment_and_overpayment(system):
+    app, company, ids = system
+    original = expense(ids, 80)
+    original["period"] = "2026-02"
+    paid = movement(ids, original, "primary", 100)
+    excess = recovery(ids, original, 20)
+    result = app.accounting_apply(command(company, excess, paid, original))
+    assert result["completion"] == "not_saved" and result["error"] == "dependency_conflict", result
+    assert get(system, original, paid, excess)["businesses"] == []
+
+
+def expense_program_plan(original):
+    """Build a controlled internal source; external commands cannot submit it."""
+
+    class ProgramContext:
+        def get_object(self, object_id):
+            return {"object_id": object_id, "kind": "organization"}
+
+        def get_fact(self, business_id):
+            return original
+
+        def resolve_sources(self, source_ids):
+            return [{"source_id": source_id} for source_id in source_ids]
+
+    owner, context = create_operations(), ProgramContext()
+    change = owner.describe_change(
+        [{"op": "recalculate", "business_id": original["business_id"], "expected_seq": 1}], context
+    )
+    return change, owner.evaluate_slot(original["business_id"], "main", context)
+
+
+@pytest.mark.parametrize("nominal,mixed", [(1, True), (2**63 - 1, False)])
+def test_offset_never_occupies_real_cash_classification_interval(system, nominal, mixed):
+    app, company, ids = system
+    original = expense(ids, nominal)
+    assert app.accounting_apply(command(company, original))["completion"] == "complete"
+    if mixed:
+        change, plan = expense_program_plan(original)
+        plan["obligations"][0]["cashflow_weights"] = [
+            {"category": "employee_payments", "weight": "1"},
+            {"category": "other_operating_payments", "weight": "1"},
+        ]
+        with app.storage.write_unit(company) as unit:
+            app.ledger.adopt([{**change, "plans": [plan]}], unit)
+    prepaid = fact(
+        ids,
+        "operations.advance",
+        {
+            "side": "supplier",
+            "counterparty_id": ids["party"],
+            "amount_fen": str(nominal),
+            "purpose": "operating",
+        },
+    )
+    offset = fact(
+        ids,
+        "money.transfer",
+        {
+            "type": "offset",
+            "offset_kind": "advance_application",
+            "first": {
+                "source": {"business_id": prepaid["business_id"], "slot": "advance"},
+                "amount_fen": str(nominal),
+            },
+            "second": {
+                "source": {"business_id": original["business_id"], "slot": "primary"},
+                "amount_fen": str(nominal),
+            },
+        },
+    )
+    paid = movement(ids, original, "primary", 1)
+    excess = recovery(ids, original, 1)
+    received = movement(ids, excess, "recovery", 1, direction="inflow", day="2026-01-16")
+    result = app.accounting_apply(command(company, received, excess, paid, offset, prepaid))
+    assert result["completion"] == "complete", result
+    saved = get(system, excess)["businesses"][0]["results"][0]
+    span = next(
+        item for item in saved["basis"]["adopted_quantities"] if item["type"] == "cumulative_range"
+    )
+    assert (span["from_fen"], span["to_fen"]) == ("0", "1")
+    with app.storage.read_unit(company) as read:
+        category = "employee_payments" if mixed else "other_operating_payments"
+        recovered = app.ledger.resource_definitions(
+            [{"business_id": excess["business_id"], "slot": "recovery"}], "obligation", read
+        )[0].value
+        assert recovered["cashflow_weights"] == [{"category": category, "weight": "1"}]
+        movements = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+        assert len(movements) == 2
+        assert all(
+            item.value["cashflow_parts"] == [{"category": category, "amount_fen": "1"}]
+            for item in movements
+        )
+    before = get(system, original, prepaid, offset, paid, excess, received)
+    assert (
+        app.accounting_apply(command(company, received, excess, paid, offset, prepaid))["changes"]
+        == "none"
+    )
+    assert get(system, original, prepaid, offset, paid, excess, received) == before
+
+
+def test_final_candidate_rejects_cash_basis_inconsistent_with_actual_settlements(
+    system, monkeypatch
+):
+    app, company, ids = system
+    original = expense(ids, 80)
+    paid = movement(ids, original, "primary", 100)
+    excess = recovery(ids, original, 20)
+    monkeypatch.setattr(app.money, "actual_settled_fen", lambda source, cutoff, context: 101)
+    result = app.accounting_apply(command(company, original, paid, excess))
+    assert result["error"] == "dependency_conflict" and result["completion"] == "not_saved", result
+    assert get(system, original, paid, excess)["businesses"] == []
+
+
+def test_later_overpayment_can_follow_an_already_recovered_earlier_overpayment(system):
+    app, company, ids = system
+    original = expense(ids, 80)
+    first_paid = movement(ids, original, "primary", 100)
+    first_claim = recovery(ids, original, 20)
+    first_refund = movement(ids, first_claim, "recovery", 20, direction="inflow", day="2026-01-16")
+    result = app.accounting_apply(command(company, original, first_paid, first_claim, first_refund))
+    assert result["completion"] == "complete", result
+    later_paid = movement(ids, original, "primary", 20, day="2026-02-05")
+    later_claim = recovery(ids, original, 20, period="2026-02")
+    later_refund = movement(ids, later_claim, "recovery", 20, direction="inflow", day="2026-02-06")
+    result = app.accounting_apply(command(company, later_refund, later_claim, later_paid))
+    assert result["completion"] == "complete", result
+    with app.storage.read_unit(company) as read:
+        states = app.ledger.resolve(
+            [
+                {"business_id": original["business_id"], "slot": "primary"},
+                {"business_id": first_claim["business_id"], "slot": "recovery"},
+                {"business_id": later_claim["business_id"], "slot": "recovery"},
+            ],
+            "obligation",
+            read,
+        )
+        assert all(item["balance"]["remaining_fen"] == "0" for item in states)
+        actual = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-02", read)
+        assert len(actual) == 4
+        assert (
+            sum(
+                int(item.value["amount_fen"]) * (1 if item.value["direction"] == "outflow" else -1)
+                for item in actual
+            )
+            == 80
+        )
+
+
+def supplier_offset(ids, original, amount, *, period="2026-01", actual=None):
+    advance = fact(
+        ids,
+        "operations.advance",
+        {
+            "side": "supplier",
+            "counterparty_id": ids["party"],
+            "amount_fen": str(amount),
+            "purpose": "operating",
+        },
+        period=period,
+    )
+    offset = fact(
+        ids,
+        "money.transfer",
+        {
+            "type": "offset",
+            "offset_kind": "advance_application",
+            "first": {
+                "source": {"business_id": advance["business_id"], "slot": "advance"},
+                "amount_fen": str(amount),
+            },
+            "second": {
+                "source": {"business_id": original["business_id"], "slot": "primary"},
+                "amount_fen": str(amount),
+            },
+        },
+        period=period,
+        actual=actual,
+    )
+    return advance, offset
+
+
+def saved_cash_ranges(system, claim):
+    result = get(system, claim)["businesses"][0]["results"][0]
+    return sorted(
+        (int(item["from_fen"]), int(item["to_fen"]))
+        for item in result["basis"]["adopted_quantities"]
+        if item["type"] == "cumulative_range"
+    )
+
+
+def test_later_offset_and_claim_cannot_reclassify_an_earlier_actual_refund(system):
+    app, company, ids = system
+    original = expense(ids, 1)
+    assert app.accounting_apply(command(company, original))["completion"] == "complete"
+    change, plan = expense_program_plan(original)
+    plan["obligations"][0]["cashflow_weights"] = [
+        {"category": "employee_payments", "weight": "1"},
+        {"category": "other_operating_payments", "weight": "1"},
+    ]
+    with app.storage.write_unit(company) as unit:
+        app.ledger.adopt([{**change, "plans": [plan]}], unit)
+    paid = movement(ids, original, "primary", 2)
+    first = recovery(ids, original, 1)
+    returned = movement(ids, first, "recovery", 1, direction="inflow", day="2026-01-16")
+    assert app.accounting_apply(command(company, returned, first, paid))["completion"] == "complete"
+    before = get(system, first, returned)["businesses"]
+    advance, offset = supplier_offset(ids, original, 1, period="2026-02")
+    later = recovery(ids, original, 1, period="2026-02")
+    result = app.accounting_apply(command(company, later, offset, advance))
+    assert result["completion"] == "complete", result
+    assert get(system, first, returned)["businesses"] == before
+    assert saved_cash_ranges(system, first) == [(1, 2)]
+    assert saved_cash_ranges(system, later) == [(0, 1)]
+    with app.storage.read_unit(company) as read:
+        actual = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+        net = {}
+        for occurred in actual:
+            for part in occurred.value["cashflow_parts"]:
+                sign = 1 if occurred.value["direction"] == "outflow" else -1
+                net[part["category"]] = net.get(part["category"], 0) + sign * int(
+                    part["amount_fen"]
+                )
+        assert {key: value for key, value in net.items() if value} == {"employee_payments": 1}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_late_correction_preserves_earlier_claims_and_can_use_fragmented_cash(system, reverse):
+    app, company, ids = system
+    original = expense(ids, 4)
+    paid = movement(ids, original, "primary", 5)
+    first = recovery(ids, original, 1)
+    assert app.accounting_apply(command(company, first, paid, original))["completion"] == "complete"
+    assert saved_cash_ranges(system, first) == [(4, 5)]
+    revised = deepcopy(original)
+    revised["data"]["amount_fen"] = "1"
+    later_paid = movement(ids, original, "primary", 3, day="2026-02-05")
+    second = recovery(ids, original, 2, period="2026-02")
+    late = recovery(ids, original, 4, period="2026-03")
+    mutations = [
+        {"op": "create", "expected_seq": 0, "fact": item} for item in (later_paid, second, late)
+    ] + [{"op": "replace", "expected_seq": 1, "fact": revised}]
+    result = app.accounting_apply(
+        command(company, mutations=list(reversed(mutations)) if reverse else mutations)
+    )
+    assert result["completion"] == "complete", result
+    assert saved_cash_ranges(system, first) == [(4, 5)]
+    assert saved_cash_ranges(system, second) == [(6, 8)]
+    assert saved_cash_ranges(system, late) == [(1, 4), (5, 6)]
+    values = (revised, paid, first, later_paid, second, late)
+    before = get(system, *values)
+    assert app.accounting_apply(command(company, *reversed(values)))["changes"] == "none"
+    assert get(system, *values) == before
+
+
+def test_unknown_sibling_day_is_not_required_when_every_order_has_enough_excess(system):
+    app, company, ids = system
+    original = expense(ids, 60)
+    paid = movement(ids, original, "primary", 100, day="2026-01-01")
+    known = recovery(ids, original, 20)
+    known["effective_on"] = "2026-01-10"
+    unknown = recovery(ids, original, 20)
+    result = app.accounting_apply(command(company, unknown, known, paid, original))
+    assert result["completion"] == "complete", result
+    assert saved_cash_ranges(system, known) == [(80, 100)]
+    assert saved_cash_ranges(system, unknown) == [(60, 80)]
+
+
+@pytest.mark.parametrize(
+    "actual,error", [(None, "needs_information"), ("2026-01-20", "dependency_conflict")]
+)
+def test_only_a_materially_uncertain_offset_day_requires_information(system, actual, error):
+    app, company, ids = system
+    original = expense(ids, 1)
+    paid = movement(ids, original, "primary", 1, day="2026-01-01")
+    advance, offset = supplier_offset(ids, original, 1, actual=actual)
+    claim = recovery(ids, original, 1)
+    claim["effective_on"] = "2026-01-10"
+    result = app.accounting_apply(command(company, claim, paid, offset, advance, original))
+    assert result["completion"] == "not_saved" and result["error"] == error, result
+    assert get(system, original, paid, claim, advance, offset)["businesses"] == []
+    if actual is None:
+        assert [(item["business_id"], item["field"]) for item in result["fact_issues"]] == [
+            (offset["business_id"], "/effective_on")
+        ]
+    offset["effective_on"] = "2026-01-05"
+    result = app.accounting_apply(command(company, original, advance, offset, paid, claim))
+    assert result["completion"] == "complete", result
+
+
+def test_definite_pool_conflict_is_not_hidden_by_an_unknown_sibling_day(system):
+    app, company, ids = system
+    original = expense(ids, 1)
+    paid = movement(ids, original, "primary", 2, day="2026-01-01")
+    first, second = recovery(ids, original, 1), recovery(ids, original, 1)
+    first["effective_on"] = "2026-01-10"
+    result = app.accounting_apply(command(company, first, original, second, paid))
+    assert result["error"] == "dependency_conflict" and result["completion"] == "not_saved", result
+
+
+def test_same_day_claims_use_stable_identity_and_include_all_same_day_cash(system):
+    app, company, ids = system
+    original = expense(ids, 60)
+    paid = movement(ids, original, "primary", 100, day="2026-01-10")
+    first, second = recovery(ids, original, 20), recovery(ids, original, 20)
+    first["business_id"] = "10000000-0000-4000-8000-000000000001"
+    second["business_id"] = "10000000-0000-4000-8000-000000000002"
+    first["effective_on"] = second["effective_on"] = "2026-01-10"
+    result = app.accounting_apply(command(company, second, paid, first, original))
+    assert result["completion"] == "complete", result
+    assert saved_cash_ranges(system, first) == [(80, 100)]
+    assert saved_cash_ranges(system, second) == [(60, 80)]
+    before = get(system, original, paid, first, second)
+    assert (
+        app.accounting_apply(command(company, original, first, paid, second))["changes"] == "none"
+    )
+    assert get(system, original, paid, first, second) == before
+
+
+def test_changing_and_withdrawing_claims_rebuilds_pool_without_erasing_actual_refund(system):
+    app, company, ids = system
+    original = expense(ids, 1)
+    paid = movement(ids, original, "primary", 5)
+    first, second = recovery(ids, original, 2), recovery(ids, original, 2)
+    first["business_id"] = "10000000-0000-4000-8000-000000000001"
+    second["business_id"] = "10000000-0000-4000-8000-000000000002"
+    returned = movement(ids, first, "recovery", 1, direction="inflow", day="2026-01-16")
+    result = app.accounting_apply(command(company, second, original, returned, first, paid))
+    assert result["completion"] == "complete", result
+    with app.storage.read_unit(company) as read:
+        original_money_ids = {
+            item.value["movement_id"]
+            for item in app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+        }
+    assert saved_cash_ranges(system, first) == [(3, 5)]
+    assert saved_cash_ranges(system, second) == [(1, 3)]
+    first_changed, second_changed = deepcopy(first), deepcopy(second)
+    first_changed["data"]["amount_fen"], second_changed["data"]["amount_fen"] = "1", "3"
+    result = app.accounting_apply(
+        command(
+            company,
+            mutations=[
+                {"op": "replace", "expected_seq": 1, "fact": second_changed},
+                {"op": "replace", "expected_seq": 1, "fact": first_changed},
+            ],
+        )
+    )
+    assert result["completion"] == "complete", result
+    assert saved_cash_ranges(system, first_changed) == [(4, 5)]
+    assert saved_cash_ranges(system, second_changed) == [(1, 4)]
+    saved = get(system, first_changed, second_changed, returned)["businesses"]
+    seq = {item["state"]["business_id"]: item["state"]["seq"] for item in saved}
+    last_claim, returned_changed = deepcopy(second_changed), deepcopy(returned)
+    last_claim["data"]["amount_fen"] = "4"
+    returned_changed["data"]["allocations"][0]["source"]["business_id"] = last_claim["business_id"]
+    result = app.accounting_apply(
+        command(
+            company,
+            mutations=[
+                {
+                    "op": "withdraw",
+                    "expected_seq": seq[first["business_id"]],
+                    "business_id": first["business_id"],
+                },
+                {"op": "replace", "expected_seq": seq[second["business_id"]], "fact": last_claim},
+                {
+                    "op": "replace",
+                    "expected_seq": seq[returned["business_id"]],
+                    "fact": returned_changed,
+                },
+            ],
+        )
+    )
+    assert result["completion"] == "complete", result
+    assert saved_cash_ranges(system, last_claim) == [(1, 5)]
+    with app.storage.read_unit(company) as read:
+        actual = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+        assert {item.value["movement_id"] for item in actual} == original_money_ids
+        assert sorted(
+            (item.value["direction"], item.value["amount_fen"], item.value["actual_on"])
+            for item in actual
+        ) == [("inflow", "1", "2026-01-16"), ("outflow", "5", "2026-01-15")]

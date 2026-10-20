@@ -1604,13 +1604,13 @@
         "due_on": {
           "$ref": "#/$defs/Date"
         },
-        "cashflow_parts": {
+        "cashflow_weights": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/ObligationCashflowPart"
+            "$ref": "#/$defs/CashflowWeight"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 1,
+          "maxItems": 17
         }
       },
       "required": [
@@ -3577,25 +3577,6 @@
       ],
       "additionalProperties": false
     },
-    "ObligationCashflowPart": {
-      "type": "object",
-      "properties": {
-        "category": {
-          "$ref": "business-facts.schema.json#/$defs/CashflowCategory"
-        },
-        "amount_fen": {
-          "$ref": "#/$defs/PositiveFen"
-        },
-        "source_business_id": {
-          "$ref": "#/$defs/Id"
-        }
-      },
-      "required": [
-        "category",
-        "amount_fen"
-      ],
-      "additionalProperties": false
-    },
     "ObligationView": {
       "type": "object",
       "properties": {
@@ -5312,6 +5293,22 @@
         "status",
         "code",
         "message"
+      ],
+      "additionalProperties": false
+    },
+    "CashflowWeight": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "$ref": "business-facts.schema.json#/$defs/CashflowCategory"
+        },
+        "weight": {
+          "$ref": "#/$defs/PositiveFen"
+        }
+      },
+      "required": [
+        "category",
+        "weight"
       ],
       "additionalProperties": false
     }

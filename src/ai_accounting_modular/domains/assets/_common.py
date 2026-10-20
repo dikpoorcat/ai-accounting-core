@@ -160,10 +160,10 @@ def obligation(plan, slot, party, amount, *, account="2202", direction="payable"
             "account_code": account,
             "allowed_settlements": ["money", "offset", "transfer"],
             "business_period": plan["accounting_period"],
-            "cashflow_parts": [
+            "cashflow_weights": [
                 {
                     "category": "asset_acquisition" if direction == "payable" else "asset_disposal",
-                    "amount_fen": format_fen(amount),
+                    "weight": "1",
                 }
             ],
         }
@@ -232,12 +232,8 @@ def cost_definition(fact, context, ref, *, object_id, category):
     if len(definitions) != 1 or definitions[0].reference != ref:
         reject("所引用的公开成本不存在。")
     definition = definitions[0]
-    if (
-        definition.value["object_id"] != object_id
-        or definition.value["category"] != category
-        or definition.value["business_period"] > fact["period"]
-    ):
-        reject("成本来源的项目、资产、性质或期间不符合本项业务。")
+    if definition.value["object_id"] != object_id or definition.value["category"] != category:
+        reject("成本来源的项目、资产或性质不符合本项业务。")
     return definition
 
 

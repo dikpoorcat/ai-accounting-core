@@ -38,16 +38,17 @@ def check_lines(lines: list[dict]) -> None:
 
 
 def check_parts(resource: dict, *, obligation: bool = False) -> None:
+    if obligation:
+        weights = resource.get("cashflow_weights", ())
+        unique((part["category"] for part in weights), "同一义务的现金流类别不能重复。")
+        return
     if "cashflow_parts" not in resource:
         return
     parts = resource["cashflow_parts"]
-    keys = [(p["category"], p.get("source_business_id")) for p in parts]
-    unique(keys, "同一正式资金分类不能重复。")
+    unique((part["category"] for part in parts), "同一正式资金分类不能重复。")
     amount = parse_fen(resource["amount_fen"])
     if sum(parse_fen(p["amount_fen"]) for p in parts) != amount:
         fail("invalid_input", "正式资金分类合计必须等于所属金额。")
-    if obligation and amount == 0 and parts:
-        fail("invalid_input", "零额义务的分类必须为空。")
 
 
 def check_plan(plan: dict) -> None:

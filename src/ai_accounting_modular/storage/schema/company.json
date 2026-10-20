@@ -1,5 +1,5 @@
 {
-  "fingerprint": "8ed219756eda4740b4a1abd77994385712bd334d6db5fe57b30ac0ce969ae327",
+  "fingerprint": "6a708de8f31ec6c78b6fbd3c6805c2abd31c34fb67183f9aaa3c76135ab65e16",
   "kind": "company",
   "objects": [
     {
@@ -264,7 +264,7 @@
     {
       "name": "obligation",
       "owner": "ledger",
-      "sql": "CREATE TABLE obligation (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n public_slot TEXT NOT NULL,\n party_id TEXT REFERENCES identity_object(object_id),\n direction TEXT NOT NULL CHECK(direction IN ('receivable','payable')),\n category TEXT NOT NULL,\n amount_fen INTEGER NOT NULL CHECK(amount_fen>=0),\n account_code TEXT NOT NULL,\n cashflow_parts_json TEXT CHECK(cashflow_parts_json IS NULL OR json_valid(cashflow_parts_json)),\n allowed_settlements_json TEXT NOT NULL CHECK(json_valid(allowed_settlements_json)),\n business_period TEXT NOT NULL,\n due_on TEXT,\n PRIMARY KEY(result_id,public_slot)\n) STRICT",
+      "sql": "CREATE TABLE obligation (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n public_slot TEXT NOT NULL,\n party_id TEXT REFERENCES identity_object(object_id),\n direction TEXT NOT NULL CHECK(direction IN ('receivable','payable')),\n category TEXT NOT NULL,\n amount_fen INTEGER NOT NULL CHECK(amount_fen>=0),\n account_code TEXT NOT NULL,\n cashflow_weights_json TEXT CHECK(cashflow_weights_json IS NULL OR json_valid(cashflow_weights_json)),\n allowed_settlements_json TEXT NOT NULL CHECK(json_valid(allowed_settlements_json)),\n business_period TEXT NOT NULL,\n due_on TEXT,\n PRIMARY KEY(result_id,public_slot)\n) STRICT",
       "table": "obligation",
       "type": "table"
     },

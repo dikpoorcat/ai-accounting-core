@@ -239,6 +239,11 @@ class SubmissionContext:
             refs, kind, cutoff, excluding_consumer=excluding_consumer
         )
 
+    def resource_windows(self, refs, kind, cutoff, *, excluding_consumer=None):
+        return self._candidate.resource_windows(
+            refs, kind, cutoff, excluding_consumer=excluding_consumer
+        )
+
     def fund_movements(self, account_id, period_from, period_to):
         return self._candidate.fund_movements(account_id, period_from, period_to)
 
@@ -246,6 +251,11 @@ class SubmissionContext:
         if self._money is None:
             raise ContractError("invalid_operation", "实际资金身份模块尚未装配。")
         return self._money.stable_occurrence_id(business_id, public_slot)
+
+    def actual_settled_fen(self, source, cutoff):
+        if self._money is None:
+            raise ContractError("invalid_operation", "实际资金模块尚未装配，不能核定真实清偿。")
+        return self._money.actual_settled_fen(source, cutoff, self)
 
     def fund_sources(self, fact, fund_movements):
         if self._money is None:

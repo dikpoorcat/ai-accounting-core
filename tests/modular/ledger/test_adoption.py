@@ -225,7 +225,7 @@ def expense(amount="100000", *, seq=0, business_id=BUSINESS):
                 "account_code": "2202",
                 "allowed_settlements": ["money", "transfer"],
                 "business_period": "2026-01",
-                "cashflow_parts": [{"category": "other_operating_payments", "amount_fen": amount}],
+                "cashflow_weights": [{"category": "other_operating_payments", "weight": "1"}],
             }
         ],
         "settlements": [],
@@ -629,7 +629,7 @@ def recovery():
         category="other",
         account_code="1221",
         allowed_settlements=["money"],
-        cashflow_parts=[{"category": "other_operating_payments", "amount_fen": "20000"}],
+        cashflow_weights=[{"category": "other_operating_payments", "weight": "1"}],
     )
     return change
 
@@ -1045,17 +1045,17 @@ def test_later_adoption_in_same_unit_cannot_leave_a_new_consumer_dangling(store)
         assert ledger.get_results([BUSINESS, RECOVERY], context) == ()
 
 
-@pytest.mark.parametrize("collection", ["allowed_settlements", "cashflow_parts"])
+@pytest.mark.parametrize("collection", ["allowed_settlements", "cashflow_weights"])
 def test_unordered_resource_composition_does_not_create_frozen_correction(collection, store):
     ledger = create_ledger()
     original = expense()
     obligation = original["plans"][0]["obligations"][0]
-    if collection == "cashflow_parts":
+    if collection == "cashflow_weights":
         # General obligation composition is not an ordered sequence. Each
         # domain separately verifies which categories its business may use.
         obligation[collection] = [
-            {"category": "other_operating_payments", "amount_fen": "60000"},
-            {"category": "materials_services_payments", "amount_fen": "40000"},
+            {"category": "other_operating_payments", "weight": "3"},
+            {"category": "materials_services_payments", "weight": "2"},
         ]
     with store.write_unit(COMPANY) as uow:
         ledger.adopt([original], uow)
@@ -1069,6 +1069,19 @@ def test_unordered_resource_composition_does_not_create_frozen_correction(collec
     assert result(store) == before
     with store.read_unit(COMPANY) as context:
         assert ledger.query_vouchers(LedgerQuery(), context).total == 1
+
+
+def test_obligation_classification_has_one_weight_per_category(store):
+    change = expense()
+    change["plans"][0]["obligations"][0]["cashflow_weights"] = [
+        {"category": "employee_payments", "weight": "1"},
+        {"category": "employee_payments", "weight": "2"},
+    ]
+    with pytest.raises(ContractError, match="类别不能重复"):
+        with store.write_unit(COMPANY) as uow:
+            create_ledger().adopt([change], uow)
+    with store.read_unit(COMPANY) as read:
+        assert create_ledger().get_results([BUSINESS], read) == ()
 
 
 def withdrawal(baseline, *, seq=1):

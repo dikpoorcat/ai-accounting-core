@@ -33,7 +33,7 @@ def split_resources(count=31):
             **obligation,
             "slot": f"payable:{index}",
             "amount_fen": "100",
-            "cashflow_parts": [{"category": "other_operating_payments", "amount_fen": "100"}],
+            "cashflow_weights": [{"category": "other_operating_payments", "weight": "1"}],
         }
         for index in range(count)
     ]

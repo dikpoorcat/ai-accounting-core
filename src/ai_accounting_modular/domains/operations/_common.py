@@ -112,8 +112,8 @@ def obligation(
         "allowed_settlements": list(methods),
         "business_period": plan["accounting_period"],
     }
-    if amount and cashflow:
-        value["cashflow_parts"] = [{"category": cashflow, "amount_fen": format_fen(amount)}]
+    if cashflow:
+        value["cashflow_weights"] = [{"category": cashflow, "weight": "1"}]
     plan["obligations"].append(value)
 
 

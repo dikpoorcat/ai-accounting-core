@@ -1,6 +1,5 @@
 """Current related facts define a stable position in one original amount."""
 
-from copy import deepcopy
 from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import cumulative_shares, format_fen
@@ -9,9 +8,13 @@ from ._common import amount, reject, sum_amounts
 
 
 @dataclass(frozen=True)
-class Position:
+class AmountRange:
     before: int
     after: int
+
+
+@dataclass(frozen=True)
+class Position(AmountRange):
     total: int
 
 
@@ -54,18 +57,25 @@ def adopt_position(plan, source, span):
     )
 
 
-def inherit_cashflow(source, target, span):
-    if "cashflow_parts" not in source:
+def inherit_cashflow(source, target, spans):
+    if "cashflow_weights" not in source:
         return
     parts = sorted(
-        source["cashflow_parts"],
-        key=lambda item: (item["category"], item.get("source_business_id", "")),
+        source["cashflow_weights"],
+        key=lambda item: item["category"],
     )
-    if not parts:
-        return
-    shares = interval_shares(span, [amount(item) for item in parts])
-    target["cashflow_parts"] = [
-        {**deepcopy(item), "amount_fen": format_fen(recovered)}
-        for item, recovered in zip(parts, shares, strict=True)
-        if recovered
+    weights = [amount(item, "weight") for item in parts]
+    shares = [interval_shares(span, weights) for span in spans]
+    positive = {}
+    for index, item in enumerate(parts):
+        total = sum_amounts(row[index] for row in shares)
+        if total:
+            positive[item["category"]] = total
+    target["cashflow_weights"] = classification_weights(positive)
+
+
+def classification_weights(components):
+    return [
+        {"category": category, "weight": "1" if len(components) == 1 else format_fen(value)}
+        for category, value in sorted(components.items())
     ]

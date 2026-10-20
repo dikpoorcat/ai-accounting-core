@@ -128,9 +128,7 @@ def payable(plan, slot, account, amount, *, category, party=None, period=None, c
     if party is not None:
         value["party_id"] = party
     if cashflow is not None:
-        value["cashflow_parts"] = (
-            [{"category": cashflow, "amount_fen": format_fen(amount)}] if amount else []
-        )
+        value["cashflow_weights"] = [{"category": cashflow, "weight": "1"}]
     plan["obligations"].append(value)
     line(plan, account, amount, party=party)
 

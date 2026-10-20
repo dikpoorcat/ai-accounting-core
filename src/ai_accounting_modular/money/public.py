@@ -1,12 +1,15 @@
 """The only cross-module entry point for real company money."""
 
 from ai_accounting_modular.contracts.public import (
+    BusinessRef,
     EvaluationContext,
     ReadContext,
+    ResourceCutoff,
     UnitOfWork,
     validate_contract,
 )
 
+from ._cashflow import actual_settled_fen as _actual_settled_fen
 from ._common import (
     allocation_refs,
     fail,
@@ -86,6 +89,12 @@ class Money:
 
     def __init__(self, *, ledger=None, identity=None):
         self._ledger, self._identity = ledger, identity
+
+    def actual_settled_fen(
+        self, source: BusinessRef, cutoff: ResourceCutoff, context: EvaluationContext
+    ) -> int:
+        """Exact current actual-cash allocations, including every payment on the cutoff day."""
+        return _actual_settled_fen(source, cutoff, context)
 
     def describe_change(self, changes, context: EvaluationContext):
         businesses, dependencies = [], []

@@ -11,6 +11,7 @@ from ai_accounting_modular.contracts.public import (
     ResourceCutoff,
     ResourceState,
     ResourceUse,
+    ResourceWindow,
     content_digest,
     format_fen,
     validate_contract,
@@ -91,6 +92,31 @@ class CandidateLedger:
         return definitions(self._repo, self._repo.current_heads(ids) if ids else (), refs, kind)
 
     def resource_states(self, refs, kind, cutoff, *, excluding_consumer=None):
+        windows = self.resource_windows(refs, kind, cutoff, excluding_consumer=excluding_consumer)
+        for window in windows:
+            if window.uncertain_uses:
+                raise ContractError(
+                    "needs_information",
+                    "该月的非资金变动只有月份，无法确定是否已在所查询实际日前发生。",
+                    fact_issues=[
+                        {
+                            "code": "resource_day_required",
+                            "business_id": window.uncertain_uses[0].source["business_id"],
+                            "field": "/effective_on",
+                            "meaning": "影响本次日截面的非资金变动实际日",
+                            "message": (
+                                "按月核验无需补日；本次核验月中实际日，需要有来源的先后依据。"
+                            ),
+                            "allowed_precision": ["day"],
+                            "reusable_sources": [],
+                            "blocking_scope": "business",
+                        }
+                    ],
+                )
+        return tuple(window.certain for window in windows)
+
+    def resource_windows(self, refs, kind, cutoff, *, excluding_consumer=None):
+        self._unit.repository("ledger")
         if not self._complete:
             fail("invalid_operation", "候选结果尚未齐备，不能读取不完整余额。")
         if not isinstance(cutoff, ResourceCutoff):
@@ -105,7 +131,7 @@ class CandidateLedger:
             self._time_version = self._repo.version
         resources = self.resource_definitions(refs, kind)
         self._repo.prepare_states(resources)
-        return tuple(self._state(resource, cutoff, excluding_consumer) for resource in resources)
+        return tuple(self._window(resource, cutoff, excluding_consumer) for resource in resources)
 
     def fund_movements(self, account_id, period_from, period_to):
         self._unit.repository("ledger")
@@ -113,7 +139,8 @@ class CandidateLedger:
             fail("invalid_operation", "候选结果尚未齐备，不能读取不完整资金范围。")
         return fund_movements(self._repo, account_id, period_from, period_to)
 
-    def _visible(self, row, table, cutoff, excluded):
+    def _visibility(self, row, table, cutoff, excluded):
+        """True is certain, False is outside, None is a month-only boundary use."""
         head = self._repo.result(row["result_id"])
         if excluded == (head["business_id"], head["result_slot"]):
             return False
@@ -133,27 +160,10 @@ class CandidateLedger:
             if period == cutoff.period:
                 last_day = monthrange(int(period[:4]), int(period[5:]))[1]
                 if int(cutoff.on[-2:]) < last_day:
-                    raise ContractError(
-                        "needs_information",
-                        "该月的非资金变动只有月份，无法确定是否已在所查询实际日前发生。",
-                        fact_issues=[
-                            {
-                                "code": "resource_day_required",
-                                "business_id": head["business_id"],
-                                "field": "/effective_on",
-                                "meaning": "影响本次日截面的非资金变动实际日",
-                                "message": (
-                                    "按月核验无需补日；本次核验月中实际日，需要有来源的先后依据。"
-                                ),
-                                "allowed_precision": ["day"],
-                                "reusable_sources": [],
-                                "blocking_scope": "business",
-                            }
-                        ],
-                    )
+                    return None
         return True
 
-    def _state(self, definition, cutoff, excluded):
+    def _window(self, definition, cutoff, excluded):
         value = definition.value
         head = self._times.head(definition.source["result_id"])
         period = head["business_period"]
@@ -164,10 +174,14 @@ class CandidateLedger:
             actual_on is not None and cutoff.on is not None and actual_on > cutoff.on
         ):
             fail("dependency_conflict", "公开资源在所需经济时点尚未成立。")
-        totals, uses = defaultdict(int), []
+        totals, uses, uncertain = defaultdict(int), [], []
         for table, rows in self._repo.uses(definition):
             for row in rows:
-                if not self._visible(row, table, cutoff, excluded):
+                visibility = self._visibility(row, table, cutoff, excluded)
+                if visibility is False:
+                    continue
+                if visibility is None:
+                    uncertain.append(self._use(row, table))
                     continue
                 key = (
                     row["method"]
@@ -184,24 +198,28 @@ class CandidateLedger:
             if definition.kind == "obligation"
             else sum_amounts((amount, -sum_amounts(totals.values())))
         )
-        uses.sort(
-            key=lambda use: (
-                use.source["business_id"],
-                use.source["result_slot"],
-                use.kind,
-                content_digest(use.value),
+        for group in (uses, uncertain):
+            group.sort(
+                key=lambda use: (
+                    use.source["business_id"],
+                    use.source["result_slot"],
+                    use.kind,
+                    content_digest(use.value),
+                )
             )
-        )
-        return ResourceState(
-            definition,
-            totals["money"],
-            totals["offset"],
-            totals["agency"],
-            totals["transfer"],
-            totals["reclassify_excess"],
-            totals["cost"],
-            remaining,
-            tuple(uses),
+        return ResourceWindow(
+            ResourceState(
+                definition,
+                totals["money"],
+                totals["offset"],
+                totals["agency"],
+                totals["transfer"],
+                totals["reclassify_excess"],
+                totals["cost"],
+                remaining,
+                tuple(uses),
+            ),
+            tuple(uncertain),
         )
 
     def _use(self, row, table):

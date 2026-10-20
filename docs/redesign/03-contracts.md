@@ -117,7 +117,7 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | identity.public | `plan_change(objects, context)`、`apply_current(plan, uow)`、`get_batch(ids, read_context)`、`find(query, read_context)` | 唯一维护对象及当前序号；批量返回 CurrentObject，不暴露私表。 |
 | domain.public | `describe_change(changes, context)`、`evaluate_slot(business_id, result_slot, context)`、`validate_candidate(plan, context)`、`apply_current(plan, uow)`、`export_current(ids, read_context)`、`query_current(query, read_context)` | describe 返回 ChangeDescription，声明责任、自然唯一键、完整槽集合、依赖和字段问题，不抢先计算正式结果。应用按槽拓扑求值，收齐完整候选后调用 validate_candidate 核验集合约束，再把 ChangePlan 交 owner 保存。最终核验不能改写计划、金额或采用依据。无自行提交、后台发任务或跨模块私表读取。 |
 | ledger.public | `begin_candidate(responsibilities, uow, correction_period=None)`、`resource_definitions(refs, kind, read_context)`、`fund_movements(account_id, period_from, period_to, read_context)`、`adopt(change_plans, uow, correction_period=None)`、正式结果和凭证等查询、`financial_snapshot(scope, read_context)` | 候选逐槽 stage，全部齐备后 complete。求值可读来源资源定义；完整后才能读资源余额及完整资金范围。ResourceDefinition 含公开身份、完整定义及精确采用来源；ResourceState 加入截至指定月份/必要实际日的清偿、转移、消耗及剩余量。采用和事务提交再次统一检查容量；正式读取明确 current 或指定月末 as_posted。完整查询与财务取数按各自合同返回。 |
-| money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。内部划转单独标记；银行原行不自动变成第二次付款。 |
+| money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`actual_settled_fen(source, cutoff, context)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。实际清偿按同单最终事实、本义务分配及经济截止计算，不含抵销、转债或代办。内部划转单独标记；银行原行不自动变成第二次付款。 |
 | ledger.opening / ledger.reporting | 同领域 describe/evaluate/apply/export/query 协议 | 分别承接 opening.package、reports.continuation 的事实写入和导出；共享 ledger 采用端口，不由 application 越界代写。 |
 | records.public | `plan_change(input, context)`、`apply_current(plan, uow)`、`resolve_sources(ids, read_context)`、`lease_source(source_id, read_context)`、`current_notes/current_issues(scope, read_context)`、`publish_documents(scopes, head)` | 唯一维护来源、说明和待办；lease_source返回受控读取租约，可流式校验/复制已登记原字节或有效说明，不让调用者解析私有路径、任意开文件或改内容。 |
 | storage.public | `read_unit(company_id)`、`write_unit(company_id)`、`maintenance_unit(company_id)`、`list_companies`、`company_metadata(read_context)`、目录/公司新建、结构验证及数据库一致快照/副本恢复 | 工作单元和一致点，不开放跨公司任意 SQL。模块仓储只接触自己的表；数据库副本操作不承接完整备份包和文档集合的编排。 |
@@ -144,13 +144,15 @@ EvaluationContext 提供当前事实、对象和已求值结果，以及显式�
 
 ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时填写。义务和成本的 business_period 可以是税款、工资或原成本的关联期；是否已经成立取生产结果的核算期。资金按真实发生日截取，非资金按正式采用的必要实际日截取。只有月份的记录不补日；同月月中确实无法判断的关系才返回精确缺项，按月或月末核验不因此普遍追问日期。
 
+完整候选的 `resource_windows` 返回确定数量、同月未知日的变动及其可能余额上下界。领域可据最不利边界证明结果不受先后影响，就无需追问日期；只有成立与否确实随未知先后改变时才补资料。需要精确数值的 `resource_states` 仍拒绝含未知边界的日截面。两种读取共用相同时序筛选，不把未知变动默认为已发生或未发生；上下界只是计算比较，不是另存的正式金额。
+
 同一计算快照批量读取并复用已验证结果，返回值与调用者相互隔离；候选增加计划时更新相应索引，缓存不能跨提交沿用。公开读取单页500不限制合法事实产生的分录或证明数量；内部输出不能另加较小上限，迫使业务缩减或拆断原子关系。
 
 `ChangeSet` 是本次变化的业务类别、对象、期间、结果槽集合，不保存过去的事实正文。应用层按读取依赖表更新当前目标 head。它不是永久事件流，也不是由领域直接列出页面缓存键。
 
 文件计划采用 core.FilePlan，具体捕获、语义头和重启接续见 [数据设计](04-data-model.md#文件任务与备份一致点)。restore/rebuild 使用 IsolatedTargetRequest/Result：输入从源文件直接取得，不需要旧公司库、旧 task_id 或旧 set_id 反查；check/run 分别返回 checked/created，失败列明检查结果。交付新目标和注册为当前公司是两个动作，离线命令不自动切换现有服务。
 
-义务公开读取返回 ObligationView（正式 Obligation 与同口径 ObligationBalance）。每项义务的 cashflow_parts 是正式分类的唯一保存处，领域产生、ledger 采用，money 从公开义务读取并按累计清偿比例分配到本次资金。普通一项、混合税/本金利息多项共用此机制，不为税另添一套付款算法。已知分类必须为正金额且合计义务额，零义务用空数组；缺少分类时省略，不代表零。真实金额和税额足够仍可记账/付款，只将受影响现金流行标为待补。FundMovement 的分类也可暂缺，补齐后保持实际发生身份重算；不能填假分类换取报表 ready。分类及累计分配、闭期有符号补差见业务和报表规范。
+义务公开读取返回 ObligationView（正式 Obligation 与同口径 ObligationBalance）。分类唯一保存在 cashflow_weights：每项为 category 与正整数字符串 weight，同一类别只能一项，来源留在必要 Basis。权重表示相对构成，不要求等于义务金额；已知单类使用1，更正为零也保留。混合构成全部为零且无来源支持比例时省略分类，不能猜均分或找回旧错误版本。money 按累计清偿额和统一权重产生本次 FundMovement.cashflow_parts，后者才是实际金额且合计必须等于真实收付。分类不放宽义务容量，超付仍须有明确追偿等关系。缺分类不妨碍已明确金额的记账/付款，仅将受影响现金流标为未知；补齐后保持实际资金身份重算。累计分配、退款继承及闭期补差见业务和报表规范。
 
 ## 标准业务文档
 

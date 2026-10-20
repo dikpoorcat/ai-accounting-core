@@ -72,7 +72,7 @@ def objects(ids):
     ]
 
 
-def payable(ids, value="100000", parts=True):
+def payable(ids, value="100000", weights=True):
     result = {
         "business_id": ids["expense"],
         "slot": "primary",
@@ -84,8 +84,8 @@ def payable(ids, value="100000", parts=True):
         "business_period": "2026-01",
         "allowed_settlements": ["money", "offset", "transfer"],
     }
-    if parts:
-        result["cashflow_parts"] = [{"category": "other_operating_payments", "amount_fen": value}]
+    if weights:
+        result["cashflow_weights"] = [{"category": "other_operating_payments", "weight": "1"}]
     return result
 
 

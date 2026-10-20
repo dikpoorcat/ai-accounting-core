@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from ._errors import ContractError
-from ._scalars import checked_fen
+from ._scalars import checked_fen, parse_fen
 from ._validation import validate_contract
 from ._wire_types import (
     AdoptedBasis,
@@ -135,6 +135,39 @@ class ResourceState:
                 raise ContractError("invalid_input", "资源使用累计额不能为负。")
 
 
+@dataclass(frozen=True)
+class ResourceWindow:
+    """Certain quantities plus same-month uses whose actual day is unknown.
+
+    Bounds are mathematical comparisons, not additional posted money amounts.
+    An uncertain use is neither silently included nor assumed not to exist.
+    """
+
+    certain: ResourceState
+    uncertain_uses: tuple[ResourceUse, ...] = ()
+
+    @property
+    def _possible_excess(self) -> int:
+        return sum(
+            parse_fen(use.value["amount_fen"])
+            for use in self.uncertain_uses
+            if use.kind == "reclassification" and use.value["mode"] == "reclassify_excess"
+        )
+
+    @property
+    def remaining_min_fen(self) -> int:
+        subtracted = sum(parse_fen(use.value["amount_fen"]) for use in self.uncertain_uses)
+        return self.certain.remaining_fen - (subtracted - self._possible_excess)
+
+    @property
+    def remaining_max_fen(self) -> int:
+        return self.certain.remaining_fen + self._possible_excess
+
+    @property
+    def excess_reclassified_max_fen(self) -> int:
+        return self.certain.excess_reclassified_fen + self._possible_excess
+
+
 @runtime_checkable
 class ReadContext(Protocol):
     @property
@@ -248,6 +281,10 @@ class EvaluationContext(Protocol):
 
     def movement_id(self, business_id: str, public_slot: str) -> str: ...
 
+    def actual_settled_fen(self, source: BusinessRef, cutoff: ResourceCutoff) -> int:
+        """Current real-money allocations through this economic cutoff, excluding nonmoney."""
+        ...
+
     def fund_sources(
         self, fact: Fact, fund_movements: Sequence[FundMovement]
     ) -> tuple[SourceLocator, ...]: ...
@@ -266,6 +303,17 @@ class EvaluationContext(Protocol):
         *,
         excluding_consumer: tuple[str, str] | None = None,
     ) -> tuple[ResourceState, ...]: ...
+
+    def resource_windows(
+        self,
+        refs: Sequence[BusinessRef],
+        kind: ResourceKind,
+        cutoff: ResourceCutoff,
+        *,
+        excluding_consumer: tuple[str, str] | None = None,
+    ) -> tuple[ResourceWindow, ...]:
+        """A complete candidate's quantities with explicit bounds for unknown use days."""
+        ...
 
     def fund_movements(
         self, account_id: str, period_from: str, period_to: str

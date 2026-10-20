@@ -2,46 +2,51 @@
 
 from collections import defaultdict
 
-from ai_accounting_modular.contracts.public import cumulative_shares
+from ai_accounting_modular.contracts.public import cumulative_shares, validate_contract
 
 from ._common import allocation_refs, amount, format_fen, total
 
 
+def _cash_allocations(source, context):
+    for fact in context.related_facts(source["business_id"], "settlement"):
+        if fact["kind"] != "money.movement" or fact["data"]["type"] not in {
+            "settlement",
+            "payroll_reserve",
+        }:
+            continue
+        for allocation in allocation_refs(fact):
+            if allocation["source"] == source:
+                yield fact, amount(allocation["amount_fen"])
+
+
+def actual_settled_fen(source, cutoff, context):
+    validate_contract("core.schema.json", "BusinessRef", source)
+    return total(
+        value
+        for fact, value in _cash_allocations(source, context)
+        if fact["period"] <= cutoff.period
+        and (cutoff.on is None or fact["effective_on"] <= cutoff.on)
+    )
+
+
 def payment_parts(fact, allocation, obligation, context):
-    parts = obligation.get("cashflow_parts")
-    if parts is None:
+    classification = obligation.get("cashflow_weights")
+    if classification is None:
         return None
     current = amount(allocation["amount_fen"])
     categories = defaultdict(int)
-    for part in parts:
-        categories[part["category"]] += amount(part["amount_fen"])
+    for part in classification:
+        categories[part["category"]] += amount(part["weight"])
     ordered = sorted(categories)
     weights = [categories[key] for key in ordered]
-    if not weights and amount(obligation["amount_fen"]) == 0:
-        # A fully corrected zero obligation may still have a real old payment
-        # and an explicit excess-recovery relationship. No positive original
-        # classification weights remain, so keep the payment and expose the
-        # classification as unknown rather than inventing zero cash or a class.
-        return None
-    if not weights or total(weights) != amount(obligation["amount_fen"]):
-        raise ValueError("formal obligation classification does not equal its amount")
     source = allocation["source"]
     order = fact["effective_on"], fact["business_id"]
-    previous = []
-    for other in context.related_facts(source["business_id"], "settlement"):
-        if (
-            other["business_id"] == fact["business_id"]
-            or other["kind"] != "money.movement"
-            or other["data"]["type"] not in {"settlement", "payroll_reserve"}
-            or (other["effective_on"], other["business_id"]) >= order
-        ):
-            continue
-        previous.extend(
-            amount(item["amount_fen"])
-            for item in allocation_refs(other)
-            if item["source"] == source
-        )
-    before = total(previous)
+    before = total(
+        value
+        for other, value in _cash_allocations(source, context)
+        if other["business_id"] != fact["business_id"]
+        and (other["effective_on"], other["business_id"]) < order
+    )
     after = total((before, current))
     previous_shares = cumulative_shares(before, weights)
     next_shares = cumulative_shares(after, weights)

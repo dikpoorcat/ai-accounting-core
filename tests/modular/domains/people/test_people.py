@@ -494,8 +494,8 @@ def test_labor_deduction_replaces_same_gross_cost_and_project_cost_is_public():
     project = evaluate(case("B17P"))
     assert project["lines"][0]["account_code"] == "189901"
     assert project["cost_lots"][0]["amount_fen"] == "100000"
-    assert project["obligations"][0]["cashflow_parts"] == [
-        {"category": "asset_acquisition", "amount_fen": "90000"}
+    assert project["obligations"][0]["cashflow_weights"] == [
+        {"category": "asset_acquisition", "weight": "1"}
     ]
 
 

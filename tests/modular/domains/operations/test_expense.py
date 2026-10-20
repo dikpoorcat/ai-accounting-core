@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.domains.operations.public import create_operations, repository_factory
 from ai_accounting_modular.ledger.public import create_ledger
 from ai_accounting_modular.ledger.public import repository_factory as ledger_factory
+from ai_accounting_modular.money.public import create_money
 from ai_accounting_modular.storage.public import (
     CompanySpec,
     OwnerProfile,
@@ -125,6 +126,14 @@ class Context:
 
     def related_facts(self, producer_id, relation_kind, **scope):
         return tuple(self.facts.values())
+
+    def actual_settled_fen(self, source, cutoff):
+        return create_money().actual_settled_fen(source, cutoff, self)
+
+    def resource_windows(self, refs, kind, cutoff, *, excluding_consumer=None):
+        return self.candidate.resource_windows(
+            refs, kind, cutoff, excluding_consumer=excluding_consumer
+        )
 
 
 def fact(amount="100000", **extra):
@@ -1193,12 +1202,12 @@ def test_overpayment_recovery_inherits_original_cashflow_and_keeps_unknown(known
     original_plan = create_operations().evaluate_slot(BUSINESS, "main", Context(None, original))
     source = original_plan["obligations"][0]
     if known:
-        source["cashflow_parts"] = [
-            {"category": "employee_payments", "amount_fen": "2"},
-            {"category": "tax_payments", "amount_fen": "3"},
+        source["cashflow_weights"] = [
+            {"category": "employee_payments", "weight": "2"},
+            {"category": "tax_payments", "weight": "3"},
         ]
     else:
-        source.pop("cashflow_parts")
+        source.pop("cashflow_weights")
     current = other_fact(
         "overpayment",
         {
@@ -1207,18 +1216,33 @@ def test_overpayment_recovery_inherits_original_cashflow_and_keeps_unknown(known
             "amount_fen": "2",
         },
     )
-    context = LifecycleContext(original, original_plan, current)
+    paid = {
+        "business_id": str(uuid4()),
+        "kind": "money.movement",
+        "period": "2026-01",
+        "evidence_ids": [SOURCE],
+        "effective_on": "2026-01-15",
+        "data": {
+            "type": "settlement",
+            "funds_account_id": BANK,
+            "direction": "outflow",
+            "amount_fen": "7",
+            "payment_method": "individual",
+            "counterparty_id": PARTY,
+            "allocations": [{"source": current["data"]["source"], "amount_fen": "7"}],
+        },
+    }
+    validate_contract("business-facts.schema.json", "Fact", paid)
+    context = LifecycleContext(original, original_plan, current, paid)
     plan = create_operations().evaluate_slot(current["business_id"], "main", context)
     if known:
-        assert plan["obligations"][0]["cashflow_parts"] == [
-            {"category": "employee_payments", "amount_fen": "1"},
-            {"category": "tax_payments", "amount_fen": "1"},
+        assert plan["obligations"][0]["cashflow_weights"] == [
+            {"category": "employee_payments", "weight": "1"},
+            {"category": "tax_payments", "weight": "1"},
         ]
-        span = next(
-            item
-            for item in plan["basis"]["adopted_quantities"]
-            if item["type"] == "cumulative_range"
-        )
-        assert (span["from_fen"], span["to_fen"]) == ("5", "7")
     else:
-        assert "cashflow_parts" not in plan["obligations"][0]
+        assert "cashflow_weights" not in plan["obligations"][0]
+    span = next(
+        item for item in plan["basis"]["adopted_quantities"] if item["type"] == "cumulative_range"
+    )
+    assert (span["from_fen"], span["to_fen"]) == ("5", "7")

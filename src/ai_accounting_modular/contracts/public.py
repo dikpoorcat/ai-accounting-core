@@ -10,6 +10,7 @@ from ._contexts import (
     ResourceKind,
     ResourceState,
     ResourceUse,
+    ResourceWindow,
     UnitOfWork,
 )
 from ._errors import ContractError
@@ -52,6 +53,7 @@ __all__ = [
     "ResourceKind",
     "ResourceState",
     "ResourceUse",
+    "ResourceWindow",
     "UnitOfWork",
     "ContractError",
     "fact_source_ids",

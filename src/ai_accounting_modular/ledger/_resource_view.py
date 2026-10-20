@@ -334,8 +334,8 @@ def resource_definition(kind, head, row, source):
             for key in ("party_id", "due_on"):
                 if row[key] is not None:
                     value[key] = row[key]
-            if row["cashflow_parts_json"] is not None:
-                value["cashflow_parts"] = json.loads(row["cashflow_parts_json"])
+            if row["cashflow_weights_json"] is not None:
+                value["cashflow_weights"] = json.loads(row["cashflow_weights_json"])
     return ResourceDefinition(kind, reference, source, value)
 
 

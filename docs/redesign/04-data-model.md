@@ -103,7 +103,7 @@ money_occurrence 只登记稳定实际发生身份与公开资源键，不另存
 
 同样，TaxSale 与 ReportContribution 从完整计划进入各自正式表，随结果完整替换或冻结。item_no 只作为一份完整税务分类中的内部顺序，不对 AI 暴露成稳定业务身份；对外仍按原业务/税期/金额范围引用。result_report_contribution 仅为严格 profit 明细行分类，不提供任意 balance/cashflow 补丁；财报主项与补充分类的取数各有唯一规则，不把凭证金额和其分类重复相加。
 
-一笔真实付款可能同时支付本金与利息，或净薪与代管款。它仍只有一个 movement_id 和总额。obligation.cashflow_parts_json 唯一保存义务的正式分类及必要处置来源，按累计清偿比例消费；result_fund_movement.cashflow_parts_json 保存本次实际款按类别归并的结果，合计等于该笔总额。分类欠缺时该列为 NULL，不假填空数组或零，已有明确账务仍可保存，相关现金流行待补。现金流量表只消费资金正式拆分及更正补差，不重复加义务分类或另一份报表贡献。划转以 none 分类并有真实两端组关系，对外收付排除。
+一笔真实付款可能同时支付本金与利息，或净薪与代管款，仍只有一个 movement_id 和总额。obligation.cashflow_weights_json 保存按类别唯一的正式分类权重，必要来源在 Basis；result_fund_movement.cashflow_parts_json 保存本次真实款按类别归并的实际分量，合计等于该笔总额。分类欠缺为 NULL，不能假填空数组或零；已知单类在义务更正为零后仍保留权重1。现金流只消费正式资金及其更正补差，不重复加义务分类或报表贡献。内部划转以 none 分类并有真实两端组关系，对外收付排除。
 
 银行/平台原行只证明发生，不自动再入一次账。同一账户/月的原行按实际日期、row_id 排序。原始 reference 可省；若存在只在本份清单内要求唯一，不假定所有银行所有月份流水号全局唯一。source_location 是原件定位，不能反过来决定核算期间。
 

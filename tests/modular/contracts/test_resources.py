@@ -62,3 +62,24 @@ def test_resource_cutoff_checks_real_day_and_its_month():
     for period, day in [("2026-02", "2026-02-30"), ("2026-01", "2026-02-01")]:
         with pytest.raises(ContractError):
             ResourceCutoff(period, day)
+
+
+@pytest.mark.parametrize("amount", ["0", "100", str(MAX_FEN)])
+def test_classification_weights_are_independent_of_nominal_money(amount):
+    resource = definition()
+    value = {
+        **resource.value,
+        "amount_fen": amount,
+        "cashflow_weights": [
+            {"category": "employee_payments", "weight": "1"},
+        ],
+    }
+    assert replace(resource, value=value).value["cashflow_weights"][0]["weight"] == "1"
+    for invalid in (
+        [],
+        [{"category": "employee_payments", "weight": "0"}],
+        [{"category": "employee_payments", "weight": True}],
+        [{"category": "employee_payments", "weight": "1", "source_business_id": BUSINESS}],
+    ):
+        with pytest.raises(ContractError):
+            replace(resource, value={**value, "cashflow_weights": invalid})
