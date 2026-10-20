@@ -10,6 +10,8 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositorySession
 
+from ._sources import issue_source_ids
+
 
 def _source(row):
     value = {key: row[key] for key in ("source_id", "kind", "sha256")}
@@ -190,7 +192,7 @@ class RecordsRepository:
             issue = {
                 "issue_id": row["issue_id"],
                 "scope": row["scope_key"],
-                "evidence_ids": uses[row["issue_id"]],
+                "evidence_ids": loads_json(row["evidence_ids_json"]),
                 "missing_fields": loads_json(row["missing_fields_json"]),
                 "question": row["current_question"],
                 "assignee": row["assignee"],
@@ -201,9 +203,11 @@ class RecordsRepository:
                     issue[key] = row[key]
             if row["known_fact_json"] is not None:
                 issue["known_fact"] = loads_json(row["known_fact_json"])
-            if content_digest(issue) != row["content_digest"] or row[
-                "known_schema_key"
-            ] != issue.get("known_fact", {}).get("kind"):
+            if (
+                content_digest(issue) != row["content_digest"]
+                or row["known_schema_key"] != issue.get("known_fact", {}).get("kind")
+                or tuple(uses[row["issue_id"]]) != issue_source_ids(issue)
+            ):
                 raise ContractError("storage_corrupt", "当前待办正文、来源或摘要不一致。")
             result.append(issue)
         return result
@@ -249,7 +253,9 @@ class RecordsRepository:
         self._session.execute("DELETE FROM current_issue WHERE scope_key=?", (scope,))
         for issue in issues:
             self._session.execute(
-                "INSERT INTO current_issue VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO current_issue(issue_id,scope_key,period,business_id,known_schema_key,"
+                "known_fact_json,missing_fields_json,current_question,assignee,action,due_on,"
+                "content_digest,evidence_ids_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     issue["issue_id"],
                     scope,
@@ -263,9 +269,10 @@ class RecordsRepository:
                     issue["action"],
                     issue.get("due_on"),
                     content_digest(issue),
+                    canonical_json(issue["evidence_ids"]),
                 ),
             )
-            self.replace_uses("issue", issue["issue_id"], issue["evidence_ids"])
+            self.replace_uses("issue", issue["issue_id"], issue_source_ids(issue))
         self._session.execute(
             "INSERT INTO current_issue_scope VALUES(?,?,?,?,?) ON CONFLICT(scope_key) "
             "DO UPDATE SET "

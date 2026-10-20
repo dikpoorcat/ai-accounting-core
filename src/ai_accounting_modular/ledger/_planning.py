@@ -49,10 +49,7 @@ def prepare_result(business_id, result_slot, uow, correction_period):
     if correction_period is not None:
         validate_contract("core.schema.json", "Month", correction_period)
     repo = uow.repository("ledger")
-    old = next(
-        (row for row in repo.current_heads([business_id]) if row["result_slot"] == result_slot),
-        None,
-    )
+    old = repo.current_result(business_id, result_slot)
     cached = repo.prepared(business_id, result_slot)
     if old and old["state"] == "open":
         identity = old["result_id"], old["generation"] + 1, old["baseline_result_id"]
@@ -132,14 +129,7 @@ def bind_plan(plan, uow, correction_period=None):
         if existing.plan_digest != plan_digest:
             fail("conflict", "已提供给同单消费者的完整来源计划不能静默改变。")
         return existing
-    old = next(
-        (
-            row
-            for row in repo.current_heads([candidate.business_id])
-            if row["result_slot"] == candidate.result_slot
-        ),
-        None,
-    )
+    old = repo.current_result(candidate.business_id, candidate.result_slot)
     unchanged = old is not None and same_formal_output(repo, old, plan)
     if unchanged and old["state"] == "open":
         unchanged = (
@@ -207,9 +197,9 @@ def check_source_references(proposed, repo, retired=()):
                 continue
             if pending is not None:
                 fail("dependency_conflict", "本单来源已重算，消费者须采用同一新结果头及内容。")
-            if ref["result_id"] not in saved:
-                saved[ref["result_id"]] = repo.result(ref["result_id"])
-            row = saved[ref["result_id"]]
+            if key not in saved:
+                saved[key] = repo.current_result(*key, metadata_only=True)
+            row = saved[key]
             if row is None or row["target_state"] == "withdrawn":
                 fail("dependency_conflict", "采用依据引用的正式来源不存在。")
             expected = stored_source_reference(row)

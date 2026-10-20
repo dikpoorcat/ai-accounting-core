@@ -204,7 +204,7 @@ def test_mixed_formal_weights_recover_only_the_cash_excess_interval(tmp_path, wi
         {"category": "other_operating_payments", "weight": "1"},
     ]
     with storage.write_unit(company) as uow:
-        ledger.adopt([{**change, "plans": [plan]}], uow)
+        ledger.adopt([{**change, "retained_results": [], "plans": [plan]}], uow)
     excess = recovery(ids, {"business_id": expense["business_id"], "slot": "primary"}, "1")
     paid = payment(ids, "2")
     received = collected(ids, excess, "1")

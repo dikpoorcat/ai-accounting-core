@@ -1,5 +1,5 @@
 {
-  "fingerprint": "269c46a45bee37dbeb3e6578e191ae02c05e261270e8f68bdf9cdf80b8c02fc9",
+  "fingerprint": "d695e52dfde75581447945e7a1674efc610d7cfb80be3190cbdf8ce259afe9b6",
   "kind": "company",
   "objects": [
     {
@@ -47,14 +47,14 @@
     {
       "name": "business_head",
       "owner": "application",
-      "sql": "CREATE TABLE business_head (\nbusiness_id TEXT PRIMARY KEY CHECK(length(business_id)=36),\n family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),\n kind TEXT NOT NULL,\n natural_key TEXT,\n seq INTEGER NOT NULL CHECK(seq>=1),\n state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),\n period TEXT,\n archive_month TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n latest_op TEXT NOT NULL CHECK(latest_op IN ('create','replace','withdraw','restore')),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),\n CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))\n) STRICT",
+      "sql": "CREATE TABLE business_head (\nbusiness_id TEXT PRIMARY KEY CHECK(length(business_id)=36),\n family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),\n kind TEXT NOT NULL,\n natural_key TEXT,\n seq INTEGER NOT NULL CHECK(seq>=1),\n state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),\n period TEXT,\n archive_month TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n latest_op TEXT NOT NULL CHECK(latest_op IN ('create','replace','withdraw','restore')),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),\n search_revision INTEGER NOT NULL CHECK(search_revision>=1),\n CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))\n) STRICT",
       "table": "business_head",
       "type": "table"
     },
     {
       "name": "current_dependency",
       "owner": "application",
-      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
+      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),\n notify_effect TEXT CHECK(notify_effect IS NULL OR (read_mode='collection' AND notify_effect IN ('result','description'))),\n is_direct INTEGER NOT NULL CHECK(is_direct IN (0,1) AND (is_direct=0 OR (producer_kind IN ('business','object') AND read_mode IN ('fact','result')))),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
       "table": "current_dependency",
       "type": "table"
     },
@@ -220,6 +220,13 @@
       "type": "index"
     },
     {
+      "name": "result_basis_ref_reverse",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_basis_ref_reverse ON result_basis_ref(producer_business_id,producer_result_slot,result_id)",
+      "table": "result_basis_ref",
+      "type": "index"
+    },
+    {
       "name": "result_fund_movement_account_date",
       "owner": "ledger",
       "sql": "CREATE INDEX result_fund_movement_account_date ON result_fund_movement(account_id,period,actual_on,movement_id,result_id)",
@@ -294,6 +301,13 @@
       "owner": "ledger",
       "sql": "CREATE TABLE period_close (\nperiod TEXT PRIMARY KEY,\n result_head TEXT NOT NULL,\n frozen_at TEXT NOT NULL,\n basis_schema TEXT NOT NULL,\n basis_json TEXT NOT NULL CHECK(json_valid(basis_json)),\n report_schema TEXT NOT NULL,\n report_json TEXT NOT NULL CHECK(json_valid(report_json)),\n report_digest TEXT NOT NULL CHECK(length(report_digest)=64)\n) STRICT",
       "table": "period_close",
+      "type": "table"
+    },
+    {
+      "name": "result_basis_ref",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_basis_ref (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,\n item_no INTEGER NOT NULL CHECK(item_no>=1),\n producer_business_id TEXT NOT NULL REFERENCES business_head(business_id) ON DELETE RESTRICT,\n producer_result_slot TEXT NOT NULL,\n producer_result_id TEXT NOT NULL CHECK(length(producer_result_id)=36),\n producer_generation INTEGER NOT NULL CHECK(producer_generation>=1),\n producer_content_digest TEXT NOT NULL CHECK(length(producer_content_digest)=64),\n PRIMARY KEY(result_id,item_no)\n) STRICT",
+      "table": "result_basis_ref",
       "type": "table"
     },
     {
@@ -483,6 +497,27 @@
       "owner": "ledger",
       "sql": "CREATE TRIGGER period_close_immutable_update BEFORE UPDATE ON period_close BEGIN SELECT RAISE(ABORT,'closed_period'); END",
       "table": "period_close",
+      "type": "trigger"
+    },
+    {
+      "name": "result_basis_ref_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_basis_ref_frozen_delete BEFORE DELETE ON result_basis_ref\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_basis_ref",
+      "type": "trigger"
+    },
+    {
+      "name": "result_basis_ref_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_basis_ref_frozen_insert BEFORE INSERT ON result_basis_ref\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_basis_ref",
+      "type": "trigger"
+    },
+    {
+      "name": "result_basis_ref_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_basis_ref_frozen_update BEFORE UPDATE ON result_basis_ref\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_basis_ref",
       "type": "trigger"
     },
     {
@@ -859,7 +894,7 @@
     {
       "name": "current_issue",
       "owner": "records",
-      "sql": "CREATE TABLE current_issue (\nissue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),\n scope_key TEXT NOT NULL,\n period TEXT,\n business_id TEXT,\n known_schema_key TEXT,\n known_fact_json TEXT CHECK(known_fact_json IS NULL OR json_valid(known_fact_json)),\n missing_fields_json TEXT NOT NULL CHECK(json_valid(missing_fields_json)),\n current_question TEXT NOT NULL,\n assignee TEXT NOT NULL CHECK(assignee IN ('ai','owner')),\n action TEXT NOT NULL CHECK(action IN ('provide_material','clarify_reality','external_payment','external_filing','professional_check')),\n due_on TEXT,\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64)\n) STRICT",
+      "sql": "CREATE TABLE current_issue (\nissue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),\n scope_key TEXT NOT NULL,\n period TEXT,\n business_id TEXT,\n known_schema_key TEXT,\n known_fact_json TEXT CHECK(known_fact_json IS NULL OR json_valid(known_fact_json)),\n missing_fields_json TEXT NOT NULL CHECK(json_valid(missing_fields_json)),\n current_question TEXT NOT NULL,\n assignee TEXT NOT NULL CHECK(assignee IN ('ai','owner')),\n action TEXT NOT NULL CHECK(action IN ('provide_material','clarify_reality','external_payment','external_filing','professional_check')),\n due_on TEXT,\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n evidence_ids_json TEXT NOT NULL CHECK(json_valid(evidence_ids_json) AND json_type(evidence_ids_json)='array')\n) STRICT",
       "table": "current_issue",
       "type": "table"
     },

@@ -77,6 +77,10 @@ def balance(consumer, producer=90, **kwargs):
     return resource(consumer, producer, mode="balance", **kwargs)
 
 
+def observer_ids(repo, uses):
+    return tuple(sorted({edge["consumer_business_id"] for edge in repo.resource_observers(uses)}))
+
+
 class Candidate(PublicationCandidate):
     """Opaque window answers verify scheduling and scope without duplicating balances."""
 
@@ -134,8 +138,16 @@ class Candidate(PublicationCandidate):
 
 class Ledger(PublicationLedger):
     def begin_candidate(
-        self, responsibilities, unit, *, publications, correction_period, resource_uses
+        self,
+        responsibilities,
+        unit,
+        *,
+        publications,
+        correction_period,
+        resource_uses,
+        retained_results,
     ):
+        assert retained_results == []
         self.candidate = Candidate(responsibilities, publications)
         self.candidate.resource_uses = deepcopy(resource_uses)
         return self.candidate
@@ -206,11 +218,11 @@ def test_component_notifications_survive_storage_and_ignore_disjoint_uses(system
         )
         used = resource(20)
         used["resource_components"] = ["money"]
-        assert repo.resource_observers([used]) == (identity(21), identity(23))
+        assert observer_ids(repo, [used]) == (identity(21), identity(23))
         used["resource_components"] = ["offset"]
-        assert repo.resource_observers([used]) == (identity(22), identity(23))
+        assert observer_ids(repo, [used]) == (identity(22), identity(23))
         used.pop("resource_components")
-        assert repo.resource_observers([used]) == (identity(21), identity(22), identity(23))
+        assert observer_ids(repo, [used]) == (identity(21), identity(22), identity(23))
 
 
 def test_balance_read_cannot_use_components_outside_its_declared_selection(system):
@@ -317,17 +329,17 @@ def test_true_sqlite_notifications_distinguish_slot_kind_day_and_exact_excluded_
     store, company = system
     with store.read_unit(company) as unit:
         repo = unit.repository("application")
-        assert repo.resource_observers([resource(20, on="2026-01-20")]) == (
+        assert observer_ids(repo, [resource(20, on="2026-01-20")]) == (
             identity(21),
             identity(26),
         )
-        assert repo.resource_observers([resource(20)]) == (
+        assert observer_ids(repo, [resource(20)]) == (
             identity(21),
             identity(24),
             identity(26),
         )
-        assert repo.resource_observers([resource(20, source_slot="vat")]) == (identity(22),)
-        assert repo.resource_observers([resource(20, kind="cost")]) == (identity(23),)
+        assert observer_ids(repo, [resource(20, source_slot="vat")]) == (identity(22),)
+        assert observer_ids(repo, [resource(20, kind="cost")]) == (identity(23),)
 
 
 def test_nonempty_exclusions_and_day_roundtrip_without_advancing_head_on_identical_write(system):
@@ -341,7 +353,10 @@ def test_nonempty_exclusions_and_day_roundtrip_without_advancing_head_on_identic
         before = unit.head
     with store.write_unit(company) as unit:
         assert (
-            unit.repository("application").replace_dependencies([identity(30)], [original]) is False
+            unit.repository("application").replace_dependencies(
+                [identity(30)], [original], relations=(), search_revision=unit.next_head
+            )
+            is False
         )
     with store.read_unit(company) as unit:
         assert unit.head == before

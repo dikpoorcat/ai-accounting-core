@@ -118,7 +118,7 @@ def same_formal_output(repo, row, plan):
     ):
         return False
     for table, desired in resource_rows(row["result_id"], plan).items():
-        if table == "result_source":
+        if table in {"result_source", "result_basis_ref"}:
             continue
         existing = [list(child.values())[1:] for child in repo.children(table, [row["result_id"]])]
         expected = [list(child)[1:] for child in desired]

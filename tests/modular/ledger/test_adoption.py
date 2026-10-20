@@ -40,7 +40,7 @@ class ApplicationSeed:
 
     def business(self, business_id=BUSINESS, *, family="operations", kind="operations.expense"):
         self.session.execute(
-            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 business_id,
                 family,
@@ -55,6 +55,7 @@ class ApplicationSeed:
                 0,
                 str(uuid4()),
                 "0" * 64,
+                1,
             ),
         )
 
@@ -291,6 +292,7 @@ def expense(amount="100000", *, seq=0, business_id=BUSINESS):
                 "complete_result_slots": ["main"],
             }
         ],
+        "retained_results": [],
         "plans": [plan],
         "dependencies": [],
         "issues": [],
@@ -369,6 +371,7 @@ def test_open_withdraw_removes_result_and_resources_without_history(store):
                 "complete_result_slots": [],
             }
         ],
+        "retained_results": [],
         "plans": [],
         "dependencies": [],
         "issues": [],
@@ -930,6 +933,7 @@ def test_new_consumer_cannot_reference_a_source_withdrawn_in_same_unit(store):
                 "complete_result_slots": [],
             }
         ],
+        "retained_results": [],
         "plans": [],
         "dependencies": [],
         "issues": [],
@@ -1078,6 +1082,7 @@ def test_later_adoption_in_same_unit_cannot_leave_a_new_consumer_dangling(store)
                 "complete_result_slots": [],
             }
         ],
+        "retained_results": [],
         "plans": [],
         "dependencies": [],
         "issues": [],
@@ -1656,6 +1661,7 @@ def test_candidate_replacement_and_withdrawal_remove_previous_consumption(store)
                 "complete_result_slots": [],
             }
         ],
+        "retained_results": [],
         "plans": [],
         "dependencies": [],
         "issues": [],

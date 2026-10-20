@@ -23,6 +23,7 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 
 from . import _backup, _changes, _documents, _periods, _sources
 from ._repository import RecordsRepository
+from ._standard import copy_standard_bundle, open_standard_bundle
 from ._types import (
     BackupMaterials,
     DocumentSnapshot,
@@ -34,6 +35,8 @@ from ._types import (
     RecordsPlan,
     ShardTarget,
     SourceStatus,
+    StandardBundle,
+    StandardFile,
 )
 
 __all__ = [
@@ -48,7 +51,11 @@ __all__ = [
     "RecordsPlan",
     "ShardTarget",
     "SourceStatus",
+    "StandardBundle",
+    "StandardFile",
+    "copy_standard_bundle",
     "create_records",
+    "open_standard_bundle",
     "repository_factory",
 ]
 

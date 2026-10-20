@@ -128,11 +128,12 @@ class Financing:
             fail("融资投资当前事实不存在。")
         validate_fact(fact, self.family)
         validate_roles(fact, context)
-        if (
-            fact["kind"] == PREFIX + "contract"
-            and result_slot in cooperation_slots(fact, context)
-            and result_slot.startswith("position:")
-        ):
+        if fact["kind"] == PREFIX + "contract" and result_slot.startswith("position:"):
+            period = result_slot.removeprefix("position:")
+            validate_contract("core.schema.json", "Month", period)
+            first = max(fact["period"], context.read_context.start_period)
+            if not first <= period <= max(first, context.evaluation_period_to):
+                fail("合作位置不在合同生效、开账和明确工作月份范围内。", "invalid_input")
             result = position_plan(fact, result_slot, context)
         elif result_slot == "main":
             result = _CALCULATORS[fact["kind"]](fact, context)

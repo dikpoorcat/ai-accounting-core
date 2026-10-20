@@ -17,7 +17,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from ._changes import _missing_sources, note_current
-from ._sources import atomic_write, controlled_path
+from ._sources import atomic_write, controlled_path, issue_source_ids
 from ._types import DocumentSnapshot, PreparedDocuments, ShardTarget
 
 FORMAT = "ai-accounting-standard/1"
@@ -143,7 +143,7 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
     issues = repository.issues() if "work" in selected else []
     for issue in issues:
         validate_contract("core.schema.json", "CurrentIssue", issue)
-        used_sources.update(issue["evidence_ids"])
+        used_sources.update(issue_source_ids(issue))
     if "work" in selected:
         parts["work"] = {"format": FORMAT, "key": "work", "issues": issues}
     notes = []

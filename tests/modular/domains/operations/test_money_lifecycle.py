@@ -854,7 +854,7 @@ def test_resource_tax_period_does_not_delay_its_real_establishment(system, consu
     # while its actual production period remains January. No AI API accepts it.
     plan["obligations"][0]["business_period"] = "2026-02"
     with app.storage.write_unit(company) as unit:
-        app.ledger.adopt([{**change, "plans": [plan]}], unit)
+        app.ledger.adopt([{**change, "retained_results": [], "plans": [plan]}], unit)
     if consumer == "overpayment":
         paid = movement(ids, original, "primary", 100)
         excess = recovery(ids, original, 20)
@@ -931,7 +931,7 @@ def test_offset_never_occupies_real_cash_classification_interval(system, nominal
             {"category": "other_operating_payments", "weight": "1"},
         ]
         with app.storage.write_unit(company) as unit:
-            app.ledger.adopt([{**change, "plans": [plan]}], unit)
+            app.ledger.adopt([{**change, "retained_results": [], "plans": [plan]}], unit)
     prepaid = fact(
         ids,
         "operations.advance",
@@ -1088,7 +1088,7 @@ def test_later_offset_and_claim_cannot_reclassify_an_earlier_actual_refund(syste
         {"category": "other_operating_payments", "weight": "1"},
     ]
     with app.storage.write_unit(company) as unit:
-        app.ledger.adopt([{**change, "plans": [plan]}], unit)
+        app.ledger.adopt([{**change, "retained_results": [], "plans": [plan]}], unit)
     paid = movement(ids, original, "primary", 2)
     first = recovery(ids, original, 1)
     returned = movement(ids, first, "recovery", 1, direction="inflow", day="2026-01-16")

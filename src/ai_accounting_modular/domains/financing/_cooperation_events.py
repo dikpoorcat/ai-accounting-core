@@ -5,7 +5,7 @@ from dataclasses import dataclass, fields
 
 from ai_accounting_modular.contracts.public import ResourceCutoff
 
-from ._common import amount, fail
+from ._common import amount, fail, missing
 from ._cooperation_common import AGENCIES, KINDS, PREFIX, actual_on
 from ._cooperation_math import Totals
 from ._cooperation_sources import result_trades
@@ -21,12 +21,29 @@ class Event:
     reference: dict | None = None
 
 
-def project_facts(contract_id, context, period_to):
+def project_facts(contract_id, context, period_to, *, period_from=None):
     return tuple(
         fact
-        for fact in context.related_facts(contract_id, "calculation", period_to=period_to)
+        for fact in context.related_facts(
+            contract_id, "calculation", period_from=period_from, period_to=period_to
+        )
         if fact["business_id"] != contract_id
     )
+
+
+def require_book_start(fact, events, start_period):
+    if any(
+        event.period < start_period
+        and any(getattr(event.delta, field.name) for field in fields(Totals))
+        for event in events
+    ):
+        missing(
+            fact,
+            "/period",
+            "开账前已发生的合作经营或出资需要完整位置接续；当前规则只承接开账后新发生的项目，不能默认为零。",
+            precision=("source",),
+            code="cooperation_opening_required",
+        )
 
 
 def recovery_parent(trade):

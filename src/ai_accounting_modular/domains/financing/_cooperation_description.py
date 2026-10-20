@@ -103,31 +103,48 @@ def dependencies(fact, context, result_slots):
             found.append(balance)
         return found
     found = [
-        _edge(fact, business_id, mode="collection", first="0001-01", last="9999-12"),
-        _edge(
-            fact,
-            "work",
-            mode="collection",
-            producer_kind="calendar",
-            first=max(fact["period"], context.read_context.start_period),
-            last="9999-12",
-        ),
+        {
+            **_edge(fact, business_id, mode="collection", first="0001-01", last="9999-12"),
+            "notify_effect": "description",
+        },
+        {
+            **_edge(
+                fact,
+                "work",
+                mode="collection",
+                producer_kind="calendar",
+                first=max(fact["period"], context.read_context.start_period),
+                last="9999-12",
+            ),
+            "notify_effect": "description",
+        },
     ]
-    related = project_facts(business_id, context, context.evaluation_period_to)
+    related = sorted(
+        project_facts(business_id, context, context.evaluation_period_to),
+        key=lambda item: (item["period"], item["business_id"]),
+    )
     previous = None
+    possible, cursor, ended = [], 0, False
     for result_slot in result_slots[1:]:
         period = result_slot.removeprefix("position:")
+        while cursor < len(related) and related[cursor]["period"] <= period:
+            other = related[cursor]
+            possible.append(other)
+            ended |= other["kind"] == PREFIX + "exit"
+            cursor += 1
+        opening = previous is None and any(
+            other["period"] < context.read_context.start_period for other in possible
+        )
         found.append(_edge(fact, business_id, consumer_slot=result_slot))
         if previous is not None:
             found.append(
                 _edge(fact, business_id, consumer_slot=result_slot, producer_slot=previous)
             )
         previous = result_slot
-        for other in related:
-            if other["period"] > period:
-                continue
-            found.append(_edge(fact, other["business_id"], consumer_slot=result_slot))
+        for other in possible:
             resource_slot = _TRADE_SLOTS.get(other["kind"])
+            if resource_slot is not None or other["period"] == period or ended or opening:
+                found.append(_edge(fact, other["business_id"], consumer_slot=result_slot))
             if resource_slot is not None:
                 balance = _edge(
                     fact,

@@ -45,13 +45,17 @@ class ResourceRepository:
     Ledger writes invalidate persisted indexes; staged rows stay in this candidate.
     """
 
-    def __init__(self, base, responsibilities=(), *, as_of=None):
+    def __init__(self, base, responsibilities=(), *, as_of=None, retained_keys=()):
         self.base, self.as_of = base, as_of
         self.responsibilities = {item["business_id"]: item for item in responsibilities}
-        old_heads = (
-            base.current_heads(tuple(self.responsibilities)) if self.responsibilities else []
+        old_refs = (
+            base.result_references(tuple(self.responsibilities)) if self.responsibilities else []
         )
-        self.shadowed = {row["result_id"] for row in old_heads}
+        self.shadowed = {
+            ref["result_id"]
+            for ref in old_refs
+            if (ref["business_id"], ref["result_slot"]) not in retained_keys
+        }
         self.heads, self.records, self.sources = {}, {}, {}
         self._staged_heads = defaultdict(list)
         self._staged_incoming = defaultdict(lambda: defaultdict(list))
@@ -86,6 +90,7 @@ class ResourceRepository:
     def add(self, plan, bound):
         self._refresh()
         identity = bound.identity
+        tables = resource_records(identity.result_id, plan)
         row = {
             "result_id": identity.result_id,
             "business_id": plan["business_id"],
@@ -97,7 +102,6 @@ class ResourceRepository:
         self.heads[identity.result_id] = row
         self._staged_heads[row["business_id"]].append(row)
         self.shadowed.add(identity.result_id)
-        tables = resource_records(identity.result_id, plan)
         self.records[identity.result_id] = tables
         self.sources[identity.result_id] = deepcopy(bound.source_ref)
         for table in ("settlement", "cost_consumption", "obligation_reclassification"):
@@ -121,18 +125,22 @@ class ResourceRepository:
         def fetch(ids):
             if self.as_of is not None:
                 return self.base.heads_through(self.as_of, ids)
-            return self.base.current_heads(ids)
+            return self.base.current_metadata(ids)
 
         rows = _load_groups(self._business_heads, business_ids, fetch, "business_id")
         staged = [row for key in business_ids for row in self._staged_heads[key]]
-        self._stored_heads.update((row["result_id"], row) for row in rows)
+        for row in rows:
+            self._stored_heads.setdefault(row["result_id"], row)
         return [row for row in rows if row["result_id"] not in self.shadowed] + staged
+
+    def current_metadata(self, business_ids):
+        return self.current_heads(business_ids)
 
     def result(self, result_id):
         self._refresh()
         if result_id in self.heads:
             return self.heads[result_id]
-        if result_id not in self._stored_heads:
+        if result_id not in self._stored_heads or "basis_json" not in self._stored_heads[result_id]:
             self._stored_heads[result_id] = self.base.result(result_id)
         return self._stored_heads[result_id]
 
@@ -169,7 +177,8 @@ class ResourceRepository:
     def source(self, result_id):
         self._refresh()
         if result_id not in self.sources:
-            self.sources[result_id] = stored_source_reference(self.result(result_id))
+            row = self._stored_heads.get(result_id)
+            self.sources[result_id] = stored_source_reference(row or self.result(result_id))
         return deepcopy(self.sources[result_id])
 
     def children(self, table, result_ids):

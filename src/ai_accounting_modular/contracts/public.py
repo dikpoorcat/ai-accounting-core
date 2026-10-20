@@ -20,7 +20,12 @@ from ._contexts import (
 )
 from ._errors import ContractError
 from ._fact_collections import restore_fact_collection, split_fact_collection
-from ._fact_sources import fact_source_ids, fact_source_paths
+from ._fact_sources import (
+    fact_source_ids,
+    fact_source_paths,
+    partial_fact_source_ids,
+    partial_fact_source_paths,
+)
 from ._resource_dependencies import (
     ALL_RESOURCE_COMPONENTS,
     check_resource_dependency,
@@ -78,6 +83,8 @@ __all__ = [
     "restore_fact_collection",
     "split_fact_collection",
     "fact_source_ids",
+    "partial_fact_source_ids",
+    "partial_fact_source_paths",
     "fact_source_paths",
     "check_resource_dependency",
     "ALL_RESOURCE_COMPONENTS",

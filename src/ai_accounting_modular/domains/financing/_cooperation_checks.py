@@ -4,7 +4,7 @@ from calendar import monthrange
 from collections import defaultdict
 
 from ._common import amount, fail, missing, total
-from ._cooperation_events import inputs, recovery_parent
+from ._cooperation_events import inputs, recovery_parent, require_book_start
 from ._cooperation_math import position
 
 
@@ -137,5 +137,6 @@ def _recovery_checks(adopted, context):
 
 def validate_contract_events(contract_fact, context):
     adopted = inputs(contract_fact["business_id"], context, context.evaluation_period_to)
+    require_book_start(contract_fact, adopted.events, context.read_context.start_period)
     _recovery_checks(adopted, context)
     _cash_checks(adopted.events, context)

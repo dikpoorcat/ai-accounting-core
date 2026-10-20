@@ -119,6 +119,18 @@ def resource_rows(result_id, plan):
                 }
             )
         ],
+        "result_basis_ref": [
+            (
+                result_id,
+                number,
+                ref["business_id"],
+                ref["result_slot"],
+                ref["result_id"],
+                ref["result_generation"],
+                ref["content_digest"],
+            )
+            for number, ref in enumerate(plan["basis"].get("source_results", ()), 1)
+        ],
         "obligation": [
             (
                 result_id,

@@ -45,7 +45,7 @@ class Publications:
             (value["business_id"], value["result_slot"])
             for value in self._matching(collection, period_from, period_to)
         }
-        if not required <= staged.keys():
+        if not required <= set(staged):
             fail("dependency_conflict", "聚合范围尚未收到全部相关发布结果，不能读取部分新旧数据。")
 
     def check_plan(self, plan):

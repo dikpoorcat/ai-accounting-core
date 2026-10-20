@@ -41,7 +41,7 @@
 
 **owner：账务负责人。** 交付 `ledger/`，含期初与统一报表取数，及 `tests/modular/ledger/`。输入是领域程序产生的完整 `PostingPlan`、公开引用和同一工作单元；输出为 `ledger.public` 的正式采用、凭证、义务、清偿、成本和财务快照。所属期初/报表接续事实也实现describe_change/evaluate_slot/apply_current/export_current/query_current，不能由application代写。AI 不可直接提交计划或自由分录。
 
-- 私有表为 `opening_fact/report_basis_fact/opening_member`、`adopted_result/result_slot_current/result_source`、`voucher/voucher_line/voucher_sequence`、`obligation/settlement/obligation_reclassification/cost_lot/cost_consumption/period_close`、`result_fund_movement/result_tax_sale/result_report_contribution`。资金/税销售/报表贡献与同一正式result头保存和冻结，供所有消费者公开查询，不各存一份可编辑正式金额。期初与接续事实仍走共同办理入口，由本 owner 的公开端口保存。
+- 私有表为 `opening_fact/report_basis_fact/opening_member`、`adopted_result/result_slot_current/result_source/result_basis_ref`、`voucher/voucher_line/voucher_sequence`、`obligation/settlement/obligation_reclassification/cost_lot/cost_consumption/period_close`、`result_fund_movement/result_tax_sale/result_report_contribution`。资金/税销售/报表贡献与同一正式result头保存和冻结，供所有消费者公开查询，不各存一份可编辑正式金额。期初与接续事实仍走共同办理入口，由本 owner 的公开端口保存。
 - 允许改本包及所属测试、结构合同；不写领域事实、真实银行行、资料待办或看板表。全平衡凭证、结果完整槽集合和稳定业务引用在此核验。
 - 复用索引为旧 `kernel/domains/opening.py`、`kernel/report_projection.py`、`report_semantics.py`及对应合成测试；复用共享取数含义，不导入旧审批或开放期版本链。
 - F 的类型及真实工作单元就绪后，先用手写确定计划独立验证，再接真实经营与工资领域。独立样例覆盖借贷不平衡拒绝、重复清偿/成本超耗拒绝、无凭证结果、保号替换、冻结不可改、闭期更正头替换及全范围汇总。

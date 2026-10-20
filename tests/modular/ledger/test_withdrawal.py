@@ -33,6 +33,7 @@ def retire(business_id=BUSINESS, *, seq=1, domain="operations"):
                 "complete_result_slots": [],
             }
         ],
+        "retained_results": [],
         "plans": [],
         "publications": [],
         "dependencies": [],

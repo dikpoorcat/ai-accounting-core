@@ -25,7 +25,7 @@ DDL 中每张表上方的 owner 是唯一写入者；数据库连接共用不改
 | 领域事实 | op_fact、people_fact、asset_fact、financing_fact、investment_fact、money_fact、tax_fact、opening_fact、report_basis_fact | 各 owner 的严格当前事实；撤去后删除该正文行。 |
 | 来源与当前工作 | source、source_use、current_issue、current_issue_scope、company_note | 固定来源内容、当前引用、未解事项和当前有效经营说明。 |
 | 当前依赖与工作范围 | current_dependency、current_publication、application_state | 当前引用、结果发布范围及已进入的工作末月；只保当前状态，不保存操作历史。 |
-| 正式采用 | adopted_result、result_slot_current、result_source | 当前完整结果槽头，以及闭期真正需要保存的正式采用和来源。 |
+| 正式采用 | adopted_result、result_slot_current、result_source、result_basis_ref | 当前完整结果槽头，以及闭期必要采用、原件来源和业务结果来源索引。 |
 | 凭证 | voucher、voucher_line、voucher_sequence | 正式平衡分录、原编号、正式冲正关联和下一编号。 |
 | 义务与成本 | obligation、settlement、obligation_reclassification、cost_lot、cost_consumption | 明确的应收应付、清偿、非资金转移及成本消耗，按正式结果所有。 |
 | 正式发生与分类 | result_fund_movement、result_tax_sale、result_report_contribution | 正式采用的实际资金、纳税销售及报表分类；开放替换、闭期冻结，不靠今天的事实重猜旧分类。 |
@@ -38,6 +38,8 @@ DDL 中每张表上方的 owner 是唯一写入者；数据库连接共用不改
 ## 当前事实及检索字段
 
 `business_head` 不保存业务正文。family/kind 决定 owner 和 Schema，seq 为当前事实序号；current_digest 为规范事实摘要。`natural_key` 由所属模块在每份完整责任中声明，没有自然唯一性时为 null。应用按整单最终集合校验，允许同单交换身份；连带重算的业务也同步其派生键，不修改事实序号。普通两笔同金额付款没有这样的唯一键，不能按金额、姓名或原件哈希把它们合为一笔。
+
+search_revision只在可检索的当前头或对象成员集合实际改变时记下本次业务版本，不随普通结果重算或对象改名推进。当前业务检索在SQL内计数、取范围最大修订及按身份翻页，只展开当前页；游标绑定过滤条件、计数和相关修订，不使用全公司global_seq。计数仍需读取相应轻量索引范围，不能把分页有界误称为全查询恒定开销。
 
 application_state 只保存已进入的工作末月。它从公司起账月开始，随明确业务月份或关账范围向后推进；撤去业务不让它倒退。标准清单保全这一当前值，使简化重建仍能生成相同范围的必要摊折，不保存“何时进入”的过程记录。
 
@@ -57,7 +59,7 @@ SQLite 的 json_valid 只检查可解析性。各 owner 严格校验完整正文
 
 ## 当前未解事项与资料来源
 
-current_issue 保存当前已知的部分事实及还缺什么，仅使用 PartialFact 校验，不进入核算。其可选 business_id 可以是尚未正式建立的稳定业务 ID，不要求为待确认资料先造一条正式业务头。scope 头比较防止两个 AI 工作单互相覆盖待办。已解决事项在正式事实写入的同一事务退出待办；待办重写不保存之前问题和回答。assignee/action 区分由 AI 核查、老板提供现实资料或办理外部事务，程序错误不自动转为老板任务。
+current_issue 保存当前已知的部分事实及还缺什么，仅使用 PartialFact 校验，不进入核算；evidence_ids_json保留该事项显式提交的证据正文，source_use索引同时覆盖它和known_fact里按Schema声明的嵌套来源，不改写两者含义。其可选 business_id 可以是尚未正式建立的稳定业务 ID，不要求为待确认资料先造一条正式业务头。scope 头比较防止两个 AI 工作单互相覆盖待办。已解决事项在正式事实写入的同一事务退出待办；待办重写不保存之前问题和回答。assignee/action 区分由 AI 核查、老板提供现实资料或办理外部事务，程序错误不自动转为老板任务。
 
 source 的内容身份固定，file 用字节摘要，owner_statement 用规范 UTF-8 正文摘要。改内容必须新 source_id，改归档月/位置由 records 管理，不改变内容身份。source_use 统一索引业务、对象、当前待办及当前说明的来源边。业务来源由唯一 Schema 的顶层 evidence_ids、嵌套 SourceLocator 以及明示 SourceId 的期初成员证据共同提取，不要求重复填写顶层证据；缺项指出实际 JSON Pointer。已有相同集合不重复删插，记录退出时同事务删除当前边。result_source 只保存正式采用真正需要的来源，不把所有旧答复列为必要。
 
@@ -71,15 +73,17 @@ company_note 只保当前说明及其依据 head。月份说明提交时比较 e
 
 adopted_result 的 target_json 保存该领域完整已采用目标，basis_json 保存实际采用的最少核算字段、数量、政策和引用摘要。采用引用包含 result_id、generation、内容摘要；对于仍可能替换的开放源，冻结时嵌入本公式实际需要的数量，不能依赖那个 result_id 的当前正文永远不变，也不递归复制全部上游结果。
 
+result_basis_ref按Basis.source_results逐项索引生产业务、槽、结果身份、代次及摘要，与该正式结果一起替换或冻结。它不保存另一份金额，也不保留开放旧正文；生产结果身份不作外键，避免必要冻结引用迫使已替换开放正文永久存在。上游变化时沿生产业务/槽索引核对当前开放消费者，即使消费者被遗漏也不能留下失效引用；精确继承本消费者冻结基线的引用按原规则保留。
+
 开放头重算时保持 result_id，generation 递增，完整替换其当前目标、分录和子结果；旧正文删除。冻结头不改，新更正头指定 baseline_result_id。若更正头仍开放，继续替换并始终对照同一冻结基线；若已冻结，下次以该更正头为新基线。
 
 正式状态与凭证影响分别判断。完整内容及依据定位未变时复用原结果。开放来源代次或位置改变时，同步精确引用，结果版本可以更新，凭证身份、编号和分录不因定位更新而改变；闭期仅补来源位置或上游代次不新建更正采用。必要政策、接续数字或分类改变时更新正式头，即使没有借贷变化也保留正确状态。确有分录变化才产生关联冲正及替代；无凭证更正头沿基线解析有效目标凭证，撤去后不再继承退出凭证。必要实际日期进入 Basis；纯管理日期只在当前 Fact。
 
-current_dependency保存当前事实/结果依赖、collection集合观察和资源use/balance声明。资源声明按精确来源、月份、必要实际日、排除槽及resource_components_json中的组成范围安排计算；NULL表示完整，不保存金额或另一份余额。旧、新使用范围均通知相交的余额观察者；事实关系只读fact/result。重复依赖合并覆盖范围和组件，实际日或排除名单不同的余额读取不合并；不扫描业务JSON猜关系。
+current_dependency保存当前事实/结果依赖、collection集合观察和资源use/balance声明。is_direct由应用按declare_relations投影，区分事实的直接成员与推导核算边；反向成员查询和成员增删通知只看前者，结果调度仍使用全部相应依赖，不能让历史金额引用反过来制造新的事实成员。notify_effect只对collection区分数值变化与责任目录通知，NULL等同result。资源声明按精确来源、月份、必要实际日、排除槽及resource_components_json中的组成范围安排计算；NULL表示完整，不保存金额或另一份余额。旧、新使用范围均通知相交的余额观察者；事实关系只读fact/result。重复依赖合并覆盖范围和组件，实际日或排除名单不同的余额读取不合并；不扫描业务JSON猜关系。
 
 current_publication 按业务、结果槽和 tax_sales/pre_tax 集合保存当前发布月份范围，并按集合和范围建立索引。aggregate 结果依赖据此发现相关槽及消费者。发布范围只是可重建索引，不含金额和旧正文；与当前事实、依赖及正式采用同事务替换。退出或移月按旧、新范围通知，金额的唯一真源仍是账务正式结果。
 
-每次计划声明该业务**完整结果槽集合**。未返回的旧槽、义务或成本必须处理退出；存在实际清偿、消耗或冻结必要引用时，不能静默删除。无凭证但有正式核算意义的结果同样采用，纯管理资料不伪造零额凭证。
+每次责任声明该业务**完整结果槽集合**，由新计划与精确保留引用共同覆盖；保留槽不清理、不重写。未列入完整责任的旧槽、义务或成本必须处理退出；存在实际清偿、消耗或冻结必要引用时，不能静默删除。无凭证但有正式核算意义的结果同样采用，纯管理资料不伪造零额凭证。
 
 关账到某月，表示把建账月至该月尚未关闭的账务一起关闭，不要求为空月逐月操作。先完成这段范围内可确定的核算和必要检查，再在同一事务冻结正式结果、凭证及必要依据，最后保存一条 period_close 和截止月三表。basis_json采用reporting.CloseBasis，只含公司、数据库、截止月和本次新冻结范围内全部正式结果源的摘要；前一截止月由上一条关账记录确定，结果及来源正文使用原有冻结表，不复制关账流水。report_json保存严格FinancialSnapshot并核对report_digest。无审批记录、预览采用表或密码批准表。
 

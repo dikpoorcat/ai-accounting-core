@@ -39,7 +39,7 @@ class SeedRepository:
 
     def business(self, business_id=BUSINESS, kind="operations.expense", period="2026-01"):
         self.session.execute(
-            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 business_id,
                 "operations",
@@ -54,6 +54,7 @@ class SeedRepository:
                 0,
                 str(uuid4()),
                 "0" * 64,
+                1,
             ),
         )
 
@@ -227,7 +228,7 @@ def apply(storage, current, *, seq=0):
             description["businesses"], unit, publications=description["publications"]
         )
         plan = operations.evaluate_slot(business_id, "main", context)
-        change = {**description, "plans": [plan]}
+        change = {**description, "retained_results": [], "plans": [plan]}
         context.candidate.stage(plan)
         context.candidate.complete()
         operations.validate_candidate(change, context)
@@ -335,7 +336,7 @@ def test_facts_do_not_commit_independently(store):
                 [{"business_id": BUSINESS, "expected_seq": 0, "op": "create", "fact": current}],
                 Context(unit, current),
             )
-            operations.apply_current({**description, "plans": []}, unit)
+            operations.apply_current({**description, "retained_results": [], "plans": []}, unit)
             raise RuntimeError("合成下游失败")
     with store.read_unit(COMPANY) as unit:
         assert operations.export_current([BUSINESS], unit) == ()

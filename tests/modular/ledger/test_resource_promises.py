@@ -263,6 +263,7 @@ def test_replaced_and_withdrawn_old_use_is_shadowed_even_before_unrelated_slots_
                     "complete_result_slots": [],
                 }
             ],
+            "retained_results": [],
             "plans": [],
             "dependencies": [],
             "publications": [],

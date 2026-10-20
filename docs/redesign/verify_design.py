@@ -279,7 +279,7 @@ def check_sql():
             db.execute("RELEASE expected_rejection")
     insert("company_profile", singleton=1, company_id=uid(30), credit_code="000000000000000001", legal_name="合成公司", accounting_standard="small_enterprise", currency="CNY", start_period="2026-01")
     insert("identity_object", object_id=uid(1), kind="organization", name="合成方", sort_key="a", seq=1, data_json="{}", content_digest=digest, latest_expected_seq=0, latest_command_id=uid(2))
-    insert("business_head", business_id=uid(3), family="operations", kind="operations.expense", seq=1, state="active", period="2026-01", archive_month="2026-01", current_digest=digest, latest_op="create", latest_expected_seq=0, latest_command_id=uid(2), latest_content_digest=digest)
+    insert("business_head", business_id=uid(3), family="operations", kind="operations.expense", seq=1, state="active", period="2026-01", archive_month="2026-01", current_digest=digest, latest_op="create", latest_expected_seq=0, latest_command_id=uid(2), latest_content_digest=digest, search_revision=1)
     result = dict(result_id=uid(4), business_id=uid(3), result_slot="main", generation=1, business_period="2026-01", posting_period="2026-01", state="open", target_state="active", adopted_fact_seq=1, calculation_key="operations.expense", calculation_revision=1, basis_schema="guard_fixture", basis_json="{}", target_schema="guard_fixture", target_json="{}", basis_digest=digest, target_digest=digest)
     # 以下是 DDL 保护测试的最小占位 JSON，不宣称是业务 Schema 合法 PostingPlan。
     insert("adopted_result", **result)
@@ -293,6 +293,7 @@ def check_sql():
     insert("money_occurrence", occurrence_id=uid(8), business_id=uid(3), public_slot="funds")
     children = {
         "result_source": dict(result_id=uid(4), source_id=uid(7), location="第1行"),
+        "result_basis_ref": dict(result_id=uid(4), item_no=1, producer_business_id=uid(3), producer_result_slot="main", producer_result_id=uid(4), producer_generation=1, producer_content_digest=digest),
         "obligation": dict(result_id=uid(4), public_slot="primary", party_id=uid(1), direction="payable", category="trade_payable", amount_fen=100, account_code="2202", allowed_settlements_json='["money"]', business_period="2026-01"),
         "settlement": dict(result_id=uid(4), settlement_id=uid(9), source_business_id=uid(3), source_public_slot="primary", consumer_public_slot="payment", period="2026-01", amount_fen=10, method="money", movement_id=uid(8)),
         "obligation_reclassification": dict(result_id=uid(4), relation_id=uid(10), mode="transfer", source_business_id=uid(3), source_public_slot="primary", target_business_id=uid(3), target_public_slot="recovery", amount_fen=10),

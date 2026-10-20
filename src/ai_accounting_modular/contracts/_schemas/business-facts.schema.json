@@ -20280,6 +20280,10 @@
         },
         "resource_components": {
           "$ref": "#/$defs/ResourceComponents"
+        },
+        "notify_effect": {
+          "type": "string",
+          "enum": ["result", "description"]
         }
       },
       "required": [
@@ -20292,6 +20296,10 @@
         "relation_kind"
       ],
       "allOf": [
+        {
+          "if": {"required": ["notify_effect"]},
+          "then": {"properties": {"read_mode": {"const": "collection"}}}
+        },
         {
           "if": {
             "properties": {
@@ -20523,6 +20531,11 @@
           },
           "minItems": 0
         },
+        "retained_results": {
+          "type": "array",
+          "items": {"$ref": "core.schema.json#/$defs/ResultRef"},
+          "uniqueItems": true
+        },
         "dependencies": {
           "type": "array",
           "items": {
@@ -20549,6 +20562,7 @@
         "domain",
         "businesses",
         "plans",
+        "retained_results",
         "dependencies",
         "issues",
         "publications"

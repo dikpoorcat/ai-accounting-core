@@ -270,7 +270,8 @@ class Application:
                     repo.save(
                         change.head(
                             request["command_id"], natural_key=natural_keys[change.business_id]
-                        )
+                        ),
+                        search_revision=unit.next_head,
                     )
             direct_changes = {change.business_id for change in changes if change.changed}
             for business_id, key in changed_keys.items():
@@ -289,13 +290,9 @@ class Application:
                 if self.money is None:
                     raise ContractError("invalid_operation", "实际资金身份模块尚未装配。")
                 self.money.register_occurrences(posting_plans, unit)
-            before_results = []
-            if self._reading_targets is not None:
-                identities = sorted(responsibilities)
-                for offset in range(0, len(identities), 500):
-                    before_results.extend(
-                        self.ledger.get_result_refs(identities[offset : offset + 500], unit)
-                    )
+            before_results = (
+                context.previous_result_refs if self._reading_targets is not None else ()
+            )
             adoption = self.ledger.adopt(
                 [plan for _, plan in plans],
                 unit,
@@ -306,7 +303,12 @@ class Application:
             dependencies = [edge for _, plan in plans for edge in plan["dependencies"]]
             projection_changed = False
             if touched:
-                dependency_changed = repo.replace_dependencies(touched, dependencies)
+                dependency_changed = repo.replace_dependencies(
+                    touched,
+                    dependencies,
+                    relations=context.declared_relations,
+                    search_revision=unit.next_head,
+                )
                 publication_changed = repo.replace_publications(
                     touched, [item for _, plan in plans for item in plan["publications"]]
                 )

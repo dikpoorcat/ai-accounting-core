@@ -30,6 +30,7 @@ from ._resource_view import (
     fund_movements,
     validate_resource_refs,
 )
+from ._retained import RetainedResults
 from ._timing import ResultTimes
 from ._values import check_bookkeeping_period, check_plan, fail, unique
 
@@ -38,7 +39,14 @@ class CandidateLedger:
     """Definitions and promised local windows; full state after every slot arrives."""
 
     def __init__(
-        self, responsibilities, unit, correction_period=None, *, publications=(), resource_uses=None
+        self,
+        responsibilities,
+        unit,
+        correction_period=None,
+        *,
+        publications=(),
+        resource_uses=None,
+        retained_results=(),
     ):
         if unit.view != "current":
             fail("invalid_input", "候选资源只能建立在当前公司工作单元。")
@@ -48,13 +56,16 @@ class CandidateLedger:
         items = [item for item in supplied if item["op"] != "handoff_out"]
         unique((item["business_id"] for item in items), "候选业务责任不能重复。")
         self._unit, self._correction_period = unit, correction_period
-        self._repo = ResourceRepository(unit.repository("ledger"), items)
+        base = unit.repository("ledger")
+        self._retained = RetainedResults(items, retained_results, base)
+        self._repo = ResourceRepository(base, items, retained_keys=self._retained.keys)
         self._times = ResultTimes(self._repo)
         self._time_version = self._repo.version
         self._expected = {
             (item["business_id"], slot) for item in items for slot in item["complete_result_slots"]
-        }
+        } - self._retained.keys
         self._plans = {}
+        self._ready = set(self._retained.keys)
         self._publications = Publications(items, publications)
         self._resource_uses = ResourceUses(items, resource_uses)
         self._complete = False
@@ -76,13 +87,15 @@ class CandidateLedger:
             return
         copied = deepcopy(plan)
         bound = bind_plan(copied, self._unit, self._correction_period)
-        self._plans[key] = copied
         self._repo.add(copied, bound)
+        self._plans[key] = copied
+        self._ready.add(key)
 
     def complete(self):
         self._unit.repository("ledger")
         if set(self._plans) != self._expected:
             fail("dependency_conflict", "候选集合尚未收到全部已声明结果槽。")
+        self._retained.check_current(self._unit.repository("ledger"))
         ids = tuple(self._repo.responsibilities)
         heads = self._repo.current_heads(ids) if ids else ()
         for kind in ("obligation", "cost", "funds"):
@@ -105,12 +118,12 @@ class CandidateLedger:
 
     def tax_sales(self, period_from, period_to):
         self._unit.repository("ledger")
-        self._publications.require_ready("tax_sales", period_from, period_to, self._plans)
+        self._publications.require_ready("tax_sales", period_from, period_to, self._ready)
         return _aggregation.tax_sales(self._repo, period_from, period_to)
 
     def pre_tax(self, period_from, period_to):
         self._unit.repository("ledger")
-        self._publications.require_ready("pre_tax", period_from, period_to, self._plans)
+        self._publications.require_ready("pre_tax", period_from, period_to, self._ready)
         return _aggregation.pre_tax(
             self._repo, self._plans, period_from, period_to, self._unit.start_period
         )
@@ -172,7 +185,7 @@ class CandidateLedger:
         excluded = exclusions(excluding_consumer, excluding_consumers)
         selected = resource_components(components)
         if not self._complete:
-            self._resource_uses.require_ready(refs, kind, cutoff, excluded, self._plans, selected)
+            self._resource_uses.require_ready(refs, kind, cutoff, excluded, self._ready, selected)
         if self._time_version != self._repo.version:
             self._times = ResultTimes(self._repo)
             self._time_version = self._repo.version

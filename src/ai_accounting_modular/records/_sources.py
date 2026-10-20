@@ -13,11 +13,22 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from uuid import uuid4
 
-from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    partial_fact_source_ids,
+    validate_contract,
+)
 
 from ._types import SourceStatus
 
 CHUNK_SIZE = 1024 * 1024
+
+
+def issue_source_ids(issue):
+    required = set(issue["evidence_ids"])
+    if "known_fact" in issue:
+        required.update(partial_fact_source_ids(issue["known_fact"]))
+    return tuple(sorted(required))
 
 
 def source_status(root: Path, source) -> SourceStatus:

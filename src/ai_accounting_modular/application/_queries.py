@@ -117,7 +117,8 @@ def find(application, query, read_context=None):
     if query.get("object_id") and query.get("status") == "withdrawn":
         raise ContractError("invalid_input", "撤去身份不保留旧对象关系，请按身份、种类或月份检索。")
     with _read(application, query["company_id"], read_context) as read:
-        total, rows = read.repository("application").search(query)
+        repo = read.repository("application")
+        total, filtered, revision = repo.search_summary(query)
         version = content_digest(
             {
                 "company": read.company_id,
@@ -129,13 +130,14 @@ def find(application, query, read_context=None):
                     "object_id": query.get("object_id"),
                 },
                 "total": total,
-                "rows": rows,
+                "filtered": filtered,
+                "revision": revision,
             }
         )
         after = _position(query.get("cursor"), version)
-        remaining = [row for row in rows if after is None or row["business_id"] > after]
-        selected = remaining[: query["limit"]]
-        has_more = len(remaining) > len(selected)
+        rows = repo.search_page(query, after=after)
+        selected = rows[: query["limit"]]
+        has_more = len(rows) > len(selected)
         return validate_contract(
             "core.schema.json",
             "BusinessFindResult",
@@ -153,7 +155,7 @@ def find(application, query, read_context=None):
                 ],
                 "page": {
                     "total_count": total,
-                    "filtered_count": len(rows),
+                    "filtered_count": filtered,
                     "returned_count": len(selected),
                     "has_more": has_more,
                     "next_cursor": _cursor(version, selected[-1]["business_id"])

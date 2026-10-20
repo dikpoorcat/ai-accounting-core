@@ -11,7 +11,7 @@ from jsonschema import FormatChecker
 
 from ._errors import ContractError
 from ._validation import _bundle, _Validator, validate_contract
-from ._wire_types import Fact
+from ._wire_types import Fact, PartialFact
 
 
 @dataclass(frozen=True)
@@ -69,11 +69,12 @@ def _child_uri(uri, *parts):
     return uri + "/" + "/".join(_pointer_part(part) for part in parts)
 
 
-@lru_cache(maxsize=1)
-def _source_plan():
+@lru_cache(maxsize=2)
+def _source_plan(definition):
     documents, registry = _bundle()
     source_schema = documents["core.schema.json"]["$defs"]["SourceLocator"]
     source_id_schema = documents["core.schema.json"]["$defs"]["SourceId"]
+    partial_locator = documents["business-facts.schema.json"]["$defs"]["PartialSourceLocator"]
     compiled, active = {}, set()
 
     def predicate(uri):
@@ -92,6 +93,8 @@ def _source_plan():
             plan = _Plan(capture=True)
         elif node is source_id_schema:
             plan = _Plan(capture_id=True)
+        elif node is partial_locator:
+            plan = _Plan(properties=(("source_id", _Plan(capture_id=True)),))
         else:
             children = []
             if "$ref" in node:
@@ -130,16 +133,20 @@ def _source_plan():
         compiled[uri] = plan
         return plan
 
-    return compile_node(documents["business-facts.schema.json"]["$id"] + "#/$defs/Fact")
+    return compile_node(documents["business-facts.schema.json"]["$id"] + "#/$defs/" + definition)
 
 
 def fact_source_paths(fact: Fact) -> dict[str, tuple[str, ...]]:
     """Map declared source identities to every exact JSON Pointer in this fact."""
-    validate_contract("business-facts.schema.json", "Fact", fact)
+    return _paths(fact, "Fact")
+
+
+def _paths(fact, definition):
+    validate_contract("business-facts.schema.json", definition, fact)
     paths = {}
-    for index, source in enumerate(fact["evidence_ids"]):
+    for index, source in enumerate(fact.get("evidence_ids", ())):
         paths.setdefault(source, set()).add(f"/evidence_ids/{index}")
-    for source, pointer in _source_plan().source_paths(fact):
+    for source, pointer in _source_plan(definition).source_paths(fact):
         paths.setdefault(source, set()).add(pointer)
     return {source: tuple(sorted(paths[source])) for source in sorted(paths)}
 
@@ -151,3 +158,12 @@ def fact_source_ids(fact: Fact) -> tuple[str, ...]:
     object identities and arbitrary strings are never treated as source IDs.
     """
     return tuple(fact_source_paths(fact))
+
+
+def partial_fact_source_paths(fact: PartialFact) -> dict[str, tuple[str, ...]]:
+    """Keep declared sources even when the surrounding business is incomplete."""
+    return _paths(fact, "PartialFact")
+
+
+def partial_fact_source_ids(fact: PartialFact) -> tuple[str, ...]:
+    return tuple(partial_fact_source_paths(fact))

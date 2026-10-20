@@ -1,6 +1,6 @@
-"""Collect owner responsibilities, find explicit dependants, evaluate complete slots."""
+"""Collect complete responsibilities and evaluate only affected result slots."""
 
-from collections import defaultdict, deque
+from collections import defaultdict
 from heapq import heapify, heappop, heappush
 
 from ai_accounting_modular.contracts.public import (
@@ -9,56 +9,22 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from ._publications import normalize as normalize_publications
+from ._descriptions import describe
+from ._dirty import consumer as consumer_key
+from ._dirty import numerical, propagate, signatures
 from ._publications import overlaps
 from ._relations import declare as declare_relations
-from ._relations import validate_description as validate_relations
-from ._resources import normalize as normalize_resource_dependency
 
 
 def _membership(edge):
     return edge["producer_kind"], edge["producer_id"], edge["relation_kind"]
 
 
-def _dependencies(edges, responsibilities):
-    """One dependency identity has one covering notification range."""
-    indexed = {}
-    identity_fields = (
-        "consumer_business_id",
-        "consumer_result_slot",
-        "producer_kind",
-        "producer_id",
-        "producer_public_slot",
-        "read_mode",
-        "relation_kind",
-    )
-    for value in edges:
-        edge = dict(value)
-        if edge["consumer_business_id"] not in responsibilities:
-            raise ContractError("invalid_input", "领域不能声明其他业务的依赖责任。")
-        start, end = edge.get("period_from"), edge.get("period_to")
-        if start and end and start > end:
-            raise ContractError("invalid_input", "依赖范围起月不能晚于末月。")
-        key = tuple(edge[field] for field in identity_fields)
-        previous = indexed.get(key)
-        normalize_resource_dependency(edge, previous)
-        if previous is not None:
-            for field, choose in (("period_from", min), ("period_to", max)):
-                bounds = previous.get(field), edge.get(field)
-                if None in bounds:
-                    edge.pop(field, None)
-                else:
-                    edge[field] = choose(bounds)
-        normalize_resource_dependency(edge)
-        indexed[key] = edge
-    return [indexed[key] for key in sorted(indexed)]
-
-
 def collect_changes(changes, changed_objects, context, registry, handoffs):
     repo = context.read_context.repository("application")
     grouped, included = defaultdict(list), set()
-    queue = deque(("object", object_id) for object_id in changed_objects)
     changed = {change.business_id: change for change in changes if change.changed}
+    explicit, notified, previous_facts, references, loaded = set(), set(), {}, {}, set()
     for change in changes:
         if not change.changed and change.fact is None:
             continue
@@ -75,8 +41,7 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
             }
         grouped[registry.owner(kind)].append({**mutation, "business_id": change.business_id})
         included.add(change.business_id)
-        queue.append(("business", change.business_id))
-    visited, previous_facts = set(), {}
+        explicit.add(change.business_id)
 
     def include(ids):
         ids = sorted(set(ids) - included)
@@ -99,10 +64,14 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
                 }
             )
             included.add(business_id)
-            queue.append(("business", business_id))
+
+    def notify(edges):
+        values = tuple(edges)
+        notified.update(consumer_key(edge) for edge in values if numerical(edge))
+        include(edge["consumer_business_id"] for edge in values)
 
     def notify_relations(businesses, edges, old_edges):
-        observers = set()
+        observers = []
         for business in businesses:
             business_id = business["business_id"]
             members = []
@@ -132,78 +101,78 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
             ]
             periods = {fact["period"] for fact in facts}
             for kind, producer, relation in members[0] | members[1]:
-                observers.update(repo.observers(kind, producer, relation, periods))
+                observers.extend(repo.observers(kind, producer, relation, periods))
             for fact in facts:
-                observers.update(repo.scope_observers(fact["kind"], {fact["period"]}))
-        include(observers)
+                observers.extend(repo.scope_observers(fact["kind"], {fact["period"]}))
+        notify(observers)
+
+    for object_id in changed_objects:
+        for mode in ("fact", "result"):
+            notify(repo.consumers("object", object_id, read_mode=mode))
+    for business_id in changed:
+        notify(repo.consumers("business", business_id, read_mode="fact"))
 
     if context.evaluation_period_to > context.previous_period_to:
-        include(repo.calendar_observers(context.previous_period_to, context.evaluation_period_to))
+        notify(repo.calendar_observers(context.previous_period_to, context.evaluation_period_to))
 
     while True:
-        while queue:
-            producer = queue.popleft()
-            if producer not in visited:
-                visited.add(producer)
-                include(repo.consumers(*producer))
         # Every changed fact shadows its old relations before any owner can
         # discover reverse membership. Descriptions never modify this directory.
         relations = declare_relations(grouped, context)
         participant_count = len(included)
         notifying = [row for rows in grouped.values() for row in rows if row["op"] != "handoff_out"]
         notify_relations(
-            notifying, relations, repo.dependencies([row["business_id"] for row in notifying])
+            notifying,
+            relations,
+            repo.dependencies([row["business_id"] for row in notifying], direct_only=True),
         )
         if len(included) != participant_count:
             continue
-        descriptions = []
-        context.reset_descriptions()
-        for owner, mutations in tuple((owner, tuple(rows)) for owner, rows in grouped.items()):
-            description = owner.describe_change(mutations, context)
-            validate_contract("business-facts.schema.json", "ChangeDescription", description)
-            expected = {item["business_id"]: item for item in mutations}
-            description["dependencies"] = _dependencies(description["dependencies"], expected)
-            actual = [item["business_id"] for item in description["businesses"]]
-            if set(actual) != expected.keys() or len(actual) != len(expected):
-                raise ContractError("invalid_input", "领域未完整承担本单业务身份，或重复声明责任。")
-            for responsibility in description["businesses"]:
-                source = expected[responsibility["business_id"]]
-                if any(responsibility[key] != source[key] for key in ("op", "expected_seq")):
-                    raise ContractError("invalid_input", "领域不得改写应用已核对的变更前提。")
-                if responsibility.get("fact") != source.get("fact"):
-                    raise ContractError("invalid_input", "领域责任必须使用本单完整正确事实。")
-                context.declare_slots(responsibility)
-            description["publications"] = normalize_publications(
-                description["publications"], description["businesses"]
+        descriptions = describe(grouped, context, relations)
+        missing = sorted(included - loaded)
+        for offset in range(0, len(missing), 500):
+            references.update(
+                ((ref["business_id"], ref["result_slot"]), ref)
+                for ref in context.current_result_refs(missing[offset : offset + 500])
             )
-            if description["issues"]:
-                raise ContractError(
-                    "needs_information",
-                    "本单业务尚有会影响核算的资料缺项。",
-                    fact_issues=description["issues"],
-                )
-            validate_relations(description, relations)
-            descriptions.append((owner, description))
-            # The adopting owner notifies old and new relationships once. The
-            # outgoing owner only removes its private body, never the public root.
-            notifying = [item for item in description["businesses"] if item["op"] != "handoff_out"]
-            if not notifying:
-                continue
-            notifying_ids = [item["business_id"] for item in notifying]
-            # Every included publisher may have a changed amount even when its
-            # fact, result slot and publication range are all unchanged.
-            include(
-                repo.aggregate_observers(
-                    [
-                        *repo.publications(notifying_ids),
-                        *description["publications"],
-                    ]
-                )
-            )
-            old_edges = repo.dependencies(notifying_ids)
-            include(repo.resource_observers([*old_edges, *description["dependencies"]]))
-            notify_relations(notifying, description["dependencies"], old_edges)
+        loaded.update(missing)
+        responsibilities = [
+            row
+            for _, description in descriptions
+            for row in description["businesses"]
+            if row["op"] != "handoff_out"
+        ]
+        complete = {
+            (row["business_id"], slot)
+            for row in responsibilities
+            for slot in row["complete_result_slots"]
+        }
+        dependencies = [
+            edge for _, description in descriptions for edge in description["dependencies"]
+        ]
+        publications = [
+            item for _, description in descriptions for item in description["publications"]
+        ]
+        old_edges, old_publications = (
+            repo.dependencies(sorted(included)),
+            repo.publications(sorted(included)),
+        )
+        before, after = (
+            signatures(old_edges, old_publications),
+            signatures(dependencies, publications),
+        )
+        dirty = (
+            notified
+            | (complete - references.keys())
+            | {key for key in complete if key[0] in explicit or before.get(key) != after.get(key)}
+        )
+        old_keys = references.keys() | before.keys()
+        retired = old_keys - complete
+        propagate(
+            dirty, retired, old_edges, dependencies, old_publications, publications, repo, notify
+        )
         if len(included) == participant_count:
+            context.select_results(dirty & complete, references, complete)
             return descriptions
         # Notifications may introduce existing businesses (e.g. a tax reader
         # of a newly reached month). Complete their direct declarations before
@@ -259,7 +228,12 @@ def evaluate(descriptions, context, ledger, correction_period):
                         edges[consumer].add(producer)
                         reasons[consumer, producer] = "资源余额"
     plans = {}
-    for business_id, result_slot in ordered_slots(edges, reasons):
+    pending_edges = {
+        key: producers & context.pending_slots
+        for key, producers in edges.items()
+        if key in context.pending_slots
+    }
+    for business_id, result_slot in ordered_slots(pending_edges, reasons):
         ledger.prepare_result(
             business_id, result_slot, context.read_context, correction_period=correction_period
         )
@@ -279,7 +253,13 @@ def evaluate(descriptions, context, ledger, correction_period):
                     plans[business["business_id"], slot]
                     for business in description["businesses"]
                     for slot in business["complete_result_slots"]
+                    if (business["business_id"], slot) in plans
                 ],
+                "retained_results": context.retained_results(
+                    row["business_id"]
+                    for row in description["businesses"]
+                    if row["op"] != "handoff_out"
+                ),
             },
         )
         for owner, description in descriptions
@@ -288,6 +268,8 @@ def evaluate(descriptions, context, ledger, correction_period):
     context.validate_occurrences(list(plans.values()))
     for _, description in descriptions:
         for edge in description["dependencies"]:
+            if consumer_key(edge) not in context.pending_slots:
+                continue
             if edge["read_mode"] in ("use", "balance"):
                 continue
             if edge["producer_kind"] in ("scope", "calendar", "aggregate"):

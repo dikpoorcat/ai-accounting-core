@@ -114,6 +114,7 @@ def validate(context, check):
         "dependencies": [],
         "publications": [],
         "issues": [],
+        "retained_results": [],
         "plans": [plan],
     }
     before = deepcopy(change)

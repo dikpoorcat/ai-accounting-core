@@ -14,6 +14,8 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     fact_source_ids,
     fact_source_paths,
+    partial_fact_source_ids,
+    partial_fact_source_paths,
     schema_document,
     validate_contract,
 )
@@ -230,3 +232,27 @@ def test_compiled_paths_escape_json_pointer_property_names():
     assert tuple(plan.source_paths({"a~/b": [{"source_id": source}]})) == (
         (source, "/a~0~1b/0/source_id"),
     )
+
+
+def test_incomplete_known_business_preserves_only_declared_source_identities():
+    source = str(uuid5(NAMESPACE_URL, "partial-tax-point-source"))
+    partial = {
+        "kind": "operations.service_sale",
+        "data": {"tax_point": {"source": {"source_id": source}}},
+    }
+    assert partial_fact_source_ids(partial) == (source,)
+    assert partial_fact_source_paths(partial) == {source: ("/data/tax_point/source/source_id",)}
+    partial["data"]["tax_point"]["source"] = {"location": "待补实际凭据身份"}
+    assert partial_fact_source_ids(partial) == ()
+    assert partial_fact_source_ids({"kind": "operations.expense"}) == ()
+    assert (
+        partial_fact_source_ids(
+            {
+                "kind": "money.movement",
+                "data": {"allocations": [{"source": {"business_id": source}}]},
+            }
+        )
+        == ()
+    )
+    with pytest.raises(ContractError):
+        partial_fact_source_ids({"kind": "operations.expense", "data": {"source_id": source}})

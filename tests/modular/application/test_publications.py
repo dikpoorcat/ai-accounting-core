@@ -258,9 +258,20 @@ class Candidate:
 
 
 class Ledger:
+    def get_result_refs(self, business_ids, unit):
+        return ()
+
     def begin_candidate(
-        self, responsibilities, unit, *, publications, correction_period, resource_uses
+        self,
+        responsibilities,
+        unit,
+        *,
+        publications,
+        correction_period,
+        resource_uses,
+        retained_results,
     ):
+        assert retained_results == []
         self.candidate = Candidate(responsibilities, publications)
         self.candidate.resource_uses = resource_uses
         return self.candidate
@@ -297,21 +308,30 @@ def system(tmp_path):
     return store, company
 
 
-def seed(system, facts, *, dependencies=(), publications=()):
+def seed(system, facts, *, dependencies=(), publications=(), relations=None):
     store, company = system
     with store.write_unit(company) as unit:
         repo = unit.repository("application")
         for current in facts:
             change = classify({"op": "create", "expected_seq": 0, "fact": current}, None)
-            repo.save(change.head(str(uuid4()), natural_key=None))
+            repo.save(change.head(str(uuid4()), natural_key=None), search_revision=unit.next_head)
         ids = [current["business_id"] for current in facts]
-        repo.replace_dependencies(ids, dependencies)
+        if relations is None:
+            relations = [
+                edge
+                for edge in dependencies
+                if edge["producer_kind"] in {"business", "object"}
+                and edge["read_mode"] in {"fact", "result"}
+            ]
+        repo.replace_dependencies(
+            ids, dependencies, relations=relations, search_revision=unit.next_head
+        )
         repo.replace_publications(ids, publications)
 
 
-def run(system, owner, mutations):
+def run(system, owner, mutations, *, ledger=None, period_to="2026-12", previous_period_to=None):
     store, company = system
-    ledger, registry = Ledger(), DomainRegistry([owner])
+    ledger, registry = ledger or Ledger(), DomainRegistry([owner])
     with store.write_unit(company) as unit:
         heads = unit.repository("application").heads(owner.facts)
         changes = [
@@ -327,7 +347,8 @@ def run(system, owner, mutations):
             ledger,
             None,
             facts={change.business_id: change.fact for change in changes},
-            evaluation_period_to="2026-12",
+            evaluation_period_to=period_to,
+            previous_period_to=previous_period_to,
         )
         descriptions = collect_changes(changes, (), context, registry, {})
         plans = evaluate(descriptions, context, ledger, None)

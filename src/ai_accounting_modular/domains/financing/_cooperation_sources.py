@@ -16,7 +16,6 @@ from ._cooperation_common import AGENCIES, event_order, require_source_period
 
 @dataclass(frozen=True)
 class Trade:
-    result: EvaluatedSlot
     quantity: CooperationTradeQuantity
     definition: ResourceDefinition
 
@@ -37,38 +36,47 @@ class Trade:
         )
 
 
+@dataclass(frozen=True)
+class PublishedTrade(Trade):
+    result: EvaluatedSlot
+
+
+def adopted_trade(item, definition, source):
+    validate_contract("business-facts.schema.json", "CooperationTradeQuantity", item)
+    project, company = (
+        amount(item["project_amount_fen"]),
+        amount(item["company_net_amount_fen"]),
+    )
+    direction = definition.value["direction"]
+    expected_sign = 1 if (item["side"] == "revenue") == (direction == "receivable") else -1
+    if (
+        (not project and company != 0)
+        or project
+        and (project > 0) != (expected_sign > 0)
+        or company
+        and (project > 0) != (company > 0)
+        or abs(company) > abs(project)
+        or definition.source != source
+        or definition.reference != item["source"]
+        or definition.value["amount_fen"] != str(abs(company))
+        or definition.value["category"] != "trade"
+        or "party_id" not in definition.value
+    ):
+        fail("合作公开经营量与其实际净经营义务不一致。")
+    return Trade(item, definition)
+
+
 def result_trades(result, context):
     quantities = [
         item for item in result.basis["adopted_quantities"] if item["type"] == "cooperation_trade"
     ]
     trades = []
     for item in quantities:
-        validate_contract("business-facts.schema.json", "CooperationTradeQuantity", item)
         definitions = context.resource_definitions([item["source"]], "obligation")
         if len(definitions) != 1:
             fail("合作经营量必须指向唯一的当前净经营义务。")
-        definition = definitions[0]
-        project, company = (
-            amount(item["project_amount_fen"]),
-            amount(item["company_net_amount_fen"]),
-        )
-        direction = definition.value["direction"]
-        expected_sign = 1 if (item["side"] == "revenue") == (direction == "receivable") else -1
-        if (
-            (not project and company != 0)
-            or project
-            and (project > 0) != (expected_sign > 0)
-            or company
-            and (project > 0) != (company > 0)
-            or abs(company) > abs(project)
-            or definition.source != result.source
-            or definition.reference != item["source"]
-            or definition.value["amount_fen"] != str(abs(company))
-            or definition.value["category"] != "trade"
-            or "party_id" not in definition.value
-        ):
-            fail("合作公开经营量与其实际净经营义务不一致。")
-        trades.append(Trade(result, item, definition))
+        trade = adopted_trade(item, definitions[0], result.source)
+        trades.append(PublishedTrade(trade.quantity, trade.definition, result))
     return tuple(trades)
 
 

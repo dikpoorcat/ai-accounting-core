@@ -107,11 +107,32 @@ class SubmissionContext:
         self._candidate = None
         self._candidate_complete = False
         self._active_slots = frozenset()
+        self.pending_slots = frozenset()
+        self._retained_results = {}
+        self.previous_result_refs = ()
+
+    def current_result_refs(self, business_ids):
+        return self._ledger.get_result_refs(business_ids, self.read_context)
+
+    def select_results(self, pending_slots, references, complete_slots):
+        self.pending_slots = frozenset(pending_slots)
+        self.previous_result_refs = tuple(references[key] for key in sorted(references))
+        self._retained_results = {
+            key: references[key] for key in sorted(complete_slots - self.pending_slots)
+        }
+
+    def retained_results(self, business_ids):
+        ids = set(business_ids)
+        return [ref for key, ref in self._retained_results.items() if key[0] in ids]
 
     def set_relations(self, business_ids, relations):
         """Replace the complete direct directory before any final description."""
         self._relation_roots = frozenset(business_ids)
         self._relations = tuple(relations)
+
+    @property
+    def declared_relations(self):
+        return self._relations
 
     def reset_descriptions(self):
         self._slots.clear()
@@ -130,6 +151,7 @@ class SubmissionContext:
                 item for _, description in descriptions for item in description["publications"]
             ],
             resource_uses=[edge for edge in self._dependencies if edge["read_mode"] == "use"],
+            retained_results=list(self._retained_results.values()),
         )
 
     @contextmanager
@@ -261,7 +283,16 @@ class SubmissionContext:
             raise ContractError("invalid_input", "相关事实须指明业务或对象关系。")
         repo = self.read_context.repository("application")
         ids = (
-            set(repo.related_ids(producer_kind, producer_ids, relation_kind)) - self._relation_roots
+            set(
+                repo.related_ids(
+                    producer_kind,
+                    producer_ids,
+                    relation_kind,
+                    period_from=period_from,
+                    period_to=period_to,
+                )
+            )
+            - self._relation_roots
         )
         ids.update(
             edge["consumer_business_id"]
@@ -413,7 +444,19 @@ class SubmissionContext:
         if business_id in self._slots:
             if result_slot not in self._slots[business_id]:
                 return None
-            raise ContractError("dependency_conflict", "同单所需结果槽尚未完成，须先声明正确依赖。")
+            retained = self._retained_results.get((business_id, result_slot))
+            if retained is None:
+                raise ContractError(
+                    "dependency_conflict", "同单所需结果槽尚未完成，须先声明正确依赖。"
+                )
+            found = self._ledger.get_result(
+                retained["result_id"], retained["generation"], self.read_context
+            )
+            return EvaluatedSlot(
+                self._ledger.get_result_source(business_id, result_slot, self.read_context),
+                found["target"],
+                found["basis"],
+            )
         if business_id not in self._stored_results:
             self._stored_results[business_id] = {
                 item["reference"]["result_slot"]: item

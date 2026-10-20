@@ -188,6 +188,7 @@ class Ledger:
         correction_period=None,
         publications=(),
         resource_uses=None,
+        retained_results=(),
     ):
         return CandidateLedger(
             responsibilities,
@@ -195,6 +196,7 @@ class Ledger:
             correction_period,
             publications=publications,
             resource_uses=resource_uses,
+            retained_results=retained_results,
         )
 
     def _current_aggregate_view(self, context):
@@ -269,9 +271,7 @@ class Ledger:
         correction_period=None,
         explanation=None,
     ) -> AdoptionResult:
-        refs, retired, changed = _adopt(
-            change_plans, uow, correction_period, _reference, explanation
-        )
+        refs, retired, changed = _adopt(change_plans, uow, correction_period, explanation)
         return AdoptionResult(refs, retired, changed)
 
     def _validate_query(self, query):

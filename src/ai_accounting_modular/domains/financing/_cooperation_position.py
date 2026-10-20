@@ -5,10 +5,11 @@ from dataclasses import fields
 
 from ai_accounting_modular.contracts.public import YearMonth
 
-from ._common import adopt_obligation, amount, fail, format_fen, line, missing, total
+from ._common import adopt_obligation, amount, fail, format_fen, line, total
 from ._cooperation_common import PREFIX, adopt_result, cooperation_plan
-from ._cooperation_events import inputs, totals
+from ._cooperation_events import inputs, project_facts, require_book_start, totals
 from ._cooperation_math import Totals, position
+from ._cooperation_month import month_inputs
 
 _TOTAL_KEYS = {
     field.name: field.name.removeprefix("company_")
@@ -16,6 +17,18 @@ _TOTAL_KEYS = {
     else field.name
     for field in fields(Totals)
 }
+_FINANCIAL_KEYS = (
+    "pool_fen",
+    "held_fen",
+    "operator_due_fen",
+    "company_due_fen",
+    "company_capital_fen",
+    "operator_capital_fen",
+)
+
+
+def _clear(values, receivable, payable):
+    return not any((receivable, payable, *(values[key] for key in _FINANCIAL_KEYS)))
 
 
 def _previous(fact, period, context):
@@ -32,29 +45,35 @@ def _previous(fact, period, context):
 def position_plan(fact, result_slot, context):
     period = result_slot.removeprefix("position:")
     previous = _previous(fact, period, context)
-    adopted = inputs(
+    exclusions = (fact["business_id"], result_slot)
+    proof_sources, initial_ended = [], False
+    start = context.read_context.start_period
+    if previous is None and YearMonth(start).ordinal:
+        before_start = str(YearMonth.from_ordinal(YearMonth(start).ordinal - 1))
+        if project_facts(fact["business_id"], context, before_start):
+            opening = inputs(fact["business_id"], context, period, excluding_consumer=exclusions)
+            require_book_start(fact, opening.events, start)
+            proof_sources.extend(opening.sources)
+            initial_ended = any(
+                event.period < start
+                and event.fact is not None
+                and event.fact["kind"] == PREFIX + "exit"
+                for event in opening.events
+            )
+    adopted = month_inputs(
         fact["business_id"],
         context,
         period,
-        excluding_consumer=(fact["business_id"], result_slot),
+        previous,
+        excluding_consumer=exclusions,
     )
-    if any(
-        event.period < context.read_context.start_period
-        and any(getattr(event.delta, field.name) for field in fields(Totals))
-        for event in adopted.events
-    ):
-        missing(
-            fact,
-            "/period",
-            "开账前已发生的合作经营或出资需要完整位置接续；当前规则只承接开账后新发生的项目，不能默认为零。",
-            precision=("source",),
-            code="cooperation_opening_required",
-        )
     previous_values = previous.target["values"] if previous is not None else {}
     previous_totals = Totals(
         **{field.name: amount(previous_values.get(field.name, "0")) for field in fields(Totals)}
     )
-    monthly = totals(event for event in adopted.events if event.period == period)
+    monthly = totals(adopted.events).plus(
+        **{field.name: getattr(adopted.outside, field.name) for field in fields(Totals)}
+    )
     current = previous_totals.plus(
         **{field.name: getattr(monthly, field.name) for field in fields(Totals)}
     )
@@ -81,30 +100,29 @@ def position_plan(fact, result_slot, context):
         - payable
     ):
         fail("合作资本与代管、应补及当前净经营往来不一致。")
-    ended = any(
-        event.fact is not None and event.fact["kind"] == PREFIX + "exit" for event in adopted.events
+    ended = (
+        initial_ended
+        or previous_values.get("status") in {"operations_ended", "settled"}
+        or any(event.fact["kind"] == PREFIX + "exit" for event in adopted.events)
     )
-    settled = (
-        ended
-        and not adopted.project_unsettled
-        and not any(
-            (
-                receivable,
-                payable,
-                *[
-                    computed[key]
-                    for key in (
-                        "pool_fen",
-                        "held_fen",
-                        "operator_due_fen",
-                        "company_due_fen",
-                        "company_capital_fen",
-                        "operator_capital_fen",
-                    )
-                ],
+    settled = False
+    if ended and _clear(computed, receivable, payable):
+        unchanged = (
+            previous is not None
+            and previous_values["status"] in {"operations_ended", "settled"}
+            and not adopted.project_changed
+            and _clear(
+                {key: amount(previous_values[key]) for key in _FINANCIAL_KEYS},
+                amount(previous_values["company_trade_receivable_net_fen"]),
+                amount(previous_values["company_trade_payable_fen"]),
             )
         )
-    )
+        if unchanged:
+            settled = previous_values["status"] == "settled"
+        else:
+            checked = inputs(fact["business_id"], context, period, excluding_consumer=exclusions)
+            proof_sources.extend(checked.sources)
+            settled = not checked.project_unsettled
     values = {
         "contract_id": fact["business_id"],
         "as_of_period": period,
@@ -144,7 +162,7 @@ def position_plan(fact, result_slot, context):
                 },
             }
         )
-    for source in adopted.sources:
+    for source in (*adopted.sources, *proof_sources):
         if source not in plan["basis"]["source_results"]:
             plan["basis"]["source_results"].append(deepcopy(source))
     for trade in adopted.trades:

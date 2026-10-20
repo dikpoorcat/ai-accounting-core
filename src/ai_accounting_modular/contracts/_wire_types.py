@@ -4453,11 +4453,13 @@ class Dependency(TypedDict):
     effective_on: NotRequired[Date]
     excluded_result_slots: NotRequired[list[ResultSlotRef]]
     resource_components: NotRequired[ResourceComponents]
+    notify_effect: NotRequired[Literal['result', 'description']]
 
 class ChangePlan(TypedDict):
     domain: Literal['operations', 'people', 'assets', 'financing', 'investment', 'money', 'taxes', 'opening', 'reports']
     businesses: list[BusinessChangeResponsibility]
     plans: list[PostingPlan]
+    retained_results: list[ResultRef]
     dependencies: list[Dependency]
     issues: list[FactIssue]
     publications: list[ResultPublication]

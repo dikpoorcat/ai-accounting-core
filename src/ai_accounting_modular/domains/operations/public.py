@@ -244,6 +244,11 @@ class Operations:
         for responsibility in plan["businesses"]:
             if responsibility["op"] in {"withdraw", "handoff_out"}:
                 repo.remove(responsibility["business_id"])
+            elif (
+                responsibility["op"] == "recalculate" and responsibility["business_id"] not in main
+            ):
+                # The unchanged main keeps its already-derived object projection.
+                continue
             else:
                 fact = responsibility["fact"]
                 if fact["kind"] not in _CALCULATORS:

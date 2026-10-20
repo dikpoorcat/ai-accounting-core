@@ -30,6 +30,7 @@ def _selected(alias, as_of):
 
 _CHILD_TABLES = (
     "result_source",
+    "result_basis_ref",
     "obligation",
     "settlement",
     "obligation_reclassification",
@@ -56,6 +57,25 @@ _FINANCIAL_FIELDS = ",".join(
         "basis_digest",
         "target_digest",
         "target_json",
+    )
+)
+_HEAD_FIELDS = ",".join(
+    "r." + name
+    for name in (
+        "result_id",
+        "business_id",
+        "result_slot",
+        "generation",
+        "business_period",
+        "posting_period",
+        "state",
+        "target_state",
+        "baseline_result_id",
+        "adopted_fact_seq",
+        "calculation_key",
+        "calculation_revision",
+        "basis_digest",
+        "target_digest",
     )
 )
 
@@ -111,6 +131,60 @@ class LedgerRepository:
             sql += " WHERE r.business_id IN (SELECT value FROM json_each(?))"
             args = (canonical(list(business_ids)),)
         return [dict(row) for row in self._session.fetchall(sql, args)]
+
+    def current_result(self, business_id, result_slot, *, metadata_only=False):
+        fields = _HEAD_FIELDS if metadata_only else "r.*"
+        row = self._session.fetchone(
+            f"SELECT {fields} FROM result_slot_current c JOIN adopted_result r "
+            "ON r.result_id=c.head_result_id WHERE c.business_id=? AND c.result_slot=?",
+            (business_id, result_slot),
+        )
+        return dict(row) if row is not None else None
+
+    def current_metadata(self, business_ids=()):
+        sql = (
+            f"SELECT {_HEAD_FIELDS} FROM adopted_result r JOIN result_slot_current c "
+            "ON c.head_result_id=r.result_id"
+        )
+        args = ()
+        if business_ids:
+            sql += " WHERE r.business_id IN (SELECT value FROM json_each(?))"
+            args = (canonical(list(business_ids)),)
+        return [dict(row) for row in self._session.fetchall(sql, args)]
+
+    def current_basis_refs(self, keys):
+        slots = [{"business_id": business, "result_slot": slot} for business, slot in sorted(keys)]
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT x.*,r.baseline_result_id FROM json_each(?) k "
+                "JOIN result_basis_ref x "
+                "ON x.producer_business_id=json_extract(k.value,'$.business_id') "
+                "AND x.producer_result_slot=json_extract(k.value,'$.result_slot') "
+                "JOIN result_slot_current c ON c.head_result_id=x.result_id "
+                "JOIN adopted_result r ON r.result_id=x.result_id WHERE r.state='open'",
+                (canonical(slots),),
+            )
+        ]
+
+    def inherited_basis_ref(self, baseline_id, ref):
+        return (
+            self._session.fetchone(
+                "SELECT 1 FROM result_basis_ref x JOIN adopted_result r ON r.result_id=x.result_id "
+                "WHERE x.result_id=? AND r.state='frozen' AND x.producer_business_id=? "
+                "AND x.producer_result_slot=? AND x.producer_result_id=? "
+                "AND x.producer_generation=? AND x.producer_content_digest=? LIMIT 1",
+                (
+                    baseline_id,
+                    ref["business_id"],
+                    ref["result_slot"],
+                    ref["result_id"],
+                    ref["result_generation"],
+                    ref["content_digest"],
+                ),
+            )
+            is not None
+        )
 
     def result_references(self, business_ids, *, as_of=None):
         fields = (
@@ -519,7 +593,7 @@ class LedgerRepository:
         return [dict(row) for row in self._session.fetchall(sql, args)]
 
     def linked_sources(self, business_ids):
-        heads = self.current_heads(business_ids)
+        heads = self.current_metadata(business_ids)
         ids = [r["result_id"] for r in heads]
         result = set(business_ids)
         for table in ("settlement", "cost_consumption", "obligation_reclassification"):

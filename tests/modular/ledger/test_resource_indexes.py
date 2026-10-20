@@ -315,6 +315,7 @@ def test_adoption_invalidates_existing_formal_and_candidate_views_in_same_unit(s
                             "complete_result_slots": [],
                         }
                     ],
+                    "retained_results": [],
                     "plans": [],
                     "dependencies": [],
                     "issues": [],

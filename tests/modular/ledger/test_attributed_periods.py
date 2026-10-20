@@ -69,7 +69,7 @@ def test_real_bonus_january_result_can_have_february_tax_and_january_payment(sto
         [{"business_id": BUSINESS, "op": "create", "expected_seq": 0, "fact": fact}], inputs
     )
     plan = people.evaluate_slot(BUSINESS, "main", inputs)
-    change = {**description, "plans": [plan]}
+    change = {**description, "retained_results": [], "plans": [plan]}
     seed_payment(store)
     with store.write_unit(COMPANY) as uow:
         _object(uow, person, "person")

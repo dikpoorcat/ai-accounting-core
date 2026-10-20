@@ -1,0 +1,85 @@
+"""Month bounds filter the current index before owner bodies are exported."""
+
+from copy import deepcopy
+
+from ai_accounting_modular.application._context import DomainRegistry, SubmissionContext
+
+from .test_publications import Ledger, Owner, direct, fact, identity, seed
+from .test_publications import system as system
+
+
+def relation(number):
+    return {**direct(number, 100), "read_mode": "fact"}
+
+
+def context(read, owner, *, facts=None):
+    return SubmissionContext(
+        read,
+        DomainRegistry([owner]),
+        None,
+        Ledger(),
+        None,
+        facts=facts,
+        evaluation_period_to="2026-12",
+    )
+
+
+def test_month_lookup_never_exports_unrelated_month_bodies(system):
+    january, december = fact(1), fact(2, "2026-12")
+    seed(system, [january, december], dependencies=[relation(1), relation(2)])
+    owner = Owner([january, december], {})
+    storage, company = system
+    with storage.read_unit(company) as read:
+        view = context(read, owner)
+        assert view.related_facts(
+            identity(100), "calculation", period_from="2026-12", period_to="2026-12"
+        ) == (december,)
+    assert owner.exported == [identity(2)]
+
+
+def test_current_month_filter_keeps_final_overlay_move_and_withdrawal(system):
+    january, december = fact(1), fact(2, "2026-12")
+    seed(system, [january, december], dependencies=[relation(1), relation(2)])
+    moved = deepcopy(january)
+    moved["period"] = "2026-12"
+    owner = Owner([january, december], {})
+    storage, company = system
+    with storage.read_unit(company) as read:
+        view = context(read, owner, facts={identity(1): moved, identity(2): None})
+        view.set_relations((identity(1), identity(2)), (relation(1),))
+        assert view.related_facts(
+            identity(100), "calculation", period_from="2026-12", period_to="2026-12"
+        ) == (moved,)
+        assert (
+            view.related_facts(
+                identity(100), "calculation", period_from="2026-01", period_to="2026-01"
+            )
+            == ()
+        )
+    assert owner.exported == []
+
+
+def test_direct_membership_flag_changes_without_changing_public_numeric_dependency(system):
+    current, edge = fact(1), relation(1)
+    seed(system, [current], dependencies=[edge], relations=[])
+    storage, company = system
+    with storage.read_unit(company) as read:
+        repo = read.repository("application")
+        assert repo.dependencies([identity(1)]) == (edge,)
+        assert repo.related_ids("business", {identity(100)}, "calculation") == ()
+    with storage.write_unit(company) as unit:
+        assert unit.repository("application").replace_dependencies(
+            [identity(1)], [edge], relations=[edge], search_revision=unit.next_head
+        )
+    with storage.read_unit(company) as read:
+        assert read.repository("application").dependencies([identity(1)]) == (edge,)
+        assert read.repository("application").related_ids(
+            "business", {identity(100)}, "calculation"
+        ) == (identity(1),)
+        before = read.head
+    with storage.write_unit(company) as unit:
+        assert not unit.repository("application").replace_dependencies(
+            [identity(1)], [edge], relations=[edge], search_revision=unit.next_head
+        )
+    with storage.read_unit(company) as read:
+        assert read.head == before

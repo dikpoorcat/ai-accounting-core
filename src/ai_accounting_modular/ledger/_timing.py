@@ -22,7 +22,10 @@ class ResultTimes:
 
     def day(self, result_id):
         if result_id not in self._days:
-            basis = json.loads(self.head(result_id)["basis_json"])
+            head = self.head(result_id)
+            if "basis_json" not in head:
+                head = self._heads[result_id] = self._repo.result(result_id)
+            basis = json.loads(head["basis_json"])
             self._days[result_id] = basis.get("effective_on")
         return self._days[result_id]
 

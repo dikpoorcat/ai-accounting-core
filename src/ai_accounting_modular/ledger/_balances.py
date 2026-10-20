@@ -66,7 +66,7 @@ def unique_movements(repo, movement_ids):
 
 def validate_capacities(repo, business_ids, retired_keys=()):
     """Check touched producers and all incoming consumers; no company-wide scan."""
-    heads = repo.current_heads(business_ids)
+    heads = repo.current_metadata(business_ids)
     by_id = {h["result_id"]: h for h in heads}
     times = ResultTimes(repo, heads)
     obligations = {}
@@ -149,7 +149,7 @@ def validate_capacities(repo, business_ids, retired_keys=()):
         target_key = row["target_business_id"], row["target_public_slot"]
         target = obligations.get(target_key)
         if target is None:
-            target_heads = repo.current_heads([target_key[0]])
+            target_heads = repo.current_metadata([target_key[0]])
             found = repo.children("obligation", [h["result_id"] for h in target_heads])
             target = next((o for o in found if o["public_slot"] == target_key[1]), None)
         if source is None or target is None:

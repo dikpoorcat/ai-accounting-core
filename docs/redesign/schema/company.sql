@@ -62,6 +62,7 @@ business_id TEXT PRIMARY KEY CHECK(length(business_id)=36),
  latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),
  latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),
  latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),
+ search_revision INTEGER NOT NULL CHECK(search_revision>=1),
  CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))
 ) STRICT;
 
@@ -212,7 +213,8 @@ issue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),
  assignee TEXT NOT NULL CHECK(assignee IN ('ai','owner')),
  action TEXT NOT NULL CHECK(action IN ('provide_material','clarify_reality','external_payment','external_filing','professional_check')),
  due_on TEXT,
- content_digest TEXT NOT NULL CHECK(length(content_digest)=64)
+ content_digest TEXT NOT NULL CHECK(length(content_digest)=64),
+ evidence_ids_json TEXT NOT NULL CHECK(json_valid(evidence_ids_json) AND json_type(evidence_ids_json)='array')
 ) STRICT;
 
 CREATE INDEX current_issue_scope_idx ON current_issue(scope_key,period,issue_id);
@@ -266,6 +268,8 @@ consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
  effective_on TEXT,
  excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),
  resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),
+ notify_effect TEXT CHECK(notify_effect IS NULL OR (read_mode='collection' AND notify_effect IN ('result','description'))),
+ is_direct INTEGER NOT NULL CHECK(is_direct IN (0,1) AND (is_direct=0 OR (producer_kind IN ('business','object') AND read_mode IN ('fact','result')))),
  PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)
 ) STRICT;
 
@@ -327,6 +331,20 @@ result_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,
 ) STRICT;
 
 CREATE INDEX result_source_reverse ON result_source(source_id,result_id);
+
+-- owner: ledger
+CREATE TABLE result_basis_ref (
+result_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,
+ item_no INTEGER NOT NULL CHECK(item_no>=1),
+ producer_business_id TEXT NOT NULL REFERENCES business_head(business_id) ON DELETE RESTRICT,
+ producer_result_slot TEXT NOT NULL,
+ producer_result_id TEXT NOT NULL CHECK(length(producer_result_id)=36),
+ producer_generation INTEGER NOT NULL CHECK(producer_generation>=1),
+ producer_content_digest TEXT NOT NULL CHECK(length(producer_content_digest)=64),
+ PRIMARY KEY(result_id,item_no)
+) STRICT;
+
+CREATE INDEX result_basis_ref_reverse ON result_basis_ref(producer_business_id,producer_result_slot,result_id);
 
 -- owner: ledger
 CREATE TABLE voucher (
@@ -766,6 +784,15 @@ CREATE TRIGGER result_source_frozen_update BEFORE UPDATE ON result_source
 WHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END;
 
 CREATE TRIGGER result_source_frozen_delete BEFORE DELETE ON result_source
+WHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END;
+
+CREATE TRIGGER result_basis_ref_frozen_insert BEFORE INSERT ON result_basis_ref
+WHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END;
+
+CREATE TRIGGER result_basis_ref_frozen_update BEFORE UPDATE ON result_basis_ref
+WHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END;
+
+CREATE TRIGGER result_basis_ref_frozen_delete BEFORE DELETE ON result_basis_ref
 WHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END;
 
 CREATE TRIGGER result_fund_movement_frozen_insert BEFORE INSERT ON result_fund_movement

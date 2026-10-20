@@ -14,7 +14,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from ._sources import check_source
+from ._sources import check_source, issue_source_ids
 from ._types import PlannedRecord, RecordsChange, RecordsContext, RecordsPlan
 
 
@@ -202,7 +202,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             ):
                 raise ContractError("invalid_input", "待办的已知业务与业务身份不一致。")
             issue_ids.add(issue["issue_id"])
-            required.update(issue["evidence_ids"])
+            required.update(issue_source_ids(issue))
             issues.append(issue)
         issues.sort(key=lambda item: item["issue_id"])
         if any(owner != scope for owner in repository.issue_owners(tuple(issue_ids)).values()):

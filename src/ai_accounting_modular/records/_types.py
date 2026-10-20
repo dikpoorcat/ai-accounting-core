@@ -155,6 +155,69 @@ class BackupMaterials:
 
 
 @dataclass(frozen=True)
+class StandardFile:
+    relative_path: str
+    sha256: str
+    byte_size: int
+    kind: Literal["standard", "original"]
+
+
+@dataclass(frozen=True)
+class StandardBundle:
+    """Verified final documents, detached from any catalog or company database."""
+
+    manifest_path: Path
+    company_root: Path
+    manifest_digest: str
+    files: tuple[StandardFile, ...]
+    _manifest_json: str
+    _parts_json: tuple[str, ...]
+
+    @property
+    def manifest(self) -> dict:
+        return loads_json(self._manifest_json)
+
+    @property
+    def set_id(self) -> str:
+        return self.manifest["set_id"]
+
+    @property
+    def company_identity(self) -> dict:
+        return self.manifest["company_identity"]
+
+    def _items(self, field) -> tuple[dict, ...]:
+        return tuple(item for raw in self._parts_json for item in loads_json(raw).get(field, ()))
+
+    @property
+    def facts(self) -> tuple[dict, ...]:
+        return self._items("facts")
+
+    @property
+    def objects(self) -> tuple[dict, ...]:
+        return self._items("objects")
+
+    @property
+    def sources(self) -> tuple[dict, ...]:
+        return self._items("sources")
+
+    @property
+    def notes(self) -> tuple[dict, ...]:
+        return self._items("notes")
+
+    @property
+    def issues(self) -> tuple[dict, ...]:
+        return self._items("issues")
+
+    @property
+    def working_period_to(self) -> str:
+        identity = self.company_identity
+        if "working_period_to" in identity:
+            return identity["working_period_to"]
+        latest = max((fact["period"] for fact in self.facts), default=identity["start_period"])
+        return max(identity["start_period"], latest)
+
+
+@dataclass(frozen=True)
 class PeriodNotesPage:
     items: tuple[CurrentNote, ...]
     total: int

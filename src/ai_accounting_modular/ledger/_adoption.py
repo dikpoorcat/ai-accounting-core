@@ -11,11 +11,12 @@ from ._formal_output import same_journal, target_voucher
 from ._planning import PlannedAdoption, bind_plan, check_source_references
 from ._publications import Publications
 from ._resource_promises import ResourceUses
+from ._retained import RetainedResults, check_changed_source_refs, result_key
 from ._values import check_bookkeeping_period, check_plan, fail
 from ._withdrawal import retirement_plan
 
 
-def adopt(change_plans, uow, correction_period, reference, explanation=None):
+def adopt(change_plans, uow, correction_period, explanation=None):
     completed = [False]
 
     def require_complete():
@@ -28,9 +29,11 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
     responsibilities = {}
     publications = []
     resource_uses = []
+    retained_refs = []
     for change in changes:
         validate_contract("business-facts.schema.json", "ChangePlan", change)
         publications.extend(change["publications"])
+        retained_refs.extend(change["retained_results"])
         resource_uses.extend(edge for edge in change["dependencies"] if edge["read_mode"] == "use")
         if change["issues"]:
             raise ContractError(
@@ -52,8 +55,13 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
             if key in plans:
                 fail("invalid_input", "同一结果槽不能产生两份采用计划。")
             plans[key] = plan
+    repo = uow.repository("ledger")
+    retained = RetainedResults(responsibilities.values(), retained_refs, repo)
+    if set(plans) & retained.keys:
+        fail("invalid_input", "同一结果槽不能同时重新计算和保留。")
     for business_id, responsibility in responsibilities.items():
         actual = {slot for biz, slot in plans if biz == business_id}
+        actual.update(slot for biz, slot in retained.keys if biz == business_id)
         if actual != set(responsibility["complete_result_slots"]):
             fail("invalid_input", "采用计划与本业务声明的完整结果槽不一致。")
     if any(biz not in responsibilities for biz, _ in plans):
@@ -68,31 +76,36 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
         return (), (), False
     if correction_period is not None:
         validate_contract("core.schema.json", "Month", correction_period)
-    repo = uow.repository("ledger")
     touched = repo.linked_sources(list(responsibilities))
-    previous = repo.current_heads(list(responsibilities))
+    previous = repo.current_metadata(list(responsibilities))
+    replaced_ids = [row["result_id"] for row in previous if result_key(row) not in retained.keys]
     movement_ids = {
-        row["movement_id"]
-        for row in repo.children("result_fund_movement", [head["result_id"] for head in previous])
+        row["movement_id"] for row in repo.children("result_fund_movement", replaced_ids)
     }
     movement_ids.update(
         move["movement_id"] for plan in plans.values() for move in plan["fund_movements"]
     )
     old_by_key = {(r["business_id"], r["result_slot"]): r for r in previous}
+    complete_keys = {
+        (business, slot)
+        for business, responsibility in responsibilities.items()
+        for slot in responsibility["complete_result_slots"]
+    }
     retired = []
     proposed = []
     # External complete slots were checked above. Frozen retired slots are
     # ledger-owned zero targets, not active slots invented by a business owner.
     for key, old in old_by_key.items():
-        if key not in plans:
+        if key not in complete_keys:
             if old["target_state"] == "withdrawn":
                 continue
             if old["state"] == "frozen" or old["baseline_result_id"]:
-                plans[key] = retirement_plan(repo, old, explanation)
+                plans[key] = retirement_plan(repo, repo.result(old["result_id"]), explanation)
             else:
                 retired.append(old)
     for key, plan in plans.items():
-        old = old_by_key.get(key)
+        metadata = old_by_key.get(key)
+        old = repo.result(metadata["result_id"]) if metadata is not None else None
         bound = bind_plan(plan, uow, correction_period)
         prepared = bound.identity
         result_id, generation = prepared.result_id, prepared.generation
@@ -141,8 +154,11 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
     check_source_references(proposed, repo, retired)
     # A caught failure must not allow the caller to commit half of an adoption.
     result_ids = [p.result_id for p in proposed]
+    changed_sources = {result_key(item.plan) for item in proposed if not item.bound.unchanged}
+    changed_sources.update(result_key(row) for row in retired)
 
     def before_commit():
+        retained.check_current(repo, allow_frozen=True)
         repo.check_sealed(result_ids)
         validate_capacities(repo, touched)
         unique_movements(repo, movement_ids)
@@ -155,6 +171,7 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
                 item = replace(item, baseline_result_id=row["result_id"])
             live.append(item)
         check_source_references(live, repo)
+        check_changed_source_refs(repo, changed_sources)
 
     uow.check_before_commit(before_commit)
     retired_keys = []
@@ -204,11 +221,15 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
     validate_capacities(repo, touched, retired_keys)
     unique_movements(repo, movement_ids)
     repo.check_sealed(result_ids)
+    retained.check_current(repo)
+    check_changed_source_refs(repo, changed_sources)
     for business_id, slot in plans:
         repo.consume_prepared(business_id, slot)
     completed[0] = True
+    keys = [result_key(item.plan) for item in proposed] + list(retained.keys)
+    references = {result_key(ref): ref for ref in repo.result_references(list(responsibilities))}
     return (
-        tuple(reference(repo.result(result_id), repo) for result_id in result_ids),
+        tuple(references[key] for key in keys),
         tuple({"business_id": r["business_id"], "slot": r["result_slot"]} for r in retired),
         bool(retired) or any(not item.bound.unchanged for item in proposed),
     )
