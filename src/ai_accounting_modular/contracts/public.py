@@ -2,6 +2,7 @@
 
 from ._allocation import cumulative_shares
 from ._contexts import (
+    DomainOwner,
     EvaluatedSlot,
     EvaluationContext,
     OpeningAssetAccounting,
@@ -21,7 +22,10 @@ from ._errors import ContractError
 from ._fact_collections import restore_fact_collection, split_fact_collection
 from ._fact_sources import fact_source_ids, fact_source_paths
 from ._resource_dependencies import (
+    ALL_RESOURCE_COMPONENTS,
     check_resource_dependency,
+    resource_component,
+    resource_components,
     resource_exclusions,
     resource_use_affects,
 )
@@ -54,6 +58,7 @@ __all__ = [
     "MAX_FEN",
     "MIN_FEN",
     "ActualDate",
+    "DomainOwner",
     "YearMonth",
     "EvaluatedSlot",
     "EvaluationContext",
@@ -75,6 +80,9 @@ __all__ = [
     "fact_source_ids",
     "fact_source_paths",
     "check_resource_dependency",
+    "ALL_RESOURCE_COMPONENTS",
+    "resource_component",
+    "resource_components",
     "resource_exclusions",
     "resource_use_affects",
     "checked_fen",

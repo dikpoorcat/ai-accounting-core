@@ -1,6 +1,6 @@
 """Opening retains its fact; this module supplies only asset calculations."""
 
-from ai_accounting_modular.contracts.public import validate_contract
+from ai_accounting_modular.contracts.public import canonical_json, validate_contract
 
 from ._card_rules import validate_card
 from ._cards import consumption_end, related
@@ -100,7 +100,7 @@ def describe(fact, context):
         )
     slots = [slot_for(month) for month in sorted(months)]
     edges.extend(monthly_dependencies(fact, slots))
-    unique = {tuple(sorted(edge.items())): edge for edge in edges}
+    unique = {canonical_json(edge): edge for edge in edges}
     return {
         "complete_result_slots": slots,
         "dependencies": list(unique.values()),

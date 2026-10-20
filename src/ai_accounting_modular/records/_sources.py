@@ -15,7 +15,29 @@ from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 
+from ._types import SourceStatus
+
 CHUNK_SIZE = 1024 * 1024
+
+
+def source_status(root: Path, source) -> SourceStatus:
+    """Inspect registered file metadata without reading or claiming to verify bytes."""
+    source_id = source["source_id"]
+    if source["kind"] == "owner_statement":
+        return SourceStatus(source_id, "present", len(source["text"].encode("utf-8")))
+    try:
+        path = controlled_path(root, source["relative_path"])
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise ContractError("source_unavailable", "原件位置不是可读取的普通文件。")
+    except FileNotFoundError:
+        return SourceStatus(source_id, "missing_file", None)
+    except OSError as exc:
+        raise ContractError("source_unavailable", "暂时无法检查原件位置。") from exc
+    except ContractError as exc:
+        raise ContractError("source_unavailable", "原件路径不可安全读取。") from exc
+    state = "present" if info.st_size == source["byte_size"] else "content_mismatch"
+    return SourceStatus(source_id, state, info.st_size)
 
 
 def source_text(text: str) -> str:
@@ -100,11 +122,11 @@ def checked_stream(root: Path, source):
         if hashlib.sha256(raw).hexdigest() != source["sha256"]:
             raise ContractError("source_corrupt", "老板说明与登记摘要不一致。")
         return io.BytesIO(raw)
-    path = controlled_path(root, source["relative_path"])
     result = tempfile.SpooledTemporaryFile(max_size=8 * CHUNK_SIZE, mode="w+b")
     digest, size = hashlib.sha256(), 0
     try:
         try:
+            path = controlled_path(root, source["relative_path"])
             with path.open("rb") as stream:
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode):
@@ -118,6 +140,8 @@ def checked_stream(root: Path, source):
             controlled_path(root, source["relative_path"])
         except FileNotFoundError as exc:
             raise ContractError("source_missing", "已登记原件不存在，需要补回正确资料。") from exc
+        except OSError as exc:
+            raise ContractError("source_unavailable", "暂时无法读取已登记原件。") from exc
         if size != source["byte_size"] or digest.hexdigest() != source["sha256"]:
             raise ContractError("source_corrupt", "原件内容与登记摘要不一致。")
         result.seek(0)

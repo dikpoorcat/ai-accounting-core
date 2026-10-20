@@ -89,7 +89,7 @@ def _scope(fact, kind, start="0001-01", end="9999-12"):
     return _edge(fact, kind, mode="collection", producer_kind="scope", start=start, end=end)
 
 
-def _dependencies(fact, context, actuals=()):
+def _direct_dependencies(fact):
     data, kind = fact["data"], fact["kind"]
     edges = []
     if kind == "taxes.tax_point":
@@ -123,19 +123,27 @@ def _dependencies(fact, context, actuals=()):
         else:
             edges.append(_edge(fact, data["assessment_id"], mode="fact", relation="reference"))
     elif kind == "taxes.tax_credit":
-        edges.extend(
-            (
-                _edge(fact, data["original_assessment_id"], relation="reference"),
-                _collection(fact, data["original_assessment_id"]),
-            )
-        )
-        periods = set()
+        edges.append(_edge(fact, data["original_assessment_id"], relation="reference"))
         for row in data["returns"]:
             edges.append(_edge(fact, row["return_id"], relation="reference"))
-            edges.append(_collection(fact, row["return_id"]))
             edges.append(
                 _edge(fact, row["original_business_id"], mode="fact", relation="reference")
             )
+    elif kind == "taxes.assessment" and data["type"] == "vat":
+        edges.extend(
+            _edge(fact, identity, relation="reference") for identity in data.get("credit_ids", ())
+        )
+    return edges
+
+
+def _dependencies(fact, context, actuals=()):
+    data, kind = fact["data"], fact["kind"]
+    edges = _direct_dependencies(fact)
+    if kind == "taxes.tax_credit":
+        periods = set()
+        edges.append(_collection(fact, data["original_assessment_id"]))
+        for row in data["returns"]:
+            edges.append(_collection(fact, row["return_id"]))
             returned = context.get_fact(row["return_id"])
             if returned is not None:
                 periods.add(returned["period"])
@@ -151,7 +159,6 @@ def _dependencies(fact, context, actuals=()):
                 if field in data and (source is None or context.get_fact(data[field]) is not None):
                     edges.append(_edge(fact, data[field], relation="policy"))
             for identity in data.get("credit_ids", ()):
-                edges.append(_edge(fact, identity, relation="reference"))
                 edges.append(_collection(fact, identity))
             edges.append(_scope(fact, "taxes.assessment"))
         else:
@@ -211,6 +218,16 @@ def _validate(fact):
 
 class Taxes:
     supported_kinds = tuple(_CALCULATORS)
+
+    def declare_relations(self, changes, context: EvaluationContext):
+        return tuple(
+            edge
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+            for edge in _direct_dependencies(
+                change.get("fact") or context.get_fact(change["business_id"])
+            )
+        )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         businesses, dependencies, publications = [], [], []

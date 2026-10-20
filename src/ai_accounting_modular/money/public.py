@@ -26,6 +26,7 @@ from ._payments import (
     physical,
     settlement,
 )
+from ._period import MoneyPeriodCheck, check_period
 from ._queries import MoneyPage, MoneyQuery, cursor, page_movements, position
 from ._reconciliation import (
     groups_from_rows,
@@ -75,6 +76,32 @@ def _validate_fact(fact):
         check_rows(fact)
 
 
+def _direct_dependencies(fact, context):
+    business_id = fact["business_id"]
+    edges = [
+        _dependency(business_id, object_id, "identity", kind="object", mode="fact")
+        for object_id, _, _ in object_roles(fact)
+    ]
+    edges.extend(
+        _dependency(business_id, allocation["source"]["business_id"], "settlement")
+        for allocation in allocation_refs(fact)
+    )
+    if fact["kind"] == "money.reconciliation":
+        edges.append(_dependency(business_id, fact["data"]["statement_id"], "reference"))
+        source = context.get_fact(fact["data"]["statement_id"])
+        if source is not None and source["kind"] == "money.bank_statement":
+            edges.append(
+                _dependency(
+                    business_id,
+                    source["data"]["funds_account_id"],
+                    "identity",
+                    kind="object",
+                    mode="fact",
+                )
+            )
+    return edges
+
+
 class Money:
     stable_occurrence_id = staticmethod(stable_occurrence_id)
 
@@ -96,6 +123,21 @@ class Money:
         """Exact current actual-cash allocations, including every payment on the cutoff day."""
         return _actual_settled_fen(source, cutoff, context)
 
+    def check_period(self, period_from, period_to, read_context: ReadContext) -> MoneyPeriodCheck:
+        if self._ledger is None or self._identity is None:
+            fail("期间核对未装配正式账务及账户读取端口。", "unsupported_business")
+        return check_period(period_from, period_to, read_context, self._ledger, self._identity)
+
+    def declare_relations(self, changes, context: EvaluationContext):
+        return tuple(
+            edge
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+            for edge in _direct_dependencies(
+                change.get("fact") or context.get_fact(change["business_id"]), context
+            )
+        )
+
     def describe_change(self, changes, context: EvaluationContext):
         businesses, dependencies, publications = [], [], []
         for change in changes:
@@ -115,6 +157,7 @@ class Money:
             _validate_fact(fact)
             if fact["business_id"] != business_id or fact["kind"] not in self.supported_kinds:
                 fail("资金业务身份或所属种类不一致。", "invalid_input")
+            dependencies.extend(_direct_dependencies(fact, context))
             responsibility.update(fact=fact, complete_result_slots=["main"])
             if fact["kind"] == "money.movement" and fact["data"]["type"] in {
                 "managed_reserve",
@@ -142,10 +185,6 @@ class Money:
                 responsibility["natural_key"] = account_id + "/" + fact["period"]
                 dependencies.extend(
                     [
-                        _dependency(business_id, statement["business_id"], "reference"),
-                        _dependency(
-                            business_id, account_id, "identity", kind="object", mode="fact"
-                        ),
                         _dependency(
                             business_id, account_id, "identity", kind="object", mode="collection"
                         ),
@@ -188,9 +227,6 @@ class Money:
             businesses.append(responsibility)
             for object_id, kinds, field in object_roles(fact):
                 require_object(fact, context, object_id, kinds, field)
-                edge = _dependency(business_id, object_id, "identity", kind="object", mode="fact")
-                if edge not in dependencies:
-                    dependencies.append(edge)
                 if (
                     "platform_account" in kinds
                     and context.get_object(object_id)["kind"] == "platform_account"
@@ -210,14 +246,16 @@ class Money:
                 use = _dependency(
                     business_id, producer, "settlement", mode="use", period=fact["period"]
                 )
+                use["resource_components"] = [
+                    "offset" if fact["kind"] == "money.transfer" else "money"
+                ]
                 use["producer_public_slot"] = allocation["source"]["slot"]
                 if "effective_on" in fact:
                     use["effective_on"] = fact["effective_on"]
                 dependencies.append(use)
-                for mode in ("result", "collection"):
-                    edge = _dependency(business_id, producer, "settlement", mode=mode)
-                    if edge not in dependencies:
-                        dependencies.append(edge)
+                edge = _dependency(business_id, producer, "settlement", mode="collection")
+                if edge not in dependencies:
+                    dependencies.append(edge)
         result = {
             "domain": "money",
             "businesses": businesses,

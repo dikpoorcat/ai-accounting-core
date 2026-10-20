@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
 
 from ._errors import ContractError
+from ._resource_dependencies import ALL_RESOURCE_COMPONENTS, resource_component, resource_components
 from ._scalars import checked_fen, parse_fen
 from ._validation import validate_contract
 from ._wire_types import (
     AdoptedAssetQuantity,
     AdoptedBasis,
+    BusinessQuery,
     BusinessRef,
+    ChangeDescription,
     ChangePlan,
     CostConsumption,
     CostLot,
@@ -26,6 +29,7 @@ from ._wire_types import (
     ObligationReclassification,
     PostingPlan,
     PretaxFields,
+    ResourceComponent,
     ResultPublication,
     ResultSourceRef,
     ResultTarget,
@@ -91,6 +95,10 @@ class ResourceUse:
     source: ResultSourceRef
     value: Settlement | ObligationReclassification | CostConsumption
 
+    @property
+    def component(self) -> ResourceComponent:
+        return resource_component(self.kind, self.value)
+
     def __post_init__(self) -> None:
         schemas = {
             "settlement": ("core.schema.json", "Settlement"),
@@ -112,7 +120,7 @@ class ResourceUse:
 
 @dataclass(frozen=True)
 class ResourceState:
-    """A complete candidate quantity; remaining may be negative before validation."""
+    """Candidate quantities under the explicit selected components, before validation."""
 
     definition: ResourceDefinition
     money_settled_fen: int = 0
@@ -123,8 +131,10 @@ class ResourceState:
     consumed_fen: int = 0
     remaining_fen: int = 0
     uses: tuple[ResourceUse, ...] = ()
+    components: tuple[ResourceComponent, ...] = ALL_RESOURCE_COMPONENTS
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "components", resource_components(self.components))
         for name in (
             "money_settled_fen",
             "offset_settled_fen",
@@ -142,6 +152,21 @@ class ResourceState:
                 ) from exc
             if name != "remaining_fen" and amount < 0:
                 raise ContractError("invalid_input", "资源使用累计额不能为负。")
+        for component, field in (
+            ("money", "money_settled_fen"),
+            ("agency", "agency_settled_fen"),
+            ("offset", "offset_settled_fen"),
+            ("transfer", "transferred_out_fen"),
+            ("reclassify_excess", "excess_reclassified_fen"),
+            ("cost", "consumed_fen"),
+        ):
+            if component not in self.components and getattr(self, field):
+                raise ContractError("invalid_input", "未选择的资源分量不能含非零累计额。")
+        if any(
+            not isinstance(use, ResourceUse) or use.component not in self.components
+            for use in self.uses
+        ):
+            raise ContractError("invalid_input", "资源使用明细必须属于明确选择的分量。")
 
 
 @dataclass(frozen=True)
@@ -154,6 +179,17 @@ class ResourceWindow:
 
     certain: ResourceState
     uncertain_uses: tuple[ResourceUse, ...] = ()
+
+    def __post_init__(self):
+        if not isinstance(self.certain, ResourceState) or any(
+            not isinstance(use, ResourceUse) or use.component not in self.certain.components
+            for use in self.uncertain_uses
+        ):
+            raise ContractError("invalid_input", "资源窗口的未知日期明细必须属于所选分量。")
+
+    @property
+    def components(self) -> tuple[ResourceComponent, ...]:
+        return self.certain.components
 
     @property
     def _possible_excess(self) -> int:
@@ -353,6 +389,7 @@ class EvaluationContext(Protocol):
         *,
         excluding_consumer: tuple[str, str] | None = None,
         excluding_consumers: Sequence[tuple[str, str]] = (),
+        components: Sequence[ResourceComponent] | None = None,
     ) -> tuple[ResourceState, ...]: ...
 
     def resource_windows(
@@ -363,6 +400,7 @@ class EvaluationContext(Protocol):
         *,
         excluding_consumer: tuple[str, str] | None = None,
         excluding_consumers: Sequence[tuple[str, str]] = (),
+        components: Sequence[ResourceComponent] | None = None,
     ) -> tuple[ResourceWindow, ...]:
         """A complete candidate's quantities with explicit bounds for unknown use days."""
         ...
@@ -372,6 +410,40 @@ class EvaluationContext(Protocol):
     ) -> tuple[ResourceDefinition, ...]:
         """Complete actual funds in the explicit account/month range."""
         ...
+
+
+class DomainOwner(Protocol):
+    """A fact owner declares direct membership before describing result dependencies.
+
+    declare_relations uses only its complete facts and direct get_fact references;
+    it never queries reverse membership, computes slots, or reads result amounts.
+    Every declared membership must occur in the final description's fact/result
+    dependencies. Withdrawn and handed-out identities declare no relations.
+    """
+
+    supported_kinds: Sequence[str]
+
+    def declare_relations(
+        self, changes: Sequence[Mapping[str, Any]], context: EvaluationContext
+    ) -> tuple[Dependency, ...]: ...
+
+    def describe_change(
+        self, changes: Sequence[Mapping[str, Any]], context: EvaluationContext
+    ) -> ChangeDescription: ...
+
+    def evaluate_slot(
+        self, business_id: str, result_slot: str, context: EvaluationContext
+    ) -> PostingPlan: ...
+
+    def validate_candidate(self, plan: ChangePlan, context: EvaluationContext) -> None: ...
+
+    def apply_current(self, plan: ChangePlan, uow: UnitOfWork) -> None: ...
+
+    def export_current(self, ids: Sequence[str], read_context: ReadContext) -> tuple[Fact, ...]: ...
+
+    def query_current(
+        self, query: BusinessQuery, read_context: ReadContext
+    ) -> tuple[Fact, ...]: ...
 
 
 class OpeningAssetSlots(TypedDict):

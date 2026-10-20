@@ -217,6 +217,8 @@ issue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),
 
 CREATE INDEX current_issue_scope_idx ON current_issue(scope_key,period,issue_id);
 
+CREATE INDEX current_issue_period_idx ON current_issue(period,scope_key,issue_id);
+
 -- owner: records
 CREATE TABLE current_issue_scope (
 scope_key TEXT PRIMARY KEY,
@@ -263,6 +265,7 @@ consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
  period_to TEXT,
  effective_on TEXT,
  excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),
+ resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),
  PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)
 ) STRICT;
 
@@ -692,7 +695,14 @@ CREATE TRIGGER adopted_result_frozen_delete BEFORE DELETE ON adopted_result
 WHEN OLD.state='frozen' BEGIN SELECT RAISE(ABORT,'frozen_result'); END;
 
 CREATE TRIGGER adopted_result_closed_insert BEFORE INSERT ON adopted_result
-WHEN EXISTS(SELECT 1 FROM period_close WHERE period=NEW.posting_period)
+WHEN NEW.posting_period >= (SELECT start_period FROM company_profile WHERE singleton=1)
+ AND EXISTS(SELECT 1 FROM period_close WHERE period>=NEW.posting_period)
+BEGIN SELECT RAISE(ABORT,'closed_period'); END;
+
+CREATE TRIGGER adopted_result_closed_update BEFORE UPDATE ON adopted_result
+WHEN OLD.state<>'frozen'
+ AND NEW.posting_period >= (SELECT start_period FROM company_profile WHERE singleton=1)
+ AND EXISTS(SELECT 1 FROM period_close WHERE period>=NEW.posting_period)
 BEGIN SELECT RAISE(ABORT,'closed_period'); END;
 
 CREATE TRIGGER voucher_frozen_insert BEFORE INSERT ON voucher

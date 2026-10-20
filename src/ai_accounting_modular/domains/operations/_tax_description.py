@@ -4,6 +4,8 @@ from ._tax_lifecycle import future_months, result_slots
 
 
 def slots(fact, context):
+    if fact["kind"] == "operations.service_sale" and fact["data"]["gross_fen"] == "0":
+        return ["main"]
     if fact["kind"] == "operations.advance_fulfillment":
         original = context.get_fact(fact["data"]["advance_id"])
         point = fact["data"].get("tax_point")

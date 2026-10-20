@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -150,3 +151,46 @@ def test_source_symlink_outside_company_is_rejected(records_case, tmp_path):
                 {"kind": "file", "relative_path": "originals/unassigned/link.txt"}, read
             )
         assert error.value.code == "invalid_path"
+
+
+def test_availability_is_a_cheap_observation_and_download_verifies_bytes(records_case, monkeypatch):
+    storage, (company, _), records = records_case
+    incoming = company.company_root / "originals/unassigned/source.txt"
+    incoming.parent.mkdir(parents=True)
+    incoming.write_bytes(b"correct")
+    with storage.read_unit(company.company_id) as read:
+        source = records.prepare_source(
+            {"kind": "file", "relative_path": "originals/unassigned/source.txt"}, read
+        )
+        statement = records.prepare_source({"kind": "owner_statement", "text": "实际说明"}, read)
+    _store_source(storage, company, records, source)
+    _store_source(storage, company, records, statement)
+    path = company.company_root / source["relative_path"]
+    absent = str(uuid4())
+    with storage.read_unit(company.company_id) as read:
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "open", lambda *a, **kw: pytest.fail("列表不可读取原件正文"))
+            statuses = records.source_status(
+                (source["source_id"], statement["source_id"], absent), read
+            )
+        by_id = {item.source_id: item for item in statuses}
+        assert by_id[source["source_id"]].state == "present"
+        assert by_id[source["source_id"]].observed_size == 7
+        assert by_id[statement["source_id"]].observed_size == len("实际说明".encode())
+        assert by_id[absent].state == "not_found"
+        path.write_bytes(b"changed")
+        assert records.source_status((source["source_id"],), read)[0].state == "present"
+        with pytest.raises(ContractError) as error:
+            with records.lease_source(source["source_id"], read):
+                pass
+        assert error.value.code == "source_corrupt"
+        path.write_bytes(b"short")
+        status = records.source_status((source["source_id"],), read)[0]
+        assert (status.state, status.observed_size) == ("content_mismatch", 5)
+        path.unlink()
+        status = records.source_status((source["source_id"],), read)[0]
+        assert (status.state, status.observed_size) == ("missing_file", None)
+        path.mkdir()
+        with pytest.raises(ContractError) as error:
+            records.source_status((source["source_id"],), read)
+        assert error.value.code == "source_unavailable"

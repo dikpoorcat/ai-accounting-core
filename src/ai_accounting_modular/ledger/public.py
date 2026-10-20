@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ai_accounting_modular.contracts.public import (
+    MAX_FEN,
     ChangePlan,
     ContractError,
     ReadContext,
@@ -26,6 +27,7 @@ from ._adoption import adopt as _adopt
 from ._balances import balance_wire, obligation_balances
 from ._candidate import CandidateLedger
 from ._cashflow import contributions as _cashflow_contributions
+from ._closing import LedgerPeriodCheck, check_period, close_period, closed_report
 from ._financial_cells import Issues
 from ._financial_selection import Selection
 from ._planning import PreparedResult, bind_plan, stored_source_reference
@@ -103,6 +105,15 @@ def _reference(row, repo, vouchers=None):
     return value
 
 
+def _exact_row(repo, result_id, generation, *, mismatch_code="snapshot_changed"):
+    row = repo.result(result_id)
+    if row is None:
+        fail("not_found", "指定正式结果不存在。")
+    if row["generation"] != generation:
+        fail(mismatch_code, "指定的开放结果已被替换，请重新读取。")
+    return row
+
+
 def _voucher_wire(voucher, row, repo, reference=None):
     value = {
         key: voucher[key]
@@ -123,7 +134,24 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 class Ledger:
     def financial_snapshot(self, scope, read_context: ReadContext):
+        normalized = _financial.normalize(scope, read_context)
+        if normalized["view"] == "as_posted" and read_context.repository("ledger").is_closed(
+            normalized["period_to"], start_period=read_context.start_period
+        ):
+            return closed_report(scope, read_context)
         return _financial.snapshot(scope, read_context)
+
+    def check_period(self, period, read_context: ReadContext) -> LedgerPeriodCheck:
+        return check_period(period, read_context)
+
+    def close_period(self, period, expected_head, uow: UnitOfWork) -> LedgerPeriodCheck:
+        return close_period(period, expected_head, uow)
+
+    def get_closed_report(self, scope, read_context: ReadContext):
+        return closed_report(scope, read_context)
+
+    def closed_through(self, read_context: ReadContext):
+        return read_context.repository("ledger").closed_through()
 
     def query_cashflow_contributions(self, query: LedgerQuery, read_context: ReadContext):
         """Formal adoption-month history, just like query_vouchers; never actual money count."""
@@ -301,9 +329,7 @@ class Ledger:
         selected = {row["result_id"]: row for row in heads}
         for ref in result_refs:
             validate_contract("core.schema.json", "ResultRef", ref)
-            row = repo.result(ref["result_id"])
-            if row is None:
-                fail("not_found", "指定正式结果不存在。")
+            row = _exact_row(repo, ref["result_id"], ref["generation"])
             if any(
                 row[key] != ref[key]
                 for key in (
@@ -317,6 +343,28 @@ class Ledger:
                 fail("snapshot_changed", "指定的开放结果已被替换，请重新读取。")
             selected[row["result_id"]] = row
         return self._views(repo, selected.values())
+
+    def get_result_refs(self, business_ids, read_context: ReadContext):
+        query = LedgerQuery(tuple(business_ids))
+        self._validate_query(query)
+        if read_context.view not in ("current", "as_posted") or (
+            read_context.view == "as_posted" and read_context.as_of is None
+        ):
+            fail("invalid_input", "正式结果引用的读取口径与截止月不一致。")
+        if not business_ids:
+            return ()
+        rows = read_context.repository("ledger").result_references(
+            business_ids, as_of=read_context.as_of if read_context.view == "as_posted" else None
+        )
+        return tuple(validate_contract("core.schema.json", "ResultRef", row) for row in rows)
+
+    def get_result(self, result_id, generation, read_context: ReadContext):
+        validate_contract("core.schema.json", "Id", result_id)
+        if type(generation) is not int or not 1 <= generation <= MAX_FEN:
+            fail("invalid_input", "正式结果代次须为有效的正整数。")
+        repo = read_context.repository("ledger")
+        row = _exact_row(repo, result_id, generation, mismatch_code="conflict")
+        return self._views(repo, [row])[0]
 
     def _views(self, repo, heads):
         heads = sorted(

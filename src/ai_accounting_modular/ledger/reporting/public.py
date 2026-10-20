@@ -27,8 +27,27 @@ def repository_factory() -> RepositoryFactory:
     return RepositoryFactory(module_schema("ledger.reporting"), ReportingRepository)
 
 
+def _relation(fact):
+    return {
+        "consumer_business_id": fact["business_id"],
+        "consumer_result_slot": "main",
+        "producer_kind": "business",
+        "producer_id": fact["data"]["opening_package_id"],
+        "producer_public_slot": "main",
+        "read_mode": "result",
+        "relation_kind": "calculation",
+    }
+
+
 class Reporting:
     supported_kinds = (KIND,)
+
+    def declare_relations(self, changes, context: EvaluationContext):
+        return tuple(
+            _relation(change.get("fact") or context.get_fact(change["business_id"]))
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+        )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         businesses, edges, publications = [], [], []
@@ -51,17 +70,7 @@ class Reporting:
                     complete_result_slots=["main"],
                     natural_key=KIND + ":" + fact["period"],
                 )
-                edges.append(
-                    {
-                        "consumer_business_id": business_id,
-                        "consumer_result_slot": "main",
-                        "producer_kind": "business",
-                        "producer_id": fact["data"]["opening_package_id"],
-                        "producer_public_slot": "main",
-                        "read_mode": "result",
-                        "relation_kind": "calculation",
-                    }
-                )
+                edges.append(_relation(fact))
                 publications.append(
                     {
                         "business_id": business_id,

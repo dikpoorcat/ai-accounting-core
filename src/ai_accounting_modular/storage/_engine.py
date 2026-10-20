@@ -330,6 +330,7 @@ class Storage:
         *,
         writable: bool,
         maintenance: bool = False,
+        preview: bool = False,
         view: Literal["current", "as_posted"] = "current",
         as_of: str | None = None,
     ):
@@ -384,12 +385,15 @@ class Storage:
                     check()
                 if context._failed:
                     raise ContractError("invalid_operation", "提交检查中的失败操作不能被忽略")
-                if context._business_changed:
-                    connection.execute(
-                        "UPDATE system_meta SET global_seq=? WHERE singleton=1",
-                        (context.next_head,),
-                    )
-                connection.commit()
+                if preview:
+                    connection.rollback()
+                else:
+                    if context._business_changed:
+                        connection.execute(
+                            "UPDATE system_meta SET global_seq=? WHERE singleton=1",
+                            (context.next_head,),
+                        )
+                    connection.commit()
             else:
                 connection.rollback()
         except sqlite3.IntegrityError:
@@ -419,6 +423,10 @@ class Storage:
 
     def write_unit(self, company_id: str):
         return self._unit(company_id, writable=True)
+
+    def preview_unit(self, company_id: str):
+        """Run the same accounting checks, then discard every database change."""
+        return self._unit(company_id, writable=True, preview=True)
 
     def maintenance_unit(self, company_id: str):
         return self._unit(company_id, writable=True, maintenance=True)

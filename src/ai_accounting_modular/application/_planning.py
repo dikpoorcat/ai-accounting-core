@@ -11,6 +11,8 @@ from ai_accounting_modular.contracts.public import (
 
 from ._publications import normalize as normalize_publications
 from ._publications import overlaps
+from ._relations import declare as declare_relations
+from ._relations import validate_description as validate_relations
 from ._resources import normalize as normalize_resource_dependency
 
 
@@ -74,7 +76,7 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
         grouped[registry.owner(kind)].append({**mutation, "business_id": change.business_id})
         included.add(change.business_id)
         queue.append(("business", change.business_id))
-    visited, descriptions = set(), []
+    visited, previous_facts = set(), {}
 
     def include(ids):
         ids = sorted(set(ids) - included)
@@ -99,17 +101,64 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
             included.add(business_id)
             queue.append(("business", business_id))
 
+    def notify_relations(businesses, edges, old_edges):
+        observers = set()
+        for business in businesses:
+            business_id = business["business_id"]
+            members = []
+            for values in (old_edges, edges):
+                members.append(
+                    {
+                        _membership(edge)
+                        for edge in values
+                        if edge["consumer_business_id"] == business_id
+                        and edge["read_mode"] in ("fact", "result")
+                        and edge["producer_kind"] in ("business", "object")
+                    }
+                )
+            change = changed.get(business_id)
+            if change is None and members[0] == members[1]:
+                continue
+            if business_id not in previous_facts:
+                previous_facts[business_id] = (
+                    registry.fact(change.before, context.read_context)
+                    if change and change.before
+                    else None
+                )
+            facts = [
+                fact
+                for fact in (business.get("fact"), previous_facts[business_id])
+                if fact is not None
+            ]
+            periods = {fact["period"] for fact in facts}
+            for kind, producer, relation in members[0] | members[1]:
+                observers.update(repo.observers(kind, producer, relation, periods))
+            for fact in facts:
+                observers.update(repo.scope_observers(fact["kind"], {fact["period"]}))
+        include(observers)
+
     if context.evaluation_period_to > context.previous_period_to:
         include(repo.calendar_observers(context.previous_period_to, context.evaluation_period_to))
 
-    while queue or grouped:
+    while True:
         while queue:
             producer = queue.popleft()
             if producer not in visited:
                 visited.add(producer)
                 include(repo.consumers(*producer))
-        current, grouped = grouped, defaultdict(list)
-        for owner, mutations in current.items():
+        # Every changed fact shadows its old relations before any owner can
+        # discover reverse membership. Descriptions never modify this directory.
+        relations = declare_relations(grouped, context)
+        participant_count = len(included)
+        notifying = [row for rows in grouped.values() for row in rows if row["op"] != "handoff_out"]
+        notify_relations(
+            notifying, relations, repo.dependencies([row["business_id"] for row in notifying])
+        )
+        if len(included) != participant_count:
+            continue
+        descriptions = []
+        context.reset_descriptions()
+        for owner, mutations in tuple((owner, tuple(rows)) for owner, rows in grouped.items()):
             description = owner.describe_change(mutations, context)
             validate_contract("business-facts.schema.json", "ChangeDescription", description)
             expected = {item["business_id"]: item for item in mutations}
@@ -133,8 +182,8 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
                     "本单业务尚有会影响核算的资料缺项。",
                     fact_issues=description["issues"],
                 )
+            validate_relations(description, relations)
             descriptions.append((owner, description))
-            context.add_description(description)
             # The adopting owner notifies old and new relationships once. The
             # outgoing owner only removes its private body, never the public root.
             notifying = [item for item in description["businesses"] if item["op"] != "handoff_out"]
@@ -153,47 +202,13 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
             )
             old_edges = repo.dependencies(notifying_ids)
             include(repo.resource_observers([*old_edges, *description["dependencies"]]))
-            for business in notifying:
-                business_id = business["business_id"]
-                before = [
-                    edge
-                    for edge in old_edges
-                    if edge["consumer_business_id"] == business_id
-                    and edge["read_mode"] in ("fact", "result")
-                    and edge["producer_kind"] in ("business", "object")
-                ]
-                after = [
-                    edge
-                    for edge in description["dependencies"]
-                    if edge["consumer_business_id"] == business_id
-                    and edge["read_mode"] in ("fact", "result")
-                    and edge["producer_kind"] in ("business", "object")
-                ]
-                old_members = {_membership(edge) for edge in before}
-                new_members = {_membership(edge) for edge in after}
-                change = changed.get(business_id)
-                if change is None and old_members == new_members:
-                    continue
-                facts = [
-                    value
-                    for value in (
-                        business.get("fact"),
-                        registry.fact(change.before, context.read_context)
-                        if change and change.before
-                        else None,
-                    )
-                    if value is not None
-                ]
-                periods = {fact["period"] for fact in facts}
-                observers = set()
-                for producer_kind, producer_id, relation_kind in old_members | new_members:
-                    observers.update(
-                        repo.observers(producer_kind, producer_id, relation_kind, periods)
-                    )
-                for fact in facts:
-                    observers.update(repo.scope_observers(fact["kind"], {fact["period"]}))
-                include(observers)
-    return descriptions
+            notify_relations(notifying, description["dependencies"], old_edges)
+        if len(included) == participant_count:
+            return descriptions
+        # Notifications may introduce existing businesses (e.g. a tax reader
+        # of a newly reached month). Complete their direct declarations before
+        # describing the enlarged set. Each round must add a business; no edge
+        # fixed point, owner priority, or arbitrary iteration limit is involved.
 
 
 def evaluate(descriptions, context, ledger, correction_period):

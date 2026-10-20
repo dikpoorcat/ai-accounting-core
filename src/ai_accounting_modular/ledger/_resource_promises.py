@@ -6,6 +6,8 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     check_resource_dependency,
+    resource_component,
+    resource_components,
     resource_use_affects,
     validate_contract,
 )
@@ -49,7 +51,12 @@ def _uses(plan):
                 if actual is not None and actual != movement["actual_on"]:
                     fail("dependency_conflict", "清偿实际日与同一真实资金实际日不符。")
                 actual = movement["actual_on"]
-            yield kind, item["source"], actual
+            use_kind = {
+                "settlements": "settlement",
+                "obligation_reclassifications": "reclassification",
+                "cost_consumptions": "cost",
+            }[name]
+            yield kind, item["source"], actual, resource_component(use_kind, item)
 
 
 class ResourceUses:
@@ -82,17 +89,21 @@ class ResourceUses:
             return
         consumer = plan["business_id"], plan["result_slot"]
         period = plan["accounting_period"]
-        for kind, ref, actual in _uses(plan):
+        for kind, ref, actual, component in _uses(plan):
             candidates = self._by_source.get((kind, ref["business_id"], ref["slot"]), ())
             if not any(
                 (edge["consumer_business_id"], edge["consumer_result_slot"]) == consumer
                 and edge["period_from"] <= period <= edge["period_to"]
                 and (edge.get("effective_on") is None or edge["effective_on"] == actual)
+                and component in resource_components(edge.get("resource_components"))
                 for edge in candidates
             ):
-                fail("invalid_input", "实际资源使用未被本槽的资源、月份及真实日期声明完整覆盖。")
+                fail(
+                    "invalid_input",
+                    "实际资源使用未被本槽的资源、分量、月份及真实日期声明完整覆盖。",
+                )
 
-    def require_ready(self, refs, kind, cutoff, excluded, staged):
+    def require_ready(self, refs, kind, cutoff, excluded, staged, components=None):
         if not self.declared or kind == "funds":
             fail("invalid_operation", "候选结果尚未齐备，不能读取不完整余额。")
         balance = {
@@ -103,6 +114,7 @@ class ResourceUses:
             "excluded_result_slots": [
                 {"business_id": key[0], "result_slot": key[1]} for key in sorted(excluded)
             ],
+            "resource_components": list(resource_components(components)),
         }
         if cutoff.on is not None:
             balance["effective_on"] = cutoff.on

@@ -1,11 +1,13 @@
 """One-submission overlays; formal identities remain the ledger's responsibility."""
 
 from collections import defaultdict
+from collections.abc import Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    DomainOwner,
     EvaluatedSlot,
     ResourceCutoff,
     validate_contract,
@@ -16,13 +18,22 @@ from ._resources import check_scope as check_resource_scope
 
 
 class DomainRegistry:
-    def __init__(self, domains):
+    def __init__(self, domains: Sequence[DomainOwner]):
         self._by_kind = {}
         for domain in domains:
+            if not callable(getattr(domain, "declare_relations", None)):
+                raise ContractError(
+                    "invalid_input",
+                    f"领域装配缺少直接关系声明端口declare_relations：{type(domain).__name__}。",
+                )
             for kind in domain.supported_kinds:
                 if kind in self._by_kind:
                     raise ContractError("invalid_input", f"业务类型重复装配：{kind}")
                 self._by_kind[kind] = domain
+
+    @property
+    def supported_kinds(self):
+        return tuple(sorted(self._by_kind))
 
     def owner(self, kind):
         owner = self._by_kind.get(kind)
@@ -91,12 +102,19 @@ class SubmissionContext:
         self._result_cache = {}
         self._stored_results = {}
         self._dependencies = ()
+        self._relations = ()
+        self._relation_roots = frozenset()
         self._candidate = None
         self._candidate_complete = False
         self._active_slots = frozenset()
 
-    def add_description(self, description):
-        self._dependencies += tuple(description["dependencies"])
+    def set_relations(self, business_ids, relations):
+        """Replace the complete direct directory before any final description."""
+        self._relation_roots = frozenset(business_ids)
+        self._relations = tuple(relations)
+
+    def reset_descriptions(self):
+        self._slots.clear()
 
     def begin_candidate(self, descriptions, correction_period):
         self._candidate_complete = False
@@ -242,10 +260,12 @@ class SubmissionContext:
         if producer_kind not in ("business", "object"):
             raise ContractError("invalid_input", "相关事实须指明业务或对象关系。")
         repo = self.read_context.repository("application")
-        ids = set(repo.related_ids(producer_kind, producer_ids, relation_kind)) - self._slots.keys()
+        ids = (
+            set(repo.related_ids(producer_kind, producer_ids, relation_kind)) - self._relation_roots
+        )
         ids.update(
             edge["consumer_business_id"]
-            for edge in self._dependencies
+            for edge in self._relations
             if edge["producer_kind"] == producer_kind
             and edge["producer_id"] in producer_ids
             and edge["relation_kind"] == relation_kind
@@ -283,7 +303,7 @@ class SubmissionContext:
     def resource_definitions(self, refs, kind):
         return self._candidate.resource_definitions(refs, kind)
 
-    def _check_resource_read(self, refs, kind, cutoff, single, multiple):
+    def _check_resource_read(self, refs, kind, cutoff, single, multiple, components):
         if not self._candidate_complete:
             if not isinstance(cutoff, ResourceCutoff):
                 raise ContractError("invalid_input", "资源读取须提供明确截止月份及可选实际日。")
@@ -293,7 +313,7 @@ class SubmissionContext:
             ):
                 raise ContractError("invalid_input", "排除范围须由明确业务及结果槽组成。")
             excluded = frozenset(([single] if single is not None else []) + list(multiple))
-            check_resource_scope(self, refs, kind, cutoff, excluded)
+            check_resource_scope(self, refs, kind, cutoff, excluded, components)
             for definition in self._candidate.resource_definitions(refs, kind):
                 if not any(
                     edge["read_mode"] == "result"
@@ -309,27 +329,47 @@ class SubmissionContext:
                     )
 
     def resource_states(
-        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
     ):
-        self._check_resource_read(refs, kind, cutoff, excluding_consumer, excluding_consumers)
+        self._check_resource_read(
+            refs, kind, cutoff, excluding_consumer, excluding_consumers, components
+        )
         return self._candidate.resource_states(
             refs,
             kind,
             cutoff,
             excluding_consumer=excluding_consumer,
             excluding_consumers=excluding_consumers,
+            components=components,
         )
 
     def resource_windows(
-        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
     ):
-        self._check_resource_read(refs, kind, cutoff, excluding_consumer, excluding_consumers)
+        self._check_resource_read(
+            refs, kind, cutoff, excluding_consumer, excluding_consumers, components
+        )
         return self._candidate.resource_windows(
             refs,
             kind,
             cutoff,
             excluding_consumer=excluding_consumer,
             excluding_consumers=excluding_consumers,
+            components=components,
         )
 
     def fund_movements(self, account_id, period_from, period_to):

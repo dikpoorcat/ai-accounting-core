@@ -228,7 +228,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "gross_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "vat": {
           "$ref": "#/$defs/VatTreatment"
@@ -240,7 +240,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "project_total_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -323,7 +323,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "project_total_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -503,7 +503,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "gross_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "credit_note_vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -525,6 +525,9 @@
             "$ref": "#/$defs/TaxReturnPart"
           },
           "minItems": 1
+        },
+        "project_total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -568,7 +571,10 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "amount_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -758,6 +764,9 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_total_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
         }
       },
@@ -5742,7 +5751,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "gross_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "vat": {
           "$ref": "#/$defs/PartialVatTreatment"
@@ -5754,7 +5763,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "project_total_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       }
     },
@@ -5819,7 +5828,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "project_total_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       }
     },
@@ -5944,7 +5953,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "gross_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "credit_note_vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -5966,6 +5975,9 @@
             "$ref": "#/$defs/PartialTaxReturnPart"
           },
           "minItems": 1
+        },
+        "project_total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       }
     },
@@ -5999,7 +6011,10 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "amount_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       }
     },
@@ -6151,6 +6166,9 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_total_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
         }
       }
@@ -10367,8 +10385,7 @@
           "items": {
             "$ref": "core.schema.json#/$defs/FactIssue"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         }
       },
       "required": [
@@ -10480,7 +10497,7 @@
           "additionalProperties": false,
           "properties": {
             "gross_fen": {
-              "$ref": "core.schema.json#/$defs/PositiveFen"
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
             },
             "revenue_fen": {
               "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -10580,7 +10597,7 @@
           "additionalProperties": false,
           "properties": {
             "amount_fen": {
-              "$ref": "core.schema.json#/$defs/PositiveFen"
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
             },
             "expense_or_income_class": {
               "type": "string",
@@ -10764,7 +10781,7 @@
           "additionalProperties": false,
           "properties": {
             "gross_fen": {
-              "$ref": "core.schema.json#/$defs/PositiveFen"
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
             },
             "revenue_reversed_fen": {
               "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -10994,7 +11011,7 @@
           "additionalProperties": false,
           "properties": {
             "amount_fen": {
-              "$ref": "core.schema.json#/$defs/PositiveFen"
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
             },
             "treatment": {
               "type": "string",
@@ -13297,6 +13314,9 @@
         },
         {
           "$ref": "#/$defs/AdoptedOpeningBalanceQuantity"
+        },
+        {
+          "$ref": "#/$defs/CooperationTradeQuantity"
         }
       ]
     },
@@ -13636,7 +13656,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "gross_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "vat": {
           "$ref": "#/$defs/AccountingVatTreatment"
@@ -13648,7 +13668,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "project_total_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -13731,7 +13751,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "project_total_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -13911,7 +13931,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "gross_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "credit_note_vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -13933,6 +13953,9 @@
             "$ref": "#/$defs/TaxReturnPart"
           },
           "minItems": 1
+        },
+        "project_total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -13976,7 +13999,10 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "amount_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -14166,6 +14192,9 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_total_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
         }
       },
@@ -20248,6 +20277,9 @@
             "$ref": "#/$defs/ResultSlotRef"
           },
           "uniqueItems": true
+        },
+        "resource_components": {
+          "$ref": "#/$defs/ResourceComponents"
         }
       },
       "required": [
@@ -20427,6 +20459,11 @@
                 {
                   "required": [
                     "excluded_result_slots"
+                  ]
+                },
+                {
+                  "required": [
+                    "resource_components"
                   ]
                 }
               ]
@@ -20858,6 +20895,9 @@
         },
         "project_amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "company_amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -20878,6 +20918,9 @@
         },
         "project_amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "company_amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": []
@@ -20964,6 +21007,9 @@
         },
         "project_amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "company_amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -20984,6 +21030,9 @@
         },
         "project_amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "company_amount_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": []
@@ -21746,27 +21795,33 @@
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "project_revenue_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "project_expense_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_revenue_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_expense_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "project_collected_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "project_paid_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_collected_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_paid_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "company_outside_settled_out_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "company_outside_settled_in_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
@@ -21800,7 +21855,9 @@
         "project_collected_fen",
         "project_paid_fen",
         "company_collected_fen",
-        "company_paid_fen"
+        "company_paid_fen",
+        "company_outside_settled_out_fen",
+        "company_outside_settled_in_fen"
       ]
     },
     "CooperationOpeningPosition": {
@@ -21835,27 +21892,33 @@
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "project_revenue_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "project_expense_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_revenue_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_expense_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "project_collected_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "project_paid_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_collected_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "company_paid_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "company_outside_settled_out_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "company_outside_settled_in_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
@@ -21876,7 +21939,9 @@
         "project_collected_fen",
         "project_paid_fen",
         "company_collected_fen",
-        "company_paid_fen"
+        "company_paid_fen",
+        "company_outside_settled_out_fen",
+        "company_outside_settled_in_fen"
       ]
     },
     "CooperationTargetContract": {
@@ -21903,19 +21968,7 @@
               "$ref": "core.schema.json#/$defs/PositiveFen"
             },
             "company_revenue_expense_share": {
-              "allOf": [
-                {
-                  "$ref": "core.schema.json#/$defs/Rate"
-                },
-                {
-                  "not": {
-                    "enum": [
-                      "0",
-                      "1"
-                    ]
-                  }
-                }
-              ]
+              "$ref": "#/$defs/CooperationShare"
             }
           },
           "required": [
@@ -22482,27 +22535,33 @@
               "$ref": "core.schema.json#/$defs/NonNegativeFen"
             },
             "project_revenue_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "project_expense_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "company_revenue_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "company_expense_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "project_collected_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "project_paid_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "company_collected_fen": {
-              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+              "$ref": "core.schema.json#/$defs/Fen"
             },
             "company_paid_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            },
+            "company_outside_settled_out_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "company_outside_settled_in_fen": {
               "$ref": "core.schema.json#/$defs/NonNegativeFen"
             }
           },
@@ -22521,7 +22580,9 @@
             "project_collected_fen",
             "project_paid_fen",
             "company_collected_fen",
-            "company_paid_fen"
+            "company_paid_fen",
+            "company_outside_settled_out_fen",
+            "company_outside_settled_in_fen"
           ]
         },
         "ending_trade_receivable_net_fen": {
@@ -22583,6 +22644,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -22652,6 +22716,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -22721,6 +22788,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -22790,6 +22860,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -22859,6 +22932,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -22928,6 +23004,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -22997,6 +23076,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -23066,6 +23148,9 @@
               },
               {
                 "$ref": "#/$defs/CooperationAdoptedCooperationCashSource"
+              },
+              {
+                "$ref": "#/$defs/CooperationTradeQuantity"
               }
             ]
           },
@@ -23145,15 +23230,18 @@
           "$ref": "#/$defs/CooperationShare"
         },
         "source_project_limit_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "source_company_net_limit_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "cumulative_project_before_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "cumulative_company_before_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "project_range_from_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
@@ -23166,7 +23254,8 @@
         "source_project_limit_fen",
         "source_company_net_limit_fen",
         "cumulative_project_before_fen",
-        "cumulative_company_before_fen"
+        "cumulative_company_before_fen",
+        "project_range_from_fen"
       ]
     },
     "CooperationShare": {
@@ -24472,6 +24561,65 @@
           }
         }
       ]
+    },
+    "CooperationTradeQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cooperation_trade"
+        },
+        "contract_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "side": {
+          "enum": [
+            "revenue",
+            "expense"
+          ]
+        },
+        "project_amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "company_net_amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "project_range_from_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        }
+      },
+      "required": [
+        "type",
+        "contract_id",
+        "source",
+        "side",
+        "project_amount_fen",
+        "company_net_amount_fen",
+        "project_range_from_fen"
+      ]
+    },
+    "ResourceComponent": {
+      "type": "string",
+      "enum": [
+        "money",
+        "agency",
+        "offset",
+        "transfer",
+        "reclassify_excess",
+        "cost"
+      ]
+    },
+    "ResourceComponents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ResourceComponent"
+      },
+      "minItems": 1,
+      "maxItems": 6,
+      "uniqueItems": true
     }
   }
 }

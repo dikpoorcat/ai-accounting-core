@@ -1,5 +1,5 @@
 {
-  "fingerprint": "10325cf61d31e035d97dacd9a65f366e79d4ba39df2d8e8d0d19b5fd6a1d10fb",
+  "fingerprint": "269c46a45bee37dbeb3e6578e191ae02c05e261270e8f68bdf9cdf80b8c02fc9",
   "kind": "company",
   "objects": [
     {
@@ -54,7 +54,7 @@
     {
       "name": "current_dependency",
       "owner": "application",
-      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
+      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
       "table": "current_dependency",
       "type": "table"
     },
@@ -362,7 +362,14 @@
     {
       "name": "adopted_result_closed_insert",
       "owner": "ledger",
-      "sql": "CREATE TRIGGER adopted_result_closed_insert BEFORE INSERT ON adopted_result\nWHEN EXISTS(SELECT 1 FROM period_close WHERE period=NEW.posting_period)\nBEGIN SELECT RAISE(ABORT,'closed_period'); END",
+      "sql": "CREATE TRIGGER adopted_result_closed_insert BEFORE INSERT ON adopted_result\nWHEN NEW.posting_period >= (SELECT start_period FROM company_profile WHERE singleton=1)\n AND EXISTS(SELECT 1 FROM period_close WHERE period>=NEW.posting_period)\nBEGIN SELECT RAISE(ABORT,'closed_period'); END",
+      "table": "adopted_result",
+      "type": "trigger"
+    },
+    {
+      "name": "adopted_result_closed_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER adopted_result_closed_update BEFORE UPDATE ON adopted_result\nWHEN OLD.state<>'frozen'\n AND NEW.posting_period >= (SELECT start_period FROM company_profile WHERE singleton=1)\n AND EXISTS(SELECT 1 FROM period_close WHERE period>=NEW.posting_period)\nBEGIN SELECT RAISE(ABORT,'closed_period'); END",
       "table": "adopted_result",
       "type": "trigger"
     },
@@ -806,6 +813,13 @@
       "sql": "CREATE TABLE read_scope_head (\nscope_key TEXT NOT NULL,\n component_key TEXT NOT NULL,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n ready_head INTEGER NOT NULL DEFAULT 0 CHECK(ready_head>=0 AND ready_head<=wanted_head),\n format_version INTEGER NOT NULL CHECK(format_version>=1),\n content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest)=64),\n state TEXT NOT NULL CHECK(state IN ('ready','preparing','failed')),\n error_code TEXT,\n PRIMARY KEY(scope_key,component_key)\n) STRICT",
       "table": "read_scope_head",
       "type": "table"
+    },
+    {
+      "name": "current_issue_period_idx",
+      "owner": "records",
+      "sql": "CREATE INDEX current_issue_period_idx ON current_issue(period,scope_key,issue_id)",
+      "table": "current_issue",
+      "type": "index"
     },
     {
       "name": "current_issue_scope_idx",

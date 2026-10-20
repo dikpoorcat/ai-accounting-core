@@ -6195,7 +6195,8 @@
               "source_project_limit_fen": "4000000",
               "source_company_net_limit_fen": "2000000",
               "cumulative_project_before_fen": "0",
-              "cumulative_company_before_fen": "0"
+              "cumulative_company_before_fen": "0",
+              "project_range_from_fen": "0"
             }
           ],
           "policies": [
@@ -6340,7 +6341,9 @@
             "project_collected_fen": "4000000",
             "project_paid_fen": "2800000",
             "company_collected_fen": "2000000",
-            "company_paid_fen": "1400000"
+            "company_paid_fen": "1400000",
+            "company_outside_settled_out_fen": "0",
+            "company_outside_settled_in_fen": "0"
           }
         },
         "basis": {
@@ -6366,7 +6369,9 @@
               "project_collected_fen": "0",
               "project_paid_fen": "800000",
               "company_collected_fen": "0",
-              "company_paid_fen": "400000"
+              "company_paid_fen": "400000",
+              "company_outside_settled_out_fen": "0",
+              "company_outside_settled_in_fen": "0"
             },
             "ending_trade_receivable_net_fen": "0",
             "ending_trade_payable_fen": "0",
@@ -6422,7 +6427,9 @@
                 "project_collected_fen": "4000000",
                 "project_paid_fen": "2000000",
                 "company_collected_fen": "2000000",
-                "company_paid_fen": "1000000"
+                "company_paid_fen": "1000000",
+                "company_outside_settled_out_fen": "0",
+                "company_outside_settled_in_fen": "0"
               }
             }
           ],

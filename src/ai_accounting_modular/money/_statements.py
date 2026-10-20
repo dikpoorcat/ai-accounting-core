@@ -79,20 +79,12 @@ def fund_sources(fact, fund_movements, context):
     for movement in expected:
         account_id = movement["funds_account_id"]
         rows = original_rows(context, account_id, fact["period"])
-        matching = []
-        for row_id in ids:
-            if row_id not in rows:
-                continue
-            row, owner = rows[row_id]
-            if (
-                row["actual_on"] != movement["actual_on"]
-                or row["direction"] != movement["direction"]
-            ):
-                fail("平台原行的实际日期、方向与真实资金不一致。")
-            matching.append(amount(row["amount_fen"]))
-            selected[row_id], used = owner, used | {row_id}
-        if not matching or total(matching) != amount(movement["amount_fen"]):
-            fail("平台真实资金必须消费本账户、同日、同方向、等额的完整原行。")
+        matched = validate_platform_movement(
+            movement, {key: pair[0] for key, pair in rows.items()}, ids
+        )
+        for row_id in matched:
+            selected[row_id] = rows[row_id][1]
+        used.update(matched)
         for other in _account_facts(context, account_id, fact["period"]):
             if other["business_id"] == fact["business_id"]:
                 continue
@@ -107,6 +99,24 @@ def fund_sources(fact, fund_movements, context):
             locations.append(dict(location))
     context.resolve_sources(list(dict.fromkeys(location["source_id"] for location in locations)))
     return tuple(locations)
+
+
+def validate_platform_movement(movement, rows, row_ids):
+    """Use identical original-row matching during adoption and closing."""
+    matched = [row_id for row_id in row_ids if row_id in rows]
+    if len(matched) != len(set(matched)):
+        fail("同一平台原行不能重复计入一笔真实资金。")
+    if any(
+        rows[row_id]["actual_on"] != movement["actual_on"]
+        or rows[row_id]["direction"] != movement["direction"]
+        for row_id in matched
+    ):
+        fail("平台原行的实际日期、方向与真实资金不一致。")
+    if not matched or total(amount(rows[key]["amount_fen"]) for key in matched) != amount(
+        movement["amount_fen"]
+    ):
+        fail("平台真实资金必须消费本账户、同日、同方向、等额的完整原行。")
+    return matched
 
 
 def reserve_internal(fact, context):

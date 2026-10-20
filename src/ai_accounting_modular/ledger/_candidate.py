@@ -14,6 +14,8 @@ from ai_accounting_modular.contracts.public import (
     ResourceWindow,
     content_digest,
     format_fen,
+    resource_component,
+    resource_components,
     validate_contract,
 )
 
@@ -114,7 +116,14 @@ class CandidateLedger:
         )
 
     def resource_states(
-        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
     ):
         windows = self.resource_windows(
             refs,
@@ -122,6 +131,7 @@ class CandidateLedger:
             cutoff,
             excluding_consumer=excluding_consumer,
             excluding_consumers=excluding_consumers,
+            components=components,
         )
         for window in windows:
             if window.uncertain_uses:
@@ -146,21 +156,29 @@ class CandidateLedger:
         return tuple(window.certain for window in windows)
 
     def resource_windows(
-        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
     ):
         self._unit.repository("ledger")
         if not isinstance(cutoff, ResourceCutoff):
             fail("invalid_input", "候选资源必须明确经济截止月及可选实际日。")
         validate_resource_refs(refs, kind)
         excluded = exclusions(excluding_consumer, excluding_consumers)
+        selected = resource_components(components)
         if not self._complete:
-            self._resource_uses.require_ready(refs, kind, cutoff, excluded, self._plans)
+            self._resource_uses.require_ready(refs, kind, cutoff, excluded, self._plans, selected)
         if self._time_version != self._repo.version:
             self._times = ResultTimes(self._repo)
             self._time_version = self._repo.version
         resources = self.resource_definitions(refs, kind)
         self._repo.prepare_states(resources)
-        return tuple(self._window(resource, cutoff, excluded) for resource in resources)
+        return tuple(self._window(resource, cutoff, excluded, selected) for resource in resources)
 
     def fund_movements(self, account_id, period_from, period_to):
         self._unit.repository("ledger")
@@ -192,7 +210,7 @@ class CandidateLedger:
                     return None
         return True
 
-    def _window(self, definition, cutoff, excluded):
+    def _window(self, definition, cutoff, excluded, selected):
         value = definition.value
         head = self._times.head(definition.source["result_id"])
         period = head["business_period"]
@@ -206,20 +224,23 @@ class CandidateLedger:
         totals, uses, uncertain = defaultdict(int), [], []
         for table, rows in self._repo.uses(definition):
             for row in rows:
+                component = resource_component(
+                    {
+                        "settlement": "settlement",
+                        "obligation_reclassification": "reclassification",
+                        "cost_consumption": "cost",
+                    }[table],
+                    row,
+                )
+                if component not in selected:
+                    continue
                 visibility = self._visibility(row, table, cutoff, excluded)
                 if visibility is False:
                     continue
                 if visibility is None:
                     uncertain.append(self._use(row, table))
                     continue
-                key = (
-                    row["method"]
-                    if table == "settlement"
-                    else row["mode"]
-                    if table == "obligation_reclassification"
-                    else "cost"
-                )
-                totals[key] = sum_amounts((totals[key], row["amount_fen"]))
+                totals[component] = sum_amounts((totals[component], row["amount_fen"]))
                 uses.append(self._use(row, table))
         amount = int(value["amount_fen"])
         remaining = (
@@ -247,6 +268,7 @@ class CandidateLedger:
                 totals["cost"],
                 remaining,
                 tuple(uses),
+                selected,
             ),
             tuple(uncertain),
         )

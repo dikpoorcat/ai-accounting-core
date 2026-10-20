@@ -21,7 +21,7 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 
 from ._common import assets_in, finalize_plan, reject
 from ._consumption import consumption, slot_for
-from ._description import DescriptionContext, activation_months, publications
+from ._description import DescriptionContext, activation_months, direct_dependencies, publications
 from ._description import dependencies as dependency_edges
 from ._facts import CALCULATORS, natural_key, role_issues, validate_fact
 from ._inputs import AssetInputs, batches, reference_key
@@ -39,6 +39,16 @@ def repository_factory() -> RepositoryFactory:
 
 class Assets:
     supported_kinds = tuple(CALCULATORS)
+
+    def declare_relations(self, changes, context: EvaluationContext):
+        return tuple(
+            edge
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+            for edge in direct_dependencies(
+                change.get("fact") or context.get_fact(change["business_id"])
+            )
+        )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         context = DescriptionContext(context, changes)

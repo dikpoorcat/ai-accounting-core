@@ -16,6 +16,7 @@ from ._common import (
     reject,
     sum_amounts,
 )
+from ._cooperation import COOPERATION_SETTLEMENTS, publish_return, returned_share
 from ._cumulative import adopt_position, inherit_cashflow, interval_shares, position, related
 from ._expenses import unknown_details
 from ._relationships import _resource
@@ -44,6 +45,7 @@ def expense_recovery(fact, context):
         reject("费用退回必须对应原费用的同一交易方。")
     values = original.target["values"]
     members = related(fact, context, data["expense_id"], {fact["kind"]}, "expense_id")
+    returned = returned_share(fact, context, original, members, total, side="expense")
     span = position(fact, members, "amount_fen", amount(values))
     plan = base_plan(fact, context, {**values, "amount_fen": data["amount_fen"]})
     adopt_source(plan, original)
@@ -70,11 +72,25 @@ def expense_recovery(fact, context):
                 )
     elif total and values["report_detail_state"] == "unestablished":
         unknown_details(plan, fact, source["expense_class"], original=original)
-    plan["basis"]["adopted_quantities"].append(quantity)
-    adopt_position(plan, ref, span)
+    if amount(values):
+        plan["basis"]["adopted_quantities"].append(quantity)
+    if total:
+        adopt_position(plan, ref, span)
     line(plan, "1221", debit=total, party=data["counterparty_id"], summary="确认真实退费追收")
     line(plan, EXPENSE_ACCOUNTS[source["expense_class"]], credit=total, summary="冲减原性质费用")
-    obligation(plan, "primary", data["counterparty_id"], "receivable", total, "1221", cashflow=None)
+    obligation(
+        plan,
+        "primary",
+        data["counterparty_id"],
+        "receivable",
+        total,
+        "1221",
+        cashflow=None,
+        methods=COOPERATION_SETTLEMENTS
+        if returned is not None
+        else ("money", "offset", "transfer"),
+    )
+    publish_return(plan, returned, side="expense", company=total)
     original_ob = _resource(context, {"business_id": data["expense_id"], "slot": "primary"})
     inherit_cashflow(original_ob.value, plan["obligations"][0], [span])
     return plan
@@ -87,8 +103,14 @@ def sale_return(fact, context):
         reject("销售退回必须对应原服务销售。", "invalid_input")
     if original.basis["input"]["customer_id"] != data["customer_id"]:
         reject("销售退回必须对应原销售的同一客户。")
-    original_sources = sources(original)
     members = related(fact, context, data["sale_id"], {fact["kind"]}, "sale_id")
+    gross, tax = amount(data, "gross_fen"), amount(data, "credit_note_vat_fen")
+    if tax > gross:
+        reject("红字VAT不能超过实际退回毛额。", "invalid_input")
+    returned = returned_share(fact, context, original, members, gross - tax, side="revenue")
+    if not gross:
+        return _zero_cooperation_return(fact, context, original, members, returned)
+    original_sources = sources(original)
     capacity = amount(original.target["values"], "gross_fen")
     assigned = return_ranges(members, capacity)
     all_parts = {}
@@ -107,7 +129,6 @@ def sale_return(fact, context):
         )
     validate_capacities(original_sources, all_parts.values())
     selected = all_parts[fact["business_id"]]
-    gross, tax = amount(data, "gross_fen"), amount(data, "credit_note_vat_fen")
     values = {
         "gross_fen": data["gross_fen"],
         "revenue_reversed_fen": str(gross - tax),
@@ -145,7 +166,61 @@ def sale_return(fact, context):
     line(plan, "222104", debit=tax - due_tax, summary="冲减尚未到税点的待转VAT")
     line(plan, "2203", credit=gross, party=data["customer_id"], summary="确认客户退款责任")
     obligation(
-        plan, "refund", data["customer_id"], "payable", gross, "2203", cashflow="customer_receipts"
+        plan,
+        "refund",
+        data["customer_id"],
+        "payable",
+        gross - tax if returned is not None else gross,
+        "2203",
+        cashflow="customer_receipts",
+        methods=COOPERATION_SETTLEMENTS
+        if returned is not None
+        else ("money", "offset", "transfer"),
     )
+    if returned is not None:
+        obligation(
+            plan,
+            "vat_refund",
+            data["customer_id"],
+            "payable",
+            tax,
+            "2203",
+            cashflow="customer_receipts",
+        )
+    publish_return(plan, returned, side="revenue", company=gross - tax, slot="refund")
     emit_negative_sales(plan, original_sources, selected)
+    return plan
+
+
+def _zero_cooperation_return(fact, context, original, members, returned):
+    if returned is None:
+        reject("普通销售退回必须有实际退回金额。", "invalid_input")
+    data = fact["data"]
+    if "tax_ranges" in data or "tax_returns" in data:
+        reject("零公司退回没有红字金额范围。", "invalid_input")
+    return_ranges(members, amount(original.target["values"], "gross_fen"))
+    plan = base_plan(
+        fact,
+        context,
+        {
+            "gross_fen": "0",
+            "revenue_reversed_fen": "0",
+            "vat_reversed_fen": "0",
+        },
+    )
+    adopt_source(plan, original)
+    obligation(
+        plan,
+        "refund",
+        data["customer_id"],
+        "payable",
+        0,
+        "2203",
+        methods=COOPERATION_SETTLEMENTS,
+        cashflow="customer_receipts",
+    )
+    obligation(
+        plan, "vat_refund", data["customer_id"], "payable", 0, "2203", cashflow="customer_receipts"
+    )
+    publish_return(plan, returned, side="revenue", company=0, slot="refund")
     return plan

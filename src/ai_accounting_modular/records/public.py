@@ -21,25 +21,33 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _changes, _documents, _sources
+from . import _backup, _changes, _documents, _periods, _sources
 from ._repository import RecordsRepository
 from ._types import (
+    BackupMaterials,
     DocumentSnapshot,
+    PeriodIssuesPage,
+    PeriodNotesPage,
     PreparedDocuments,
     RecordsChange,
     RecordsContext,
     RecordsPlan,
     ShardTarget,
+    SourceStatus,
 )
 
 __all__ = [
+    "BackupMaterials",
     "DocumentSnapshot",
+    "PeriodIssuesPage",
+    "PeriodNotesPage",
     "PreparedDocuments",
     "Records",
     "RecordsChange",
     "RecordsContext",
     "RecordsPlan",
     "ShardTarget",
+    "SourceStatus",
     "create_records",
     "repository_factory",
 ]
@@ -117,6 +125,21 @@ class Records:
             {"source_id": source["source_id"]} for source in self.resolve_sources(ids, read_context)
         ]
 
+    def source_status(
+        self, ids: Sequence[str], read_context: ReadContext
+    ) -> tuple[SourceStatus, ...]:
+        wanted = _changes.source_ids(ids)
+        sources = {
+            source["source_id"]: source for source in self.resolve_sources(wanted, read_context)
+        }
+        root = self._root(read_context)
+        return tuple(
+            _sources.source_status(root, sources[source_id])
+            if source_id in sources
+            else SourceStatus(source_id, "not_found", None)
+            for source_id in wanted
+        )
+
     @contextmanager
     def lease_source(self, source_id: str, read_context: ReadContext):
         sources = self.resolve_sources((source_id,), read_context)
@@ -160,6 +183,17 @@ class Records:
         if row is not None and row["content_digest"] != content_digest(result["issues"]):
             raise ContractError("storage_corrupt", "当前待办范围与完整集合的摘要不一致。")
         return validate_contract("core.schema.json", "IssueScope", result)
+
+    def period_notes(
+        self, period_from, period_to, read_context: ReadContext, *, limit=500, cursor=None
+    ) -> PeriodNotesPage:
+        return _periods.notes(period_from, period_to, read_context, limit=limit, cursor=cursor)
+
+    def period_issues(
+        self, period_from, period_to, read_context: ReadContext, *, limit=500, cursor=None
+    ) -> PeriodIssuesPage:
+        """All scopes' range/no-period issues, with full scope versions, paged."""
+        return _periods.issues(period_from, period_to, read_context, limit=limit, cursor=cursor)
 
     def invalidate_notes(
         self, note_basis_heads, command_id: str, uow: UnitOfWork
@@ -260,6 +294,14 @@ class Records:
         else:
             self._cleanup_parts(root, current, publication)
 
+    def _release_paths(self, root, publication, paths):
+        with publication.lock:
+            for path in paths:
+                publication.leases[path] -= 1
+                if not publication.leases[path]:
+                    del publication.leases[path]
+            self._cleanup_current_parts(root, publication)
+
     def record_document_error(
         self, keys, code: str, message: str, uow: UnitOfWork, *, expected_heads: dict[str, int]
     ) -> None:
@@ -305,12 +347,55 @@ class Records:
             _documents.verify_manifest(root, manifest)
             yield loads_json(canonical_json(manifest))
         finally:
-            with publication.lock:
-                for path in paths:
-                    publication.leases[path] -= 1
-                    if not publication.leases[path]:
-                        del publication.leases[path]
-                self._cleanup_current_parts(root, publication)
+            self._release_paths(root, publication, paths)
+
+    @contextmanager
+    def capture_backup_materials(self, read_context: ReadContext, capture_id: str):
+        """Pin this snapshot's originals/parts and copy its two mutable documents."""
+        root = self._root(read_context)
+        publication = _publication(root)
+        with publication.lock:
+            prepared = _backup.prepare(root, read_context, capture_id)
+            publication.leases.update(prepared.paths)
+        try:
+            _documents.verify_manifest(root, loads_json(prepared.manifest_json))
+            _backup.check_inputs(
+                root,
+                prepared.materials.capture_root,
+                tuple(
+                    item for item in prepared.materials.inputs if item["source_root"] == "company"
+                ),
+            )
+            _backup.create(root, read_context, prepared)
+            yield prepared.materials
+        finally:
+            self._release_paths(root, publication, prepared.paths)
+
+    @contextmanager
+    def lease_backup_inputs(self, plan, read_context: ReadContext):
+        """Restore exact saved physical pins, without selecting today's document set."""
+        root = self._root(read_context)
+        publication = _publication(root)
+        with publication.lock:
+            capture_root, paths, inputs = _backup.restore(root, read_context, plan)
+            publication.leases.update(paths)
+        try:
+            _backup.check_inputs(root, capture_root, inputs)
+            yield
+        finally:
+            self._release_paths(root, publication, paths)
+
+    def backup_capture_ids(self, read_context: ReadContext) -> tuple[str, ...]:
+        """List only strictly identified temporary captures; files decides acceptance."""
+        return _backup.capture_ids(self._root(read_context), read_context)
+
+    def discard_backup_capture(
+        self, capture_id: str, read_context: ReadContext, *, keep_capture: bool = False
+    ) -> bool:
+        """Called after files confirms nonacceptance or releases a completed capture."""
+        return _backup.discard(
+            self._root(read_context), read_context, capture_id, keep_capture=keep_capture
+        )
 
 
 def create_records(root_for: Callable[[ReadContext], Path]) -> Records:

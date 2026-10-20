@@ -56,6 +56,7 @@ def dependencies(fact, context):
                 **common,
                 "producer_public_slot": slot,
                 "read_mode": "use",
+                "resource_components": ["offset", "transfer"],
                 "relation_kind": "settlement",
                 "period_from": cutoff.period,
                 "period_to": cutoff.period,

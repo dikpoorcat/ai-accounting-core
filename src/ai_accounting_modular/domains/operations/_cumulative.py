@@ -71,7 +71,10 @@ def inherit_cashflow(source, target, spans):
         total = sum_amounts(row[index] for row in shares)
         if total:
             positive[item["category"]] = total
-    target["cashflow_weights"] = classification_weights(positive)
+    if positive:
+        target["cashflow_weights"] = classification_weights(positive)
+    elif len(parts) == 1:
+        target["cashflow_weights"] = [{"category": parts[0]["category"], "weight": "1"}]
 
 
 def classification_weights(components):

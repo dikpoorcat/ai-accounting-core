@@ -5,6 +5,7 @@ import json
 from ai_accounting_modular.contracts.public import (
     ContractError,
     canonical_json,
+    resource_components,
     resource_use_affects,
 )
 
@@ -28,6 +29,36 @@ class ApplicationRepository:
         return self._session.fetchone("SELECT MAX(period) FROM business_head WHERE state='active'")[
             0
         ]
+
+    def search(self, query):
+        conditions = ["h.family=?", "COALESCE(h.period,h.archive_month) BETWEEN ? AND ?"]
+        parameters = [query["family"], query["period_from"], query["period_to"]]
+        status = query.get("status", "active")
+        if status != "all":
+            conditions.append("h.state=?")
+            parameters.append(status)
+        base = " AND ".join(conditions)
+        total = self._session.fetchone(
+            "SELECT COUNT(*) FROM business_head h WHERE " + base, tuple(parameters)
+        )[0]
+        if query.get("kind"):
+            conditions.append("h.kind=?")
+            parameters.append(query["kind"])
+        if query.get("object_id"):
+            conditions.append(
+                "h.state='active' AND EXISTS(SELECT 1 FROM current_dependency d "
+                "WHERE d.consumer_business_id=h.business_id AND d.producer_kind='object' "
+                "AND d.producer_id=?)"
+            )
+            parameters.append(query["object_id"])
+        rows = self._session.fetchall(
+            "SELECT h.business_id,h.kind,h.seq,h.state,h.current_digest,"
+            "COALESCE(h.period,h.archive_month) AS search_period FROM business_head h WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY h.business_id",
+            tuple(parameters),
+        )
+        return total, [dict(row) for row in rows]
 
     def working_period_to(self):
         row = self._session.fetchone(
@@ -61,6 +92,26 @@ class ApplicationRepository:
                 (after, before),
             )
         )
+
+    def horizon_inputs(self, before, after):
+        pending, result = set(self.calendar_observers(before, after)), {}
+        while pending:
+            batch = sorted(pending - result.keys())
+            if not batch:
+                break
+            heads = self.heads(batch)
+            if set(heads) != set(batch):
+                raise ContractError("storage_corrupt", "工作月份依赖缺少明确业务身份。")
+            result.update(heads)
+            pending = {
+                edge["producer_id"]
+                for edge in self.dependencies(batch)
+                if edge["producer_kind"] == "business"
+            }
+        return [
+            {key: head[key] for key in ("business_id", "kind", "seq", "state", "current_digest")}
+            for _, head in sorted(result.items())
+        ]
 
     def active_heads(self, family, period):
         return tuple(
@@ -284,7 +335,10 @@ class ApplicationRepository:
                     "period_to",
                     "effective_on",
                 )
-            ) + (canonical_json(edge.get("excluded_result_slots", [])),)
+            ) + (
+                canonical_json(edge.get("excluded_result_slots", [])),
+                canonical_json(list(resource_components(edge.get("resource_components")))),
+            )
 
         if {key(edge) for edge in self.dependencies(business_ids)} == {
             key(edge) for edge in dependencies
@@ -297,7 +351,7 @@ class ApplicationRepository:
         )
         for edge in dependencies:
             self._session.execute(
-                "INSERT INTO current_dependency VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO current_dependency VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 tuple(
                     edge.get(key)
                     for key in (
@@ -313,7 +367,12 @@ class ApplicationRepository:
                         "effective_on",
                     )
                 )
-                + (canonical_json(edge.get("excluded_result_slots", [])),),
+                + (
+                    canonical_json(edge.get("excluded_result_slots", [])),
+                    canonical_json(edge["resource_components"])
+                    if "resource_components" in edge
+                    else None,
+                ),
             )
         return True
 
@@ -321,6 +380,9 @@ class ApplicationRepository:
 def _dependency(row):
     value = dict(row)
     excluded = value.pop("excluded_result_slots_json")
+    components = value.pop("resource_components_json")
+    if components is not None:
+        value["resource_components"] = list(resource_components(json.loads(components)))
     if excluded is not None and json.loads(excluded):
         value["excluded_result_slots"] = json.loads(excluded)
     return {key: item for key, item in value.items() if item is not None}

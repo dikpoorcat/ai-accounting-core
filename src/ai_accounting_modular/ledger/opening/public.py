@@ -36,6 +36,14 @@ class Opening:
     def __init__(self, *, asset_accounting: OpeningAssetAccounting | None = None):
         self._asset_accounting = AssetAccounting(asset_accounting)
 
+    def declare_relations(self, changes, context: EvaluationContext):
+        return tuple(
+            edge
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+            for edge in dependencies(change.get("fact") or context.get_fact(change["business_id"]))
+        )
+
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         businesses, edges, published, issues = [], [], [], []
         for change in changes:

@@ -160,6 +160,16 @@ class Owner:
         self.exported.extend(ids)
         return tuple(deepcopy(self.facts[key]) for key in ids if key in self.facts)
 
+    def declare_relations(self, changes, context):
+        return tuple(
+            deepcopy(edge)
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+            for edge in self.configurations.get(change["business_id"], {}).get("dependencies", ())
+            if edge["producer_kind"] in {"business", "object"}
+            and edge["read_mode"] in {"fact", "result"}
+        )
+
     def describe_change(self, changes, context):
         businesses, dependencies, publications = [], [], []
         for change in changes:

@@ -1013,7 +1013,7 @@ def test_later_overpayment_can_follow_an_already_recovered_earlier_overpayment(s
     later_claim = recovery(ids, original, 20, period="2026-02")
     later_refund = movement(ids, later_claim, "recovery", 20, direction="inflow", day="2026-02-06")
     result = app.accounting_apply(command(company, later_refund, later_claim, later_paid))
-    assert result["completion"] == "complete", result
+    assert result["completion"] == "complete", result.get("message", result)
     with app.storage.read_unit(company) as read:
         states = app.ledger.resolve(
             [

@@ -81,7 +81,14 @@ class Candidate(PublicationCandidate):
     """Opaque window answers verify scheduling and scope without duplicating balances."""
 
     def resource_windows(
-        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
     ):
         self.reads.append(
             (
@@ -183,6 +190,63 @@ def query(consumer, producer=90, *, slot="main", cutoff=None, excluded=(), sourc
         "single": (identity(consumer), slot),
         "multiple": tuple((identity(number), result_slot) for number, result_slot in excluded),
     }
+
+
+def test_component_notifications_survive_storage_and_ignore_disjoint_uses(system):
+    money, offset, full = balance(21), balance(22), balance(23)
+    money.pop("excluded_result_slots")
+    money["resource_components"] = ["money", "agency"]
+    offset["resource_components"] = ["offset"]
+    seed(system, [fact(number) for number in range(20, 24)], dependencies=[money, offset, full])
+    store, company = system
+    with store.read_unit(company) as read:
+        repo = read.repository("application")
+        assert repo.dependencies([identity(21)]) == (
+            {**money, "resource_components": ["agency", "money"]},
+        )
+        used = resource(20)
+        used["resource_components"] = ["money"]
+        assert repo.resource_observers([used]) == (identity(21), identity(23))
+        used["resource_components"] = ["offset"]
+        assert repo.resource_observers([used]) == (identity(22), identity(23))
+        used.pop("resource_components")
+        assert repo.resource_observers([used]) == (identity(21), identity(22), identity(23))
+
+
+def test_balance_read_cannot_use_components_outside_its_declared_selection(system):
+    watched = balance(61, excluded=((61, "main"),), end="2026-03")
+    watched["resource_components"] = ["money"]
+    owner = Owner(
+        [],
+        {
+            identity(61): {
+                "dependencies": [direct(61, 90), watched],
+                "windows": {"main": [query(61)]},
+            }
+        },
+    )
+    with pytest.raises(ContractError, match="未声明覆盖"):
+        run(system, owner, [create(fact(61)), create(fact(90))])
+
+
+@pytest.mark.parametrize(
+    "reverse,full", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_duplicate_balance_declarations_union_components_without_order_dependence(
+    system, reverse, full
+):
+    first = balance(61, excluded=((61, "main"),))
+    second = deepcopy(first)
+    first["resource_components"] = ["money"]
+    if not full:
+        second["resource_components"] = ["agency"]
+    edges = [first, second]
+    if reverse:
+        edges.reverse()
+    owner = Owner([], {identity(61): {"dependencies": edges}})
+    descriptions = run(system, owner, [create(fact(61))], evaluate_plans=False)
+    result = descriptions[0][1]["dependencies"][0]
+    assert result.get("resource_components") == (None if full else ["agency", "money"])
 
 
 def test_recalculated_user_notifies_balance_even_when_user_fact_and_edges_are_unchanged(system):

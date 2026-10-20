@@ -14,6 +14,8 @@ from ai_accounting_modular.domains.operations.public import create_operations
 from ai_accounting_modular.domains.operations.public import (
     repository_factory as operations_repository,
 )
+from ai_accounting_modular.domains.taxes.public import create_taxes
+from ai_accounting_modular.domains.taxes.public import repository_factory as taxes_repository
 from ai_accounting_modular.identity.public import create_identity
 from ai_accounting_modular.identity.public import repository_factory as identity_repository
 from ai_accounting_modular.ledger.public import create_ledger
@@ -219,7 +221,7 @@ def result(app, company_id, item):
     return get(app, company_id, item["business_id"])["businesses"][0]["results"][0]
 
 
-def assemble(tmp_path, *, investment=None):
+def assemble(tmp_path, *, investment=None, taxes=False):
     catalog = tmp_path / "catalog.sqlite3"
     create_catalog(catalog, OwnerProfile(str(uuid4()), "合成负责人", "synthetic-hash"))
     storage = Storage(
@@ -232,6 +234,7 @@ def assemble(tmp_path, *, investment=None):
             financing_repository(),
             money_repository(),
             operations_repository(),
+            *([taxes_repository()] if taxes else []),
         ],
     )
     company_id = str(uuid4())
@@ -252,7 +255,13 @@ def assemble(tmp_path, *, investment=None):
         identity=identity,
         ledger=ledger,
         records=create_records(root_for=lambda read: storage.company_metadata(read).company_root),
-        domains=[create_financing(), investment or create_investment(), money, create_operations()],
+        domains=[
+            create_financing(),
+            investment or create_investment(),
+            money,
+            create_operations(),
+            *([create_taxes()] if taxes else []),
+        ],
         money=money,
     )
     return app, company_id

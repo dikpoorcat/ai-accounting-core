@@ -98,18 +98,28 @@ def _opening(fact, context, statement):
 
 def validate_reconciliation(fact, context):
     statement = statement_for(fact, context)
-    data, period = statement["data"], fact["period"]
-    account_id = data["funds_account_id"]
     expected_opening, _ = _opening(fact, context, statement)
+    validate_complete_statement(
+        statement,
+        context.fund_movements(
+            statement["data"]["funds_account_id"], fact["period"], fact["period"]
+        ),
+        fact["data"]["matches"],
+        expected_opening,
+    )
+
+
+def validate_complete_statement(statement, definitions, matches, expected_opening):
+    """One complete matching rule for adoption and the later closing check."""
+    data = statement["data"]
     if expected_opening != amount(data["opening_fen"]):
         fail("银行期初与有据账面起点或上月已核对期末不一致。")
-    definitions = context.fund_movements(account_id, period, period)
     funds = {item.value["movement_id"]: item.value for item in definitions}
     if len(funds) != len(definitions):
         fail("本账户完整正式资金集合有重复实际发生身份。")
     rows = {row["row_id"]: row for row in data["rows"]}
     seen_rows, seen_funds = set(), set()
-    for match in fact["data"]["matches"]:
+    for match in matches:
         row_ids, movement_ids = match["statement_row_ids"], match["fund_movement_ids"]
         if seen_rows.intersection(row_ids) or seen_funds.intersection(movement_ids):
             fail("银行核对的不同匹配组不能重复使用原行或真实资金。")

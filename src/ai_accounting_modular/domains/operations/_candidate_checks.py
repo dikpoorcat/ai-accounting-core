@@ -8,7 +8,8 @@ from ._overpayment_pool import claims_for, pool_ranges
 
 def _resource_day_issues(window, context):
     need_excess = window.certain.remaining_fen <= 0 or (
-        window.excess_reclassified_max_fen > window.certain.money_settled_fen
+        window.excess_reclassified_max_fen
+        > sum_amounts((window.certain.money_settled_fen, window.certain.agency_settled_fen))
     )
     need_consumption = window.certain.remaining_fen > 0
     causes = {}
@@ -51,22 +52,22 @@ def _validate_overpayment_pool(fact, postings, context):
         if ranges != expected_ranges or sum_amounts(end - start for start, end in ranges) != amount(
             claim["data"]
         ):
-            reject("追偿必须保全本笔实际采用的全部互不重叠现金区间。")
+            reject("追偿必须保全本笔实际采用的全部互不重叠清偿区间。")
         occupied.extend(ranges)
         cutoff = ResourceCutoff(claim["period"], claim.get("effective_on"))
         (window,) = context.resource_windows([source], "obligation", cutoff)
-        paid = window.certain.money_settled_fen
-        if context.actual_settled_fen(source, cutoff) != paid:
-            reject("追偿采用的真实付款累计与正式资金清偿结果不一致。")
+        paid = sum_amounts((window.certain.money_settled_fen, window.certain.agency_settled_fen))
+        if context.actual_settled_fen(source, cutoff) != window.certain.money_settled_fen:
+            reject("追偿采用的真实现金累计与正式资金清偿结果不一致。")
         if any(start < 0 or end <= start or end > paid for start, end in ranges):
-            reject("追偿区间不能借用其经济截止后才发生的现金。")
+            reject("追偿区间不能借用其经济截止后才发生的实际清偿。")
         if window.remaining_min_fen > 0 or window.certain.excess_reclassified_fen > paid:
             reject("截至该笔追偿时，实际超付不足以支持已经成立的追偿责任。")
         if window.remaining_max_fen > 0 or window.excess_reclassified_max_fen > paid:
             ambiguous.append(window)
     ordered = sorted(occupied)
     if any(right[0] < left[1] for left, right in zip(ordered, ordered[1:], strict=False)):
-        reject("同一原债的不同追偿不能重复占用实际现金区间。")
+        reject("同一原债的不同追偿不能重复占用实际清偿区间。")
     if ambiguous:
         causes = {}
         for window in ambiguous:

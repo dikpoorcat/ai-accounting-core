@@ -1,5 +1,7 @@
 """Declare complete monthly responsibilities and exact asset dependency edges."""
 
+from ai_accounting_modular.contracts.public import canonical_json
+
 from ._cards import activated_cards, consumption_end, related
 from ._common import add_months, assets_in, month_at, month_number
 from ._consumption import slot_for
@@ -36,7 +38,7 @@ def _edge(
     relation="identity",
     **scope,
 ):
-    return {
+    result = {
         "consumer_business_id": fact["business_id"],
         "consumer_result_slot": slot,
         "producer_kind": producer_kind,
@@ -46,6 +48,9 @@ def _edge(
         "relation_kind": relation,
         **scope,
     }
+    if mode == "use":
+        result["resource_components"] = ["cost"]
+    return result
 
 
 def activation_months(fact, context):
@@ -141,11 +146,30 @@ def monthly_dependencies(fact, slots):
     return edges
 
 
-def dependencies(fact, slots, context):
+def direct_dependencies(fact):
     edges = [
         _edge(fact, "object", object_id)
         for object_id in dict.fromkeys(role[1] for role in roles(fact))
     ]
+    edges.extend(
+        _edge(fact, "business", item["source"]["business_id"], mode="result", relation="cost")
+        for item in fact["data"].get("sources", ())
+    )
+    if fact["kind"] == "assets.disposal" and fact["data"]["type"] == "sale":
+        edges.append(
+            _edge(
+                fact,
+                "business",
+                fact["data"]["used_asset_vat_policy_id"],
+                mode="result",
+                relation="policy",
+            )
+        )
+    return edges
+
+
+def dependencies(fact, slots, context):
+    edges = direct_dependencies(fact)
     edges.extend(source_scopes(fact, context))
     data, kind = fact["data"], fact["kind"]
     if kind in {"assets.acquisition", "assets.activation", "assets.disposal"}:
@@ -232,9 +256,6 @@ def dependencies(fact, slots, context):
                                 )
     for item in data.get("sources", ()):
         edges.append(
-            _edge(fact, "business", item["source"]["business_id"], mode="result", relation="cost")
-        )
-        edges.append(
             _edge(
                 fact,
                 "business",
@@ -244,12 +265,6 @@ def dependencies(fact, slots, context):
                 relation="cost",
                 period_from=fact["period"],
                 period_to=fact["period"],
-            )
-        )
-    if kind == "assets.disposal" and data["type"] == "sale":
-        edges.append(
-            _edge(
-                fact, "business", data["used_asset_vat_policy_id"], mode="result", relation="policy"
             )
         )
     if kind == "assets.activation":
@@ -267,5 +282,5 @@ def dependencies(fact, slots, context):
             )
         )
         edges.extend(monthly_dependencies(fact, slots))
-    unique = {tuple(sorted(edge.items())): edge for edge in edges}
+    unique = {canonical_json(edge): edge for edge in edges}
     return list(unique.values())

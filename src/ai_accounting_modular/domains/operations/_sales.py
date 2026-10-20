@@ -3,17 +3,19 @@
 from ai_accounting_modular.contracts.public import ContractError, format_fen
 
 from ._common import amount, base_plan, issue, line, obligation, reject
+from ._cooperation import COOPERATION_SETTLEMENTS, original_share, publish
 from ._current_tax import adjustments, adopt_adjustments, apply_current_sales
 from ._tax_lifecycle import adopt_details, resolution, tax_details, totals
-from ._vat import _check_tax_day, _policy_reference
+from ._vat import _adopt_policy, _check_tax_day, _policy, _policy_reference
 
 
 def service_sale(fact, context):
     data, gross = fact["data"], amount(fact["data"], "gross_fen")
-    if "cooperation_id" in data:
-        reject("合作按份销售须接入合同份额核验后方可办理。", "unsupported_business")
+    if not gross:
+        return _zero_cooperation_sale(fact, context)
     resolved, source, details = tax_details(fact, context, data["vat"], data["tax_point"], gross)
     net, tax, current_net, current_tax = totals(details, fact["period"])
+    agreement = original_share(fact, context, net, side="revenue")
     changes, observed = adjustments(fact, context, resolved, details, gross)
     for change in changes.values():
         current_net -= sum(end - start for start, end in change["ranges"]) - change["tax"]
@@ -41,11 +43,70 @@ def service_sale(fact, context):
         "primary",
         data["customer_id"],
         "receivable",
-        gross,
+        net if agreement is not None else gross,
         "1122",
         cashflow="customer_receipts",
+        methods=COOPERATION_SETTLEMENTS
+        if agreement is not None
+        else ("money", "offset", "transfer"),
     )
+    if agreement is not None:
+        obligation(
+            plan,
+            "vat",
+            data["customer_id"],
+            "receivable",
+            tax,
+            "1122",
+            cashflow="customer_receipts",
+        )
+        publish(
+            plan, agreement, side="revenue", project=amount(data, "project_total_fen"), company=net
+        )
     apply_current_sales(plan, details, changes)
+    return plan
+
+
+def _zero_cooperation_sale(fact, context):
+    data = fact["data"]
+    agreement = original_share(fact, context, 0, side="revenue")
+    if agreement is None:
+        reject("普通服务销售必须有实际销售金额。", "invalid_input")
+    point = data["tax_point"]
+    resolved, source = resolution(fact, context, point, 0)
+    policy = (
+        _policy(fact, context, data["vat"], point)
+        if point["type"] == "explicit"
+        else (_policy_reference(fact, context, data["vat"]))
+    )
+    plan = base_plan(
+        fact,
+        context,
+        {
+            "gross_fen": "0",
+            "revenue_fen": "0",
+            "vat_fen": "0",
+            "current_tax_net_fen": "0",
+            "current_tax_vat_fen": "0",
+            "deferred_vat_fen": "0",
+        },
+    )
+    _adopt_policy(plan, policy, context)
+    adopt_details(plan, context, resolved, source, [])
+    obligation(
+        plan,
+        "primary",
+        data["customer_id"],
+        "receivable",
+        0,
+        "1122",
+        methods=COOPERATION_SETTLEMENTS,
+        cashflow="customer_receipts",
+    )
+    obligation(
+        plan, "vat", data["customer_id"], "receivable", 0, "1122", cashflow="customer_receipts"
+    )
+    publish(plan, agreement, side="revenue", project=amount(data, "project_total_fen"), company=0)
     return plan
 
 

@@ -22,7 +22,9 @@ from ._common import issue
 from ._description import DescriptionContext
 from ._expenses import check_expense, expense
 from ._income import other_income
+from ._overpayment_pool import balance_dependency
 from ._publications import publications
+from ._relations import direct_relations, reference_edge, references, resource_uses
 from ._relationships import deposit, overpayment, pass_through, pass_through_return, reimbursement
 from ._repository import OperationsRepository
 from ._returns import expense_recovery, sale_return
@@ -63,68 +65,6 @@ def _main_object(fact, posting=None):
     )
 
 
-def _references(fact, context):
-    data, kind = fact["data"], fact["kind"]
-    if kind in {"operations.advance_fulfillment", "operations.advance_refund"}:
-        refs = [{"business_id": data["advance_id"], "slot": "main"}]
-        if kind == "operations.advance_fulfillment":
-            original = context.get_fact(data["advance_id"])
-            vat = data.get("vat") or (original or {}).get("data", {}).get("vat")
-            if vat:
-                refs.append({"business_id": vat["policy_id"], "slot": "main"})
-        return refs
-    if kind == "operations.expense_recovery":
-        return [{"business_id": data["expense_id"], "slot": "main"}]
-    if kind == "operations.sale_return":
-        return [{"business_id": data["sale_id"], "slot": "main"}]
-    if kind == "operations.overpayment":
-        return [data["source"]]
-    if kind == "operations.pass_through_return":
-        return [{"business_id": data["pass_through_id"], "slot": "main"}]
-    if kind == "operations.reimbursement":
-        return [x["source"] for x in data.get("allocations", data.get("sources", ()))]
-    if "vat" in data:
-        refs = [{"business_id": data["vat"]["policy_id"], "slot": "main"}]
-        if data.get("tax_point", {}).get("type") == "derived":
-            refs.append({"business_id": data["tax_point"]["tax_point_id"], "slot": "main"})
-        return refs
-    return []
-
-
-def _resource_uses(fact):
-    kind, data = fact["kind"], fact["data"]
-    if kind == "operations.reimbursement":
-        refs = [item["source"] for item in data.get("allocations", data.get("sources", ()))]
-    elif kind == "operations.overpayment":
-        refs = [data["source"]]
-    elif kind == "operations.pass_through_return":
-        refs = [{"business_id": data["pass_through_id"], "slot": "remittance"}]
-    elif kind in {"operations.advance_fulfillment", "operations.advance_refund"}:
-        refs = [{"business_id": data["advance_id"], "slot": "advance"}]
-    else:
-        return []
-    result = []
-    for ref in refs:
-        edge = {
-            "consumer_business_id": fact["business_id"],
-            "consumer_result_slot": "main",
-            "producer_kind": "business",
-            "producer_id": ref["business_id"],
-            "producer_public_slot": ref["slot"],
-            "read_mode": "use",
-            "relation_kind": "settlement",
-            "period_from": fact["period"],
-            "period_to": fact["period"],
-        }
-        actual = kind in {"operations.overpayment", "operations.pass_through_return"} or (
-            kind == "operations.reimbursement" and data["type"] == "personal_payment"
-        )
-        if actual and "effective_on" in fact:
-            edge["effective_on"] = fact["effective_on"]
-        result.append(edge)
-    return result
-
-
 def _validate_fact(fact):
     if (
         fact.get("kind") == "operations.reimbursement"
@@ -143,6 +83,17 @@ def _validate_fact(fact):
 
 class Operations:
     supported_kinds = tuple(_CALCULATORS)
+
+    def declare_relations(self, changes, context):
+        context = DescriptionContext(context, changes)
+        return tuple(
+            edge
+            for change in changes
+            if change["op"] not in {"withdraw", "handoff_out"}
+            for fact in (change.get("fact") or context.get_fact(change["business_id"]),)
+            if fact is not None
+            for edge in direct_relations(fact, context)
+        )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         context = DescriptionContext(context, changes)
@@ -179,21 +130,12 @@ class Operations:
             responsibilities.append(responsibility)
             published.extend(publications(fact, slots))
             dependencies.extend(tax_dependencies(fact, context, slots))
-            dependencies.extend(_resource_uses(fact))
+            dependencies.extend(resource_uses(fact))
+            if fact["kind"] == "operations.overpayment":
+                dependencies.append(balance_dependency(fact))
             roles = object_roles(fact)
             issues.extend(role_issues(fact, context, roles))
-            for object_id in dict.fromkeys(ref.object_id for ref in roles):
-                dependencies.append(
-                    {
-                        "consumer_business_id": business_id,
-                        "consumer_result_slot": "main",
-                        "producer_kind": "object",
-                        "producer_id": object_id,
-                        "producer_public_slot": "main",
-                        "read_mode": "fact",
-                        "relation_kind": "identity",
-                    }
-                )
+            dependencies.extend(direct_relations(fact, context))
             if fact["kind"] == "operations.other_income":
                 account_id = fact["data"]["funds_account_id"]
                 account = context.get_object(account_id)
@@ -211,31 +153,12 @@ class Operations:
                             "period_to": fact["period"],
                         }
                     )
-            for ref in _references(fact, context):
-                policy_only = (
-                    fact["kind"] == "operations.advance"
-                    and fact["data"]["side"] == "customer"
-                    and fact["data"]["tax_status"] == "not_due"
-                    and "tax_point" not in fact["data"]
-                )
+            for ref in references(fact, context):
                 money_sensitive = fact["kind"] in {
                     "operations.pass_through_return",
                     "operations.overpayment",
                 }
-                edge = {
-                    "consumer_business_id": business_id,
-                    "consumer_result_slot": "main",
-                    "producer_kind": "business",
-                    "producer_id": ref["business_id"],
-                    "producer_public_slot": "main",
-                    "read_mode": "fact" if policy_only else "result",
-                    "relation_kind": "settlement"
-                    if money_sensitive
-                    else "policy"
-                    if policy_only
-                    else "calculation",
-                }
-                dependencies.append(edge)
+                edge = reference_edge(fact, ref)
                 if money_sensitive:
                     dependencies.append(
                         {

@@ -117,11 +117,11 @@ def adopt(change_plans, uow, correction_period, reference, explanation=None):
             )
             if posting_period is None:
                 fail("closed_period_required", "冻结业务更正须明确一个开放发现期。")
-            if not baseline_id and repo.is_closed(posting_period):
+            if not baseline_id and repo.is_closed(posting_period, start_period=uow.start_period):
                 posting_period = effective_correction_period
                 if posting_period is None:
                     fail("closed_period_required", "新增闭期事实须明确一个开放发现期。")
-        if not bound.unchanged and repo.is_closed(posting_period):
+        if not bound.unchanged and repo.is_closed(posting_period, start_period=uow.start_period):
             fail("closed_period_required", "不能向已关账月份写入正式结果。")
         if (
             not bound.unchanged

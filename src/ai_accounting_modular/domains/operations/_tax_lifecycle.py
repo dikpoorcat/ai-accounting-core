@@ -50,7 +50,10 @@ def resolution(fact, context, point, capacity):
         }
         if "tax_on" in point:
             segment["tax_on"] = point["tax_on"]
-        value = {"target_business_id": fact["business_id"], "segments": [segment]}
+        value = {
+            "target_business_id": fact["business_id"],
+            "segments": [segment] if capacity else [],
+        }
     else:
         source = context.get_result(point["tax_point_id"], "main")
         if source is None:

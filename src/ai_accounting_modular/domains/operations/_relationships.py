@@ -15,6 +15,7 @@ from ._common import (
     reject,
     sum_amounts,
 )
+from ._cooperation import COOPERATION_SETTLEMENTS, publish_overpayment
 from ._cumulative import adopt_position, classification_weights, inherit_cashflow
 from ._overpayment_pool import pool_ranges
 
@@ -234,7 +235,6 @@ def overpayment(fact, context):
     if "counterparty_id" in data and data["counterparty_id"] != party:
         reject("多收或多付的处理对象必须与原正式往来一致，不能补造或更换对象。")
     overpaid = ob["direction"] == "payable"
-    spans = pool_ranges(fact, context)[fact["business_id"]]
     plan = base_plan(
         fact,
         context,
@@ -245,6 +245,13 @@ def overpayment(fact, context):
         adopt_effective_on="effective_on" in fact,
     )
     _adopt_obligation(plan, original)
+    original_result = referenced_result(fact, context, data["source"])
+    cooperative = publish_overpayment(
+        plan, fact, context, original_result, direction=ob["direction"]
+    )
+    if not total and not cooperative:
+        reject("普通多收或多付追偿必须有实际公司金额。", "invalid_input")
+    spans = pool_ranges(fact, context)[fact["business_id"]]
     if overpaid:
         line(plan, "1221", debit=total, party=party, summary="确认实际超付追收")
         line(plan, ob["account_code"], credit=total, party=party, summary="重分类原债超付")
@@ -258,17 +265,19 @@ def overpayment(fact, context):
         "receivable" if overpaid else "payable",
         total,
         "1221" if overpaid else "2241",
-        category="other",
+        category="trade" if cooperative else "other",
         cashflow=None,
+        methods=COOPERATION_SETTLEMENTS if cooperative else ("money", "offset", "transfer"),
     )
     inherit_cashflow(ob, plan["obligations"][0], spans)
     for span in spans:
         adopt_position(plan, data["source"], span)
-    _transfer(
-        plan,
-        data["source"],
-        {"business_id": fact["business_id"], "slot": "recovery"},
-        total,
-        mode="reclassify_excess",
-    )
+    if total:
+        _transfer(
+            plan,
+            data["source"],
+            {"business_id": fact["business_id"], "slot": "recovery"},
+            total,
+            mode="reclassify_excess",
+        )
     return plan

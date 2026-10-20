@@ -5,14 +5,26 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from ai_accounting_modular.contracts.public import (
+    CapturedFile,
     CurrentIssue,
+    CurrentNote,
     NoteChange,
     ReadContext,
     Source,
     loads_json,
 )
+
+
+@dataclass(frozen=True)
+class SourceStatus:
+    """Cheap availability observation; full byte verification belongs to the lease."""
+
+    source_id: str
+    state: Literal["present", "missing_file", "content_mismatch", "not_found"]
+    observed_size: int | None
 
 
 @dataclass(frozen=True)
@@ -118,3 +130,42 @@ class PreparedDocuments:
     @property
     def manifest(self) -> dict:
         return loads_json(self.manifest_json)
+
+
+@dataclass(frozen=True)
+class BackupMaterials:
+    """One read snapshot's material inputs; releasing it does not delete a capture."""
+
+    company_id: str
+    database_id: str
+    head: int
+    capture_id: str
+    capture_root: Path
+    document_set_id: str
+    _company_identity_json: str
+    _inputs_json: str
+
+    @property
+    def company_identity(self) -> dict:
+        return loads_json(self._company_identity_json)
+
+    @property
+    def inputs(self) -> tuple[CapturedFile, ...]:
+        return tuple(loads_json(self._inputs_json))
+
+
+@dataclass(frozen=True)
+class PeriodNotesPage:
+    items: tuple[CurrentNote, ...]
+    total: int
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class PeriodIssuesPage:
+    """A filtered view, never an IssueScope suitable for complete replacement."""
+
+    items: tuple[CurrentIssue, ...]
+    scope_heads: Mapping[str, int]
+    total: int
+    next_cursor: str | None

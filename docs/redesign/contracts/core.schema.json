@@ -1150,8 +1150,7 @@
           "items": {
             "$ref": "#/$defs/ResultRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         }
       },
       "required": [
@@ -1231,8 +1230,7 @@
           "items": {
             "$ref": "#/$defs/FactIssue"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         },
         "unresolved": {
           "type": "array",
@@ -1865,7 +1863,7 @@
             "minLength": 1,
             "maxLength": 200
           },
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 20
         },
         "business_ids": {
@@ -1873,32 +1871,28 @@
           "items": {
             "$ref": "#/$defs/Id"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         },
         "object_ids": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/Id"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         },
         "periods": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/Month"
           },
-          "minItems": 0,
-          "maxItems": 12000
+          "minItems": 0
         },
         "slots": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/BusinessRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         }
       },
       "required": [
@@ -2097,29 +2091,88 @@
       ],
       "additionalProperties": false,
       "dependentRequired": {
-        "error_code": ["message"],
-        "message": ["error_code"]
+        "error_code": [
+          "message"
+        ],
+        "message": [
+          "error_code"
+        ]
       },
       "allOf": [
         {
           "if": {
-            "properties": {"state": {"const": "succeeded"}},
-            "required": ["state"]
+            "properties": {
+              "state": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "state"
+            ]
           },
           "then": {
-            "required": ["path", "sha256", "byte_size"],
-            "not": {"anyOf": [{"required": ["error_code"]}, {"required": ["message"]}]}
+            "required": [
+              "path",
+              "sha256",
+              "byte_size"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "error_code"
+                  ]
+                },
+                {
+                  "required": [
+                    "message"
+                  ]
+                }
+              ]
+            }
           },
           "else": {
-            "not": {"anyOf": [{"required": ["path"]}, {"required": ["sha256"]}, {"required": ["byte_size"]}]}
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "path"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "byte_size"
+                  ]
+                }
+              ]
+            }
           }
         },
         {
           "if": {
-            "properties": {"state": {"enum": ["failed", "expired"]}},
-            "required": ["state"]
+            "properties": {
+              "state": {
+                "enum": [
+                  "failed",
+                  "expired"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
           },
-          "then": {"required": ["error_code", "message"]}
+          "then": {
+            "required": [
+              "error_code",
+              "message"
+            ]
+          }
         }
       ]
     },
@@ -3134,16 +3187,14 @@
           "items": {
             "$ref": "#/$defs/FactIssue"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         },
         "unresolved": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CurrentIssue"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         },
         "document_state": {
           "type": "string",
@@ -3313,8 +3364,7 @@
           "items": {
             "$ref": "#/$defs/ResultView"
           },
-          "minItems": 0,
-          "maxItems": 12000
+          "minItems": 0
         },
         "sources": {
           "type": "array",
@@ -4448,7 +4498,7 @@
             "$ref": "#/$defs/CurrentNote"
           },
           "minItems": 0,
-          "maxItems": 500
+          "maxItems": 12000
         },
         "issue_scopes": {
           "type": "array",
@@ -5055,16 +5105,14 @@
           "items": {
             "$ref": "#/$defs/Month"
           },
-          "minItems": 0,
-          "maxItems": 12000
+          "minItems": 0
         },
         "closed_periods": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/Month"
           },
-          "minItems": 0,
-          "maxItems": 12000
+          "minItems": 0
         },
         "notes": {
           "type": "array",
@@ -5079,8 +5127,7 @@
           "items": {
             "$ref": "#/$defs/CurrentIssue"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "issue_scopes": {
           "type": "array",
@@ -5310,8 +5357,7 @@
           "items": {
             "$ref": "#/$defs/FactIssue"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         },
         "diagnostic_id": {
           "$ref": "#/$defs/Id"

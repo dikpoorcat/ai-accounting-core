@@ -1,14 +1,24 @@
 """Exact resource-use notifications and planning scopes; no balance arithmetic."""
 
 from ai_accounting_modular.contracts.public import (
+    ALL_RESOURCE_COMPONENTS,
     ContractError,
     check_resource_dependency,
+    resource_components,
     resource_exclusions,
 )
 
 
 def normalize(edge, previous=None):
     check_resource_dependency(edge)
+    if edge["read_mode"] in {"use", "balance"}:
+        components = set(resource_components(edge.get("resource_components")))
+        if previous is not None:
+            components.update(resource_components(previous.get("resource_components")))
+        if components == set(ALL_RESOURCE_COMPONENTS):
+            edge.pop("resource_components", None)
+        else:
+            edge["resource_components"] = sorted(components)
     if edge["read_mode"] == "balance":
         edge["excluded_result_slots"] = [
             {"business_id": business_id, "result_slot": slot}
@@ -25,7 +35,8 @@ def normalize(edge, previous=None):
     return edge
 
 
-def check_scope(context, refs, kind, cutoff, excluded):
+def check_scope(context, refs, kind, cutoff, excluded, components=None):
+    selected = set(resource_components(components))
     if len(context._active_slots) != 1 or not context._active_slots <= excluded:
         raise ContractError("dependency_conflict", "余额求值必须明确排除当前单个结果槽。")
     relation = {"obligation": "settlement", "cost": "cost"}.get(kind)
@@ -46,6 +57,7 @@ def check_scope(context, refs, kind, cutoff, excluded):
                 and cutoff.on <= edge["effective_on"]
             )
             and resource_exclusions(edge) == excluded
+            and selected <= set(resource_components(edge.get("resource_components")))
             for edge in context._dependencies
         ):
             raise ContractError(

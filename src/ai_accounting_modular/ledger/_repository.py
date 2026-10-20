@@ -12,6 +12,22 @@ from ai_accounting_modular.contracts.public import format_fen, parse_fen
 from ._resource_rows import resource_rows
 from ._values import fail
 
+
+def _selected(alias, as_of):
+    if as_of is None:
+        return (
+            f"EXISTS(SELECT 1 FROM result_slot_current c WHERE c.head_result_id={alias}.result_id)",
+            (),
+        )
+    return (
+        f"EXISTS(SELECT 1 FROM adopted_result r WHERE r.result_id={alias}.result_id "
+        "AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
+        "WHERE newer.business_id=r.business_id AND newer.result_slot=r.result_slot "
+        "AND newer.posting_period<=? AND newer.posting_period>r.posting_period))",
+        (as_of, as_of),
+    )
+
+
 _CHILD_TABLES = (
     "result_source",
     "obligation",
@@ -95,6 +111,38 @@ class LedgerRepository:
             sql += " WHERE r.business_id IN (SELECT value FROM json_each(?))"
             args = (canonical(list(business_ids)),)
         return [dict(row) for row in self._session.fetchall(sql, args)]
+
+    def result_references(self, business_ids, *, as_of=None):
+        fields = (
+            "r.business_id,r.result_slot,r.result_id,r.generation,r.business_period,"
+            "r.posting_period,r.state,r.baseline_result_id,"
+            "v.voucher_id,v.number AS voucher_number"
+        )
+        if as_of is None:
+            sql = (
+                f"SELECT {fields} FROM adopted_result r JOIN result_slot_current c "
+                "ON c.head_result_id=r.result_id "
+            )
+            boundary, args = "", []
+        else:
+            sql = f"SELECT {fields} FROM adopted_result r "
+            boundary = (
+                " AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
+                "WHERE newer.business_id=r.business_id AND newer.result_slot=r.result_slot "
+                "AND newer.posting_period<=? AND newer.posting_period>r.posting_period)"
+            )
+            args = [as_of, as_of]
+        sql += (
+            "LEFT JOIN voucher v ON v.result_id=r.result_id "
+            "AND v.role IN ('original','replacement') "
+            "WHERE r.business_id IN (SELECT value FROM json_each(?))"
+            + boundary
+            + " ORDER BY r.business_id,r.result_slot,r.posting_period"
+        )
+        rows = self._session.fetchall(sql, (canonical(list(business_ids)), *args))
+        return [
+            {key: value for key, value in dict(row).items() if value is not None} for row in rows
+        ]
 
     def heads_through(self, as_of, business_ids=()):
         sql = (
@@ -182,14 +230,46 @@ class LedgerRepository:
             args = as_of, as_of
         return [dict(row) for row in self._session.fetchall(sql, args)]
 
-    def closed_periods(self, period_from, period_to):
+    def closed_through(self):
+        return self._session.fetchone("SELECT MAX(period) FROM period_close")[0]
+
+    def closed_periods(self, period_from, period_to, *, start_period=None):
+        from ai_accounting_modular.contracts.public import YearMonth
+
+        frontier = self.closed_through()
+        first = max(period_from, start_period or period_from)
+        last = min(period_to, frontier) if frontier else None
+        if last is None or last < first:
+            return []
         return [
-            row[0]
-            for row in self._session.fetchall(
-                "SELECT period FROM period_close WHERE period>=? AND period<=? ORDER BY period",
-                (period_from, period_to),
-            )
+            str(YearMonth.from_ordinal(number))
+            for number in range(YearMonth(first).ordinal, YearMonth(last).ordinal + 1)
         ]
+
+    def close_record(self, period, *, covering=False):
+        predicate = "period>=? ORDER BY period LIMIT 1" if covering else "period=?"
+        row = self._session.fetchone("SELECT * FROM period_close WHERE " + predicate, (period,))
+        return dict(row) if row else None
+
+    def previous_close(self, period):
+        return self._session.fetchone(
+            "SELECT MAX(period) FROM period_close WHERE period<?", (period,)
+        )[0]
+
+    def save_close(self, period, head, basis, report, frozen_at):
+        self._session.execute(
+            "INSERT INTO period_close VALUES(?,?,?,?,?,?,?,?)",
+            (
+                period,
+                head,
+                frozen_at,
+                "reporting.schema.json#/$defs/CloseBasis",
+                canonical(basis),
+                "reporting.schema.json#/$defs/FinancialSnapshot",
+                canonical(report),
+                digest(report),
+            ),
+        )
 
     def results(self, result_ids):
         return [
@@ -228,11 +308,11 @@ class LedgerRepository:
             args.append(canonical(list(business_ids)))
         return [dict(row) for row in self._session.fetchall(sql, tuple(args))]
 
-    def is_closed(self, period):
-        return (
-            self._session.fetchone("SELECT 1 FROM period_close WHERE period=?", (period,))
-            is not None
-        )
+    def is_closed(self, period, *, start_period=None):
+        if start_period is not None and period < start_period:
+            return False
+        frontier = self.closed_through()
+        return frontier is not None and period <= frontier
 
     def vouchers(self, result_ids):
         rows = self._session.fetchall(
@@ -449,14 +529,14 @@ class LedgerRepository:
                     result.add(row["target_business_id"])
         return result
 
-    def movements(self, movement_ids):
+    def movements(self, movement_ids, *, as_of=None):
+        selection, args = _selected("m", as_of)
         return [
             dict(row)
             for row in self._session.fetchall(
-                "SELECT m.* FROM result_fund_movement m JOIN result_slot_current c "
-                "ON c.head_result_id=m.result_id WHERE m.movement_id IN "
-                "(SELECT value FROM json_each(?))",
-                (canonical(list(movement_ids)),),
+                "SELECT m.* FROM result_fund_movement m WHERE m.movement_id IN "
+                "(SELECT value FROM json_each(?)) AND " + selection,
+                (canonical(list(movement_ids)), *args),
             )
         ]
 
@@ -482,25 +562,25 @@ class LedgerRepository:
             args += [as_of, as_of]
         return [dict(row) for row in self._session.fetchall(sql, tuple(args))]
 
-    def settlements_by_movements(self, movement_ids):
+    def settlements_by_movements(self, movement_ids, *, as_of=None):
+        selection, args = _selected("s", as_of)
         return [
             dict(row)
             for row in self._session.fetchall(
-                "SELECT s.* FROM settlement s JOIN result_slot_current c "
-                "ON c.head_result_id=s.result_id WHERE s.movement_id IN "
-                "(SELECT value FROM json_each(?))",
-                (canonical(list(movement_ids)),),
+                "SELECT s.* FROM settlement s WHERE s.movement_id IN "
+                "(SELECT value FROM json_each(?)) AND " + selection,
+                (canonical(list(movement_ids)), *args),
             )
         ]
 
-    def transfers_to(self, business_ids):
+    def transfers_to(self, business_ids, *, as_of=None):
+        selection, args = _selected("x", as_of)
         return [
             dict(row)
             for row in self._session.fetchall(
-                "SELECT x.* FROM obligation_reclassification x JOIN result_slot_current c "
-                "ON c.head_result_id=x.result_id WHERE x.target_business_id IN "
-                "(SELECT value FROM json_each(?))",
-                (canonical(list(business_ids)),),
+                "SELECT x.* FROM obligation_reclassification x WHERE x.target_business_id IN "
+                "(SELECT value FROM json_each(?)) AND " + selection,
+                (canonical(list(business_ids)), *args),
             )
         ]
 
@@ -509,4 +589,12 @@ class LedgerRepository:
         self._session.execute(
             "UPDATE adopted_result SET state='frozen' WHERE posting_period=? AND state='open'",
             (period,),
+        )
+
+    def freeze_range(self, first, last):
+        self._resources_changed()
+        self._session.execute(
+            "UPDATE adopted_result SET state='frozen' WHERE posting_period>=? "
+            "AND posting_period<=? AND state='open'",
+            (first, last),
         )

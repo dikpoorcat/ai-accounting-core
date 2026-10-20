@@ -47,7 +47,7 @@ class BusinessChange:
             "seq": self.seq,
             "state": "active" if fact else "withdrawn",
             "period": fact["period"] if fact else None,
-            "archive_month": fact["period"] if fact else None,
+            "archive_month": fact["period"] if fact else old["archive_month"],
             "current_digest": self.digest if fact else None,
             "latest_op": self.mutation["op"],
             "latest_expected_seq": self.mutation["expected_seq"],

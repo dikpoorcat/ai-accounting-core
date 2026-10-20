@@ -233,7 +233,7 @@ class ResourceRepository:
         return _load_groups(
             self._incoming[table],
             business_ids,
-            lambda ids: self.base.incoming(table, ids),
+            lambda ids: self.base.incoming(table, ids, through=self.as_of),
             "source_business_id",
         )
 
@@ -247,6 +247,19 @@ class ResourceRepository:
                     grouped[row["source_public_slot"]].append(row)
             self._incoming_slots[key] = grouped
         return self._incoming_slots[key][slot] + self._staged_incoming[table][business_id, slot]
+
+    def incoming(self, table, business_ids, *, through=None):
+        rows = (
+            self._persisted_incoming(table, business_ids)
+            if through is None or through == self.as_of
+            else self.base.incoming(table, business_ids, through=through)
+        )
+        return [row for row in rows if row["result_id"] not in self.shadowed] + [
+            row
+            for (business_id, _), values in self._staged_incoming[table].items()
+            if business_id in business_ids
+            for row in values
+        ]
 
     def uses(self, definition):
         if definition.kind == "funds":
@@ -293,7 +306,7 @@ class ResourceRepository:
         return self._indexed_overlay(
             movement_ids,
             self._movements,
-            self.base.movements,
+            lambda ids: self.base.movements(ids, as_of=self.as_of),
             "movement_id",
             self._staged_movements,
         )
@@ -303,10 +316,20 @@ class ResourceRepository:
         return self._indexed_overlay(
             movement_ids,
             self._settlements,
-            self.base.settlements_by_movements,
+            lambda ids: self.base.settlements_by_movements(ids, as_of=self.as_of),
             "movement_id",
             self._staged_settlements,
         )
+
+    def transfers_to(self, business_ids):
+        self._refresh()
+        rows = self.base.transfers_to(business_ids, as_of=self.as_of)
+        return [row for row in rows if row["result_id"] not in self.shadowed] + [
+            row
+            for tables in self.records.values()
+            for row in tables["obligation_reclassification"]
+            if row["target_business_id"] in business_ids
+        ]
 
     def movement_scope(self, account_id, period_from, period_to):
         self._refresh()

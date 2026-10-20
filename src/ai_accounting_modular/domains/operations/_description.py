@@ -1,5 +1,9 @@
 """Describe this owner's explicit typed changes before their edges are registered."""
 
+from collections import defaultdict
+
+from ._relations import direct_relations
+
 
 class DescriptionContext:
     def __init__(self, context, changes):
@@ -12,6 +16,11 @@ class DescriptionContext:
                 fact = change.get("fact") or context.get_fact(business_id)
                 if fact is not None:
                     self._facts[business_id] = fact
+        self._members = defaultdict(dict)
+        for fact in self._facts.values():
+            for edge in direct_relations(fact, self):
+                key = edge["producer_kind"], edge["producer_id"], edge["relation_kind"]
+                self._members[key][fact["business_id"]] = fact
 
     def __getattr__(self, name):
         return getattr(self._context, name)
@@ -43,17 +52,7 @@ class DescriptionContext:
             )
             if fact["business_id"] not in self._shadowed
         }
-        if producer_kind == "business":
-            fields = {
-                "operations.expense_recovery": "expense_id",
-                "operations.sale_return": "sale_id",
-                "operations.advance_fulfillment": "advance_id",
-                "operations.advance_refund": "advance_id",
-            }
-            for fact in self._facts.values():
-                field = fields.get(fact["kind"])
-                if relation_kind == "calculation" and field and fact["data"][field] == producer_id:
-                    found[fact["business_id"]] = fact
+        found.update(self._members.get((producer_kind, producer_id, relation_kind), {}))
         return tuple(
             fact
             for _, fact in sorted(found.items())

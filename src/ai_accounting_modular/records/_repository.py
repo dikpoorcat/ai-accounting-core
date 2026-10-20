@@ -11,6 +11,19 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.storage.public import RepositorySession
 
 
+def _source(row):
+    value = {key: row[key] for key in ("source_id", "kind", "sha256")}
+    if row["archive_month"] is not None:
+        value["archive_month"] = row["archive_month"]
+    if row["kind"] == "file":
+        value.update(
+            {key: row[key] for key in ("relative_path", "original_name", "media_type", "byte_size")}
+        )
+    else:
+        value["text"] = row["statement_text"]
+    return value
+
+
 class RecordsRepository:
     def __init__(self, session: RepositorySession):
         self._session = session
@@ -22,22 +35,13 @@ class RecordsRepository:
             "SELECT * FROM source WHERE source_id IN (SELECT value FROM json_each(?))",
             (canonical_json(list(ids)),),
         )
-        result = {}
-        for row in rows:
-            source = {"source_id": row["source_id"], "kind": row["kind"], "sha256": row["sha256"]}
-            if row["archive_month"] is not None:
-                source["archive_month"] = row["archive_month"]
-            if row["kind"] == "file":
-                source.update(
-                    {
-                        key: row[key]
-                        for key in ("relative_path", "original_name", "media_type", "byte_size")
-                    }
-                )
-            else:
-                source["text"] = row["statement_text"]
-            result[source["source_id"]] = source
-        return result
+        return {row["source_id"]: _source(row) for row in rows}
+
+    def all_sources(self):
+        return tuple(
+            _source(row)
+            for row in self._session.fetchall("SELECT * FROM source ORDER BY source_id")
+        )
 
     def save_source(self, source):
         self._session.execute(
@@ -128,6 +132,26 @@ class RecordsRepository:
             result[row["scope_key"]] = dict(row)
         return result
 
+    def period_note_metadata(self, first, last):
+        return tuple(
+            tuple(row)
+            for row in self._session.fetchall(
+                "SELECT scope_key,seq,content_digest FROM company_note "
+                "WHERE scope_key BETWEEN ? AND ? ORDER BY scope_key",
+                ("period:" + first, "period:" + last),
+            )
+        )
+
+    def period_note_rows(self, first, last, after, limit):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM company_note WHERE scope_key BETWEEN ? AND ? "
+                "AND scope_key>? ORDER BY scope_key LIMIT ?",
+                ("period:" + first, "period:" + last, after or "", limit),
+            )
+        )
+
     def save_note(self, current, expected_seq, command_id, digest):
         self._session.execute(
             "INSERT INTO company_note VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET "
@@ -157,6 +181,9 @@ class RecordsRepository:
         rows = self._session.fetchall(
             "SELECT * FROM current_issue" + where + " ORDER BY scope_key,issue_id", args
         )
+        return self._issues(rows)
+
+    def _issues(self, rows):
         uses = self.uses_many("issue", [row["issue_id"] for row in rows])
         result = []
         for row in rows:
@@ -180,6 +207,40 @@ class RecordsRepository:
                 raise ContractError("storage_corrupt", "当前待办正文、来源或摘要不一致。")
             result.append(issue)
         return result
+
+    def period_issue_metadata(self, first, last):
+        return tuple(
+            tuple(row)
+            for row in self._session.fetchall(
+                "SELECT period,scope_key,issue_id,content_digest FROM current_issue "
+                "WHERE period IS NULL OR period BETWEEN ? AND ? "
+                "ORDER BY period,scope_key,issue_id",
+                (first, last),
+            )
+        )
+
+    def period_issue_rows(self, first, last, after, limit):
+        if after is None:
+            where, args = "(i.period IS NULL OR i.period BETWEEN ? AND ?)", (first, last)
+        elif after[0] is None:
+            where = (
+                "((i.period IS NULL AND (i.scope_key,i.issue_id)>(?,?)) "
+                "OR i.period BETWEEN ? AND ?)"
+            )
+            args = (*after[1:], first, last)
+        else:
+            where = "i.period BETWEEN ? AND ? AND (i.period,i.scope_key,i.issue_id)>(?,?,?)"
+            args = (first, last, *after)
+        rows = self._session.fetchall(
+            "SELECT i.*,s.head AS scope_head FROM current_issue AS i "
+            "LEFT JOIN current_issue_scope AS s ON s.scope_key=i.scope_key WHERE "
+            + where
+            + " ORDER BY i.period,i.scope_key,i.issue_id LIMIT ?",
+            (*args, limit),
+        )
+        if any(row["scope_head"] is None for row in rows):
+            raise ContractError("storage_corrupt", "当前待办缺少所属范围的完整版本。")
+        return self._issues(rows), {row["scope_key"]: row["scope_head"] for row in rows}
 
     def replace_issues(self, scope, head, expected_head, command_id, digest, issues):
         old_ids = [item["issue_id"] for item in self.issues(scope)]

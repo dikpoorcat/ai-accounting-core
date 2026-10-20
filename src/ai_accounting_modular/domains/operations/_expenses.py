@@ -13,6 +13,7 @@ from ._common import (
     reject,
     sum_amounts,
 )
+from ._cooperation import COOPERATION_SETTLEMENTS, original_share, publish
 
 
 def check_expense(fact):
@@ -58,9 +59,8 @@ def unknown_details(plan, fact, expense_class, *, original=None):
 def expense(fact, context):
     check_expense(fact)
     data = fact["data"]
-    if "cooperation_id" in data:
-        reject("合作按份经营费用须接入合同份额核验后方可办理。", "unsupported_business")
     total = amount(data)
+    agreement = original_share(fact, context, total, side="expense")
     plan = base_plan(
         fact,
         context,
@@ -86,7 +86,18 @@ def expense(fact, context):
         cashflow="materials_services_payments"
         if data["expense_class"] == "service"
         else "other_operating_payments",
+        methods=COOPERATION_SETTLEMENTS
+        if agreement is not None
+        else ("money", "offset", "transfer"),
     )
+    if agreement is not None:
+        publish(
+            plan,
+            agreement,
+            side="expense",
+            project=amount(data, "project_total_fen"),
+            company=total,
+        )
     for detail in data.get("report_details", ()):
         if detail["code"] in REPORT_LINES:
             plan["report_contributions"].append(

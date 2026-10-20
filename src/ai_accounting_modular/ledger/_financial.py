@@ -18,6 +18,9 @@ from ._financial_selection import Selection
 from ._profit import pretax_basis_digest
 from ._values import fail
 
+MAPPING_V1 = "small-enterprise-financial-1"
+CURRENT_MAPPING_VERSION = MAPPING_V1
+
 
 def normalize(scope, context):
     validate_contract("core.schema.json", "LedgerScope", scope)
@@ -81,7 +84,14 @@ def _table(definition, columns):
     }
 
 
-def snapshot(scope, context):
+def snapshot(scope, context, *, mapping_version=None):
+    version = mapping_version or CURRENT_MAPPING_VERSION
+    if version != MAPPING_V1:
+        fail("unsupported_policy", "该历史报告映射版本尚未装配，不能改用另一版本。")
+    return _snapshot_v1(scope, context)
+
+
+def _snapshot_v1(scope, context):
     normalized = normalize(scope, context)
     repo = context.repository("ledger")
     first, last = normalized["period_from"], normalized["period_to"]
@@ -159,7 +169,7 @@ def snapshot(scope, context):
         "head": context.head,
         "scope": normalized,
         "accounting_standard": "small_enterprise",
-        "mapping_version": "small-enterprise-financial-1",
+        "mapping_version": MAPPING_V1,
         "status": "partial"
         if issues.values or any(check["status"] != "pass" for check in checks)
         else "ready",
@@ -192,7 +202,7 @@ def snapshot(scope, context):
     )
     selected = {
         "selection_digest": digest,
-        "closed_periods": repo.closed_periods(year, last),
+        "closed_periods": repo.closed_periods(year, last, start_period=context.start_period),
         "supplement_periods": sorted(
             {
                 selection.heads[key]["posting_period"]

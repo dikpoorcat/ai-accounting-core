@@ -48,6 +48,49 @@ def test_failed_body_and_commit_check_both_roll_back(storage_case):
             assert read.repository("identity").names() == []
 
 
+def test_preview_runs_final_checks_without_saving_any_rows_or_head(storage_case):
+    storage, company = storage_case
+    checked = []
+    with storage.preview_unit(company.company_id) as unit:
+        repository = unit.repository("identity")
+        repository.add(name="仅供核对的演算")
+        unit.check_before_commit(lambda: checked.extend(repository.names()))
+        with pytest.raises(ContractError, match="嵌套"):
+            with storage.write_unit(company.company_id):
+                pass
+    assert checked == ["仅供核对的演算"]
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 0
+        assert read.repository("identity").names() == []
+    with pytest.raises(ContractError, match="已结束"):
+        repository.names()
+    with storage.write_unit(company.company_id) as writer:
+        writer.repository("identity").add(name="正式办理")
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 1
+        assert read.repository("identity").names() == ["正式办理"]
+
+
+def test_preview_does_not_hide_failed_accounting_checks(storage_case):
+    storage, company = storage_case
+    with pytest.raises(RuntimeError, match="核算错误"):
+        with storage.preview_unit(company.company_id) as unit:
+            unit.repository("identity").add()
+            unit.check_before_commit(lambda: (_ for _ in ()).throw(RuntimeError("核算错误")))
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 0
+        assert read.repository("identity").names() == []
+
+
+def test_preview_cannot_capture_a_database_with_uncommitted_calculation(storage_case, tmp_path):
+    storage, company = storage_case
+    with storage.preview_unit(company.company_id) as unit:
+        unit.repository("identity").add()
+        with pytest.raises(ContractError, match="只读一致点"):
+            storage.capture_database(unit, tmp_path / "not-a-snapshot.sqlite3")
+    assert not (tmp_path / "not-a-snapshot.sqlite3").exists()
+
+
 def test_caught_statement_failure_cannot_commit_partial_work(storage_case):
     storage, company = storage_case
     with pytest.raises(ContractError, match="部分结果"):

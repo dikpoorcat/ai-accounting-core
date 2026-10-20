@@ -95,6 +95,31 @@ def _natural_key(fact):
     return None
 
 
+def _direct_edge(fact, producer, mode, relation, kind="business"):
+    return {
+        "consumer_business_id": fact["business_id"],
+        "consumer_result_slot": "main",
+        "producer_kind": kind,
+        "producer_id": producer,
+        "producer_public_slot": "main",
+        "read_mode": mode,
+        "relation_kind": relation,
+    }
+
+
+def _direct_dependencies(fact):
+    return [
+        *(
+            _direct_edge(fact, object_id, "fact", "identity", "object")
+            for _, object_id, _ in _roles(fact)
+        ),
+        *(
+            _direct_edge(fact, producer, mode, relation)
+            for producer, mode, relation in _references(fact)
+        ),
+    ]
+
+
 def _validate(fact):
     validate_contract("business-facts.schema.json", "Fact", fact)
     if fact["kind"] not in _CALCULATORS:
@@ -107,6 +132,15 @@ def _validate(fact):
 
 class People:
     supported_kinds = tuple(_CALCULATORS)
+
+    def declare_relations(self, changes, context: EvaluationContext):
+        edges = []
+        for change in changes:
+            if change["op"] in {"withdraw", "handoff_out"}:
+                continue
+            fact = change.get("fact") or context.get_fact(change["business_id"])
+            edges.extend(_direct_dependencies(fact))
+        return tuple(edges)
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         responsibilities, dependencies, issues, publications = [], [], [], []
@@ -144,30 +178,7 @@ class People:
                     }
                 )
             issues.extend(_role_issues(fact, context))
-            for _, object_id, _ in _roles(fact):
-                dependencies.append(
-                    {
-                        "consumer_business_id": business_id,
-                        "consumer_result_slot": "main",
-                        "producer_kind": "object",
-                        "producer_id": object_id,
-                        "producer_public_slot": "main",
-                        "read_mode": "fact",
-                        "relation_kind": "identity",
-                    }
-                )
-            for producer, read_mode, relation_kind in _references(fact):
-                dependencies.append(
-                    {
-                        "consumer_business_id": business_id,
-                        "consumer_result_slot": "main",
-                        "producer_kind": "business",
-                        "producer_id": producer,
-                        "producer_public_slot": "main",
-                        "read_mode": read_mode,
-                        "relation_kind": relation_kind,
-                    }
-                )
+            dependencies.extend(_direct_dependencies(fact))
         result = {
             "domain": "people",
             "businesses": responsibilities,

@@ -121,22 +121,27 @@ def source_locations(fact):
     return values
 
 
+def accounting_input(fact):
+    """The same accounting projection is checked at adoption and period review."""
+    data = deepcopy(fact["data"])
+    for field in ("return_source", "boundary_source"):
+        data.pop(field, None)
+    for row in data.get("rows", ()):
+        for field in ("source", "reference", "counterparty_text"):
+            row.pop(field, None)
+    return data
+
+
 def base_plan(fact, context, values, *, actual=False):
     locations = source_locations(fact)
     ids = list(dict.fromkeys(x["source_id"] for x in locations))
     # The records boundary confirms that every referenced source belongs here.
     context.resolve_sources(ids)
-    accounting_input = deepcopy(fact["data"])
-    for field in ("return_source", "boundary_source"):
-        accounting_input.pop(field, None)
-    for row in accounting_input.get("rows", ()):
-        for field in ("source", "reference", "counterparty_text"):
-            row.pop(field, None)
     basis = {
         "kind": fact["kind"],
         "result_slot": "main",
         "period": fact["period"],
-        "input": accounting_input,
+        "input": accounting_input(fact),
         "source_results": [],
         "adopted_quantities": [],
         "policies": [],

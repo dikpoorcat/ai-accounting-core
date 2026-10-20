@@ -77,10 +77,10 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head。省略范围默认公司说明和当前开放月；不全库加载档案。 |
 | `accounting_objects` | ObjectsRequest：get 指定 IDs；find 指定 kind、可选 name_contains、limit/cursor | CurrentObject 含 seq/digest 和完整当前档案；检索名称只供选择，不自动绑定同名人。 |
 | `accounting_get` | company_id、1–500 business_ids；可选 result_id+generation、include=facts/results/sources | 当前事实、序号、结果槽及其必要来源；成对指定 result_id/generation 精确查询正式保留结果，开放旧代已替换则 conflict。不得声称能读取已经删除的开放期旧正文。 |
-| `accounting_find` | BusinessQuery：company_id、family、period_from/to、可选 object_id/status/kind、limit=1–500、cursor | BusinessFindResult：当前明确身份、kind/period/seq/state、摘要标签、完整数量和同范围 cursor；不作姓名模糊自动绑定。 |
+| `accounting_find` | BusinessQuery：company_id、family、period_from/to、可选 object_id/status/kind、limit=1–500、cursor | BusinessFindResult：当前明确身份、kind/period/seq/state、摘要标签、完整数量和同范围 cursor；不作姓名模糊自动绑定。撤去身份只按最后归属月、种类及身份检索，不保存旧正文或旧对象关系。object_id只匹配当前有效关系，与status=withdrawn同时提供时明确拒绝。 |
 | `accounting_sources` | import/get/find/inspect；company_id；来源描述或来源 ID；有界分页 | 真实原件/老板有效补充的当前索引与定位。import 先核对公司根、文件类型/大小/摘要，不能任意读取主机路径。 |
 | `accounting_documents` | DocumentsRequest：company_id、action=status/finish/export；可选 scopes | DocumentsResult：集合标识、待完成范围和失败；ready 必含可供离线读取的 manifest_path 完整定位。finish 按当前事实接续；export 返回已发布清单定位，不新增归档任务或重记账。 |
-| `accounting_period` | company_id、action=check/close、period、expected_head(close) | check 返回只读检查及阻断事实；close 在同一事务复查当前 head 后冻结，无老板批准/密码预览。changed 返回 conflict，不悄悄关掉新结果。 |
+| `accounting_period` | company_id、action=check/close、period、expected_head(close) | 检查或关闭截至指定月尚未关闭的整段账务，不要求逐月处理空月。check 返回只读检查及阻断事实；close 在同一事务复查同范围 head 后冻结，无老板批准/密码预览。范围变化返回 conflict，不悄悄关掉新结果。 |
 | `accounting_backup` | company_id、expected_database_id（目标取已配置目录） | 创建备份任务 receipt。成功仅在验证完成后返回包及摘要。 |
 | `accounting_restore` | IsolatedTargetRequest：action=restore、source_path、new_target_directory、mode=check/run | 离线同步返回 IsolatedTargetResult，不依赖源业务库/任务。check 不写目标库；run 验证并创建新目标，既有文件即使空库也不覆盖。 |
 | `accounting_rebuild` | 同合同 action=rebuild；来源为完整当前标准文档清单 | 离线同步返回检查或新目标结果；run 新建简化账，不接入旧目录、旧运行身份或旧请求。 |
@@ -110,25 +110,25 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 
 ## 模块之间的公开能力
 
-这些是进程内端口，使用相同合同类型；不再为每个模块建立网络 API。批量接口上限均为 500 个身份，分页上限 500，结果必须指出完整范围与版本。
+这些是进程内端口，使用相同合同类型；不再为每个模块建立网络 API。批量查询及分页每次最多500个身份，结果必须指出完整范围与版本。单笔业务的完整采用结果、来源定位，以及关账汇总的全部问题不截断，也不另设比合法输入更小的返回上限。ChangeSet没有业务家族变化时families为空，不为纯资料、对象或关账通知虚构业务类型。
 
 | 提供者 | 固定能力 | 合同含义 |
 | --- | --- | --- |
 | identity.public | `plan_change(objects, context)`、`apply_current(plan, uow)`、`get_batch(ids, read_context)`、`find(query, read_context)` | 唯一维护对象及当前序号；批量返回 CurrentObject，不暴露私表。 |
-| domain.public | `describe_change(changes, context)`、`evaluate_slot(business_id, result_slot, context)`、`validate_candidate(plan, context)`、`apply_current(plan, uow)`、`export_current(ids, read_context)`、`query_current(query, read_context)` | describe 返回 ChangeDescription，声明责任、自然唯一键、完整槽集合、依赖和字段问题，不抢先计算正式结果。应用按槽拓扑求值，收齐完整候选后调用 validate_candidate 核验集合约束，再把 ChangePlan 交 owner 保存。最终核验不能改写计划、金额或采用依据。无自行提交、后台发任务或跨模块私表读取。 |
+| domain.public | `declare_relations(changes, context)`、`describe_change(changes, context)`、`evaluate_slot(business_id, result_slot, context)`、`validate_candidate(plan, context)`、`apply_current(plan, uow)`、`export_current(ids, read_context)`、`query_current(query, read_context)` | declare_relations只按本模块完整事实及直接引用声明关系，不读取派生关系或计算金额。应用收齐直接关系后，describe返回ChangeDescription，声明责任、自然唯一键、完整槽、核算依赖和字段问题。应用按槽拓扑求值，收齐完整候选后调用validate_candidate核验集合约束，再交owner保存。最终核验不改写计划、金额或依据；模块不自行提交、不越界读私表。 |
 | ledger.public | `begin_candidate(responsibilities, uow, correction_period=None, publications=(), resource_uses=None)`、`resource_definitions(refs, kind, read_context)`、`fund_movements(account_id, period_from, period_to, read_context)`、`adopt(change_plans, uow, correction_period=None, explanation=None)`、正式结果和凭证等查询、`financial_snapshot(scope, read_context)` | 候选逐槽 stage，全部齐备后 complete。求值可读来源资源定义；声明完整使用范围后，相关槽就绪即可读取精确资源窗口；完整资金范围仍须等全部候选齐备。ResourceDefinition 含公开身份、完整定义及精确采用来源；ResourceState 加入截至指定月份/必要实际日的清偿、转移、消耗及剩余量。采用和事务提交再次统一检查容量；正式读取明确 current 或指定月末 as_posted。完整查询与财务取数按各自合同返回。冻结槽退出由ledger统一生成必要空目标，原因原样采用请求说明；领域不虚报新的有效槽。 |
-| money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`actual_settled_fen(source, cutoff, context)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。实际清偿按同单最终事实、本义务分配及经济截止计算，不含抵销、转债或代办。内部划转单独标记；银行原行不自动变成第二次付款。 |
+| money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`actual_settled_fen(source, cutoff, context)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`、`check_period(period_from, period_to, read_context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。实际清偿按同单最终事实、本义务分配及经济截止计算，不含抵销、转债或代办。关账复用登记时的完整银行匹配和平台原行规则，返回范围依据头及全部阻断项；未付款或闲置账户不要求虚构原行。 |
 | ledger.opening / ledger.reporting | 同领域 describe/evaluate/apply/export/query 协议 | 分别承接 opening.package、reports.continuation 的事实写入和导出；共享 ledger 采用端口，不由 application 越界代写。期初仍是其唯一事实 owner，资产卡片及后续摊折由注入的 OpeningAssetAccounting 计算，不能另造启用事实。 |
-| records.public | `plan_change(input, context)`、`apply_current(plan, uow)`、`resolve_sources(ids, read_context)`、`lease_source(source_id, read_context)`、`current_notes/current_issues(scope, read_context)`、`publish_documents(scopes, head)` | 唯一维护来源、说明和待办；lease_source返回受控读取租约，可流式校验/复制已登记原字节或有效说明，不让调用者解析私有路径、任意开文件或改内容。 |
-| storage.public | `read_unit(company_id)`、`write_unit(company_id)`、`maintenance_unit(company_id)`、`list_companies`、`company_metadata(read_context)`、目录/公司新建、结构验证及数据库一致快照/副本恢复 | 工作单元和一致点，不开放跨公司任意 SQL。模块仓储只接触自己的表；数据库副本操作不承接完整备份包和文档集合的编排。 |
-| files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)` | 仅备份/报表当前任务及验证，严格 FilePlan 为 BackupPlan 或 ReportExportPlan。具体内容和版本检查由注入的生产者端口负责；文件核验在事务外，最终维护事务内轻量复核有效性后按头和代次写回。files 不反向导入 application/reading。 |
+| records.public | `plan_change(input, context)`、`apply_current(plan, uow)`、`resolve_sources/source_status(ids, read_context)`、`lease_source(source_id, read_context)`、当前说明/待办及`period_notes/period_issues`分页、`capture_documents/prepare_documents/publish_documents`、`capture_backup_materials/lease_backup_inputs/discard_backup_capture` | 唯一维护来源、说明、待办和最终文档。source_status只观察受控文件位置及大小；lease_source才核对完整字节并返回独立读取租约，不泄漏主机路径。期间查询包含所有自定义范围中的相关及未定月份待办，不把过滤结果当作可全量替换的原范围。备份捕获绑定同一数据库快照，固定可变清单并保护所引用的原件和分片。 |
+| storage.public | `read_unit(company_id)`、`write_unit(company_id)`、`preview_unit(company_id)`、`maintenance_unit(company_id)`、`list_companies`、`company_metadata(read_context)`、目录/公司新建、结构验证及数据库一致快照/副本恢复 | 工作单元和一致点，不开放跨公司任意 SQL。preview复用完整核算及事务末核验，正常结束也回滚，不保存业务、推进版本、发布文件或建立备份快照。模块仓储只接触自己的表；数据库副本操作不承接完整备份包和文档集合的编排。 |
+| files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)`、`discard_unaccepted_capture(company_id, capture_id)` | 仅备份/报表当前任务及验证，严格 FilePlan 为 BackupPlan 或 ReportExportPlan。具体内容和版本检查由注入的生产者端口负责；文件核验在事务外，最终维护事务内轻量复核有效性后按头和代次写回。未接纳捕获通过独立CaptureContext回收；当前任务任意状态或实际租约仍引用时保留，清理失败明确报错。files 不反向导入 application/reading。 |
 | reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`export_report(scope, head, request_id)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页；文件计划防重及验证。context 使用仅含可选 company_id 的 ContextScope，其余使用 LedgerScope。 |
 
-reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过 storage 建立一次只读上下文；HTTP 只解析参数，不自行另开连接。ContextScope 无公司时只取目录元数据，选定公司后才建立公司 ReadContext。来源审查 detail 使用 ContextScope，不编造业务月份。
+reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过storage建立一次只读上下文；HTTP只解析参数，不自行另开连接。页面context可以按目录默认选择一家公司，尚无公司时只返回目录；不打开其他公司业务库。AI的accounting_context未指定公司时只列可选公司，不代替AI选定工作范围。来源审查detail使用ContextScope，不编造业务月份。
 
 入口内所有跨模块子查询显式使用同一 `ReadContext`：company_id、database_id、start_period、head、view/as_of，以及同一快照内的模块仓储。start_period 是公司已有建账边界，不表示此前余额或发生额为零。`repository(owner)` 只供各模块取得自身装配的仓储；上下文不公开连接、任意 SQL 或 commit。模块不得另开连接，避免一页混合两次提交。`UnitOfWork` 额外提供 next_head 和事务末检查登记，由 storage 统一结束事务；各数据 owner 的 apply_current/adopt/mark_targets 加入同一工作单元，不由应用层越界写私表。各 owner 专属计划和查询类型放在自身 public，公开线协议不携带这些进程内能力。
 
-`LedgerScope.expected_head` 是同公司、同范围、同读取口径的 `FinancialSnapshot.selection_digest`，比较时不把 expected_head 自身计入摘要。它核对实际报表选择，不使用 global_seq；无关文件任务和范围外业务不能让相同报表失效。
+`LedgerScope.expected_head` 是同公司、同范围、同读取口径的 `FinancialSnapshot.selection_digest`，比较时不把 expected_head 自身计入摘要。它核对实际报表选择，不使用 global_seq；无关文件任务和范围外业务不能让相同报表失效。应用比较采用变化时使用`ledger.get_result_refs(business_ids, read_context)`批量取得窄引用，不为读取ID、代次及期间加载全部采用正文和凭证分录。
 
 报表的scope显式选择current/as_posted，可在同一ReadContext中分别读取；其他未单独指定口径的查询沿上下文默认值。选择口径不另开事务，不复制存储上下文或连接。
 
@@ -140,7 +140,7 @@ reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过 
 
 历史合同、政策等事实可以早于建账月。账务层统一拒绝在建账月以前产生凭证、资金、义务、成本消耗或正式财报贡献；建账前余额及未清组成通过期初接续，不由各业务模块一律拒绝较早事实。
 
-求值使用统一 EvaluationContext：当前事实和对象以本单正确内容覆盖；get_result 返回只有 source/target/basis 的 EvaluatedSlot，不把尚未提交的结果伪装成已有凭证。来源引用由 ledger 在同一工作单元绑定完整计划后生成，正式保存使用同一身份和摘要；领域不自行生成结果身份。普通 result 依赖的 producer_public_slot 指核算节点的 result_slot；use/balance 依赖则明确指向义务或成本的公开资源槽。资源定义另由 result 边声明，不能把 main 结果槽与 tax、primary 等资源槽混用。related_facts 按已经声明的当前依赖关系发现相关事实，再叠加本单新增、替换及撤去，不扫描全部正文猜关系。
+求值使用统一EvaluationContext：当前事实和对象以本单正确内容覆盖；get_result返回source/target/basis，不把候选伪装成已有凭证。ledger绑定完整计划后生成来源引用，正式保存使用同一身份和摘要；领域不自行生成结果身份。result依赖指结果槽；use/balance依赖指义务或成本的公开资源槽，资源定义另由result边声明，不能混用main与primary等名称。related_facts只按各owner事先声明的完整直接关系目录发现成员，叠加新增、替换和撤去，不扫描全部正文猜关系。
 
 代理代收代付采用严格 AgencyProof：只有合作 collection/payment 的正式 Target/Basis 产生，包含业务身份、agency 槽、原交易 source、方向、交易方、经营者、公司金额及期间，可选真实日。应用层按同一读快照或同单计划解析并传入 ledger；不保存第二份可编辑证明表。settlement.method=agency 须 agency_business_id/agency_public_slot，禁止 movement_id；金额合计必须等于有效证明，交易方、方向和原义务容量均须匹配。不产生公司资金发生或现金流。method=money 须真实 movement_id；offset 不伪造资金；转移及超付归类由独立 ObligationReclassification 承接。
 
@@ -156,7 +156,7 @@ ChangeDescription 与 ChangePlan 的 publications 明确每个结果槽可能影
 
 `tax_sales(from,to)` 返回带精确采用来源的 TaxSaleView；`pre_tax(from,to)` 返回 PretaxView，含统一利润字段、必要来源和具体缺项。候选只在相关发布槽齐备后提供这些读取，不要求包括所得税自身在内的全部候选完成；资源余额按下述明确使用范围等待相关槽；完整资金范围仍等全部候选。所得税不发布税前利润，税点本身不发布税销售，避免重复或自我依赖。正式读取和同单候选共用账务选择器；各消费者不另写一套收入或利润汇总。
 
-资源使用和余额读取复用 Dependency：use 声明本结果槽可能使用的精确来源资源及核算月份范围，settlement 表示义务，cost 表示成本；不保存金额。balance 声明同一资源从公司建账起点到截止期的读取范围，另有 result 边保证定义就绪。应用等待范围内所有可能使用者，账务仍用同一窗口算法计算。纳入重算的使用者无论边是否变化，都按旧、新范围通知余额观察者；普通相关事实查询不混入这些调度声明。
+资源使用和余额读取复用Dependency：use声明可能使用的精确资源及月份范围，settlement表示义务，cost表示成本，不保存金额；balance声明从建账起点到截止期的读取范围，另用result边保证定义就绪。可用resource_components选择money、agency、offset、transfer、reclassify_excess或cost，省略表示完整。通知、求值等待和实际窗口使用相同选择，例如实际追偿只等待money/agency，不等待无关抵销。返回量带components，部分读取不冒充完整余额。纳入重算的使用者无论边是否变化，都按旧、新范围通知余额观察者；普通事实关系不混入这些声明。
 
 必要的 effective_on 只能来自真实采用日，未知同月仍须等待并保留窗口上下界。balance 的 excluded_result_slots 明确排除自身及业务规则确定的内部结果，调度与实际读取使用同一名单，不能笼统排除下游或真实资金来消除循环。不同精确日或排除名单的读取不能静默合并。暂存与正式采用再次检查实际使用均被声明覆盖；完整候选仍核对全部容量。
 

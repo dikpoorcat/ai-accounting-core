@@ -8,6 +8,8 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     EvaluatedSlot,
     ResourceDefinition,
+    ResourceState,
+    ResourceWindow,
     validate_contract,
 )
 from ai_accounting_modular.domains.operations.public import create_operations, repository_factory
@@ -134,9 +136,23 @@ class Context:
     def actual_settled_fen(self, source, cutoff):
         return create_money().actual_settled_fen(source, cutoff, self)
 
-    def resource_windows(self, refs, kind, cutoff, *, excluding_consumer=None):
+    def resource_windows(
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
+    ):
         return self.candidate.resource_windows(
-            refs, kind, cutoff, excluding_consumer=excluding_consumer
+            refs,
+            kind,
+            cutoff,
+            excluding_consumer=excluding_consumer,
+            excluding_consumers=excluding_consumers,
+            components=components,
         )
 
 
@@ -1001,6 +1017,30 @@ class LifecycleContext(Context):
             for ref in refs
             for value in self.plan["obligations"]
             if ref == {"business_id": value["business_id"], "slot": value["slot"]}
+        )
+
+    def resource_windows(
+        self,
+        refs,
+        kind,
+        cutoff,
+        *,
+        excluding_consumer=None,
+        excluding_consumers=(),
+        components=None,
+    ):
+        return tuple(
+            ResourceWindow(
+                ResourceState(
+                    definition,
+                    money_settled_fen=(
+                        paid := self.actual_settled_fen(definition.reference, cutoff)
+                    ),
+                    remaining_fen=int(definition.value["amount_fen"]) - paid,
+                    components=components,
+                )
+            )
+            for definition in self.resource_definitions(refs, kind)
         )
 
 

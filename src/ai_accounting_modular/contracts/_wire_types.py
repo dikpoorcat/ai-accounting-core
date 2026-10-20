@@ -621,11 +621,11 @@ type BusinessTaxPoint = ExplicitTaxPoint | DerivedTaxPoint
 
 class OperationsServiceSale(TypedDict):
     customer_id: Id
-    gross_fen: PositiveFen
+    gross_fen: NonNegativeFen
     vat: VatTreatment
     tax_point: BusinessTaxPoint
     cooperation_id: NotRequired[Id]
-    project_total_fen: NotRequired[PositiveFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class OperationsExpense(TypedDict):
     creditor_id: Id
@@ -634,7 +634,7 @@ class OperationsExpense(TypedDict):
     expense_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee']
     report_details: NotRequired[list[OperationsExpenseReportDetailsItem]]
     cooperation_id: NotRequired[Id]
-    project_total_fen: NotRequired[PositiveFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class OperationsOtherIncome(TypedDict):
     income_kind: Literal['bank_interest', 'company_reward']
@@ -668,11 +668,12 @@ class OperationsAdvanceFulfillment(TypedDict):
 class OperationsSaleReturn(TypedDict):
     sale_id: Id
     customer_id: Id
-    gross_fen: PositiveFen
+    gross_fen: NonNegativeFen
     credit_note_vat_fen: NonNegativeFen
     original_tax_period: NotRequired[Month]
     tax_ranges: NotRequired[list[AmountRange]]
     tax_returns: NotRequired[list[TaxReturnPart]]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class OperationsAdvanceRefund(TypedDict):
     advance_id: Id
@@ -682,7 +683,8 @@ class OperationsAdvanceRefund(TypedDict):
 class OperationsExpenseRecovery(TypedDict):
     expense_id: Id
     counterparty_id: Id
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class OperationsPassThrough(TypedDict):
     payer_id: Id
@@ -724,7 +726,8 @@ type OperationsReimbursement = PersonalAdvance | ReimbursementAcceptance
 class OperationsOverpayment(TypedDict):
     source: BusinessRef
     counterparty_id: NotRequired[Id]
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
+    project_total_fen: NotRequired[PositiveFen]
 
 class PeopleEmployment(TypedDict):
     employee_id: Id
@@ -1705,11 +1708,11 @@ type PartialBusinessTaxPoint = PartialExplicitTaxPoint | PartialDerivedTaxPoint
 
 class PartialOperationsServiceSale(TypedDict):
     customer_id: NotRequired[Id]
-    gross_fen: NotRequired[PositiveFen]
+    gross_fen: NotRequired[NonNegativeFen]
     vat: NotRequired[PartialVatTreatment]
     tax_point: NotRequired[PartialBusinessTaxPoint]
     cooperation_id: NotRequired[Id]
-    project_total_fen: NotRequired[PositiveFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class PartialOperationsExpense(TypedDict):
     creditor_id: NotRequired[Id]
@@ -1718,7 +1721,7 @@ class PartialOperationsExpense(TypedDict):
     expense_class: NotRequired[Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee']]
     report_details: NotRequired[list[PartialOperationsExpenseReportDetailsItem]]
     cooperation_id: NotRequired[Id]
-    project_total_fen: NotRequired[PositiveFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class PartialOperationsOtherIncome(TypedDict):
     income_kind: NotRequired[Literal['bank_interest', 'company_reward']]
@@ -1752,11 +1755,12 @@ class PartialOperationsAdvanceFulfillment(TypedDict):
 class PartialOperationsSaleReturn(TypedDict):
     sale_id: NotRequired[Id]
     customer_id: NotRequired[Id]
-    gross_fen: NotRequired[PositiveFen]
+    gross_fen: NotRequired[NonNegativeFen]
     credit_note_vat_fen: NotRequired[NonNegativeFen]
     original_tax_period: NotRequired[Month]
     tax_ranges: NotRequired[list[PartialAmountRange]]
     tax_returns: NotRequired[list[PartialTaxReturnPart]]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class PartialOperationsAdvanceRefund(TypedDict):
     advance_id: NotRequired[Id]
@@ -1766,7 +1770,8 @@ class PartialOperationsAdvanceRefund(TypedDict):
 class PartialOperationsExpenseRecovery(TypedDict):
     expense_id: NotRequired[Id]
     counterparty_id: NotRequired[Id]
-    amount_fen: NotRequired[PositiveFen]
+    amount_fen: NotRequired[NonNegativeFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class PartialOperationsPassThrough(TypedDict):
     payer_id: NotRequired[Id]
@@ -1808,7 +1813,8 @@ type PartialOperationsReimbursement = PartialPersonalAdvance | PartialReimbursem
 class PartialOperationsOverpayment(TypedDict):
     source: NotRequired[PartialBusinessRef]
     counterparty_id: NotRequired[Id]
-    amount_fen: NotRequired[PositiveFen]
+    amount_fen: NotRequired[NonNegativeFen]
+    project_total_fen: NotRequired[PositiveFen]
 
 class PartialPeopleEmployment(TypedDict):
     employee_id: NotRequired[Id]
@@ -3164,7 +3170,7 @@ class AdoptedBalanceQuantity(TypedDict):
     balance_fen: Fen
     as_of_period: Month
 
-type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity
+type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity | CooperationTradeQuantity
 
 class AdoptedPeopleContributionPolicy(TypedDict):
     policy_business_id: Id
@@ -3243,11 +3249,11 @@ type AccountingBusinessTaxPoint = AccountingExplicitTaxPoint | AccountingDerived
 
 class AccountingOperationsServiceSale(TypedDict):
     customer_id: Id
-    gross_fen: PositiveFen
+    gross_fen: NonNegativeFen
     vat: AccountingVatTreatment
     tax_point: AccountingBusinessTaxPoint
     cooperation_id: NotRequired[Id]
-    project_total_fen: NotRequired[PositiveFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class AccountingOperationsExpense(TypedDict):
     creditor_id: Id
@@ -3256,7 +3262,7 @@ class AccountingOperationsExpense(TypedDict):
     expense_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee']
     report_details: NotRequired[list[AccountingOperationsExpenseReportDetailsItem]]
     cooperation_id: NotRequired[Id]
-    project_total_fen: NotRequired[PositiveFen]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class AccountingOperationsOtherIncome(TypedDict):
     income_kind: Literal['bank_interest', 'company_reward']
@@ -3290,11 +3296,12 @@ class AccountingOperationsAdvanceFulfillment(TypedDict):
 class AccountingOperationsSaleReturn(TypedDict):
     sale_id: Id
     customer_id: Id
-    gross_fen: PositiveFen
+    gross_fen: NonNegativeFen
     credit_note_vat_fen: NonNegativeFen
     original_tax_period: NotRequired[Month]
     tax_ranges: NotRequired[list[AccountingAmountRange]]
     tax_returns: NotRequired[list[TaxReturnPart]]
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class AccountingOperationsAdvanceRefund(TypedDict):
     advance_id: Id
@@ -3304,7 +3311,8 @@ class AccountingOperationsAdvanceRefund(TypedDict):
 class AccountingOperationsExpenseRecovery(TypedDict):
     expense_id: Id
     counterparty_id: Id
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
+    project_total_fen: NotRequired[NonNegativeFen]
 
 class AccountingOperationsPassThrough(TypedDict):
     payer_id: Id
@@ -3346,7 +3354,8 @@ type AccountingOperationsReimbursement = AccountingPersonalAdvance | AccountingR
 class AccountingOperationsOverpayment(TypedDict):
     source: BusinessRef
     counterparty_id: NotRequired[Id]
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
+    project_total_fen: NotRequired[PositiveFen]
 
 class AccountingPeopleEmployment(TypedDict):
     employee_id: Id
@@ -4443,6 +4452,7 @@ class Dependency(TypedDict):
     period_to: NotRequired[Month]
     effective_on: NotRequired[Date]
     excluded_result_slots: NotRequired[list[ResultSlotRef]]
+    resource_components: NotRequired[ResourceComponents]
 
 class ChangePlan(TypedDict):
     domain: Literal['operations', 'people', 'assets', 'financing', 'investment', 'money', 'taxes', 'opening', 'reports']
@@ -4527,11 +4537,13 @@ class CooperationCollection(TypedDict):
     contract_id: Id
     source: BusinessRef
     project_amount_fen: PositiveFen
+    company_amount_fen: NotRequired[NonNegativeFen]
 
 class CooperationPartialCollection(TypedDict):
     contract_id: NotRequired[Id]
     source: NotRequired[BusinessRef]
     project_amount_fen: NotRequired[PositiveFen]
+    company_amount_fen: NotRequired[NonNegativeFen]
 
 class CooperationFactCollection(TypedDict):
     business_id: Id
@@ -4553,11 +4565,13 @@ class CooperationPayment(TypedDict):
     contract_id: Id
     source: BusinessRef
     project_amount_fen: PositiveFen
+    company_amount_fen: NotRequired[NonNegativeFen]
 
 class CooperationPartialPayment(TypedDict):
     contract_id: NotRequired[Id]
     source: NotRequired[BusinessRef]
     project_amount_fen: NotRequired[PositiveFen]
+    company_amount_fen: NotRequired[NonNegativeFen]
 
 class CooperationFactPayment(TypedDict):
     business_id: Id
@@ -4686,14 +4700,16 @@ class CooperationPositionValues(TypedDict):
     operator_funded_fen: NonNegativeFen
     operator_withdrawn_fen: NonNegativeFen
     operator_profit_received_fen: NonNegativeFen
-    project_revenue_fen: NonNegativeFen
-    project_expense_fen: NonNegativeFen
-    company_revenue_fen: NonNegativeFen
-    company_expense_fen: NonNegativeFen
-    project_collected_fen: NonNegativeFen
-    project_paid_fen: NonNegativeFen
-    company_collected_fen: NonNegativeFen
-    company_paid_fen: NonNegativeFen
+    project_revenue_fen: Fen
+    project_expense_fen: Fen
+    company_revenue_fen: Fen
+    company_expense_fen: Fen
+    project_collected_fen: Fen
+    project_paid_fen: Fen
+    company_collected_fen: Fen
+    company_paid_fen: Fen
+    company_outside_settled_out_fen: NonNegativeFen
+    company_outside_settled_in_fen: NonNegativeFen
 
 class CooperationOpeningPosition(TypedDict):
     contract_id: Id
@@ -4705,14 +4721,16 @@ class CooperationOpeningPosition(TypedDict):
     operator_funded_fen: NonNegativeFen
     operator_withdrawn_fen: NonNegativeFen
     operator_profit_received_fen: NonNegativeFen
-    project_revenue_fen: NonNegativeFen
-    project_expense_fen: NonNegativeFen
-    company_revenue_fen: NonNegativeFen
-    company_expense_fen: NonNegativeFen
-    project_collected_fen: NonNegativeFen
-    project_paid_fen: NonNegativeFen
-    company_collected_fen: NonNegativeFen
-    company_paid_fen: NonNegativeFen
+    project_revenue_fen: Fen
+    project_expense_fen: Fen
+    company_revenue_fen: Fen
+    company_expense_fen: Fen
+    project_collected_fen: Fen
+    project_paid_fen: Fen
+    company_collected_fen: Fen
+    company_paid_fen: Fen
+    company_outside_settled_out_fen: NonNegativeFen
+    company_outside_settled_in_fen: NonNegativeFen
 
 class CooperationTargetContract(TypedDict):
     kind: Literal['investment.cooperation_contract']
@@ -4790,7 +4808,7 @@ class CooperationBasisContract(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationAccountingContract
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4801,7 +4819,7 @@ class CooperationBasisFunding(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationFunding
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4812,7 +4830,7 @@ class CooperationBasisCollection(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationCollection
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4823,7 +4841,7 @@ class CooperationBasisPayment(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationPayment
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4834,7 +4852,7 @@ class CooperationBasisOperatorTransfer(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationOperatorTransfer
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4845,7 +4863,7 @@ class CooperationBasisDistribution(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationDistribution
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4856,7 +4874,7 @@ class CooperationBasisExit(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationExit
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4867,7 +4885,7 @@ class CooperationBasisPosition(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationAccountingPosition
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -4879,10 +4897,11 @@ class CooperationAdoptedCooperationCashSource(TypedDict):
     operator_id: Id
     party_id: Id
     company_revenue_expense_share: CooperationShare
-    source_project_limit_fen: PositiveFen
-    source_company_net_limit_fen: PositiveFen
+    source_project_limit_fen: NonNegativeFen
+    source_company_net_limit_fen: NonNegativeFen
     cumulative_project_before_fen: NonNegativeFen
     cumulative_company_before_fen: NonNegativeFen
+    project_range_from_fen: NonNegativeFen
 
 type CooperationShare = Rate
 
@@ -5013,6 +5032,19 @@ class AdoptedOpeningBalanceQuantity(TypedDict):
     credit_fen: NonNegativeFen
     party_id: NotRequired[Id]
     object_id: NotRequired[Id]
+
+class CooperationTradeQuantity(TypedDict):
+    type: Literal['cooperation_trade']
+    contract_id: Id
+    source: BusinessRef
+    side: Literal['revenue', 'expense']
+    project_amount_fen: Fen
+    company_net_amount_fen: Fen
+    project_range_from_fen: NonNegativeFen
+
+type ResourceComponent = Literal['money', 'agency', 'offset', 'transfer', 'reclassify_excess', 'cost']
+
+type ResourceComponents = list[ResourceComponent]
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
@@ -9784,7 +9816,7 @@ class PartialVatAssessmentFilingProfile(TypedDict):
     source: NotRequired[PartialSourceLocation]
 
 class TargetOperationsServiceSaleValues(TypedDict):
-    gross_fen: PositiveFen
+    gross_fen: NonNegativeFen
     revenue_fen: NonNegativeFen
     vat_fen: NonNegativeFen
     current_tax_net_fen: NonNegativeFen
@@ -9797,7 +9829,7 @@ class TargetOperationsExpenseValues(TypedDict):
     report_detail_state: Literal['known', 'unestablished']
 
 class TargetOperationsExpenseRecoveryValues(TypedDict):
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
     expense_or_income_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee', 'bank_interest', 'company_reward']
     report_detail_state: Literal['known', 'unestablished']
 
@@ -9819,7 +9851,7 @@ class TargetOperationsAdvanceFulfillmentValues(TypedDict):
     advance_consumed_fen: PositiveFen
 
 class TargetOperationsSaleReturnValues(TypedDict):
-    gross_fen: PositiveFen
+    gross_fen: NonNegativeFen
     revenue_reversed_fen: NonNegativeFen
     vat_reversed_fen: NonNegativeFen
     original_tax_period: NotRequired[Month]
@@ -9847,7 +9879,7 @@ class TargetOperationsReimbursementValues(TypedDict):
     treatment: Literal['personal_payment', 'acceptance']
 
 class TargetOperationsOverpaymentValues(TypedDict):
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
     treatment: Literal['overpayment_recovery', 'overreceipt_refund']
 
 class TargetPeopleEmploymentValues(TypedDict):
@@ -10058,7 +10090,7 @@ class CooperationTargetContractValues(TypedDict):
     project_id: Id
     operator_id: Id
     company_initial_commitment_fen: PositiveFen
-    company_revenue_expense_share: Rate
+    company_revenue_expense_share: CooperationShare
 
 class CooperationTargetFundingValues(TypedDict):
     contract_id: Id
@@ -10112,14 +10144,16 @@ class CooperationAccountingPositionPeriodTotals(TypedDict):
     operator_funded_fen: NonNegativeFen
     operator_withdrawn_fen: NonNegativeFen
     operator_profit_received_fen: NonNegativeFen
-    project_revenue_fen: NonNegativeFen
-    project_expense_fen: NonNegativeFen
-    company_revenue_fen: NonNegativeFen
-    company_expense_fen: NonNegativeFen
-    project_collected_fen: NonNegativeFen
-    project_paid_fen: NonNegativeFen
-    company_collected_fen: NonNegativeFen
-    company_paid_fen: NonNegativeFen
+    project_revenue_fen: Fen
+    project_expense_fen: Fen
+    company_revenue_fen: Fen
+    company_expense_fen: Fen
+    project_collected_fen: Fen
+    project_paid_fen: Fen
+    company_collected_fen: Fen
+    company_paid_fen: Fen
+    company_outside_settled_out_fen: NonNegativeFen
+    company_outside_settled_in_fen: NonNegativeFen
 
 class TaxPointSegmentVariant1(TypedDict):
     state: Literal['due']
@@ -11699,6 +11733,9 @@ __all__ = [
     'AdoptedIncomeTaxCumulativeQuantity',
     'AdoptedTaxReturnQuantity',
     'AdoptedOpeningBalanceQuantity',
+    'CooperationTradeQuantity',
+    'ResourceComponent',
+    'ResourceComponents',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',
