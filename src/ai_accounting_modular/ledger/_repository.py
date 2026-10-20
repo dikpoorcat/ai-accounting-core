@@ -87,6 +87,39 @@ class LedgerRepository:
             args.append(canonical(list(business_ids)))
         return [dict(row) for row in self._session.fetchall(sql, tuple(args))]
 
+    def current_heads_in_period(self, period_from, period_to):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT r.* FROM adopted_result r JOIN result_slot_current c "
+                "ON c.head_result_id=r.result_id "
+                "WHERE r.business_period>=? AND r.business_period<=?",
+                (period_from, period_to),
+            )
+        ]
+
+    def results(self, result_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM adopted_result WHERE result_id IN (SELECT value FROM json_each(?))",
+                (canonical(list(result_ids)),),
+            )
+        ]
+
+    def tax_sales(self, period_from, period_to):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT t.*,r.business_id,r.result_slot,r.generation,r.baseline_result_id,"
+                "r.calculation_key,r.calculation_revision,r.basis_digest,r.target_digest "
+                "FROM result_tax_sale t JOIN result_slot_current c ON c.head_result_id=t.result_id "
+                "JOIN adopted_result r ON r.result_id=t.result_id "
+                "WHERE t.tax_period>=? AND t.tax_period<=?",
+                (period_from, period_to),
+            )
+        ]
+
     def result(self, result_id):
         row = self._session.fetchone("SELECT * FROM adopted_result WHERE result_id=?", (result_id,))
         return dict(row) if row else None

@@ -10,6 +10,7 @@ from test_adoption import (
     RECOVERY,
     SUPPLIER,
     _candidate,
+    adopt_declared,
     expense,
     payment,
     recovery,
@@ -95,7 +96,7 @@ def test_unknown_sibling_claim_has_safe_bounds_exact_sources_and_persisted_seman
             assert not whole.uncertain_uses
             assert whole.remaining_min_fen == whole.remaining_max_fen == 0
             assert whole.certain == forward.resource_states([REF], "obligation", cutoff)[0]
-        ledger.adopt(changes, uow)
+        adopt_declared(ledger, changes, uow)
     assert changes == original
     with store.write_unit(COMPANY) as uow:
         saved = ledger.begin_candidate([], uow).complete()
@@ -188,7 +189,9 @@ def test_future_month_unknown_use_is_outside_and_known_source_day_still_applies(
 def test_window_requires_complete_live_unit_and_preserves_reference_limit(store):
     ledger, change = create_ledger(), expense()
     with store.write_unit(COMPANY) as uow:
-        candidate = ledger.begin_candidate(change["businesses"], uow)
+        candidate = ledger.begin_candidate(
+            change["businesses"], uow, publications=change["publications"]
+        )
         with pytest.raises(ContractError, match="不完整余额"):
             candidate.resource_windows([REF], "obligation", DAY)
         candidate.stage(change["plans"][0])

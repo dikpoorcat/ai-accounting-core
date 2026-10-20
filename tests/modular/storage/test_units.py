@@ -16,6 +16,7 @@ def test_single_company_transaction_and_repository_lifetime(storage_case):
     with storage.write_unit(company.company_id) as unit:
         assert isinstance(unit, UnitOfWork)
         assert unit.head == 0 and unit.next_head == 1
+        assert unit.start_period == company.start_period
         assert not any(hasattr(unit, name) for name in ("connection", "commit", "execute"))
         repository = unit.repository("identity")
         repository.add(name="甲")
@@ -24,6 +25,7 @@ def test_single_company_transaction_and_repository_lifetime(storage_case):
         assert isinstance(read, ReadContext)
         assert not isinstance(read, UnitOfWork)
         assert read.head == 1
+        assert read.start_period == company.start_period
         assert read.repository("identity").names() == ["乙", "甲"]
     with pytest.raises(ContractError, match="已结束"):
         repository.names()

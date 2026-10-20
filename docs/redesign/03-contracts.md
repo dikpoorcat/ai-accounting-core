@@ -116,7 +116,7 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | --- | --- | --- |
 | identity.public | `plan_change(objects, context)`、`apply_current(plan, uow)`、`get_batch(ids, read_context)`、`find(query, read_context)` | 唯一维护对象及当前序号；批量返回 CurrentObject，不暴露私表。 |
 | domain.public | `describe_change(changes, context)`、`evaluate_slot(business_id, result_slot, context)`、`validate_candidate(plan, context)`、`apply_current(plan, uow)`、`export_current(ids, read_context)`、`query_current(query, read_context)` | describe 返回 ChangeDescription，声明责任、自然唯一键、完整槽集合、依赖和字段问题，不抢先计算正式结果。应用按槽拓扑求值，收齐完整候选后调用 validate_candidate 核验集合约束，再把 ChangePlan 交 owner 保存。最终核验不能改写计划、金额或采用依据。无自行提交、后台发任务或跨模块私表读取。 |
-| ledger.public | `begin_candidate(responsibilities, uow, correction_period=None)`、`resource_definitions(refs, kind, read_context)`、`fund_movements(account_id, period_from, period_to, read_context)`、`adopt(change_plans, uow, correction_period=None)`、正式结果和凭证等查询、`financial_snapshot(scope, read_context)` | 候选逐槽 stage，全部齐备后 complete。求值可读来源资源定义；完整后才能读资源余额及完整资金范围。ResourceDefinition 含公开身份、完整定义及精确采用来源；ResourceState 加入截至指定月份/必要实际日的清偿、转移、消耗及剩余量。采用和事务提交再次统一检查容量；正式读取明确 current 或指定月末 as_posted。完整查询与财务取数按各自合同返回。 |
+| ledger.public | `begin_candidate(responsibilities, uow, correction_period=None, publications=(), resource_uses=None)`、`resource_definitions(refs, kind, read_context)`、`fund_movements(account_id, period_from, period_to, read_context)`、`adopt(change_plans, uow, correction_period=None)`、正式结果和凭证等查询、`financial_snapshot(scope, read_context)` | 候选逐槽 stage，全部齐备后 complete。求值可读来源资源定义；声明完整使用范围后，相关槽就绪即可读取精确资源窗口；完整资金范围仍须等全部候选齐备。ResourceDefinition 含公开身份、完整定义及精确采用来源；ResourceState 加入截至指定月份/必要实际日的清偿、转移、消耗及剩余量。采用和事务提交再次统一检查容量；正式读取明确 current 或指定月末 as_posted。完整查询与财务取数按各自合同返回。 |
 | money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`actual_settled_fen(source, cutoff, context)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。实际清偿按同单最终事实、本义务分配及经济截止计算，不含抵销、转债或代办。内部划转单独标记；银行原行不自动变成第二次付款。 |
 | ledger.opening / ledger.reporting | 同领域 describe/evaluate/apply/export/query 协议 | 分别承接 opening.package、reports.continuation 的事实写入和导出；共享 ledger 采用端口，不由 application 越界代写。 |
 | records.public | `plan_change(input, context)`、`apply_current(plan, uow)`、`resolve_sources(ids, read_context)`、`lease_source(source_id, read_context)`、`current_notes/current_issues(scope, read_context)`、`publish_documents(scopes, head)` | 唯一维护来源、说明和待办；lease_source返回受控读取租约，可流式校验/复制已登记原字节或有效说明，不让调用者解析私有路径、任意开文件或改内容。 |
@@ -126,13 +126,13 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 
 reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过 storage 建立一次只读上下文；HTTP 只解析参数，不自行另开连接。ContextScope 无公司时只取目录元数据，选定公司后才建立公司 ReadContext。来源审查 detail 使用 ContextScope，不编造业务月份。
 
-入口内所有跨模块子查询显式使用同一 `ReadContext`：company_id、database_id、head、view/as_of，以及同一快照内的模块仓储。`repository(owner)` 只供各模块取得自身装配的仓储；上下文不公开连接、任意 SQL 或 commit。模块不得另开连接，避免一页混合两次提交。`UnitOfWork` 额外提供 next_head 和事务末检查登记，由 storage 统一结束事务；各数据 owner 的 apply_current/adopt/mark_targets 加入同一工作单元，不由应用层越界写私表。各 owner 专属计划和查询类型放在自身 public，公开线协议不携带这些进程内能力。
+入口内所有跨模块子查询显式使用同一 `ReadContext`：company_id、database_id、start_period、head、view/as_of，以及同一快照内的模块仓储。start_period 是公司已有建账边界，不表示此前余额或发生额为零。`repository(owner)` 只供各模块取得自身装配的仓储；上下文不公开连接、任意 SQL 或 commit。模块不得另开连接，避免一页混合两次提交。`UnitOfWork` 额外提供 next_head 和事务末检查登记，由 storage 统一结束事务；各数据 owner 的 apply_current/adopt/mark_targets 加入同一工作单元，不由应用层越界写私表。各 owner 专属计划和查询类型放在自身 public，公开线协议不携带这些进程内能力。
 
 业务及当前资料的有效保存一次推进 global_seq；纯读取、文档发布确认、读取模型和文件任务维护不推进它。维护事务只能使用对应派生/任务仓储，不能在不推进业务头的情况下更改事实、来源或说明正文。这样缓存生成、备份进度不会反过来让业务依据失效。
 
 `PostingPlan` 只由领域程序产生，字段包括 business_id、result_slot、accounting_period、rule_refs、受控 lines、obligations、settlements、obligation_reclassifications、cost_lots/consumptions、资金与税务/报表分类结果、agency_proofs、引用依据。每次还声明该业务的完整结果槽集合；未再产生的旧槽必须明确退出，不能遗留旧义务。公开资源键由 business_id+slot 稳定定位，不随 result_id 或计算序号改变；有清偿/消耗/冻结必要引用时不能静默删除。AI 接口不接收计划，科目和方向由固定业务规则选择，只有内部完整平衡的计划才能采用。
 
-求值使用统一 EvaluationContext：当前事实和对象以本单正确内容覆盖；get_result 返回只有 source/target/basis 的 EvaluatedSlot，不把尚未提交的结果伪装成已有凭证。来源引用由 ledger 在同一工作单元绑定完整计划后生成，正式保存使用同一身份和摘要；领域不自行生成结果身份。依赖的 producer_public_slot 指核算节点的 result_slot，义务或成本引用的 BusinessRef.slot 则是该节点内的公开资源，两者不能混用。related_facts 按已经声明的当前依赖关系发现相关事实，再叠加本单新增、替换及撤去，不扫描全部正文猜关系。
+求值使用统一 EvaluationContext：当前事实和对象以本单正确内容覆盖；get_result 返回只有 source/target/basis 的 EvaluatedSlot，不把尚未提交的结果伪装成已有凭证。来源引用由 ledger 在同一工作单元绑定完整计划后生成，正式保存使用同一身份和摘要；领域不自行生成结果身份。普通 result 依赖的 producer_public_slot 指核算节点的 result_slot；use/balance 依赖则明确指向义务或成本的公开资源槽。资源定义另由 result 边声明，不能把 main 结果槽与 tax、primary 等资源槽混用。related_facts 按已经声明的当前依赖关系发现相关事实，再叠加本单新增、替换及撤去，不扫描全部正文猜关系。
 
 代理代收代付采用严格 AgencyProof：只有合作 collection/payment 的正式 Target/Basis 产生，包含业务身份、agency 槽、原交易 source、方向、交易方、经营者、公司金额及期间，可选真实日。应用层按同一读快照或同单计划解析并传入 ledger；不保存第二份可编辑证明表。settlement.method=agency 须 agency_business_id/agency_public_slot，禁止 movement_id；金额合计必须等于有效证明，交易方、方向和原义务容量均须匹配。不产生公司资金发生或现金流。method=money 须真实 movement_id；offset 不伪造资金；转移及超付归类由独立 ObligationReclassification 承接。
 
@@ -140,11 +140,21 @@ reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过 
 
 每份业务责任必须声明 `natural_key`：确有自然唯一性时填写稳定键，否则为 null。应用统一检查最终责任集合，包含被连带重算的业务；同单互换唯一键合法，未参与的业务不能被挤掉。不得以姓名、数组顺序或资料行位置猜键。
 
-EvaluationContext 提供当前事实、对象和已求值结果，以及显式关系集合 `related_facts/related_facts_many`、指定 kind/月范围 `facts_in_scope`。集合读取叠加本单新建、更正和撤去，不扫描私有 JSON 猜关系。依赖的 fact 边采用事实，result 边才参与求值拓扑；collection 边订阅集合增删，scope 订阅指定业务种类及月份，calendar/work 订阅已进入的工作月份。重复依赖按同一身份合并通知范围，不改变业务本身的核算范围。
+EvaluationContext 提供当前事实、对象和已求值结果，以及显式关系集合 `related_facts/related_facts_many`、指定 kind/月范围 `facts_in_scope`。集合读取叠加本单新建、更正和撤去，不扫描私有 JSON 猜关系。依赖的 fact 边采用事实，result 与 balance 边参与求值拓扑，use 声明被余额读取等待的槽；collection 边订阅集合增删，scope 订阅指定业务种类及月份，calendar/work 订阅已进入的工作月份。重复依赖按同一身份合并通知范围，不改变业务本身的核算范围。
+
+ChangeDescription 与 ChangePlan 的 publications 明确每个结果槽可能影响的 `tax_sales` 或 `pre_tax` 月份范围；没有贡献时为空。ResultPublication 只含业务、槽、集合和起止月，不保存金额。同槽同集合合并为一个覆盖范围，实际贡献不得越界。税销售按 TaxSale.tax_period 发布，税前利润按完整目标的核算月发布，不能拿事实归档月或发现期代替。
+
+读取这些集合时，依赖用 producer_kind=aggregate、producer_id=集合名、producer_public_slot=main、read_mode=result、relation_kind=calculation 和明确月份范围。应用对本单相关发布槽建立拓扑边，并按旧、新发布范围找消费者；槽被连带重算，即使事实和范围未变也通知。退出槽只通知旧范围，不继续等它求值。未受影响的持久结果直接参与取数，不为求集合重新处理全部历史。
+
+`tax_sales(from,to)` 返回带精确采用来源的 TaxSaleView；`pre_tax(from,to)` 返回 PretaxView，含统一利润字段、必要来源和具体缺项。候选只在相关发布槽齐备后提供这些读取，不要求包括所得税自身在内的全部候选完成；资源余额按下述明确使用范围等待相关槽；完整资金范围仍等全部候选。所得税不发布税前利润，税点本身不发布税销售，避免重复或自我依赖。正式读取和同单候选共用账务选择器；各消费者不另写一套收入或利润汇总。
+
+资源使用和余额读取复用 Dependency：use 声明本结果槽可能使用的精确来源资源及核算月份范围，settlement 表示义务，cost 表示成本；不保存金额。balance 声明同一资源从公司建账起点到截止期的读取范围，另有 result 边保证定义就绪。应用等待范围内所有可能使用者，账务仍用同一窗口算法计算。纳入重算的使用者无论边是否变化，都按旧、新范围通知余额观察者；普通相关事实查询不混入这些调度声明。
+
+必要的 effective_on 只能来自真实采用日，未知同月仍须等待并保留窗口上下界。balance 的 excluded_result_slots 明确排除自身及业务规则确定的内部结果，调度与实际读取使用同一名单，不能笼统排除下游或真实资金来消除循环。不同精确日或排除名单的读取不能静默合并。暂存与正式采用再次检查实际使用均被声明覆盖；完整候选仍核对全部容量。
 
 ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时填写。义务和成本的 business_period 可以是税款、工资或原成本的关联期；是否已经成立取生产结果的核算期。资金按真实发生日截取，非资金按正式采用的必要实际日截取。只有月份的记录不补日；同月月中确实无法判断的关系才返回精确缺项，按月或月末核验不因此普遍追问日期。
 
-完整候选的 `resource_windows` 返回确定数量、同月未知日的变动及其可能余额上下界。领域可据最不利边界证明结果不受先后影响，就无需追问日期；只有成立与否确实随未知先后改变时才补资料。需要精确数值的 `resource_states` 仍拒绝含未知边界的日截面。两种读取共用相同时序筛选，不把未知变动默认为已发生或未发生；上下界只是计算比较，不是另存的正式金额。
+`resource_windows` 返回确定数量、同月未知日的变动及其可能余额上下界。领域可据最不利边界证明结果不受先后影响，就无需追问日期；只有成立与否确实随未知先后改变时才补资料。需要精确数值的 `resource_states` 仍拒绝含未知边界的日截面。两种读取共用相同时序筛选，不把未知变动默认为已发生或未发生；上下界只是计算比较，不是另存的正式金额。
 
 同一计算快照批量读取并复用已验证结果，返回值与调用者相互隔离；候选增加计划时更新相应索引，缓存不能跨提交沿用。公开读取单页500不限制合法事实产生的分录或证明数量；内部输出不能另加较小上限，迫使业务缩减或拆断原子关系。
 

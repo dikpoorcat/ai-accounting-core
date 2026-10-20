@@ -121,6 +121,7 @@ class StorageContext:
         head: int,
         factories: dict[str, RepositoryFactory],
         *,
+        start_period: str,
         writable: bool,
         maintenance: bool = False,
         view: Literal["current", "as_posted"] = "current",
@@ -128,6 +129,7 @@ class StorageContext:
     ):
         self.company_id = company_id
         self.database_id = database_id
+        self.start_period = start_period
         self.head = head
         self.view = view
         self.as_of = as_of

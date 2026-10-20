@@ -17,8 +17,17 @@ from ._common import (
     sum_amounts,
 )
 from ._cumulative import adopt_position, inherit_cashflow, interval_shares, position, related
+from ._expenses import unknown_details
 from ._relationships import _resource
-from ._sales import tax_sale_values
+from ._tax_lifecycle import day_used
+from ._tax_ranges import ranges, return_ranges
+from ._tax_returns import (
+    adopt_return_sources,
+    emit_negative_sales,
+    selected_parts,
+    sources,
+    validate_capacities,
+)
 
 
 def expense_recovery(fact, context):
@@ -59,6 +68,8 @@ def expense_recovery(fact, context):
                         "amount_fen": format_fen(-recovered),
                     }
                 )
+    elif total and values["report_detail_state"] == "unestablished":
+        unknown_details(plan, fact, source["expense_class"], original=original)
     plan["basis"]["adopted_quantities"].append(quantity)
     adopt_position(plan, ref, span)
     line(plan, "1221", debit=total, party=data["counterparty_id"], summary="确认真实退费追收")
@@ -69,157 +80,72 @@ def expense_recovery(fact, context):
     return plan
 
 
-def original_tax_sale(original):
-    """Reproduce the one complete tax source actually frozen in original Basis."""
-    source, values = original.basis["input"], original.target["values"]
-    vat, point = source.get("vat"), source.get("tax_point")
-    if not vat or not point or point["type"] != "explicit":
-        reject("原业务没有可直接采用的完整单税源。", "unsupported_business")
-    policies = [
-        item
-        for item in original.basis["policies"]
-        if item["policy_business_id"] == vat["policy_id"]
-        and item["policy_kind"] == "taxes.vat_policy"
-    ]
-    if len(policies) != 1:
-        reject("原业务缺少唯一已采用VAT政策。")
-    if original.target["kind"] == "operations.service_sale":
-        if amount(values, "deferred_vat_fen") or point["tax_period"] != original.basis["period"]:
-            reject("部分计税或跨税点来源须接入完整税点生命周期。", "unsupported_business")
-        net = amount(values, "revenue_fen")
-    elif original.target["kind"] == "operations.advance":
-        net = amount(values, "net_fen")
-    else:
-        reject("当前退回只承接普通销售或已计税预收的完整单税源。", "unsupported_business")
-    tax = amount(values, "vat_fen")
-    sale = tax_sale_values(
-        original.source["business_id"],
-        point["tax_period"],
-        policies[0]["parameters"],
-        vat,
-        net,
-        tax,
-        amount(values, "gross_fen"),
-    )
-    return sale, policies[0]
-
-
-def adopt_tax(plan, original):
-    sale, policy = original_tax_sale(original)
-    adopt_source(plan, original)
-    plan["basis"]["adopted_quantities"].append({"type": "tax_sale", "sale": deepcopy(sale)})
-    plan["basis"]["policies"].append(deepcopy(policy))
-    plan["rule_refs"][0]["policy_business_ids"] = [policy["policy_business_id"]]
-    plan["rule_refs"][0]["official_urls"] = [policy["parameters"]["policy"]["official_url"]]
-    return sale
-
-
-def negative_tax(plan, original_sale, net, tax, ranges):
-    plan["tax_sales"].append(
-        {
-            **deepcopy(original_sale),
-            "source_business_id": plan["business_id"],
-            "tax_period": plan["accounting_period"],
-            "net_sales_fen": format_fen(-net),
-            "vat_fen": format_fen(-tax),
-            "ranges": deepcopy(ranges),
-        }
-    )
-
-
-def _return_ranges(members, capacity):
-    by_id, ranges = {}, []
-    for item in members:
-        if "tax_ranges" not in item["data"]:
-            continue
-        gross = amount(item["data"], "gross_fen")
-        current = item["data"]["tax_ranges"]
-        normalized = sorted((amount(row, "from_fen"), amount(row, "to_fen")) for row in current)
-        if any(start >= end or end > capacity for start, end in normalized):
-            reject("红字退回范围必须为原销售毛额内的有效正区间。", "invalid_input")
-        if sum_amounts(end - start for start, end in normalized) != gross:
-            reject("红字退回范围合计必须等于本次退回毛额。", "invalid_input")
-        ranges.extend(normalized)
-        by_id[item["business_id"]] = normalized
-    ordered = sorted(ranges)
-    if any(right[0] < left[1] for left, right in zip(ordered, ordered[1:], strict=False)):
-        reject("同一销售的当前红字退回范围不能重叠。")
-    available, start = [], 0
-    for begin, end in ordered:
-        if start < begin:
-            available.append([start, begin])
-        start = end
-    if start < capacity:
-        available.append([start, capacity])
-    cursor = 0
-    for item in members:
-        if item["business_id"] in by_id:
-            continue
-        remaining, assigned = amount(item["data"], "gross_fen"), []
-        while remaining:
-            begin, end = available[cursor]
-            used = min(end - begin, remaining)
-            assigned.append((begin, begin + used))
-            remaining -= used
-            available[cursor][0] += used
-            if available[cursor][0] == end:
-                cursor += 1
-        by_id[item["business_id"]] = assigned
-    return {
-        key: [{"from_fen": format_fen(start), "to_fen": format_fen(end)} for start, end in values]
-        for key, values in by_id.items()
-    }
-
-
 def sale_return(fact, context):
     data = fact["data"]
     original = referenced_result(fact, context, {"business_id": data["sale_id"], "slot": "main"})
     if original.target["kind"] != "operations.service_sale":
-        reject("销售退回目前承接普通服务销售的完整单税源。", "unsupported_business")
+        reject("销售退回必须对应原服务销售。", "invalid_input")
     if original.basis["input"]["customer_id"] != data["customer_id"]:
         reject("销售退回必须对应原销售的同一客户。")
-    original_sale, _ = original_tax_sale(original)
+    original_sources = sources(original)
     members = related(fact, context, data["sale_id"], {fact["kind"]}, "sale_id")
-    gross, tax = amount(data, "gross_fen"), amount(data, "credit_note_vat_fen")
-    capacity, original_vat = (
-        amount(original.target["values"], "gross_fen"),
-        amount(original_sale, "vat_fen"),
-    )
-    span = position(fact, members, "gross_fen", capacity)
-    cumulative_vat = sum_amounts(amount(item["data"], "credit_note_vat_fen") for item in members)
-    if any(
-        amount(item["data"], "credit_note_vat_fen") >= amount(item["data"], "gross_fen")
-        for item in members
-    ):
-        reject("每次红字VAT必须小于该次退回毛额。", "invalid_input")
-    if cumulative_vat > original_vat or span.total - cumulative_vat > capacity - original_vat:
-        reject("累计冲回净收入和VAT均不能超过原采用金额。")
-    if span.total == capacity and cumulative_vat != original_vat:
-        reject("全部退回必须包含原销售全部已采用VAT。")
+    capacity = amount(original.target["values"], "gross_fen")
+    assigned = return_ranges(members, capacity)
+    all_parts = {}
     for member in members:
-        if (
-            member["data"].get("original_tax_period", original_sale["tax_period"])
-            != original_sale["tax_period"]
-        ):
-            reject("所给原税期与原销售已采用税源不一致。", "invalid_input")
-    ranges = _return_ranges(members, capacity)[fact["business_id"]]
-    net = gross - tax
+        value, vat = (
+            amount(member["data"], "gross_fen"),
+            amount(member["data"], "credit_note_vat_fen"),
+        )
+        if vat > value:
+            reject("每次红字VAT不能超过该次退回毛额。", "invalid_input")
+        all_parts[member["business_id"]] = selected_parts(
+            member,
+            original_sources,
+            ranges(assigned[member["business_id"]], capacity),
+            expected_tax=vat,
+        )
+    validate_capacities(original_sources, all_parts.values())
+    selected = all_parts[fact["business_id"]]
+    gross, tax = amount(data, "gross_fen"), amount(data, "credit_note_vat_fen")
+    values = {
+        "gross_fen": data["gross_fen"],
+        "revenue_reversed_fen": str(gross - tax),
+        "vat_reversed_fen": str(tax),
+        "tax_returns": [part for _, part in selected],
+    }
+    periods = {part.get("original_tax_period") for _, part in selected}
+    if len(periods) == 1 and None not in periods:
+        values["original_tax_period"] = next(iter(periods))
     plan = base_plan(
         fact,
         context,
-        {
-            "gross_fen": data["gross_fen"],
-            "revenue_reversed_fen": format_fen(net),
-            "vat_reversed_fen": format_fen(tax),
-            "original_tax_period": original_sale["tax_period"],
-        },
+        values,
+        adopt_effective_on=any(day_used(source["segment"], fact) for source in original_sources),
     )
-    adopt_tax(plan, original)
-    line(plan, "5001", debit=net, summary="冲减真实退回收入")
-    line(plan, "222101", debit=tax, summary="冲减原已采用VAT")
+    plan["basis"]["input"]["tax_returns"] = deepcopy(values["tax_returns"])
+    adopt_return_sources(plan, original, original_sources, selected)
+    for month in sorted(
+        {
+            part["original_tax_period"]
+            for _, part in selected
+            if part["state"] == "taxed"
+            and original.basis["period"] < part["original_tax_period"] < fact["period"]
+        }
+    ):
+        release = context.get_result(data["sale_id"], "tax:" + month)
+        if release is None:
+            reject("已到税点退回需要原业务该月正式税额释放结果。")
+        adopt_source(plan, release)
+    line(plan, "5001", debit=gross - tax, summary="冲减真实退回收入")
+    due_tax = sum_amounts(
+        amount(part, "vat_fen") for _, part in selected if part["state"] == "taxed"
+    )
+    line(plan, "222101", debit=due_tax, summary="冲减原已采用VAT")
+    line(plan, "222104", debit=tax - due_tax, summary="冲减尚未到税点的待转VAT")
     line(plan, "2203", credit=gross, party=data["customer_id"], summary="确认客户退款责任")
     obligation(
         plan, "refund", data["customer_id"], "payable", gross, "2203", cashflow="customer_receipts"
     )
-    negative_tax(plan, original_sale, net, tax, ranges)
+    emit_negative_sales(plan, original_sources, selected)
     return plan

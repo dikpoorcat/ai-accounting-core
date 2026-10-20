@@ -17,13 +17,16 @@ from ._wire_types import (
     CurrentObject,
     DependencyRelationKind,
     Fact,
+    FactIssue,
     FundMovement,
     Obligation,
     ObligationReclassification,
+    PretaxFields,
     ResultSourceRef,
     ResultTarget,
     Settlement,
     SourceLocator,
+    TaxSale,
 )
 
 ResourceKind = Literal["obligation", "cost", "funds"]
@@ -177,6 +180,11 @@ class ReadContext(Protocol):
     def database_id(self) -> str: ...
 
     @property
+    def start_period(self) -> str:
+        """The company's sourced bookkeeping boundary in this same snapshot."""
+        ...
+
+    @property
     def head(self) -> int: ...
 
     @property
@@ -221,6 +229,34 @@ class EvaluatedSlot:
             raise ContractError(
                 "invalid_input", "求值结果的来源、目标和依据必须属于同一结果槽及类型"
             )
+
+
+@dataclass(frozen=True)
+class TaxSaleView:
+    """One adopted tax-sale component and its exact producing result."""
+
+    sale: TaxSale
+    source: ResultSourceRef
+
+    def __post_init__(self) -> None:
+        validate_contract("business-facts.schema.json", "TaxSale", self.sale)
+        validate_contract("business-facts.schema.json", "ResultSourceRef", self.source)
+
+
+@dataclass(frozen=True)
+class PretaxView:
+    """The shared financial selector's pretax fields and necessary basis."""
+
+    fields: PretaxFields
+    sources: tuple[ResultSourceRef, ...] = ()
+    issues: tuple[FactIssue, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_contract("reporting.schema.json", "PretaxFields", self.fields)
+        for source in self.sources:
+            validate_contract("business-facts.schema.json", "ResultSourceRef", source)
+        for issue in self.issues:
+            validate_contract("core.schema.json", "FactIssue", issue)
 
 
 @runtime_checkable
@@ -279,6 +315,14 @@ class EvaluationContext(Protocol):
         self, kinds: Sequence[str], period_from: str, period_to: str
     ) -> tuple[Fact, ...]: ...
 
+    def tax_sales(self, period_from: str, period_to: str) -> tuple[TaxSaleView, ...]:
+        """Current tax-period components after the declared publisher slots are ready."""
+        ...
+
+    def pre_tax(self, period_from: str, period_to: str) -> PretaxView:
+        """Shared current financial inputs, excluding income tax and its own payment."""
+        ...
+
     def movement_id(self, business_id: str, public_slot: str) -> str: ...
 
     def actual_settled_fen(self, source: BusinessRef, cutoff: ResourceCutoff) -> int:
@@ -302,6 +346,7 @@ class EvaluationContext(Protocol):
         cutoff: ResourceCutoff,
         *,
         excluding_consumer: tuple[str, str] | None = None,
+        excluding_consumers: Sequence[tuple[str, str]] = (),
     ) -> tuple[ResourceState, ...]: ...
 
     def resource_windows(
@@ -311,6 +356,7 @@ class EvaluationContext(Protocol):
         cutoff: ResourceCutoff,
         *,
         excluding_consumer: tuple[str, str] | None = None,
+        excluding_consumers: Sequence[tuple[str, str]] = (),
     ) -> tuple[ResourceWindow, ...]:
         """A complete candidate's quantities with explicit bounds for unknown use days."""
         ...

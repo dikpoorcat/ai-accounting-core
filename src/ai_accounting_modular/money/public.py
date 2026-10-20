@@ -97,7 +97,7 @@ class Money:
         return _actual_settled_fen(source, cutoff, context)
 
     def describe_change(self, changes, context: EvaluationContext):
-        businesses, dependencies = [], []
+        businesses, dependencies, publications = [], [], []
         for change in changes:
             op = change["op"]
             business_id = change.get("business_id") or change["fact"]["business_id"]
@@ -116,6 +116,19 @@ class Money:
             if fact["business_id"] != business_id or fact["kind"] not in self.supported_kinds:
                 fail("资金业务身份或所属种类不一致。", "invalid_input")
             responsibility.update(fact=fact, complete_result_slots=["main"])
+            if fact["kind"] == "money.movement" and fact["data"]["type"] in {
+                "managed_reserve",
+                "payroll_reserve",
+            }:
+                publications.append(
+                    {
+                        "business_id": business_id,
+                        "result_slot": "main",
+                        "collection": "pre_tax",
+                        "period_from": fact["period"],
+                        "period_to": fact["period"],
+                    }
+                )
             if fact["kind"] in {"money.bank_statement", "money.platform_activity"}:
                 account_field = (
                     "funds_account_id"
@@ -194,6 +207,13 @@ class Money:
                         dependencies.append(collection)
             for allocation in allocation_refs(fact):
                 producer = allocation["source"]["business_id"]
+                use = _dependency(
+                    business_id, producer, "settlement", mode="use", period=fact["period"]
+                )
+                use["producer_public_slot"] = allocation["source"]["slot"]
+                if "effective_on" in fact:
+                    use["effective_on"] = fact["effective_on"]
+                dependencies.append(use)
                 for mode in ("result", "collection"):
                     edge = _dependency(business_id, producer, "settlement", mode=mode)
                     if edge not in dependencies:
@@ -202,6 +222,7 @@ class Money:
             "domain": "money",
             "businesses": businesses,
             "dependencies": dependencies,
+            "publications": publications,
             "issues": [],
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)

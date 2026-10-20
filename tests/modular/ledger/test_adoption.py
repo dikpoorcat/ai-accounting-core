@@ -119,7 +119,7 @@ class SourceSeed:
 
 
 @pytest.fixture
-def store(tmp_path):
+def store(tmp_path, request):
     catalog = tmp_path / "catalog.sqlite3"
     create_catalog(catalog, OwnerProfile(str(uuid4()), "合成老板", "synthetic-test-password-hash"))
     storage = Storage(
@@ -138,7 +138,7 @@ def store(tmp_path):
             database_id=DATABASE,
             credit_code="913100000000000001",
             legal_name="合成账务测试公司",
-            start_period="2026-01",
+            start_period=getattr(request, "param", "2026-01"),
             company_root=tmp_path / "company",
         )
     )
@@ -147,6 +147,47 @@ def store(tmp_path):
         uow.repository("identity").supplier()
         uow.repository("records").source()
     return storage
+
+
+def publication(business_id, period="2026-01", *, slot="main", collection="pre_tax"):
+    return {
+        "business_id": business_id,
+        "result_slot": slot,
+        "collection": collection,
+        "period_from": period,
+        "period_to": period,
+    }
+
+
+def with_resource_uses(changes):
+    """Declare synthetic trusted-plan uses; production owners make their own promises."""
+    changes = deepcopy(changes)
+    for change in changes:
+        for plan in change["plans"]:
+            for name, relation in (
+                ("settlements", "settlement"),
+                ("obligation_reclassifications", "settlement"),
+                ("cost_consumptions", "cost"),
+            ):
+                for use in plan[name]:
+                    edge = {
+                        "consumer_business_id": plan["business_id"],
+                        "consumer_result_slot": plan["result_slot"],
+                        "producer_kind": "business",
+                        "producer_id": use["source"]["business_id"],
+                        "producer_public_slot": use["source"]["slot"],
+                        "read_mode": "use",
+                        "relation_kind": relation,
+                        "period_from": plan["accounting_period"],
+                        "period_to": plan["accounting_period"],
+                    }
+                    if edge not in change["dependencies"]:
+                        change["dependencies"].append(edge)
+    return changes
+
+
+def adopt_declared(ledger, changes, uow, **kwargs):
+    return ledger.adopt(with_resource_uses(changes), uow, **kwargs)
 
 
 def expense(amount="100000", *, seq=0, business_id=BUSINESS):
@@ -239,6 +280,7 @@ def expense(amount="100000", *, seq=0, business_id=BUSINESS):
     }
     return {
         "domain": "operations",
+        "publications": [publication(business_id)],
         "businesses": [
             {
                 "business_id": business_id,
@@ -263,10 +305,10 @@ def result(store, business_id=BUSINESS):
 def test_open_replace_keeps_identity_and_number_and_removes_old_payload(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        assert ledger.adopt([expense()], uow).changed is True
+        assert adopt_declared(ledger, [expense()], uow).changed is True
     before = result(store)
     with store.write_unit(COMPANY) as uow:
-        assert ledger.adopt([expense("90000", seq=1)], uow).changed is True
+        assert adopt_declared(ledger, [expense("90000", seq=1)], uow).changed is True
     after = result(store)
     assert after["reference"]["result_id"] == before["reference"]["result_id"]
     assert after["reference"]["generation"] == 2
@@ -288,8 +330,8 @@ def test_invalid_plan_rolls_back_entire_transaction(store):
     bad["plans"][0]["lines"][1]["credit_fen"] = "89999"
     with pytest.raises(ContractError) as error:
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([expense()], uow)
-            ledger.adopt([bad], uow)
+            adopt_declared(ledger, [expense()], uow)
+            adopt_declared(ledger, [bad], uow)
     assert error.value.code == "unbalanced_voucher"
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS], context) == ()
@@ -301,9 +343,9 @@ def test_caught_plan_failure_still_cannot_commit_partial_unit(store):
     invalid["plans"][0]["lines"][1]["credit_fen"] = "1"
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([expense()], uow)
+            adopt_declared(ledger, [expense()], uow)
             try:
-                ledger.adopt([invalid], uow)
+                adopt_declared(ledger, [invalid], uow)
             except ContractError:
                 pass
     assert rejected.value.code == "invalid_operation"
@@ -314,9 +356,10 @@ def test_caught_plan_failure_still_cannot_commit_partial_unit(store):
 def test_open_withdraw_removes_result_and_resources_without_history(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
     withdrawn = {
         "domain": "operations",
+        "publications": [],
         "businesses": [
             {
                 "business_id": BUSINESS,
@@ -331,11 +374,11 @@ def test_open_withdraw_removes_result_and_resources_without_history(store):
         "issues": [],
     }
     with store.write_unit(COMPANY) as uow:
-        adopted = ledger.adopt([withdrawn], uow)
+        adopted = adopt_declared(ledger, [withdrawn], uow)
         assert adopted.changed is True
         assert adopted.retired_slots == ({"business_id": BUSINESS, "slot": "main"},)
     with store.write_unit(COMPANY) as uow:
-        repeated = ledger.adopt([withdrawn], uow)
+        repeated = adopt_declared(ledger, [withdrawn], uow)
         assert repeated.changed is False
         assert repeated.results == repeated.retired_slots == ()
     with store.read_unit(COMPANY) as context:
@@ -349,7 +392,7 @@ def test_full_range_counts_and_cursor_cannot_cross_commits(store):
     second = "50000000-0000-4000-8000-000000000002"
     with store.write_unit(COMPANY) as uow:
         uow.repository("application").business(second)
-        ledger.adopt([expense(), expense("23456", business_id=second)], uow)
+        adopt_declared(ledger, [expense(), expense("23456", business_id=second)], uow)
     query = LedgerQuery(limit=1)
     with store.read_unit(COMPANY) as context:
         first = ledger.query_obligations(query, context)
@@ -361,7 +404,7 @@ def test_full_range_counts_and_cursor_cannot_cross_commits(store):
             != next_page.items[0]["obligation"]["business_id"]
         )
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense("90000", seq=1)], uow)
+        adopt_declared(ledger, [expense("90000", seq=1)], uow)
     with store.read_unit(COMPANY) as context:
         with pytest.raises(ContractError) as error:
             ledger.query_obligations(replace(query, cursor=first.next_cursor), context)
@@ -372,7 +415,7 @@ def test_vouchers_are_sealed_and_dirty_check_rejects_incomplete_mutation(store):
     ledger = create_ledger()
     with pytest.raises(ContractError, match="未封存"):
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([expense()], uow)
+            adopt_declared(ledger, [expense()], uow)
             repo = uow.repository("ledger")
             voucher = repo.vouchers([repo.current_heads([BUSINESS])[0]["result_id"]])[0]
             repo._session.execute(
@@ -429,16 +472,16 @@ def test_no_voucher_result_is_formally_adopted(store):
 def test_frozen_baseline_and_repeated_open_correction_keep_only_final_target(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         # White-box freeze proves adoption only; this does not claim the
         # application close workflow/report snapshot has been implemented.
         uow.repository("ledger").freeze_heads("2026-01")
     original = result(store)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense("90000", seq=1)], uow, correction_period="2026-02")
+        adopt_declared(ledger, [expense("90000", seq=1)], uow, correction_period="2026-02")
     correction = result(store)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense("80000", seq=2)], uow, correction_period="2026-02")
+        adopt_declared(ledger, [expense("80000", seq=2)], uow, correction_period="2026-02")
     final = result(store)
     assert final["reference"]["baseline_result_id"] == original["reference"]["result_id"]
     assert final["reference"]["result_id"] == correction["reference"]["result_id"]
@@ -464,7 +507,7 @@ def test_frozen_baseline_and_repeated_open_correction_keep_only_final_target(sto
     with store.write_unit(COMPANY) as uow:
         uow.repository("ledger").freeze_heads("2026-02")
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense("70000", seq=3)], uow, correction_period="2026-03")
+        adopt_declared(ledger, [expense("70000", seq=3)], uow, correction_period="2026-03")
     march = result(store)
     assert march["reference"]["baseline_result_id"] == final["reference"]["result_id"]
     reversal = next(v for v in march["vouchers"] if v["role"] == "reversal")
@@ -492,6 +535,7 @@ def payment():
     fact = change["businesses"][0]["fact"]
     fact.update(kind="money.movement", effective_on="2026-01-05", data=data)
     change["domain"] = "money"
+    change["publications"] = []
     plan.update(
         calculation_key="money.movement",
         target={
@@ -566,6 +610,7 @@ def payment():
 
 def recovery():
     change = expense("20000", business_id=RECOVERY)
+    change["publications"] = []
     plan = change["plans"][0]
     data = {
         "source": {"business_id": BUSINESS, "slot": "primary"},
@@ -645,15 +690,15 @@ def test_true_payment_is_preserved_and_explicit_recovery_is_atomic(store):
     ledger = create_ledger()
     seed_payment(store)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense(), payment()], uow)
+        adopt_declared(ledger, [expense(), payment()], uow)
     with pytest.raises(ContractError) as error:
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([expense("80000", seq=1)], uow)
+            adopt_declared(ledger, [expense("80000", seq=1)], uow)
     assert error.value.code == "dependency_conflict"
     assert result(store)["target"]["values"]["amount_fen"] == "100000"
     with store.write_unit(COMPANY) as uow:
         uow.repository("application").business(RECOVERY, kind="operations.overpayment")
-        ledger.adopt([expense("80000", seq=1), recovery()], uow)
+        adopt_declared(ledger, [expense("80000", seq=1), recovery()], uow)
     with store.read_unit(COMPANY) as context:
         paid, owing = ledger.resolve(
             [
@@ -684,7 +729,7 @@ def test_duplicate_money_allocation_is_rejected_without_new_cash(store):
     wrong["plans"][0]["settlements"].append(duplicate)
     with pytest.raises(ContractError):
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([expense("300000"), wrong], uow)
+            adopt_declared(ledger, [expense("300000"), wrong], uow)
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS, PAYMENT], context) == ()
 
@@ -696,7 +741,7 @@ def test_prepared_identity_and_source_are_the_same_before_and_after_adoption(sto
         prepared = ledger.prepare_result(BUSINESS, "main", uow)
         assert ledger.prepare_result(BUSINESS, "main", uow) is prepared
         staged_source = ledger.get_result_source(BUSINESS, "main", uow, plan=first["plans"][0])
-        adopted = ledger.adopt([first], uow)
+        adopted = adopt_declared(ledger, [first], uow)
         assert adopted.results[0]["result_id"] == prepared.result_id
         assert adopted.results[0]["generation"] == prepared.generation == 1
         assert ledger.get_result_source(BUSINESS, "main", uow) == staged_source
@@ -707,14 +752,14 @@ def test_prepared_identity_and_source_are_the_same_before_and_after_adoption(sto
         assert next_identity.generation == 2
         changed_source = ledger.get_result_source(BUSINESS, "main", uow, plan=changed["plans"][0])
         assert changed_source["content_digest"] != staged_source["content_digest"]
-        ledger.adopt([changed], uow)
+        adopt_declared(ledger, [changed], uow)
         assert ledger.get_result_source(BUSINESS, "main", uow) == changed_source
 
 
 def test_source_changes_when_basis_changes_even_if_formal_amount_does_not(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         old = ledger.get_result_source(BUSINESS, "main", uow)
     changed = expense(seq=1)
     # A classified management detail changes its basis, not its amount or account.
@@ -723,7 +768,7 @@ def test_source_changes_when_basis_changes_even_if_formal_amount_does_not(store)
     ]
     with store.write_unit(COMPANY) as uow:
         staged = ledger.get_result_source(BUSINESS, "main", uow, plan=changed["plans"][0])
-        ledger.adopt([changed], uow)
+        adopt_declared(ledger, [changed], uow)
         assert ledger.get_result_source(BUSINESS, "main", uow) == staged
         assert staged["content_digest"] != old["content_digest"]
 
@@ -731,12 +776,12 @@ def test_source_changes_when_basis_changes_even_if_formal_amount_does_not(store)
 def test_prepared_discovery_period_cannot_be_changed_silently(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
             ledger.prepare_result(BUSINESS, "main", uow, correction_period="2026-02")
-            ledger.adopt([expense("90000", seq=1)], uow, correction_period="2026-03")
+            adopt_declared(ledger, [expense("90000", seq=1)], uow, correction_period="2026-03")
     assert rejected.value.code == "conflict"
     assert result(store)["target"]["values"]["amount_fen"] == "100000"
 
@@ -747,7 +792,7 @@ def test_plan_cannot_change_after_its_prepared_source_has_been_consumed(store):
         with store.write_unit(COMPANY) as uow:
             original = expense()
             ledger.get_result_source(BUSINESS, "main", uow, plan=original["plans"][0])
-            ledger.adopt([expense("90000")], uow)
+            adopt_declared(ledger, [expense("90000")], uow)
     assert rejected.value.code == "conflict"
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS], context) == ()
@@ -794,7 +839,7 @@ def test_consumer_basis_uses_the_same_new_producer_identity_after_adoption(store
         source = ledger.get_result_source(BUSINESS, "main", uow, plan=original["plans"][0])
         consumer = refund(source)
         # Persistence order does not require the consumer to create a fake ref.
-        ledger.adopt([consumer, original], uow)
+        adopt_declared(ledger, [consumer, original], uow)
         assert ledger.get_result_source(BUSINESS, "main", uow) == source
     assert result(store, RECOVERY)["basis"]["source_results"] == [source]
     assert result(store, RECOVERY)["basis"]["adopted_quantities"][0]["amount_fen"] == "100000"
@@ -803,12 +848,12 @@ def test_consumer_basis_uses_the_same_new_producer_identity_after_adoption(store
 def test_consumer_cannot_use_persisted_old_head_when_producer_is_in_same_batch(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         source = ledger.get_result_source(BUSINESS, "main", uow)
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
             uow.repository("application").business(RECOVERY, kind="operations.expense_recovery")
-            ledger.adopt([expense("90000", seq=1), refund(source)], uow)
+            adopt_declared(ledger, [expense("90000", seq=1), refund(source)], uow)
     assert rejected.value.code == "dependency_conflict"
     assert result(store)["reference"]["generation"] == 1
     with store.read_unit(COMPANY) as context:
@@ -819,7 +864,7 @@ def test_consumer_cannot_use_persisted_old_head_when_producer_is_in_same_batch(s
 def test_consumer_requires_a_valid_persisted_source(changed, store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         source = ledger.get_result_source(BUSINESS, "main", uow)
     if changed == "generation":
         source["result_generation"] += 1
@@ -830,7 +875,7 @@ def test_consumer_requires_a_valid_persisted_source(changed, store):
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
             uow.repository("application").business(RECOVERY, kind="operations.expense_recovery")
-            ledger.adopt([refund(source)], uow)
+            adopt_declared(ledger, [refund(source)], uow)
     assert rejected.value.code == "dependency_conflict"
 
 
@@ -852,15 +897,17 @@ def test_actual_cash_identity_is_unique_even_without_settlements(store):
     )
     plan["settlements"] = []
     plan["lines"][0]["account_code"] = "5602"
+    first["publications"] = [publication(PAYMENT)]
     second = deepcopy(first)
     second_id = "50000000-0000-4000-8000-000000000099"
     second["businesses"][0]["business_id"] = second_id
     second["businesses"][0]["fact"]["business_id"] = second_id
     second["plans"][0]["business_id"] = second_id
+    second["publications"] = [publication(second_id)]
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
             uow.repository("application").business(second_id, family="money", kind="money.movement")
-            ledger.adopt([first, second], uow)
+            adopt_declared(ledger, [first, second], uow)
     assert rejected.value.code == "dependency_conflict"
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([PAYMENT, second_id], context) == ()
@@ -869,10 +916,11 @@ def test_actual_cash_identity_is_unique_even_without_settlements(store):
 def test_new_consumer_cannot_reference_a_source_withdrawn_in_same_unit(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         source = ledger.get_result_source(BUSINESS, "main", uow)
     withdraw = {
         "domain": "operations",
+        "publications": [],
         "businesses": [
             {
                 "business_id": BUSINESS,
@@ -889,7 +937,7 @@ def test_new_consumer_cannot_reference_a_source_withdrawn_in_same_unit(store):
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
             uow.repository("application").business(RECOVERY, kind="operations.expense_recovery")
-            ledger.adopt([withdraw, refund(source)], uow)
+            adopt_declared(ledger, [withdraw, refund(source)], uow)
     assert rejected.value.code == "dependency_conflict"
     assert result(store)["reference"]["generation"] == 1
     with store.read_unit(COMPANY) as context:
@@ -899,10 +947,10 @@ def test_new_consumer_cannot_reference_a_source_withdrawn_in_same_unit(store):
 def test_voucher_month_is_posting_month_for_current_and_as_posted_views(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense("90000", seq=1)], uow, correction_period="2026-02")
+        adopt_declared(ledger, [expense("90000", seq=1)], uow, correction_period="2026-02")
     for view, as_of in (("current", None), ("as_posted", "2026-02")):
         with store.read_unit(COMPANY, view=view, as_of=as_of) as context:
             january = ledger.query_vouchers(
@@ -930,7 +978,7 @@ def test_frozen_no_impact_recalculation_reuses_head_source_and_voucher_without_w
 ):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     before = result(store)
     with store.read_unit(COMPANY) as context:
@@ -946,7 +994,7 @@ def test_frozen_no_impact_recalculation_reuses_head_source_and_voucher_without_w
         ledger.prepare_result(BUSINESS, "main", uow, correction_period="2026-02")
         planned_source = ledger.get_result_source(BUSINESS, "main", uow, plan=repeated["plans"][0])
         assert planned_source == old_source
-        adopted = ledger.adopt([repeated], uow, correction_period="2026-02")
+        adopted = adopt_declared(ledger, [repeated], uow, correction_period="2026-02")
         assert adopted.changed is False
         assert adopted.results == (before["reference"],)
     assert result(store) == before
@@ -959,7 +1007,7 @@ def test_frozen_no_impact_recalculation_reuses_head_source_and_voucher_without_w
 def test_non_accounting_date_supplement_to_frozen_fact_does_not_create_correction(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     before = result(store)
     supplement = expense(seq=1)
@@ -969,7 +1017,7 @@ def test_non_accounting_date_supplement_to_frozen_fact_does_not_create_correctio
     with store.write_unit(COMPANY) as uow:
         staged = ledger.get_result_source(BUSINESS, "main", uow, plan=supplement["plans"][0])
         assert staged["result_id"] == before["reference"]["result_id"]
-        ledger.adopt([supplement], uow)
+        adopt_declared(ledger, [supplement], uow)
     # The caller owns the supplemented current fact; frozen accounting evidence
     # remains the actual original adoption, with no review diary or new journal.
     assert result(store) == before
@@ -978,7 +1026,7 @@ def test_non_accounting_date_supplement_to_frozen_fact_does_not_create_correctio
 def test_no_impact_frozen_producer_can_be_used_by_new_consumer_in_same_unit(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     before = result(store)
     repeated = expense(seq=1)
@@ -986,7 +1034,7 @@ def test_no_impact_frozen_producer_can_be_used_by_new_consumer_in_same_unit(stor
     with store.write_unit(COMPANY) as uow:
         uow.repository("application").business(RECOVERY, kind="operations.expense_recovery")
         source = ledger.get_result_source(BUSINESS, "main", uow, plan=repeated["plans"][0])
-        adopted = ledger.adopt([refund(source), repeated], uow)
+        adopted = adopt_declared(ledger, [refund(source), repeated], uow)
         assert adopted.changed is True
         assert len(adopted.results) == 2
     assert result(store) == before
@@ -996,7 +1044,7 @@ def test_no_impact_frozen_producer_can_be_used_by_new_consumer_in_same_unit(stor
 def test_same_amount_with_changed_formal_classification_is_not_no_impact(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     before = result(store)
     changed = expense(seq=1)
@@ -1005,7 +1053,7 @@ def test_same_amount_with_changed_formal_classification_is_not_no_impact(store):
     with store.write_unit(COMPANY) as uow:
         staged = ledger.get_result_source(BUSINESS, "main", uow, plan=changed["plans"][0])
         assert staged["result_id"] != before["reference"]["result_id"]
-        assert ledger.adopt([changed], uow, correction_period="2026-02").changed is True
+        assert adopt_declared(ledger, [changed], uow, correction_period="2026-02").changed is True
     after = result(store)
     assert after["reference"]["result_id"] == staged["result_id"]
     assert after["target"]["values"]["amount_fen"] == "100000"
@@ -1020,6 +1068,7 @@ def test_later_adoption_in_same_unit_cannot_leave_a_new_consumer_dangling(store)
     ledger = create_ledger()
     withdraw = {
         "domain": "operations",
+        "publications": [],
         "businesses": [
             {
                 "business_id": BUSINESS,
@@ -1038,8 +1087,8 @@ def test_later_adoption_in_same_unit_cannot_leave_a_new_consumer_dangling(store)
             uow.repository("application").business(RECOVERY, kind="operations.expense_recovery")
             original = expense()
             source = ledger.get_result_source(BUSINESS, "main", uow, plan=original["plans"][0])
-            ledger.adopt([original, refund(source)], uow)
-            ledger.adopt([withdraw], uow)
+            adopt_declared(ledger, [original, refund(source)], uow)
+            adopt_declared(ledger, [withdraw], uow)
     assert rejected.value.code == "dependency_conflict"
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS, RECOVERY], context) == ()
@@ -1058,14 +1107,14 @@ def test_unordered_resource_composition_does_not_create_frozen_correction(collec
             {"category": "materials_services_payments", "weight": "2"},
         ]
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([original], uow)
+        adopt_declared(ledger, [original], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     before = result(store)
     reordered = deepcopy(original)
     reordered["businesses"][0].update(expected_seq=1, op="recalculate")
     reordered["plans"][0]["obligations"][0][collection].reverse()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([reordered], uow, correction_period="2026-02")
+        adopt_declared(ledger, [reordered], uow, correction_period="2026-02")
     assert result(store) == before
     with store.read_unit(COMPANY) as context:
         assert ledger.query_vouchers(LedgerQuery(), context).total == 1
@@ -1114,12 +1163,12 @@ def withdrawal(baseline, *, seq=1):
 def test_frozen_withdrawal_uses_exact_baseline_and_can_be_frozen_in_same_unit(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
         baseline = ledger.get_result_source(BUSINESS, "main", uow)
     withdrawn = withdrawal(baseline)
     with store.write_unit(COMPANY) as uow:
-        assert ledger.adopt([withdrawn], uow, correction_period="2026-02").changed is True
+        assert adopt_declared(ledger, [withdrawn], uow, correction_period="2026-02").changed is True
         uow.repository("ledger").freeze_heads("2026-02")
     current = result(store)
     assert current["target"]["state"] == "withdrawn"
@@ -1197,7 +1246,7 @@ def test_source_values_changed_behind_same_target_are_new_formal_heads_without_v
     business_id = original["businesses"][0]["business_id"]
     with store.write_unit(COMPANY) as uow:
         uow.repository("application").business(business_id, family=original["domain"], kind=kind)
-        ledger.adopt([original], uow)
+        adopt_declared(ledger, [original], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     before = result(store, business_id)
     changed = deepcopy(original)
@@ -1210,7 +1259,7 @@ def test_source_values_changed_behind_same_target_are_new_formal_heads_without_v
     with store.write_unit(COMPANY) as uow:
         ledger.prepare_result(business_id, "main", uow, correction_period="2026-02")
         staged = ledger.get_result_source(business_id, "main", uow, plan=changed["plans"][0])
-        assert ledger.adopt([changed], uow, correction_period="2026-02").changed is True
+        assert adopt_declared(ledger, [changed], uow, correction_period="2026-02").changed is True
         assert ledger.get_result_source(business_id, "main", uow) == staged
     after = result(store, business_id)
     assert after["target"] == before["target"]
@@ -1225,13 +1274,13 @@ def test_source_values_changed_behind_same_target_are_new_formal_heads_without_v
 def test_formal_only_corrections_inherit_effective_journal_across_frozen_heads(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     original = result(store)
     formal = expense(seq=1)
     formal["plans"][0]["obligations"][0]["allowed_settlements"] = ["money"]
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([formal], uow, correction_period="2026-02")
+        adopt_declared(ledger, [formal], uow, correction_period="2026-02")
         uow.repository("ledger").freeze_heads("2026-02")
     inherited = result(store)
     assert inherited["vouchers"] == []
@@ -1240,7 +1289,7 @@ def test_formal_only_corrections_inherit_effective_journal_across_frozen_heads(s
     changed["plans"][0]["obligations"][0]["allowed_settlements"] = ["money"]
     with store.write_unit(COMPANY) as uow:
         staged = ledger.get_result_source(BUSINESS, "main", uow, plan=changed["plans"][0])
-        ledger.adopt([changed], uow, correction_period="2026-03")
+        adopt_declared(ledger, [changed], uow, correction_period="2026-03")
         assert ledger.get_result_source(BUSINESS, "main", uow) == staged
         uow.repository("ledger").freeze_heads("2026-03")
     march = result(store)
@@ -1255,13 +1304,13 @@ def test_formal_only_corrections_inherit_effective_journal_across_frozen_heads(s
     april["businesses"][0]["expected_seq"] = 3
     april["plans"][0]["basis"]["input"]["report_details"][0]["code"] = "management_startup"
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([april], uow, correction_period="2026-04")
+        adopt_declared(ledger, [april], uow, correction_period="2026-04")
         uow.repository("ledger").freeze_heads("2026-04")
     assert result(store)["vouchers"] == []
     may = expense("80000", seq=4)
     may["plans"][0]["obligations"][0]["allowed_settlements"] = ["money"]
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([may], uow, correction_period="2026-05")
+        adopt_declared(ledger, [may], uow, correction_period="2026-05")
     after = result(store)
     reversal = next(v for v in after["vouchers"] if v["role"] == "reversal")
     assert reversal["reverses_voucher_id"] == replacement["voucher_id"]
@@ -1279,17 +1328,17 @@ def test_open_correction_can_return_to_baseline_then_withdraw_and_restore_withou
 ):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     original = result(store)
     changed = expense("90000", seq=1)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([changed], uow, correction_period="2026-02")
+        adopt_declared(ledger, [changed], uow, correction_period="2026-02")
     correcting = result(store)
     returned = expense(seq=2)
     returned["plans"][0]["obligations"][0]["allowed_settlements"] = ["money"]
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([returned], uow)
+        adopt_declared(ledger, [returned], uow)
         uow.repository("ledger").freeze_heads("2026-02")
         baseline = ledger.get_result_source(BUSINESS, "main", uow)
     inherited = result(store)
@@ -1299,7 +1348,7 @@ def test_open_correction_can_return_to_baseline_then_withdraw_and_restore_withou
     with store.read_unit(COMPANY) as context:
         assert ledger.query_vouchers(LedgerQuery(), context).total == 1
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([withdrawal(baseline, seq=3)], uow, correction_period="2026-03")
+        adopt_declared(ledger, [withdrawal(baseline, seq=3)], uow, correction_period="2026-03")
         uow.repository("ledger").freeze_heads("2026-03")
     withdrawn = result(store)
     assert [v["role"] for v in withdrawn["vouchers"]] == ["reversal"]
@@ -1308,7 +1357,7 @@ def test_open_correction_can_return_to_baseline_then_withdraw_and_restore_withou
     restored = expense("80000", seq=4)
     restored["businesses"][0]["op"] = "restore"
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([restored], uow, correction_period="2026-04")
+        adopt_declared(ledger, [restored], uow, correction_period="2026-04")
     after = result(store)
     assert [v["role"] for v in after["vouchers"]] == ["replacement"]
     assert after["vouchers"][0]["lines"][0]["debit_fen"] == "80000"
@@ -1322,17 +1371,18 @@ def test_frozen_consumer_compares_adopted_values_separately_from_source_locators
 ):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
         original_source = ledger.get_result_source(BUSINESS, "main", uow)
     consumer = refund(original_source)
     consumer["businesses"][0]["fact"]["period"] = "2026-02"
     consumer["plans"][0]["accounting_period"] = "2026-02"
+    consumer["publications"] = [publication(RECOVERY, "2026-02")]
     consumer["plans"][0]["basis"]["period"] = "2026-02"
     consumer["plans"][0]["obligations"][0]["business_period"] = "2026-02"
     with store.write_unit(COMPANY) as uow:
         uow.repository("application").business(RECOVERY, kind="operations.expense_recovery")
-        ledger.adopt([consumer], uow)
+        adopt_declared(ledger, [consumer], uow)
         uow.repository("ledger").freeze_heads("2026-02")
         old_consumer_source = ledger.get_result_source(RECOVERY, "main", uow)
     before = result(store, RECOVERY)
@@ -1350,7 +1400,7 @@ def test_frozen_consumer_compares_adopted_values_separately_from_source_locators
             quantity["report_details"][0]["amount_fen"] = "120000"
         staged = ledger.get_result_source(RECOVERY, "main", uow, plan=recalculated["plans"][0])
         assert (staged != old_consumer_source) is quantity_changes
-        ledger.adopt([recalculated, producer], uow, correction_period="2026-03")
+        adopt_declared(ledger, [recalculated, producer], uow, correction_period="2026-03")
         assert ledger.get_result_source(RECOVERY, "main", uow) == staged
     after = result(store, RECOVERY)
     if quantity_changes:
@@ -1376,7 +1426,7 @@ def test_no_responsibility_has_no_formal_change(store):
 def test_open_fact_source_supplement_and_reference_seq_sync_reuse_formal_result(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        assert ledger.adopt([expense()], uow).changed is True
+        assert adopt_declared(ledger, [expense()], uow).changed is True
     before = result(store)
     supplemented = expense(seq=1)
     extra_source = str(uuid4())
@@ -1385,7 +1435,7 @@ def test_open_fact_source_supplement_and_reference_seq_sync_reuse_formal_result(
     # still uses the original unchanged necessary Basis and formal output.
     with store.write_unit(COMPANY) as uow:
         uow.repository("records").source(extra_source)
-        adopted = ledger.adopt([supplemented], uow)
+        adopted = adopt_declared(ledger, [supplemented], uow)
         assert adopted.changed is False
         assert adopted.results == (before["reference"],)
         assert adopted.retired_slots == ()
@@ -1399,14 +1449,14 @@ def test_open_fact_source_supplement_and_reference_seq_sync_reuse_formal_result(
 def test_open_necessary_basis_locator_update_is_a_real_adoption_with_same_voucher(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
     before = result(store)
     supplemented = expense(seq=1)
     supplemented["plans"][0]["basis"]["source_locations"] = [
         {"source_id": SOURCE, "location": "必要来源的明确原件位置"}
     ]
     with store.write_unit(COMPANY) as uow:
-        adopted = ledger.adopt([supplemented], uow)
+        adopted = adopt_declared(ledger, [supplemented], uow)
         assert adopted.changed is True
     after = result(store)
     assert after["reference"]["result_id"] == before["reference"]["result_id"]
@@ -1445,7 +1495,7 @@ def test_real_object_rename_recalculation_reuses_complete_formal_result(frozen, 
     with storage.write_unit(COMPANY) as uow:
         initial = identity.plan_change([supplier], IdentityContext(uow, str(uuid4())))
         identity.apply_current(initial, uow)
-        assert ledger.adopt([change], uow).changed is True
+        assert adopt_declared(ledger, [change], uow).changed is True
         if frozen:
             uow.repository("ledger").freeze_heads("2026-01")
     before = result(storage)
@@ -1456,7 +1506,7 @@ def test_real_object_rename_recalculation_reuses_complete_formal_result(frozen, 
         name_plan = identity.plan_change([renamed], IdentityContext(uow, str(uuid4())))
         assert name_plan.changed_ids == (supplier["object_id"],)
         identity.apply_current(name_plan, uow)
-        adopted = ledger.adopt([repeated], uow)
+        adopted = adopt_declared(ledger, [repeated], uow)
         assert adopted.changed is False
         assert adopted.results == (before["reference"],)
         assert adopted.retired_slots == ()
@@ -1476,6 +1526,7 @@ def _candidate(ledger, uow, changes, *, reverse=False, correction_period=None):
         [responsibility for change in changes for responsibility in change["businesses"]],
         uow,
         correction_period=correction_period,
+        publications=[publication for change in changes for publication in change["publications"]],
     )
     plans = [plan for change in changes for plan in change["plans"]]
     for plan in reversed(plans) if reverse else plans:
@@ -1519,10 +1570,12 @@ def _payment_at(
 def test_candidate_definitions_hide_replaced_old_slots_and_require_complete_set(store):
     ledger = create_ledger()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
     replacement = expense("80000", seq=1)
     with store.write_unit(COMPANY) as uow:
-        candidate = ledger.begin_candidate(replacement["businesses"], uow)
+        candidate = ledger.begin_candidate(
+            replacement["businesses"], uow, publications=replacement["publications"]
+        )
         ref = {"business_id": BUSINESS, "slot": "primary"}
         with pytest.raises(ContractError, match="尚未完成"):
             candidate.resource_definitions([ref], "obligation")
@@ -1588,11 +1641,12 @@ def test_candidate_replacement_and_withdrawal_remove_previous_consumption(store)
     ledger = create_ledger()
     seed_payment(store)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense(), payment()], uow)
+        adopt_declared(ledger, [expense(), payment()], uow)
     ref = {"business_id": BUSINESS, "slot": "primary"}
     replacement = _payment_at("40000", seq=1)
     withdrawn = {
         "domain": "money",
+        "publications": [],
         "businesses": [
             {
                 "business_id": PAYMENT,
@@ -1624,7 +1678,7 @@ def test_candidate_reclassification_uses_economic_month_not_posting_correction_m
     seed_payment(store)
     with store.write_unit(COMPANY) as uow:
         uow.repository("application").business(RECOVERY, kind="operations.overpayment")
-        ledger.adopt([expense("80000"), payment(), recovery()], uow)
+        adopt_declared(ledger, [expense("80000"), payment(), recovery()], uow)
         uow.repository("ledger").freeze_heads("2026-01")
     changed = recovery()
     changed["businesses"][0].update(op="replace", expected_seq=1)
@@ -1654,7 +1708,7 @@ def test_resource_definitions_read_formal_funds_without_balance_or_private_table
     ledger = create_ledger()
     seed_payment(store)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense(), payment()], uow)
+        adopt_declared(ledger, [expense(), payment()], uow)
     with store.read_unit(COMPANY) as context:
         definition = ledger.resource_definitions(
             [{"business_id": PAYMENT, "slot": "funds"}], "funds", context
@@ -1694,7 +1748,7 @@ def test_candidate_overflow_is_structured_and_invalid_adoption_rolls_back(store)
                 )[0].remaining_fen
                 == -20000
             )
-            ledger.adopt([expense("80000"), payment()], uow)
+            adopt_declared(ledger, [expense("80000"), payment()], uow)
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS, PAYMENT], context) == ()
 
@@ -1720,14 +1774,14 @@ def test_candidate_excludes_only_one_consumer_and_funds_scope_is_complete(store)
         assert sum(int(item.value["amount_fen"]) for item in movements) == 50000
         assert candidate.fund_movements(BANK, "2026-02", "2026-02") == ()
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense(), first], uow)
+        adopt_declared(ledger, [expense(), first], uow)
     replacement = _payment_at("40000", period="2026-02", seq=1)
     with store.write_unit(COMPANY) as uow:
         candidate = _candidate(ledger, uow, [replacement])
         assert candidate.fund_movements(BANK, "2026-01", "2026-01") == ()
         feb = candidate.fund_movements(BANK, "2026-02", "2026-02")
         assert len(feb) == 1 and feb[0].value["amount_fen"] == "40000"
-        ledger.adopt([replacement], uow)
+        adopt_declared(ledger, [replacement], uow)
         # The complete overlay remains coherent after adopt in this same unit.
         assert candidate.fund_movements(BANK, "2026-02", "2026-02") == feb
     with store.read_unit(COMPANY) as context:
@@ -1747,9 +1801,10 @@ def test_candidate_rejects_duplicate_actual_occurrence_and_source_future_month(s
     plan = future["plans"][0]
     plan["accounting_period"] = plan["basis"]["period"] = "2026-02"
     plan["obligations"][0]["business_period"] = "2026-02"
+    future["publications"] = [publication(BUSINESS, "2026-02")]
     with pytest.raises(ContractError, match="不能早于来源"):
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([future, payment()], uow)
+            adopt_declared(ledger, [future, payment()], uow)
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS, PAYMENT], context) == ()
 
@@ -1759,7 +1814,7 @@ def test_resource_attributed_period_does_not_replace_formal_production_time(stor
     source = expense()
     source["plans"][0]["obligations"][0]["business_period"] = "2025-12"
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([source], uow)
+        adopt_declared(ledger, [source], uow)
         candidate = ledger.begin_candidate([], uow).complete()
         ref = {"business_id": BUSINESS, "slot": "primary"}
         assert (
@@ -1795,7 +1850,7 @@ def test_known_nonmoney_day_filters_same_month_and_preserves_persisted_semantics
         )[0]
         assert early.excess_reclassified_fen == 0 and early.remaining_fen == -20000
         assert late.excess_reclassified_fen == 20000 and late.remaining_fen == 0
-        ledger.adopt(changes, uow)
+        adopt_declared(ledger, changes, uow)
     assert changes == before
     with store.write_unit(COMPANY) as uow:
         saved = ledger.begin_candidate([], uow).complete()
@@ -1837,6 +1892,6 @@ def test_actual_money_cannot_precede_known_necessary_source_day(store):
     original["plans"][0]["basis"]["effective_on"] = "2026-01-10"
     with pytest.raises(ContractError, match="必要实际日"):
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt([original, payment()], uow)
+            adopt_declared(ledger, [original, payment()], uow)
     with store.read_unit(COMPANY) as context:
         assert ledger.get_results([BUSINESS, PAYMENT], context) == ()

@@ -19,13 +19,18 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 from ._advances import advance_fulfillment, advance_refund
 from ._candidate_checks import validate_candidate as validate_operating_candidate
 from ._common import issue
+from ._description import DescriptionContext
 from ._expenses import check_expense, expense
 from ._income import other_income
+from ._publications import publications
 from ._relationships import deposit, overpayment, pass_through, pass_through_return, reimbursement
 from ._repository import OperationsRepository
 from ._returns import expense_recovery, sale_return
 from ._roles import object_roles, role_issues
 from ._sales import advance, check_advance_tax_status, service_sale
+from ._tax_description import dependencies as tax_dependencies
+from ._tax_description import slots as tax_slots
+from ._tax_release import releases
 
 _CALCULATORS = {
     "operations.expense": expense,
@@ -48,9 +53,14 @@ def repository_factory() -> RepositoryFactory:
     return RepositoryFactory(module_schema("domains.operations"), OperationsRepository)
 
 
-def _main_object(fact):
+def _main_object(fact, posting=None):
     roles = object_roles(fact)
-    return roles[0].object_id if roles else None
+    if roles:
+        return roles[0].object_id
+    return next(
+        (item["party_id"] for item in (posting or {}).get("obligations", ()) if "party_id" in item),
+        None,
+    )
 
 
 def _references(fact, context):
@@ -81,6 +91,40 @@ def _references(fact, context):
     return []
 
 
+def _resource_uses(fact):
+    kind, data = fact["kind"], fact["data"]
+    if kind == "operations.reimbursement":
+        refs = [item["source"] for item in data.get("allocations", data.get("sources", ()))]
+    elif kind == "operations.overpayment":
+        refs = [data["source"]]
+    elif kind == "operations.pass_through_return":
+        refs = [{"business_id": data["pass_through_id"], "slot": "remittance"}]
+    elif kind in {"operations.advance_fulfillment", "operations.advance_refund"}:
+        refs = [{"business_id": data["advance_id"], "slot": "advance"}]
+    else:
+        return []
+    result = []
+    for ref in refs:
+        edge = {
+            "consumer_business_id": fact["business_id"],
+            "consumer_result_slot": "main",
+            "producer_kind": "business",
+            "producer_id": ref["business_id"],
+            "producer_public_slot": ref["slot"],
+            "read_mode": "use",
+            "relation_kind": "settlement",
+            "period_from": fact["period"],
+            "period_to": fact["period"],
+        }
+        actual = kind in {"operations.overpayment", "operations.pass_through_return"} or (
+            kind == "operations.reimbursement" and data["type"] == "personal_payment"
+        )
+        if actual and "effective_on" in fact:
+            edge["effective_on"] = fact["effective_on"]
+        result.append(edge)
+    return result
+
+
 def _validate_fact(fact):
     if (
         fact.get("kind") == "operations.reimbursement"
@@ -101,7 +145,8 @@ class Operations:
     supported_kinds = tuple(_CALCULATORS)
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
-        responsibilities, dependencies, issues = [], [], []
+        context = DescriptionContext(context, changes)
+        responsibilities, dependencies, issues, published = [], [], [], []
         for change in changes:
             business_id, op = (
                 change.get("business_id", change.get("fact", {}).get("business_id")),
@@ -129,8 +174,12 @@ class Operations:
                 check_expense(fact)
             elif fact["kind"] == "operations.advance":
                 check_advance_tax_status(fact)
-            responsibility.update(fact=deepcopy(fact), complete_result_slots=["main"])
+            slots = tax_slots(fact, context)
+            responsibility.update(fact=deepcopy(fact), complete_result_slots=slots)
             responsibilities.append(responsibility)
+            published.extend(publications(fact, slots))
+            dependencies.extend(tax_dependencies(fact, context, slots))
+            dependencies.extend(_resource_uses(fact))
             roles = object_roles(fact)
             issues.extend(role_issues(fact, context, roles))
             for object_id in dict.fromkeys(ref.object_id for ref in roles):
@@ -167,6 +216,7 @@ class Operations:
                     fact["kind"] == "operations.advance"
                     and fact["data"]["side"] == "customer"
                     and fact["data"]["tax_status"] == "not_due"
+                    and "tax_point" not in fact["data"]
                 )
                 money_sensitive = fact["kind"] in {
                     "operations.pass_through_return",
@@ -219,6 +269,7 @@ class Operations:
             "domain": "operations",
             "businesses": responsibilities,
             "dependencies": dependencies,
+            "publications": published,
             "issues": issues,
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)
@@ -227,8 +278,6 @@ class Operations:
     def evaluate_slot(
         self, business_id: str, result_slot: str, context: EvaluationContext
     ) -> PostingPlan:
-        if result_slot != "main":
-            raise ContractError("invalid_input", "经营业务只支持main完整结果槽。")
         fact = context.get_fact(business_id)
         if fact is None:
             raise ContractError("dependency_conflict", "经营业务当前事实不存在。")
@@ -244,7 +293,12 @@ class Operations:
                 "经营业务引用的对象不符合其业务角色。",
                 fact_issues=issues,
             )
-        plan = calculator(fact, context)
+        if result_slot == "main":
+            plan = calculator(fact, context)
+        elif result_slot in tax_slots(fact, context) and result_slot.startswith("tax:"):
+            plan = releases(fact, result_slot[4:], context)
+        else:
+            raise ContractError("invalid_input", "该经营事实不承担所请求的完整结果槽。")
         validate_contract("business-facts.schema.json", "PostingPlan", plan)
         return plan
 
@@ -259,6 +313,11 @@ class Operations:
         if plan["domain"] != "operations" or plan["issues"]:
             raise ContractError("invalid_input", "不能保存其他领域或仍有核算问题的经营变更。")
         repo = uow.repository("domains.operations")
+        main = {
+            posting["business_id"]: posting
+            for posting in plan["plans"]
+            if posting["result_slot"] == "main"
+        }
         for responsibility in plan["businesses"]:
             if responsibility["op"] in {"withdraw", "handoff_out"}:
                 repo.remove(responsibility["business_id"])
@@ -266,7 +325,7 @@ class Operations:
                 fact = responsibility["fact"]
                 if fact["kind"] not in _CALCULATORS:
                     raise ContractError("unsupported_business", "不能保存尚未实现的经营事实。")
-                repo.save(fact, _main_object(fact))
+                repo.save(fact, _main_object(fact, main.get(fact["business_id"])))
 
     def export_current(self, ids, read_context: ReadContext) -> tuple[Fact, ...]:
         return read_context.repository("domains.operations").get(ids)

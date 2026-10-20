@@ -69,7 +69,7 @@ def issue(fact, field, message, *, precision=()):
         "meaning": "accounting",
         "message": message,
         "allowed_precision": list(precision),
-        "reusable_sources": [{"source_id": x} for x in fact["evidence_ids"]],
+        "reusable_sources": [{"source_id": x} for x in fact["evidence_ids"][:500]],
         "blocking_scope": "business",
     }
 
@@ -104,7 +104,6 @@ def obligation(
     value = {
         "business_id": plan["business_id"],
         "slot": slot,
-        "party_id": party,
         "direction": direction,
         "category": category,
         "amount_fen": format_fen(amount),
@@ -112,6 +111,8 @@ def obligation(
         "allowed_settlements": list(methods),
         "business_period": plan["accounting_period"],
     }
+    if party is not None:
+        value["party_id"] = party
     if cashflow:
         value["cashflow_weights"] = [{"category": cashflow, "weight": "1"}]
     plan["obligations"].append(value)
@@ -124,6 +125,7 @@ def base_plan(fact, context, values, *, adopt_effective_on=False):
         kind == "operations.advance"
         and accounting_input["side"] == "customer"
         and accounting_input["tax_status"] == "not_due"
+        and "tax_point" not in accounting_input
     ):
         accounting_input.pop("vat", None)
     tax_point = accounting_input.get("tax_point", {})

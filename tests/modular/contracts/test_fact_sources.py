@@ -146,6 +146,25 @@ def test_business_references_are_not_source_locators():
         fact_source_ids(fact)
 
 
+def test_opening_member_source_ids_are_indexed_without_duplicate_root_evidence():
+    fact = deepcopy(
+        next(
+            fact
+            for fact in _facts()
+            if fact["kind"] == "opening.package" and fact["data"]["members"]
+        )
+    )
+    fact["evidence_ids"] = []
+    expected = {}
+    for index, member in enumerate(fact["data"]["members"]):
+        source = str(uuid5(NAMESPACE_URL, f"opening-member-source:{index}"))
+        member["evidence_ids"] = [source]
+        expected[source] = (f"/data/members/{index}/evidence_ids/0",)
+    # Explicit member sources must be distinct from ordinary object/member IDs.
+    assert fact_source_paths(fact) == dict(sorted(expected.items()))
+    assert fact_source_ids(fact) == tuple(sorted(expected))
+
+
 def test_thousand_top_level_sources_plus_nested_source_have_no_false_limit():
     fact = deepcopy(next(fact for fact in _facts() if fact["kind"] == "money.bank_statement"))
     evidence = [str(uuid5(NAMESPACE_URL, f"top-source:{index}")) for index in range(1000)]

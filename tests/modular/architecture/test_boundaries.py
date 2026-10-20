@@ -49,3 +49,28 @@ def test_private_tables_and_repositories_remain_with_their_owner():
         "ai_accounting_modular.ledger.public",
         tables={"adopted_result": "ledger"},
     )
+
+
+def test_declared_opening_and_reporting_owners_have_real_boundaries():
+    scan = CHECK["violations"]
+    assert not scan(
+        'ctx.repository("ledger.opening")', "ai_accounting_modular.ledger.opening._repository"
+    )
+    assert scan('ctx.repository("ledger")', "ai_accounting_modular.ledger.opening.public")
+    assert not scan(
+        "from ai_accounting_modular.ledger.opening.public import create_opening",
+        "ai_accounting_modular.application.public",
+    )
+    assert scan(
+        "from ai_accounting_modular.ledger.opening._repository import OpeningRepository",
+        "ai_accounting_modular.ledger.public",
+    )
+    assert scan(
+        "from ai_accounting_modular.application.public import create_application",
+        "ai_accounting_modular.ledger.reporting.public",
+    )
+    assert scan(
+        'query = "SELECT * FROM opening_member"',
+        "ai_accounting_modular.ledger.public",
+        tables={"opening_member": "ledger.opening"},
+    )

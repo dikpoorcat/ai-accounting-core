@@ -292,6 +292,7 @@ def test_change_description_and_plan_have_distinct_responsibilities():
             }
         ],
         "dependencies": [],
+        "publications": [],
         "issues": [],
     }
     validate_contract("business-facts.schema.json", "ChangeDescription", description)

@@ -1,5 +1,5 @@
 {
-  "fingerprint": "6a708de8f31ec6c78b6fbd3c6805c2abd31c34fb67183f9aaa3c76135ab65e16",
+  "fingerprint": "14b6fc04649ef29906956096e2a294d9a1a3b0d72db5716437a95dddeb427cdd",
   "kind": "company",
   "objects": [
     {
@@ -31,6 +31,13 @@
       "type": "index"
     },
     {
+      "name": "current_publication_range",
+      "owner": "application",
+      "sql": "CREATE INDEX current_publication_range ON current_publication(collection,period_from,period_to,business_id,result_slot)",
+      "table": "current_publication",
+      "type": "index"
+    },
+    {
       "name": "application_state",
       "owner": "application",
       "sql": "CREATE TABLE application_state (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n working_period_to TEXT NOT NULL CHECK(length(working_period_to)=7)\n) STRICT",
@@ -47,8 +54,15 @@
     {
       "name": "current_dependency",
       "owner": "application",
-      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work')\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
+      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
       "table": "current_dependency",
+      "type": "table"
+    },
+    {
+      "name": "current_publication",
+      "owner": "application",
+      "sql": "CREATE TABLE current_publication (\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n collection TEXT NOT NULL CHECK(collection IN ('tax_sales','pre_tax')),\n period_from TEXT NOT NULL CHECK(length(period_from)=7),\n period_to TEXT NOT NULL CHECK(length(period_to)=7 AND period_to>=period_from),\n PRIMARY KEY(business_id,result_slot,collection)\n) STRICT",
+      "table": "current_publication",
       "type": "table"
     },
     {
@@ -292,7 +306,7 @@
     {
       "name": "result_report_contribution",
       "owner": "ledger",
-      "sql": "CREATE TABLE result_report_contribution (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n statement TEXT NOT NULL CHECK(statement='profit'),\n line INTEGER NOT NULL CHECK(line IN (6,10,12,13,15,16,17,19)),\n detail_code TEXT NOT NULL CHECK(detail_code IN ('management_startup','management_entertainment','management_research','management_other','sales_merchandise_repair','sales_advertising_promotion','sales_other','finance_interest','finance_other','tax_urban','tax_education','tax_local_education')),\n amount_fen INTEGER NOT NULL,\n PRIMARY KEY(result_id,statement,line,detail_code)\n) STRICT",
+      "sql": "CREATE TABLE result_report_contribution (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n statement TEXT NOT NULL CHECK(statement='profit'),\n line INTEGER NOT NULL CHECK(line IN (6,10,12,13,15,16,17,19)),\n detail_code TEXT NOT NULL CHECK(detail_code IN ('management_startup','management_entertainment','management_research','management_other','sales_merchandise_repair','sales_advertising_promotion','sales_other','finance_interest','finance_other','tax_urban','tax_education','tax_local_education')),\n amount_fen INTEGER,\n issue_json TEXT CHECK(issue_json IS NULL OR json_valid(issue_json)),\n CHECK((amount_fen IS NOT NULL AND issue_json IS NULL) OR (amount_fen IS NULL AND issue_json IS NOT NULL)),\n PRIMARY KEY(result_id,statement,line,detail_code)\n) STRICT",
       "table": "result_report_contribution",
       "type": "table"
     },

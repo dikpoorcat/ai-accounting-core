@@ -3588,7 +3588,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",
@@ -3658,7 +3658,7 @@
               ],
               "data": {
                 "customer_id": "91000000-0000-4000-8000-000000000006",
-                "gross_fen": "2000000",
+                "gross_fen": "2020000",
                 "vat": {
                   "policy_id": "91000000-0000-4000-8000-000000000101",
                   "exemption_eligible": true,
@@ -3691,6 +3691,11 @@
               "company_trade_payable_fen": "0",
               "company_profit_fen": "2000000",
               "operator_profit_fen": "2000000"
+            },
+            "expect_company_trade_resources": {
+              "primary_net_fen": "2000000",
+              "vat_fen": "20000",
+              "gross_fen": "2020000"
             }
           },
           {
@@ -4068,12 +4073,14 @@
               "amount_fen": "10600000"
             }
           ],
-          "company_bank_ending_balance_fen": "20600000"
+          "company_bank_ending_balance_fen": "20600000",
+          "company_remaining_vat_receivable_fen": "20000"
         },
         "checks": [
           "同一事实重试不增加资金、利润、分录或位置义务",
           "2026-01关账后2026-02的真实新成本是当期业务，不能倒改1月真实利润领取",
-          "每次分录平衡，正常经营成本不能又记投资损失；标准文档保留真实收付款和新成本，不保纠错过程"
+          "每次分录平衡，正常经营成本不能又记投资损失；标准文档保留真实收付款和新成本，不保纠错过程",
+          "合作净经营和资金已经结清，池外VAT应收20000分及其应交税额仍按公司税务业务处理，不混入合作利润或持款。"
         ]
       },
       {
@@ -4133,7 +4140,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",
@@ -4270,7 +4277,7 @@
               ],
               "data": {
                 "customer_id": "91000000-0000-4000-8000-000000000006",
-                "gross_fen": "1000000",
+                "gross_fen": "1010000",
                 "vat": {
                   "policy_id": "91000000-0000-4000-8000-000000000101",
                   "exemption_eligible": true,
@@ -4303,6 +4310,11 @@
               "company_trade_payable_fen": "0",
               "company_profit_fen": "0",
               "operator_profit_fen": "0"
+            },
+            "expect_company_trade_resources": {
+              "primary_net_fen": "1000000",
+              "vat_fen": "10000",
+              "gross_fen": "1010000"
             }
           },
           {
@@ -4403,7 +4415,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",
@@ -4737,7 +4749,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",
@@ -4840,6 +4852,11 @@
               "company_trade_payable_fen": "0",
               "company_profit_fen": "1",
               "operator_profit_fen": "1"
+            },
+            "expect_company_trade_resources": {
+              "primary_net_fen": "1",
+              "vat_fen": "0",
+              "gross_fen": "1"
             }
           },
           {
@@ -4974,7 +4991,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",
@@ -5044,7 +5061,7 @@
               ],
               "data": {
                 "customer_id": "91000000-0000-4000-8000-000000000006",
-                "gross_fen": "1000000",
+                "gross_fen": "1010000",
                 "vat": {
                   "policy_id": "91000000-0000-4000-8000-000000000101",
                   "exemption_eligible": true,
@@ -5077,6 +5094,11 @@
               "company_trade_payable_fen": "0",
               "company_profit_fen": "1000000",
               "operator_profit_fen": "1000000"
+            },
+            "expect_company_trade_resources": {
+              "primary_net_fen": "1000000",
+              "vat_fen": "10000",
+              "gross_fen": "1010000"
             }
           }
         ],
@@ -5109,9 +5131,35 @@
           "ordinary_company_vat_receipt_fen": "60000"
         },
         "checks": [
-          "该case是operations公开结果的边界夹具，真实集成须另按有效VAT政策生成同值结果；不能用此夹具声称完整税务计算已通过",
+          "这是明确实际按3%办理的独立政策边界夹具；真实集成须采用given_vat_policy_fact生成同值经营结果，不套用普通减按1%的政策。",
           "公司VAT实收使用普通money并保留客户及实际资金身份，不再进入合作pool或第二次认营业收入"
-        ]
+        ],
+        "given_vat_policy_fact": {
+          "business_id": "91000000-0000-4000-8000-000000000601",
+          "kind": "taxes.vat_policy",
+          "period": "2026-01",
+          "evidence_ids": [
+            "91000000-0000-4000-8000-000000000008"
+          ],
+          "data": {
+            "policy": {
+              "version": "synthetic-actual-three-percent",
+              "official_url": "https://shanghai.chinatax.gov.cn/zzzb/zcwj/202602/t479283.html",
+              "effective_from": "2026-01-01",
+              "effective_to": "2027-12-31"
+            },
+            "nominal_rate": "0.03",
+            "tax_base_rate": "0.03",
+            "payable_rate": "0.03",
+            "form_version": "small_taxpayer_2026",
+            "threshold_fen": "10000000",
+            "threshold_period": "month",
+            "threshold_operator": "strictly_below",
+            "exemption_scope": "eligible_non_excluded_sales",
+            "special_invoice_may_waive_exemption": true,
+            "special_invoice_may_waive_rate_reduction": true
+          }
+        }
       },
       {
         "id": "CO07",
@@ -5170,7 +5218,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",
@@ -5240,7 +5288,7 @@
               ],
               "data": {
                 "customer_id": "91000000-0000-4000-8000-000000000006",
-                "gross_fen": "2000000",
+                "gross_fen": "2020000",
                 "vat": {
                   "policy_id": "91000000-0000-4000-8000-000000000101",
                   "exemption_eligible": true,
@@ -5273,6 +5321,11 @@
               "company_trade_payable_fen": "0",
               "company_profit_fen": "2000000",
               "operator_profit_fen": "2000000"
+            },
+            "expect_company_trade_resources": {
+              "primary_net_fen": "2000000",
+              "vat_fen": "20000",
+              "gross_fen": "2020000"
             }
           },
           {
@@ -5447,7 +5500,7 @@
                   "effective_to": "2027-12-31"
                 },
                 "nominal_rate": "0.03",
-                "tax_base_rate": "0.03",
+                "tax_base_rate": "0.01",
                 "payable_rate": "0.01",
                 "form_version": "small_taxpayer_2026",
                 "threshold_fen": "10000000",

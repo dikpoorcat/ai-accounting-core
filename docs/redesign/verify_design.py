@@ -178,6 +178,7 @@ def check_examples():
             for case in lifecycle["cases"]:
                 if "given_public_operations_result" in case:
                     validate_examples("business-facts.schema.json", "ResultTarget", [case["given_public_operations_result"]])
+                    validate_examples("business-facts.schema.json", "Fact", [case["given_vat_policy_fact"]])
                     assert "steps" not in case, (case["id"], "公开结果夹具与实际步骤须明确区分")
                 else:
                     assert "steps" in case and case["steps"], (case["id"], "没有声明可校验的事实或公开结果夹具")

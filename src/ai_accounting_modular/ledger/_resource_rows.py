@@ -5,6 +5,21 @@ from __future__ import annotations
 from ai_accounting_modular.contracts.public import canonical_json, parse_fen
 
 _RESOURCE_COLUMNS = {
+    "result_tax_sale": (
+        "result_id",
+        "item_no",
+        "source_business_id",
+        "tax_period",
+        "net_sales_fen",
+        "vat_fen",
+        "nominal_rate",
+        "tax_base_rate",
+        "payable_rate",
+        "exemption_eligible",
+        "filing_bucket",
+        "invoice_kind",
+        "ranges_json",
+    ),
     "obligation": (
         "result_id",
         "public_slot",
@@ -213,7 +228,8 @@ def resource_rows(result_id, plan):
                 r["statement"],
                 r["line"],
                 r["detail_code"],
-                parse_fen(r["amount_fen"]),
+                parse_fen(r["amount_fen"]) if "amount_fen" in r else None,
+                _json(r, "issue"),
             )
             for r in plan["report_contributions"]
         ],

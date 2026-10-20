@@ -109,7 +109,7 @@ class People:
     supported_kinds = tuple(_CALCULATORS)
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
-        responsibilities, dependencies, issues = [], [], []
+        responsibilities, dependencies, issues, publications = [], [], [], []
         for change in changes:
             business_id = change.get("business_id", change.get("fact", {}).get("business_id"))
             op = change["op"]
@@ -133,6 +133,16 @@ class People:
                 fact=deepcopy(fact), complete_result_slots=["main"], natural_key=_natural_key(fact)
             )
             responsibilities.append(responsibility)
+            if fact["kind"] == "people.remuneration":
+                publications.append(
+                    {
+                        "business_id": business_id,
+                        "result_slot": "main",
+                        "collection": "pre_tax",
+                        "period_from": fact["period"],
+                        "period_to": fact["period"],
+                    }
+                )
             issues.extend(_role_issues(fact, context))
             for _, object_id, _ in _roles(fact):
                 dependencies.append(
@@ -162,6 +172,7 @@ class People:
             "domain": "people",
             "businesses": responsibilities,
             "dependencies": dependencies,
+            "publications": publications,
             "issues": issues,
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)

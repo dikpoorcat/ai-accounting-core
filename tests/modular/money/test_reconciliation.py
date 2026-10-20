@@ -112,6 +112,7 @@ def validate(context, check):
             }
         ],
         "dependencies": [],
+        "publications": [],
         "issues": [],
         "plans": [plan],
     }

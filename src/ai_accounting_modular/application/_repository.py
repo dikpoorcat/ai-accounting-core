@@ -1,6 +1,12 @@
 """Only the current business identity and dependency projections live here."""
 
-from ai_accounting_modular.contracts.public import ContractError, canonical_json
+import json
+
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    canonical_json,
+    resource_use_affects,
+)
 
 
 class ApplicationRepository:
@@ -80,11 +86,89 @@ class ApplicationRepository:
         if not business_ids:
             return ()
         return tuple(
-            dict(row)
+            _dependency(row)
             for row in self._session.fetchall(
                 "SELECT * FROM current_dependency WHERE consumer_business_id IN "
                 "(SELECT value FROM json_each(?)) ORDER BY consumer_business_id",
                 (canonical_json(list(business_ids)),),
+            )
+        )
+
+    def publications(self, business_ids):
+        if not business_ids:
+            return ()
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM current_publication WHERE business_id IN "
+                "(SELECT value FROM json_each(?)) "
+                "ORDER BY business_id,result_slot,collection",
+                (canonical_json(list(business_ids)),),
+            )
+        )
+
+    def aggregate_observers(self, publications):
+        if not publications:
+            return ()
+        return tuple(
+            row[0]
+            for row in self._session.fetchall(
+                "SELECT DISTINCT d.consumer_business_id FROM json_each(?) p "
+                "JOIN current_dependency d ON d.producer_kind='aggregate' "
+                "AND d.producer_id=json_extract(p.value,'$.collection') "
+                "AND d.read_mode='result' "
+                "WHERE d.period_from<=json_extract(p.value,'$.period_to') "
+                "AND d.period_to>=json_extract(p.value,'$.period_from') "
+                "ORDER BY d.consumer_business_id",
+                (canonical_json(list(publications)),),
+            )
+        )
+
+    def replace_publications(self, business_ids, publications):
+        fields = ("business_id", "result_slot", "collection", "period_from", "period_to")
+        before = {tuple(row[field] for field in fields) for row in self.publications(business_ids)}
+        after = {tuple(row[field] for field in fields) for row in publications}
+        if before == after:
+            return False
+        self._session.execute(
+            "DELETE FROM current_publication WHERE business_id IN (SELECT value FROM json_each(?))",
+            (canonical_json(list(business_ids)),),
+        )
+        if after:
+            self._session.executemany(
+                "INSERT INTO current_publication VALUES(?,?,?,?,?)", sorted(after)
+            )
+        return True
+
+    def resource_observers(self, uses):
+        indexed = {}
+        for edge in uses:
+            if edge["read_mode"] == "use":
+                key = edge["producer_id"], edge["producer_public_slot"], edge["relation_kind"]
+                indexed.setdefault(key, []).append(edge)
+        if not indexed:
+            return ()
+        rows = self._session.fetchall(
+            "SELECT * FROM current_dependency WHERE producer_kind='business' "
+            "AND read_mode='balance' AND producer_id IN (SELECT value FROM json_each(?))",
+            (canonical_json(sorted({key[0] for key in indexed})),),
+        )
+        return tuple(
+            sorted(
+                {
+                    balance["consumer_business_id"]
+                    for row in rows
+                    for balance in (_dependency(row),)
+                    for use in indexed.get(
+                        (
+                            balance["producer_id"],
+                            balance["producer_public_slot"],
+                            balance["relation_kind"],
+                        ),
+                        (),
+                    )
+                    if resource_use_affects(use, balance)
+                }
             )
         )
 
@@ -95,7 +179,7 @@ class ApplicationRepository:
                 "SELECT DISTINCT consumer_business_id FROM current_dependency "
                 "WHERE producer_kind=? AND producer_id IN (SELECT value FROM json_each(?)) "
                 "AND relation_kind=? "
-                "AND read_mode!='collection' ORDER BY consumer_business_id",
+                "AND read_mode IN ('fact','result') ORDER BY consumer_business_id",
                 (producer_kind, canonical_json(sorted(producer_ids)), relation_kind),
             )
         )
@@ -198,13 +282,14 @@ class ApplicationRepository:
                     "relation_kind",
                     "period_from",
                     "period_to",
+                    "effective_on",
                 )
-            )
+            ) + (canonical_json(edge.get("excluded_result_slots", [])),)
 
         if {key(edge) for edge in self.dependencies(business_ids)} == {
             key(edge) for edge in dependencies
         }:
-            return
+            return False
         self._session.execute(
             "DELETE FROM current_dependency WHERE consumer_business_id IN "
             "(SELECT value FROM json_each(?))",
@@ -212,7 +297,7 @@ class ApplicationRepository:
         )
         for edge in dependencies:
             self._session.execute(
-                "INSERT INTO current_dependency VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO current_dependency VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 tuple(
                     edge.get(key)
                     for key in (
@@ -225,6 +310,17 @@ class ApplicationRepository:
                         "relation_kind",
                         "period_from",
                         "period_to",
+                        "effective_on",
                     )
-                ),
+                )
+                + (canonical_json(edge.get("excluded_result_slots", [])),),
             )
+        return True
+
+
+def _dependency(row):
+    value = dict(row)
+    excluded = value.pop("excluded_result_slots_json")
+    if excluded is not None and json.loads(excluded):
+        value["excluded_result_slots"] = json.loads(excluded)
+    return {key: item for key, item in value.items() if item is not None}

@@ -4,6 +4,7 @@ from ._allocation import cumulative_shares
 from ._contexts import (
     EvaluatedSlot,
     EvaluationContext,
+    PretaxView,
     ReadContext,
     ResourceCutoff,
     ResourceDefinition,
@@ -11,10 +12,16 @@ from ._contexts import (
     ResourceState,
     ResourceUse,
     ResourceWindow,
+    TaxSaleView,
     UnitOfWork,
 )
 from ._errors import ContractError
 from ._fact_sources import fact_source_ids, fact_source_paths
+from ._resource_dependencies import (
+    check_resource_dependency,
+    resource_exclusions,
+    resource_use_affects,
+)
 from ._scalars import (
     MAX_FEN,
     MIN_FEN,
@@ -47,6 +54,7 @@ __all__ = [
     "YearMonth",
     "EvaluatedSlot",
     "EvaluationContext",
+    "PretaxView",
     "ReadContext",
     "ResourceCutoff",
     "ResourceDefinition",
@@ -54,10 +62,14 @@ __all__ = [
     "ResourceState",
     "ResourceUse",
     "ResourceWindow",
+    "TaxSaleView",
     "UnitOfWork",
     "ContractError",
     "fact_source_ids",
     "fact_source_paths",
+    "check_resource_dependency",
+    "resource_exclusions",
+    "resource_use_affects",
     "checked_fen",
     "format_fen",
     "parse_fen",

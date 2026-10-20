@@ -93,6 +93,10 @@ class Context:
     def get_fact(self, business_id):
         return self.facts.get(business_id)
 
+    @property
+    def evaluation_period_to(self):
+        return max(fact["period"] for fact in self.facts.values())
+
     def get_object(self, object_id):
         if self.read_context is not None:
             return self.read_context.repository("identity").object(object_id)
@@ -203,7 +207,9 @@ def apply(storage, current, *, seq=0):
             ],
             context,
         )
-        context.candidate = ledger.begin_candidate(description["businesses"], unit)
+        context.candidate = ledger.begin_candidate(
+            description["businesses"], unit, publications=description["publications"]
+        )
         plan = operations.evaluate_slot(business_id, "main", context)
         change = {**description, "plans": [plan]}
         context.candidate.stage(plan)
@@ -524,6 +530,15 @@ def sale_fact(tax_period="2026-01"):
     )
 
 
+def test_zero_expense_has_no_unknown_report_detail_or_remaining_cost_line():
+    current = fact("0")
+    plan = create_operations().evaluate_slot(BUSINESS, "main", Context(None, current))
+    assert plan["target"]["values"]["report_detail_state"] == "known"
+    assert plan["report_contributions"] == []
+    assert plan["lines"] == []
+    assert plan["obligations"][0]["amount_fen"] == "0"
+
+
 def test_service_sale_splits_exact_tax_and_does_not_create_money():
     current = sale_fact()
     context = vat_context(current)
@@ -547,11 +562,40 @@ def test_service_sale_splits_exact_tax_and_does_not_create_money():
     assert {"source_id": SOURCE, "location": "合成税点说明"} in plan["basis"]["source_locations"]
 
 
-def test_future_tax_point_is_not_accepted_before_its_lifecycle_is_implemented():
+@pytest.mark.parametrize(
+    "waive,gross,net,tax,base",
+    [(False, "101000", "100000", "1000", "0.01"), (True, "103000", "100000", "3000", "0.03")],
+)
+def test_reduced_service_rate_and_explicit_waiver_keep_gross_net_tax_consistent(
+    waive, gross, net, tax, base
+):
+    current = sale_fact()
+    current["data"]["gross_fen"] = gross
+    current["data"]["vat"].update(waive_rate_reduction=waive, exemption_eligible=True)
+    context = vat_context(current, tax_base_rate="0.01", payable_rate="0.01")
+    plan = create_operations().evaluate_slot(current["business_id"], "main", context)
+    assert plan["target"]["values"]["revenue_fen"] == net
+    assert plan["target"]["values"]["vat_fen"] == tax
+    sale = plan["tax_sales"][0]
+    assert (sale["net_sales_fen"], sale["vat_fen"]) == (net, tax)
+    assert (sale["nominal_rate"], sale["tax_base_rate"], sale["payable_rate"]) == (
+        "0.03",
+        base,
+        base,
+    )
+    assert sum(int(row["credit_fen"]) for row in plan["lines"]) == int(gross)
+    assert all(row["account_code"] != "630101" for row in plan["lines"])
+
+
+def test_future_tax_point_is_frozen_without_entering_current_tax_sales():
     current = sale_fact("2026-02")
-    with pytest.raises(ContractError) as unsupported:
-        create_operations().evaluate_slot(current["business_id"], "main", vat_context(current))
-    assert unsupported.value.code == "unsupported_business"
+    plan = create_operations().evaluate_slot(current["business_id"], "main", vat_context(current))
+    assert plan["tax_sales"] == []
+    assert plan["target"]["values"]["deferred_vat_fen"] == "3000"
+    adopted = next(
+        item["sale"] for item in plan["basis"]["adopted_quantities"] if item["type"] == "tax_sale"
+    )
+    assert adopted["tax_period"] == "2026-02" and adopted["vat_fen"] == "3000"
 
 
 def test_same_month_tax_point_requires_enough_real_policy_precision():
@@ -767,11 +811,11 @@ def test_policy_waiver_switches_do_not_block_permitted_special_or_ordinary_sale(
     assert plan["target"]["values"]["vat_fen"] == "3000"
 
 
-def test_future_tax_point_failure_cannot_leave_partial_fact_or_voucher(store):
+def test_future_tax_point_missing_policy_cannot_leave_partial_fact_or_voucher(store):
     current = sale_fact("2026-02")
     with pytest.raises(ContractError) as rejected:
         apply(store, current)
-    assert rejected.value.code == "unsupported_business"
+    assert rejected.value.code == "needs_information"
     with store.read_unit(COMPANY) as unit:
         assert create_operations().export_current([current["business_id"]], unit) == ()
         assert create_ledger().get_results([current["business_id"]], unit) == ()
@@ -1246,3 +1290,48 @@ def test_overpayment_recovery_inherits_original_cashflow_and_keeps_unknown(known
         item for item in plan["basis"]["adopted_quantities"] if item["type"] == "cumulative_range"
     )
     assert (span["from_fen"], span["to_fen"]) == ("5", "7")
+
+
+@pytest.mark.parametrize("reverse_ids", [False, True])
+def test_real_advance_red_vat_and_installments_conserve_frozen_tax_source(reverse_ids):
+    original, _, policy = customer_advance(total="10100")
+    original["data"]["vat"]["waive_rate_reduction"] = False
+    rule = policy.get_fact(original["data"]["vat"]["policy_id"])
+    rule["data"].update(tax_base_rate="0.01", payable_rate="0.01")
+    original_plan = create_operations().evaluate_slot(original["business_id"], "main", policy)
+    returned = advance_use(original, "advance_refund", 2020)
+    returned["data"]["tax_returns"] = [
+        {
+            "state": "taxed",
+            "original_tax_period": "2026-01",
+            "ranges": [{"from_fen": "0", "to_fen": "2020"}],
+            "vat_fen": "19",
+        }
+    ]
+    first = advance_use(original, "advance_fulfillment", 2020, month="2026-03")
+    last = advance_use(original, "advance_fulfillment", 6060, month="2026-04")
+    ids = sorted(item["business_id"] for item in (first, last, returned))
+    if reverse_ids:
+        ids.reverse()
+    for item, identifier in zip((first, last, returned), ids, strict=True):
+        item["business_id"] = identifier
+    context = LifecycleContext(
+        original, original_plan, last, returned, first, policy_context=policy
+    )
+    plans = [
+        create_operations().evaluate_slot(item["business_id"], "main", context)
+        for item in (returned, first, last)
+    ]
+    assert plans[0]["target"]["values"]["vat_reversed_fen"] == "19"
+    assert [plan["target"]["values"]["vat_fen"] for plan in plans[1:]] == ["20", "61"]
+    assert (
+        sum(
+            int(
+                plan["target"]["values"].get(
+                    "vat_fen", plan["target"]["values"].get("vat_reversed_fen")
+                )
+            )
+            for plan in plans
+        )
+        == 100
+    )

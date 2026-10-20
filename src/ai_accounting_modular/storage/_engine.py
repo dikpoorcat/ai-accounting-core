@@ -367,6 +367,7 @@ class Storage:
                 system["database_id"],
                 system["global_seq"],
                 self._factories,
+                start_period=profile["start_period"],
                 writable=writable,
                 maintenance=maintenance,
                 view=view,

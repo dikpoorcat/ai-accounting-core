@@ -21,6 +21,7 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.contracts.public import canonical_json as canonical
 from ai_accounting_modular.contracts.public import content_digest as digest
 
+from . import _aggregation
 from ._adoption import adopt as _adopt
 from ._balances import balance_wire, obligation_balances
 from ._candidate import CandidateLedger
@@ -122,8 +123,43 @@ class Ledger:
         """Latest economic month already represented by formal results."""
         return read_context.repository("ledger").latest_period()
 
-    def begin_candidate(self, responsibilities, uow: UnitOfWork, *, correction_period=None):
-        return CandidateLedger(responsibilities, uow, correction_period)
+    def begin_candidate(
+        self,
+        responsibilities,
+        uow: UnitOfWork,
+        *,
+        correction_period=None,
+        publications=(),
+        resource_uses=None,
+    ):
+        return CandidateLedger(
+            responsibilities,
+            uow,
+            correction_period,
+            publications=publications,
+            resource_uses=resource_uses,
+        )
+
+    def _current_aggregate_view(self, context):
+        if context.view != "current" or context.as_of is not None:
+            fail(
+                "unsupported_business", "本取数端口当前只支持完整当前目标，尚未交付as_posted口径。"
+            )
+        return self._resource_view(context)
+
+    def tax_sales(self, period_from, period_to, read_context: ReadContext):
+        return _aggregation.tax_sales(
+            self._current_aggregate_view(read_context), period_from, period_to
+        )
+
+    def pre_tax(self, period_from, period_to, read_context: ReadContext):
+        return _aggregation.pre_tax(
+            self._current_aggregate_view(read_context),
+            {},
+            period_from,
+            period_to,
+            read_context.start_period,
+        )
 
     def resource_definitions(self, refs, kind, read_context: ReadContext):
         validate_resource_refs(refs, kind)

@@ -12,6 +12,7 @@ from test_adoption import (
     SUPPLIER,
     _candidate,
     _payment_at,
+    adopt_declared,
     expense,
     seed_payment,
 )
@@ -77,7 +78,7 @@ def test_real_bonus_january_result_can_have_february_tax_and_january_payment(sto
             "WHERE business_id=?",
             (BUSINESS,),
         )
-        ledger.adopt([change], uow)
+        adopt_declared(ledger, [change], uow)
         candidate = ledger.begin_candidate([], uow).complete()
         ref = {"business_id": BUSINESS, "slot": "tax"}
         state = candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01"))[0]
@@ -93,7 +94,7 @@ def test_real_bonus_january_result_can_have_february_tax_and_january_payment(sto
         paid["fund_movements"][0].pop("party_id")
         paid["fund_movements"][0]["cashflow_parts"][0]["category"] = "tax_payments"
         paid["basis"]["source_results"] = [state.definition.source]
-        ledger.adopt([payment], uow)
+        adopt_declared(ledger, [payment], uow)
     with store.read_unit(COMPANY) as read:
         definition = ledger.resource_definitions([ref], "obligation", read)[0]
         assert definition.value["business_period"] == "2026-02"
@@ -247,7 +248,7 @@ def test_opening_keeps_old_tax_payroll_and_cost_periods_but_is_available_from_bo
     with store.write_unit(COMPANY) as uow:
         _object(uow, person, "person")
         _object(uow, fund, "investment_product")
-        ledger.adopt([opening], uow)
+        adopt_declared(ledger, [opening], uow)
         candidate = ledger.begin_candidate([], uow).complete()
         for kind, slot, amount in (
             ("obligation", "tax", 10000),
@@ -377,7 +378,7 @@ def test_opening_cost_consumption_uses_boundary_and_its_own_known_day(store):
         after = candidate.resource_states([ref], "cost", ResourceCutoff("2026-01", "2026-01-20"))[0]
         assert before.consumed_fen == 0 and before.remaining_fen == 100000
         assert after.consumed_fen == 20000 and after.remaining_fen == 80000
-        ledger.adopt([opening, release], uow)
+        adopt_declared(ledger, [opening, release], uow)
     with store.write_unit(COMPANY) as uow:
         saved = ledger.begin_candidate([], uow).complete()
         assert (

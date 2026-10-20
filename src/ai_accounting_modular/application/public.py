@@ -225,8 +225,13 @@ class Application:
                 business["business_id"] for _, plan in plans for business in plan["businesses"]
             ]
             dependencies = [edge for _, plan in plans for edge in plan["dependencies"]]
+            projection_changed = False
             if touched:
-                repo.replace_dependencies(touched, dependencies)
+                dependency_changed = repo.replace_dependencies(touched, dependencies)
+                publication_changed = repo.replace_publications(
+                    touched, [item for _, plan in plans for item in plan["publications"]]
+                )
+                projection_changed = dependency_changed or publication_changed
             for change in changes:
                 if change.changed:
                     self.records.replace_source_uses(
@@ -281,7 +286,7 @@ class Application:
                 {key: obj[key] for key in ("object_id", "seq", "content_digest")}
                 for obj in identity_plan.objects
             ]
-            changed = bool(keys or changed_keys or adoption.changed)
+            changed = bool(keys or changed_keys or adoption.changed or projection_changed)
             result.update(
                 changes="committed" if changed else "none",
                 accounting="saved" if adoption.changed else "unchanged",

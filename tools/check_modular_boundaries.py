@@ -21,6 +21,8 @@ def owner_of(module: str) -> str | None:
         return None
     if parts[1] == "domains":
         return ".".join(parts[1:3]) if len(parts) > 2 else None
+    if parts[1] == "ledger" and len(parts) > 2 and parts[2] in {"opening", "reporting"}:
+        return ".".join(parts[1:3])
     return parts[1]
 
 
@@ -77,7 +79,7 @@ def permitted_dependency(owner: str, target: str) -> bool:
         return target not in {"application", "agent", "dashboard"}
     if owner == "records":
         return target not in {"application", "agent", "reading", "dashboard"}
-    if owner.startswith("domains.") or owner in {"ledger", "money"}:
+    if owner.startswith(("domains.", "ledger.")) or owner in {"ledger", "money"}:
         return target not in {"application", "agent", "reading", "dashboard"}
     return True
 

@@ -7,6 +7,7 @@ from ._common import (
     REPORT_LINES,
     amount,
     base_plan,
+    issue,
     line,
     obligation,
     reject,
@@ -28,6 +29,32 @@ def check_expense(fact):
         reject("费用报表细目合计必须等于本项费用，未分类部分须明确列为other。", "invalid_input")
 
 
+def unknown_details(plan, fact, expense_class, *, original=None):
+    for code in sorted(REPORT_CODES[expense_class] & REPORT_LINES.keys()):
+        problem = issue(
+            fact,
+            "/data/report_details" if original is None else "/data/expense_id",
+            "本项费用的报表细分尚无来源，已明确的费用及收付款可以继续办理。",
+            precision=("source",),
+        )
+        problem.update(
+            code="report_classification_required",
+            meaning="费用报表细目",
+            blocking_scope="none",
+        )
+        if original is not None:
+            problem["reusable_sources"] = original.basis["source_locations"][:500]
+        plan["report_contributions"].append(
+            {
+                "statement": "profit",
+                "line": REPORT_LINES[code],
+                "detail_code": code,
+                "state": "unestablished",
+                "issue": problem,
+            }
+        )
+
+
 def expense(fact, context):
     check_expense(fact)
     data = fact["data"]
@@ -41,7 +68,7 @@ def expense(fact, context):
             "amount_fen": data["amount_fen"],
             "expense_or_income_class": data["expense_class"],
             "report_detail_state": "known"
-            if "report_details" in data or not REPORT_CODES[data["expense_class"]]
+            if not total or "report_details" in data or not REPORT_CODES[data["expense_class"]]
             else "unestablished",
         },
     )
@@ -70,4 +97,6 @@ def expense(fact, context):
                     "amount_fen": detail["amount_fen"],
                 }
             )
+    if plan["target"]["values"]["report_detail_state"] == "unestablished":
+        unknown_details(plan, fact, data["expense_class"])
     return plan

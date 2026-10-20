@@ -70,6 +70,7 @@ class ResourceRepository:
         self._movements, self._settlements, self._scopes = {}, {}, {}
         self._definitions, self._business_definitions = {}, {}
         self._loaded_definitions = set()
+        self._period_heads, self._tax_sales = {}, {}
         self.sources = {key: value for key, value in self.sources.items() if key in self.heads}
 
     def _refresh(self):
@@ -134,6 +135,36 @@ class ResourceRepository:
         if result_id not in self._stored_heads:
             self._stored_heads[result_id] = self.base.result(result_id)
         return self._stored_heads[result_id]
+
+    def period_heads(self, period_from, period_to):
+        self._refresh()
+        key = period_from, period_to
+        if key not in self._period_heads:
+            self._period_heads[key] = self.base.current_heads_in_period(*key)
+        stored = self._period_heads[key]
+        self._stored_heads.update((row["result_id"], row) for row in stored)
+        return [row for row in stored if row["result_id"] not in self.shadowed] + [
+            row for row in self.heads.values() if period_from <= row["business_period"] <= period_to
+        ]
+
+    def tax_sales(self, period_from, period_to):
+        self._refresh()
+        key = period_from, period_to
+        if key not in self._tax_sales:
+            self._tax_sales[key] = self.base.tax_sales(*key)
+            for row in self._tax_sales[key]:
+                if row["result_id"] not in self.sources:
+                    self.sources[row["result_id"]] = stored_source_reference(row)
+        return [row for row in self._tax_sales[key] if row["result_id"] not in self.shadowed] + [
+            dict(
+                row,
+                business_id=self.heads[row["result_id"]]["business_id"],
+                result_slot=self.heads[row["result_id"]]["result_slot"],
+            )
+            for tables in self.records.values()
+            for row in tables["result_tax_sale"]
+            if period_from <= row["tax_period"] <= period_to
+        ]
 
     def source(self, result_id):
         self._refresh()

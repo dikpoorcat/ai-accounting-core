@@ -139,13 +139,12 @@ def vat():
         ("not_due", "2026-01", True, "invalid_input"),
         ("not_due", "2026-01", False, "invalid_input"),
         ("not_due", "2025-12", False, "invalid_input"),
-        ("not_due", "2026-02", False, "unsupported_business"),
-        ("not_due", "2026-02", True, "unsupported_business"),
-        ("not_due", "derived", False, "unsupported_business"),
+        ("not_due", "2026-02", True, "needs_information"),
+        ("not_due", "derived", False, "needs_information"),
         ("not_due", None, True, "needs_information"),
         ("due", "2026-02", True, "invalid_input"),
-        ("due", "2025-12", True, "unsupported_business"),
-        ("due", "derived", True, "unsupported_business"),
+        ("due", "2025-12", True, "needs_information"),
+        ("due", "derived", True, "needs_information"),
     ],
 )
 def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission(

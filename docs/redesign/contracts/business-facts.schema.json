@@ -274,7 +274,7 @@
           ]
         },
         "amount_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "expense_class": {
           "type": "string",
@@ -518,6 +518,13 @@
           },
           "minItems": 1,
           "maxItems": 10000
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxReturnPart"
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -536,6 +543,13 @@
         },
         "gross_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxReturnPart"
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -749,7 +763,6 @@
       },
       "required": [
         "source",
-        "counterparty_id",
         "amount_fen"
       ]
     },
@@ -2563,6 +2576,14 @@
         },
         "vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "tax_ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AmountRange"
+          },
+          "minItems": 1,
+          "maxItems": 10000
         }
       },
       "required": [
@@ -2615,6 +2636,15 @@
         },
         "exemption_reversal_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "urban_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "education_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "local_education_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -2628,7 +2658,21 @@
         "vat_credit_fen",
         "surtax_credit_fen",
         "exemption_reversal_fen"
-      ]
+      ],
+      "dependentRequired": {
+        "urban_credit_fen": [
+          "education_credit_fen",
+          "local_education_credit_fen"
+        ],
+        "education_credit_fen": [
+          "urban_credit_fen",
+          "local_education_credit_fen"
+        ],
+        "local_education_credit_fen": [
+          "urban_credit_fen",
+          "education_credit_fen"
+        ]
+      }
     },
     "ActualVatDeclaration": {
       "type": "object",
@@ -3286,6 +3330,9 @@
         },
         "amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
         }
       },
       "required": [
@@ -3295,6 +3342,32 @@
         "payroll_period",
         "component",
         "amount_fen"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "component": {
+                "const": "tax"
+              }
+            },
+            "required": [
+              "component"
+            ]
+          },
+          "then": {
+            "required": [
+              "tax_period"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "tax_period"
+              ]
+            }
+          }
+        }
       ]
     },
     "OpeningEquity": {
@@ -3406,7 +3479,7 @@
         "evidence_ids": {
           "type": "array",
           "items": {
-            "$ref": "core.schema.json#/$defs/Id"
+            "$ref": "core.schema.json#/$defs/SourceId"
           },
           "minItems": 1,
           "maxItems": 100,
@@ -3545,6 +3618,9 @@
           },
           "minItems": 22,
           "maxItems": 22
+        },
+        "income_tax_carry": {
+          "$ref": "#/$defs/IncomeTaxCarry"
         }
       },
       "required": [
@@ -5662,7 +5738,7 @@
           ]
         },
         "amount_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "expense_class": {
           "type": "string",
@@ -5847,6 +5923,13 @@
           },
           "minItems": 1,
           "maxItems": 10000
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PartialTaxReturnPart"
+          },
+          "minItems": 1
         }
       }
     },
@@ -5859,6 +5942,13 @@
         },
         "gross_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PartialTaxReturnPart"
+          },
+          "minItems": 1
         }
       }
     },
@@ -7410,6 +7500,14 @@
         },
         "vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "tax_ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AmountRange"
+          },
+          "minItems": 1,
+          "maxItems": 10000
         }
       }
     },
@@ -7455,6 +7553,15 @@
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "exemption_reversal_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "urban_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "education_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "local_education_credit_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       }
@@ -7978,6 +8085,9 @@
         },
         "amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
         }
       }
     },
@@ -8075,7 +8185,7 @@
         "evidence_ids": {
           "type": "array",
           "items": {
-            "$ref": "core.schema.json#/$defs/Id"
+            "$ref": "core.schema.json#/$defs/SourceId"
           },
           "minItems": 1,
           "maxItems": 100,
@@ -8191,6 +8301,9 @@
           },
           "minItems": 22,
           "maxItems": 22
+        },
+        "income_tax_carry": {
+          "$ref": "#/$defs/PartialIncomeTaxCarry"
         }
       }
     },
@@ -9984,221 +10097,10 @@
     "ReportContribution": {
       "oneOf": [
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 6
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "tax_urban"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
+          "$ref": "#/$defs/KnownReportContribution"
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 10
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "tax_education",
-                "tax_local_education"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 12
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "sales_merchandise_repair"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 13
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "sales_advertising_promotion"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 15
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "management_startup"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 16
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "management_entertainment"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 17
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "management_research"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "const": "profit"
-            },
-            "line": {
-              "const": 19
-            },
-            "detail_code": {
-              "type": "string",
-              "enum": [
-                "finance_interest"
-              ]
-            },
-            "amount_fen": {
-              "$ref": "core.schema.json#/$defs/Fen"
-            }
-          },
-          "required": [
-            "statement",
-            "line",
-            "detail_code",
-            "amount_fen"
-          ]
+          "$ref": "#/$defs/UnknownReportContribution"
         }
       ]
     },
@@ -10352,10 +10254,10 @@
           "const": "vat"
         },
         "net_sales_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "accrued_vat_fen": {
-          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+          "$ref": "core.schema.json#/$defs/Fen"
         },
         "payable_vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -10410,15 +10312,33 @@
         "net_sales_fen",
         "accrued_vat_fen",
         "payable_vat_fen",
-        "relief_fen",
         "urban_fen",
         "education_fen",
         "local_education_fen",
         "surtax_fen",
-        "rounding_adjustment_fen",
         "adopted_basis",
         "filing_state",
         "filing_issues"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "adopted_basis": {
+                "const": "calculated"
+              }
+            },
+            "required": [
+              "adopted_basis"
+            ]
+          },
+          "then": {
+            "required": [
+              "relief_fen",
+              "rounding_adjustment_fen"
+            ]
+          }
+        }
       ]
     },
     "IncomeTaxAssessmentMetrics": {
@@ -10545,7 +10465,7 @@
           "additionalProperties": false,
           "properties": {
             "amount_fen": {
-              "$ref": "core.schema.json#/$defs/PositiveFen"
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
             },
             "expense_or_income_class": {
               "type": "string",
@@ -10790,6 +10710,13 @@
             },
             "original_tax_period": {
               "$ref": "core.schema.json#/$defs/Month"
+            },
+            "tax_returns": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TaxReturnPart"
+              },
+              "minItems": 0
             }
           },
           "required": [
@@ -11008,7 +10935,8 @@
             "treatment": {
               "type": "string",
               "enum": [
-                "overpayment_recovery"
+                "overpayment_recovery",
+                "overreceipt_refund"
               ]
             }
           },
@@ -12358,6 +12286,15 @@
                 "offset",
                 "refund_or_offset"
               ]
+            },
+            "urban_credit_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "education_credit_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "local_education_credit_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
             }
           },
           "required": [
@@ -12365,7 +12302,21 @@
             "surtax_credit_fen",
             "exemption_reversal_fen",
             "disposition"
-          ]
+          ],
+          "dependentRequired": {
+            "urban_credit_fen": [
+              "education_credit_fen",
+              "local_education_credit_fen"
+            ],
+            "education_credit_fen": [
+              "urban_credit_fen",
+              "local_education_credit_fen"
+            ],
+            "local_education_credit_fen": [
+              "urban_credit_fen",
+              "education_credit_fen"
+            ]
+          }
         }
       },
       "required": [
@@ -12427,25 +12378,7 @@
           "$ref": "core.schema.json#/$defs/Slot"
         },
         "values": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "target_business_id": {
-              "$ref": "core.schema.json#/$defs/Id"
-            },
-            "tax_sales": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/TaxSale"
-              },
-              "minItems": 0,
-              "maxItems": 10000
-            }
-          },
-          "required": [
-            "target_business_id",
-            "tax_sales"
-          ]
+          "$ref": "#/$defs/TaxPointResolution"
         }
       },
       "required": [
@@ -12773,6 +12706,12 @@
         },
         {
           "$ref": "#/$defs/CooperationResultTarget"
+        },
+        {
+          "$ref": "#/$defs/TargetOperationsTaxRelease"
+        },
+        {
+          "$ref": "#/$defs/TargetTaxesIncomeTaxNetting"
         }
       ]
     },
@@ -13282,6 +13221,18 @@
         },
         {
           "$ref": "#/$defs/AdoptedCumulativeRangeQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedTaxPointQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedTaxReturnQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedIncomeTaxCumulativeQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedOpeningBalanceQuantity"
         }
       ]
     },
@@ -13667,7 +13618,7 @@
           ]
         },
         "amount_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "expense_class": {
           "type": "string",
@@ -13911,6 +13862,13 @@
           },
           "minItems": 1,
           "maxItems": 10000
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxReturnPart"
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -13929,6 +13887,13 @@
         },
         "gross_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxReturnPart"
+          },
+          "minItems": 1
         }
       },
       "required": [
@@ -14142,7 +14107,6 @@
       },
       "required": [
         "source",
-        "counterparty_id",
         "amount_fen"
       ]
     },
@@ -14409,22 +14373,6 @@
         "tax_period",
         "tax_fen",
         "basis_type"
-      ],
-      "allOf": [
-        {
-          "if": {
-            "required": [
-              "withheld_on"
-            ]
-          },
-          "then": {
-            "properties": {
-              "basis_type": {
-                "const": "actual_withholding"
-              }
-            }
-          }
-        }
       ]
     },
     "AccountingWageRemuneration": {
@@ -15732,25 +15680,6 @@
         "treatment",
         "loss_deduction_fen",
         "special_treatments"
-      ],
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "treatment": {
-                "const": "small_low_profit"
-              }
-            },
-            "required": [
-              "treatment"
-            ]
-          },
-          "then": {
-            "required": [
-              "eligibility_source"
-            ]
-          }
-        }
       ]
     },
     "AccountingVatAssessment": {
@@ -15905,6 +15834,14 @@
         },
         "vat_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "tax_ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AmountRange"
+          },
+          "minItems": 1,
+          "maxItems": 10000
         }
       },
       "required": [
@@ -15951,6 +15888,15 @@
         },
         "exemption_reversal_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "urban_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "education_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "local_education_credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         }
       },
       "required": [
@@ -15962,7 +15908,21 @@
         "vat_credit_fen",
         "surtax_credit_fen",
         "exemption_reversal_fen"
-      ]
+      ],
+      "dependentRequired": {
+        "urban_credit_fen": [
+          "education_credit_fen",
+          "local_education_credit_fen"
+        ],
+        "education_credit_fen": [
+          "urban_credit_fen",
+          "local_education_credit_fen"
+        ],
+        "local_education_credit_fen": [
+          "urban_credit_fen",
+          "education_credit_fen"
+        ]
+      }
     },
     "AccountingActualVatDeclaration": {
       "type": "object",
@@ -16597,6 +16557,9 @@
         },
         "amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
         }
       },
       "required": [
@@ -16606,6 +16569,32 @@
         "payroll_period",
         "component",
         "amount_fen"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "component": {
+                "const": "tax"
+              }
+            },
+            "required": [
+              "component"
+            ]
+          },
+          "then": {
+            "required": [
+              "tax_period"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "tax_period"
+              ]
+            }
+          }
+        }
       ]
     },
     "AccountingOpeningEquity": {
@@ -16856,6 +16845,9 @@
           },
           "minItems": 22,
           "maxItems": 22
+        },
+        "income_tax_carry": {
+          "$ref": "#/$defs/AccountingIncomeTaxCarry"
         }
       },
       "required": [
@@ -19750,6 +19742,12 @@
         },
         {
           "$ref": "#/$defs/CooperationAdoptedBasis"
+        },
+        {
+          "$ref": "#/$defs/BasisOperationsTaxRelease"
+        },
+        {
+          "$ref": "#/$defs/BasisTaxesIncomeTaxNetting"
         }
       ]
     },
@@ -20102,7 +20100,8 @@
             "business",
             "object",
             "scope",
-            "calendar"
+            "calendar",
+            "aggregate"
           ]
         },
         "producer_id": {
@@ -20118,7 +20117,9 @@
           "enum": [
             "fact",
             "result",
-            "collection"
+            "collection",
+            "use",
+            "balance"
           ]
         },
         "relation_kind": {
@@ -20137,6 +20138,16 @@
         },
         "period_to": {
           "$ref": "core.schema.json#/$defs/Month"
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "excluded_result_slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultSlotRef"
+          },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -20234,11 +20245,110 @@
               ]
             },
             "else": {
-              "properties": {
-                "producer_id": {
-                  "$ref": "core.schema.json#/$defs/Id"
+              "if": {
+                "properties": {
+                  "producer_kind": {
+                    "const": "aggregate"
+                  }
+                },
+                "required": [
+                  "producer_kind"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "producer_id": {
+                    "$ref": "#/$defs/ResultCollection"
+                  },
+                  "producer_public_slot": {
+                    "const": "main"
+                  },
+                  "read_mode": {
+                    "const": "result"
+                  },
+                  "relation_kind": {
+                    "const": "calculation"
+                  }
+                },
+                "required": [
+                  "period_from",
+                  "period_to"
+                ]
+              },
+              "else": {
+                "properties": {
+                  "producer_id": {
+                    "$ref": "core.schema.json#/$defs/Id"
+                  }
                 }
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "read_mode": {
+                "enum": [
+                  "use",
+                  "balance"
+                ]
+              }
+            },
+            "required": [
+              "read_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "producer_kind": {
+                "const": "business"
+              },
+              "relation_kind": {
+                "enum": [
+                  "settlement",
+                  "cost"
+                ]
+              }
+            },
+            "required": [
+              "period_from",
+              "period_to"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "effective_on"
+                  ]
+                },
+                {
+                  "required": [
+                    "excluded_result_slots"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "read_mode": {
+                "const": "use"
+              }
+            },
+            "required": [
+              "read_mode"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "excluded_result_slots"
+              ]
             }
           }
         }
@@ -20289,6 +20399,13 @@
             "$ref": "core.schema.json#/$defs/FactIssue"
           },
           "minItems": 0
+        },
+        "publications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultPublication"
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -20296,7 +20413,8 @@
         "businesses",
         "plans",
         "dependencies",
-        "issues"
+        "issues",
+        "publications"
       ]
     },
     "ChangeDescription": {
@@ -20337,13 +20455,21 @@
             "$ref": "core.schema.json#/$defs/FactIssue"
           },
           "minItems": 0
+        },
+        "publications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultPublication"
+          },
+          "minItems": 0
         }
       },
       "required": [
         "domain",
         "businesses",
         "dependencies",
-        "issues"
+        "issues",
+        "publications"
       ]
     },
     "CooperationContract": {
@@ -23075,6 +23201,1176 @@
         "source",
         "from_fen",
         "to_fen"
+      ]
+    },
+    "ResultCollection": {
+      "type": "string",
+      "enum": [
+        "tax_sales",
+        "pre_tax"
+      ]
+    },
+    "ResultPublication": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "collection": {
+          "$ref": "#/$defs/ResultCollection"
+        },
+        "period_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        }
+      },
+      "required": [
+        "business_id",
+        "result_slot",
+        "collection",
+        "period_from",
+        "period_to"
+      ]
+    },
+    "TaxPointSegment": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "due"
+            },
+            "ranges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AmountRange"
+              },
+              "minItems": 1
+            },
+            "tax_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "tax_on": {
+              "$ref": "core.schema.json#/$defs/Date"
+            },
+            "trigger": {
+              "type": "string",
+              "enum": [
+                "contractual_entitlement",
+                "invoice",
+                "receipt",
+                "service_start",
+                "completion",
+                "explicit"
+              ]
+            },
+            "event_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "core.schema.json#/$defs/Id"
+              },
+              "minItems": 0,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "state",
+            "ranges",
+            "tax_period",
+            "trigger",
+            "event_ids"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "trigger": {
+                    "const": "explicit"
+                  }
+                },
+                "required": [
+                  "trigger"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "event_ids": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "event_ids": {
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "const": "not_due"
+            },
+            "ranges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AmountRange"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "state",
+            "ranges"
+          ]
+        }
+      ]
+    },
+    "TaxPointResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxPointSegment"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "target_business_id",
+        "segments"
+      ]
+    },
+    "KnownReportContribution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 6
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "tax_urban"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 10
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "tax_education",
+                "tax_local_education"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 12
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "sales_merchandise_repair"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 13
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "sales_advertising_promotion"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 15
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "management_startup"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 16
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "management_entertainment"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 17
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "management_research"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 19
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "finance_interest"
+              ]
+            },
+            "amount_fen": {
+              "$ref": "core.schema.json#/$defs/Fen"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "amount_fen"
+          ]
+        }
+      ]
+    },
+    "UnknownReportContribution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 6
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "tax_urban"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 10
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "tax_education",
+                "tax_local_education"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 12
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "sales_merchandise_repair"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 13
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "sales_advertising_promotion"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 15
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "management_startup"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 16
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "management_entertainment"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 17
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "management_research"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "const": "profit"
+            },
+            "line": {
+              "const": 19
+            },
+            "detail_code": {
+              "type": "string",
+              "enum": [
+                "finance_interest"
+              ]
+            },
+            "state": {
+              "const": "unestablished"
+            },
+            "issue": {
+              "$ref": "core.schema.json#/$defs/FactIssue"
+            }
+          },
+          "required": [
+            "statement",
+            "line",
+            "detail_code",
+            "state",
+            "issue"
+          ]
+        }
+      ]
+    },
+    "AdoptedTaxPointQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "tax_point"
+        },
+        "resolution": {
+          "$ref": "#/$defs/TaxPointResolution"
+        }
+      },
+      "required": [
+        "type",
+        "resolution"
+      ]
+    },
+    "TaxReturnPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "original_tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AmountRange"
+          },
+          "minItems": 1
+        },
+        "vat_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "taxed",
+            "not_due"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "ranges",
+        "vat_fen"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "taxed"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "required": [
+              "original_tax_period"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "original_tax_period"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "PartialTaxReturnPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "original_tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AmountRange"
+          },
+          "minItems": 1
+        },
+        "vat_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "taxed",
+            "not_due"
+          ]
+        }
+      }
+    },
+    "TargetOperationsTaxRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "operations.tax_release"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "gross_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "net_sales_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "vat_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            }
+          },
+          "required": [
+            "gross_fen",
+            "net_sales_fen",
+            "vat_fen"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "result_slot",
+        "values"
+      ]
+    },
+    "BasisOperationsTaxRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "operations.tax_release"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tax_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "ranges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AmountRange"
+              },
+              "minItems": 0
+            }
+          },
+          "required": [
+            "tax_period",
+            "ranges"
+          ]
+        },
+        "source_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultSourceRef"
+          },
+          "minItems": 0
+        },
+        "adopted_quantities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptedQuantity"
+          },
+          "minItems": 0
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptedPolicy"
+          },
+          "minItems": 0
+        },
+        "source_locations": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/SourceLocator"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "kind",
+        "result_slot",
+        "period",
+        "input",
+        "source_results",
+        "adopted_quantities",
+        "policies",
+        "source_locations"
+      ]
+    },
+    "ResultSlotRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        }
+      },
+      "required": [
+        "business_id",
+        "result_slot"
+      ]
+    },
+    "TargetTaxesIncomeTaxNetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "taxes.income_tax_netting"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tax_year": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9999
+            },
+            "matched_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            }
+          },
+          "required": [
+            "tax_year",
+            "matched_fen"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "result_slot",
+        "values"
+      ]
+    },
+    "BasisTaxesIncomeTaxNetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "taxes.income_tax_netting"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tax_year": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9999
+            },
+            "tax_period_end": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "stage": {
+              "enum": [
+                "provision",
+                "annual"
+              ]
+            },
+            "cutoff": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "period": {
+                  "$ref": "core.schema.json#/$defs/Month"
+                },
+                "on": {
+                  "$ref": "core.schema.json#/$defs/Date"
+                }
+              },
+              "required": [
+                "period"
+              ]
+            }
+          },
+          "required": [
+            "tax_year",
+            "tax_period_end",
+            "stage",
+            "cutoff"
+          ]
+        },
+        "source_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultSourceRef"
+          },
+          "minItems": 0
+        },
+        "adopted_quantities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptedQuantity"
+          },
+          "minItems": 0
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptedPolicy"
+          },
+          "minItems": 0
+        },
+        "source_locations": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/SourceLocator"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "kind",
+        "result_slot",
+        "period",
+        "input",
+        "source_results",
+        "adopted_quantities",
+        "policies",
+        "source_locations"
+      ]
+    },
+    "IncomeTaxCarry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tax_year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "cumulative_tax_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/SourceLocator"
+        }
+      },
+      "required": [
+        "tax_year",
+        "period_to",
+        "cumulative_tax_fen",
+        "source"
+      ]
+    },
+    "AccountingIncomeTaxCarry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tax_year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "cumulative_tax_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        }
+      },
+      "required": [
+        "tax_year",
+        "period_to",
+        "cumulative_tax_fen"
+      ]
+    },
+    "PartialIncomeTaxCarry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tax_year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "cumulative_tax_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/SourceLocator"
+        }
+      }
+    },
+    "AdoptedIncomeTaxCumulativeQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "income_tax_cumulative"
+        },
+        "tax_year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "cumulative_tax_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        }
+      },
+      "required": [
+        "type",
+        "tax_year",
+        "period_to",
+        "cumulative_tax_fen"
+      ]
+    },
+    "AdoptedTaxReturnQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "tax_return"
+        },
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "tax_returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxReturnPart"
+          },
+          "minItems": 1
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        }
+      },
+      "required": [
+        "type",
+        "business_id",
+        "period",
+        "tax_returns"
+      ]
+    },
+    "AdoptedOpeningBalanceQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "opening_balance"
+        },
+        "member_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "account_code": {
+          "$ref": "reporting.schema.json#/$defs/AccountCode"
+        },
+        "debit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "credit_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "party_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "object_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        }
+      },
+      "required": [
+        "type",
+        "member_id",
+        "account_code",
+        "debit_fen",
+        "credit_fen"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "debit_fen": {
+              "const": "0"
+            },
+            "credit_fen": {
+              "$ref": "core.schema.json#/$defs/PositiveFen"
+            }
+          }
+        },
+        {
+          "properties": {
+            "credit_fen": {
+              "const": "0"
+            },
+            "debit_fen": {
+              "$ref": "core.schema.json#/$defs/PositiveFen"
+            }
+          }
+        }
       ]
     }
   }

@@ -249,21 +249,36 @@ CREATE TABLE application_state (
 CREATE TABLE current_dependency (
 consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
  consumer_result_slot TEXT NOT NULL,
- producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar')),
+ producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),
  producer_id TEXT NOT NULL CHECK(
   (producer_kind IN ('business','object') AND length(producer_id)=36) OR
   (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR
-  (producer_kind='calendar' AND producer_id='work')
+  (producer_kind='calendar' AND producer_id='work') OR
+  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))
  ),
  producer_public_slot TEXT NOT NULL,
- read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection')),
+ read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),
  relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),
  period_from TEXT,
  period_to TEXT,
+ effective_on TEXT,
+ excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),
  PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)
 ) STRICT;
 
 CREATE INDEX current_dependency_reverse ON current_dependency(producer_kind,producer_id,producer_public_slot,read_mode,relation_kind,consumer_business_id);
+
+-- owner: application
+CREATE TABLE current_publication (
+ business_id TEXT NOT NULL REFERENCES business_head(business_id),
+ result_slot TEXT NOT NULL,
+ collection TEXT NOT NULL CHECK(collection IN ('tax_sales','pre_tax')),
+ period_from TEXT NOT NULL CHECK(length(period_from)=7),
+ period_to TEXT NOT NULL CHECK(length(period_to)=7 AND period_to>=period_from),
+ PRIMARY KEY(business_id,result_slot,collection)
+) STRICT;
+
+CREATE INDEX current_publication_range ON current_publication(collection,period_from,period_to,business_id,result_slot);
 
 -- owner: ledger
 CREATE TABLE adopted_result (
@@ -486,7 +501,9 @@ result_id TEXT NOT NULL REFERENCES adopted_result(result_id),
  statement TEXT NOT NULL CHECK(statement='profit'),
  line INTEGER NOT NULL CHECK(line IN (6,10,12,13,15,16,17,19)),
  detail_code TEXT NOT NULL CHECK(detail_code IN ('management_startup','management_entertainment','management_research','management_other','sales_merchandise_repair','sales_advertising_promotion','sales_other','finance_interest','finance_other','tax_urban','tax_education','tax_local_education')),
- amount_fen INTEGER NOT NULL,
+ amount_fen INTEGER,
+ issue_json TEXT CHECK(issue_json IS NULL OR json_valid(issue_json)),
+ CHECK((amount_fen IS NOT NULL AND issue_json IS NULL) OR (amount_fen IS NULL AND issue_json IS NOT NULL)),
  PRIMARY KEY(result_id,statement,line,detail_code)
 ) STRICT;
 

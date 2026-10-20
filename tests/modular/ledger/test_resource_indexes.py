@@ -12,6 +12,7 @@ from test_adoption import (
     PAYMENT,
     SUPPLIER,
     _candidate,
+    adopt_declared,
     expense,
     payment,
     seed_payment,
@@ -96,7 +97,7 @@ def test_many_slots_parse_each_definition_once_and_load_incoming_once(
     changes = split_resources(count)
     if persisted:
         with store.write_unit(COMPANY) as uow:
-            ledger.adopt(changes, uow)
+            adopt_declared(ledger, changes, uow)
     converted, incoming = Counter(), Counter()
     convert, read_incoming = _resource_view.resource_definition, LedgerRepository.incoming
 
@@ -141,7 +142,7 @@ def test_formal_definition_view_reuses_parsed_source_within_one_snapshot(store, 
     ledger, count = create_ledger(), 31
     changes = split_resources(count)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([changes[0]], uow)
+        adopt_declared(ledger, [changes[0]], uow)
     converted, fetches = Counter(), Counter()
     convert, children = _resource_view.resource_definition, LedgerRepository.children
 
@@ -187,7 +188,7 @@ def test_state_batch_loads_incoming_for_distinct_source_businesses_together(stor
     with store.write_unit(COMPANY) as uow:
         for business_id in business_ids[1:]:
             uow.repository("application").business(business_id)
-        ledger.adopt(changes, uow)
+        adopt_declared(ledger, changes, uow)
     calls, read_incoming = [], LedgerRepository.incoming
 
     def counted_incoming(repo, table, ids, **kwargs):
@@ -210,7 +211,7 @@ def test_fund_scope_and_definition_share_exact_parsed_source_and_safe_copies(
     ledger = create_ledger()
     seed_payment(store)
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense(), payment()], uow)
+        adopt_declared(ledger, [expense(), payment()], uow)
     converted, sources = [], []
     convert, source = _resource_view.resource_definition, _resource_view.stored_source_reference
 
@@ -252,7 +253,12 @@ def test_staging_another_result_invalidates_business_slot_map_and_duplicate_chec
     second["obligations"][0]["slot"] = "second"
     ref = {"business_id": BUSINESS, "slot": "primary"}
     with store.write_unit(COMPANY) as uow:
-        candidate = ledger.begin_candidate([responsibility], uow)
+        candidate = ledger.begin_candidate(
+            [responsibility],
+            uow,
+            publications=first["publications"]
+            + [{**first["publications"][0], "result_slot": "aux"}],
+        )
         candidate.stage(first["plans"][0])
         assert (
             candidate.resource_definitions([ref], "obligation")[0].value["amount_fen"] == "100000"
@@ -263,7 +269,12 @@ def test_staging_another_result_invalidates_business_slot_map_and_duplicate_chec
         candidate.complete()
     second["obligations"][0]["slot"] = "primary"
     with store.write_unit(COMPANY) as uow:
-        candidate = ledger.begin_candidate([responsibility], uow)
+        candidate = ledger.begin_candidate(
+            [responsibility],
+            uow,
+            publications=first["publications"]
+            + [{**first["publications"][0], "result_slot": "aux"}],
+        )
         candidate.stage(first["plans"][0])
         candidate.resource_definitions([ref], "obligation")
         candidate.stage(second)
@@ -275,24 +286,26 @@ def test_adoption_invalidates_existing_formal_and_candidate_views_in_same_unit(s
     ledger = create_ledger()
     ref, cutoff = {"business_id": BUSINESS, "slot": "primary"}, ResourceCutoff("2026-01")
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense()], uow)
+        adopt_declared(ledger, [expense()], uow)
         old = ledger.resource_definitions([ref], "obligation", uow)[0]
         candidate = ledger.begin_candidate([], uow).complete()
         assert candidate.resource_states([ref], "obligation", cutoff)[0].remaining_fen == 100000
         changed = expense("80000", seq=1)
         changed["plans"][0]["basis"]["effective_on"] = "2026-01-20"
         changed["businesses"][0]["fact"]["effective_on"] = "2026-01-20"
-        ledger.adopt([changed], uow)
+        adopt_declared(ledger, [changed], uow)
         new = ledger.resource_definitions([ref], "obligation", uow)[0]
         assert new.value["amount_fen"] == "80000" and new.source != old.source
         actual = candidate.resource_states([ref], "obligation", cutoff)[0]
         assert actual.definition == new and actual.remaining_fen == 80000
         with pytest.raises(ContractError, match="尚未成立"):
             candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01", "2026-01-10"))
-        ledger.adopt(
+        adopt_declared(
+            ledger,
             [
                 {
                     "domain": "operations",
+                    "publications": [],
                     "businesses": [
                         {
                             "business_id": BUSINESS,
@@ -321,7 +334,7 @@ def test_cached_candidate_cannot_outlive_its_original_work_unit(store):
     ref = {"business_id": BUSINESS, "slot": "primary"}
     cutoff = ResourceCutoff("2026-01")
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense(), payment()], uow)
+        adopt_declared(ledger, [expense(), payment()], uow)
         candidate = ledger.begin_candidate([], uow).complete()
         assert (
             candidate.resource_definitions([ref], "obligation")[0].value["amount_fen"] == "100000"
@@ -334,7 +347,7 @@ def test_cached_candidate_cannot_outlive_its_original_work_unit(store):
     # A later valid transaction changes the source. The old candidate must not
     # serve its warmed caches after the transaction that defined them has ended.
     with store.write_unit(COMPANY) as uow:
-        ledger.adopt([expense("120000", seq=1)], uow)
+        adopt_declared(ledger, [expense("120000", seq=1)], uow)
         current = ledger.begin_candidate([], uow).complete()
         assert current.resource_definitions([ref], "obligation")[0].value["amount_fen"] == "120000"
         assert current.resource_states([ref], "obligation", cutoff)[0].remaining_fen == 20000

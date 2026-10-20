@@ -230,31 +230,34 @@ def overpayment(fact, context):
     data, total = fact["data"], amount(fact["data"])
     original = _resource(context, data["source"])
     ob = original.value
-    if ob["direction"] != "payable" or ob.get("party_id") != data["counterparty_id"]:
-        reject("超付追收必须引用属于同一交易方的原应付。")
+    party = ob.get("party_id")
+    if "counterparty_id" in data and data["counterparty_id"] != party:
+        reject("多收或多付的处理对象必须与原正式往来一致，不能补造或更换对象。")
+    overpaid = ob["direction"] == "payable"
     spans = pool_ranges(fact, context)[fact["business_id"]]
     plan = base_plan(
         fact,
         context,
-        {"amount_fen": data["amount_fen"], "treatment": "overpayment_recovery"},
+        {
+            "amount_fen": data["amount_fen"],
+            "treatment": "overpayment_recovery" if overpaid else "overreceipt_refund",
+        },
         adopt_effective_on="effective_on" in fact,
     )
     _adopt_obligation(plan, original)
-    line(plan, "1221", debit=total, party=data["counterparty_id"], summary="确认实际超付追收")
-    line(
-        plan,
-        ob["account_code"],
-        credit=total,
-        party=data["counterparty_id"],
-        summary="重分类原债超付",
-    )
+    if overpaid:
+        line(plan, "1221", debit=total, party=party, summary="确认实际超付追收")
+        line(plan, ob["account_code"], credit=total, party=party, summary="重分类原债超付")
+    else:
+        line(plan, ob["account_code"], debit=total, party=party, summary="重分类原债超收")
+        line(plan, "2241", credit=total, party=party, summary="确认实际超收退款责任")
     obligation(
         plan,
         "recovery",
-        data["counterparty_id"],
-        "receivable",
+        party,
+        "receivable" if overpaid else "payable",
         total,
-        "1221",
+        "1221" if overpaid else "2241",
         category="other",
         cashflow=None,
     )

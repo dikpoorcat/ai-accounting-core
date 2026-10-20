@@ -56,6 +56,33 @@ def activation_months(fact, context):
     return sorted(months)
 
 
+def publications(fact, slots):
+    result = []
+    for slot in slots:
+        month = slot.removeprefix("depreciation:") if slot != "main" else fact["period"]
+        if slot != "main" or fact["kind"] in {"assets.project_release", "assets.disposal"}:
+            result.append(
+                {
+                    "business_id": fact["business_id"],
+                    "result_slot": slot,
+                    "collection": "pre_tax",
+                    "period_from": month,
+                    "period_to": month,
+                }
+            )
+        if fact["kind"] == "assets.disposal" and fact["data"]["type"] == "sale":
+            result.append(
+                {
+                    "business_id": fact["business_id"],
+                    "result_slot": slot,
+                    "collection": "tax_sales",
+                    "period_from": month,
+                    "period_to": month,
+                }
+            )
+    return result
+
+
 def dependencies(fact, slots, context):
     edges = [
         _edge(fact, "object", object_id)
@@ -75,6 +102,18 @@ def dependencies(fact, slots, context):
                             acquired["business_id"],
                             mode="result",
                             relation="cost",
+                        )
+                    )
+                    edges.append(
+                        _edge(
+                            fact,
+                            "business",
+                            acquired["business_id"],
+                            producer_slot="cost:" + asset_id,
+                            mode="use",
+                            relation="cost",
+                            period_from=fact["period"],
+                            period_to=fact["period"],
                         )
                     )
             if kind == "assets.activation":
@@ -110,6 +149,18 @@ def dependencies(fact, slots, context):
     for item in data.get("sources", ()):
         edges.append(
             _edge(fact, "business", item["source"]["business_id"], mode="result", relation="cost")
+        )
+        edges.append(
+            _edge(
+                fact,
+                "business",
+                item["source"]["business_id"],
+                producer_slot=item["source"]["slot"],
+                mode="use",
+                relation="cost",
+                period_from=fact["period"],
+                period_to=fact["period"],
+            )
         )
     if kind == "assets.disposal" and data["type"] == "sale":
         edges.append(

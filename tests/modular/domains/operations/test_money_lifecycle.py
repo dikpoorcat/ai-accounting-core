@@ -8,6 +8,10 @@ import pytest
 
 from ai_accounting_modular.application.public import create_application
 from ai_accounting_modular.application.public import repository_factory as application_repository
+from ai_accounting_modular.domains.financing.public import create_investment
+from ai_accounting_modular.domains.financing.public import (
+    repository_factory as financing_repository,
+)
 from ai_accounting_modular.domains.operations.public import create_operations
 from ai_accounting_modular.domains.operations.public import (
     repository_factory as operations_repository,
@@ -35,6 +39,7 @@ def system(tmp_path):
             ledger_repository(),
             records_repository(),
             operations_repository(),
+            financing_repository(),
             money_repository(),
         ],
     )
@@ -56,7 +61,7 @@ def system(tmp_path):
         identity=identity,
         ledger=ledger,
         records=create_records(root_for=lambda read: storage.company_metadata(read).company_root),
-        domains=[create_operations(), money],
+        domains=[create_operations(), create_investment(), money],
         money=money,
     )
     ids = {key: str(uuid4()) for key in ("source", "party", "beneficiary", "bank")}
@@ -200,6 +205,230 @@ def get(system, *facts):
             "include": ["facts", "results", "sources"],
         }
     )
+
+
+def test_paid_expense_can_be_corrected_to_zero_with_exact_recovery_and_real_refund(system):
+    app, company, ids = system
+    original = expense(ids, 100)
+    paid = movement(ids, original, "primary", 100)
+    saved = app.accounting_apply(command(company, paid, original))
+    assert saved["completion"] == "complete", saved.get("message", saved)
+    with app.storage.read_unit(company) as read:
+        original_occurrence = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)[
+            0
+        ].value
+    revised = deepcopy(original)
+    revised["data"]["amount_fen"] = "0"
+    claim = recovery(ids, original, 100)
+    corrected = app.accounting_apply(
+        command(
+            company,
+            mutations=[
+                {"op": "create", "expected_seq": 0, "fact": claim},
+                {"op": "replace", "expected_seq": 1, "fact": revised},
+            ],
+        )
+    )
+    assert corrected["completion"] == "complete", corrected.get("message", corrected)
+    current = get(system, original)["businesses"][0]
+    assert current["fact"]["data"]["amount_fen"] == "0"
+    assert current["results"][0]["target"]["values"]["report_detail_state"] == "known"
+    returned = movement(ids, claim, "recovery", 100, direction="inflow", day="2026-01-16")
+    refunded = app.accounting_apply(command(company, returned))
+    assert refunded["completion"] == "complete", refunded.get("message", refunded)
+    with app.storage.read_unit(company) as read:
+        movements = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+        assert (
+            next(item.value for item in movements if item.value["direction"] == "outflow")
+            == original_occurrence
+        )
+        balances = app.ledger.resolve(
+            [
+                {"business_id": original["business_id"], "slot": "primary"},
+                {"business_id": claim["business_id"], "slot": "recovery"},
+            ],
+            "obligation",
+            read,
+        )
+        assert [item["balance"]["remaining_fen"] for item in balances] == ["0", "0"]
+        assert (
+            sum(
+                int(item.value["amount_fen"]) * (1 if item.value["direction"] == "inflow" else -1)
+                for item in movements
+            )
+            == 0
+        )
+
+
+def test_paid_expense_zero_without_recovery_rolls_back_fact_and_keeps_real_money(system):
+    app, company, ids = system
+    original = expense(ids, 100)
+    paid = movement(ids, original, "primary", 100)
+    assert app.accounting_apply(command(company, original, paid))["completion"] == "complete"
+    before = get(system, original, paid)
+    revised = deepcopy(original)
+    revised["data"]["amount_fen"] = "0"
+    rejected = app.accounting_apply(
+        command(company, mutations=[{"op": "replace", "expected_seq": 1, "fact": revised}])
+    )
+    assert rejected["completion"] == "not_saved" and rejected["error"] == "dependency_conflict", (
+        rejected
+    )
+    assert get(system, original, paid) == before
+
+
+def test_overpayment_reuses_original_party_when_counterparty_is_omitted(system):
+    app, company, ids = system
+    original = expense(ids, 100)
+    paid = movement(ids, original, "primary", 101)
+    claim = recovery(ids, original, 1)
+    del claim["data"]["counterparty_id"]
+    saved = app.accounting_apply(command(company, claim, paid, original))
+    assert saved["completion"] == "complete", saved
+    with app.storage.read_unit(company) as read:
+        (definition,) = app.ledger.resource_definitions(
+            [{"business_id": claim["business_id"], "slot": "recovery"}], "obligation", read
+        )
+        assert definition.value["party_id"] == ids["party"]
+        assert definition.value["direction"] == "receivable"
+        found = create_operations().query_current(
+            {
+                "company_id": company,
+                "family": "operations",
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "kind": "operations.overpayment",
+                "object_id": ids["party"],
+                "limit": 100,
+            },
+            read,
+        )
+        assert [item["business_id"] for item in found] == [claim["business_id"]]
+
+
+@pytest.mark.parametrize("wrong_party", [False, True])
+def test_fund_redemption_correction_preserves_real_receipt_and_refunds_actual_excess(
+    system, wrong_party
+):
+    app, company, ids = system
+    product = str(uuid4())
+    registered = app.accounting_apply(
+        command(
+            company,
+            objects=[
+                {
+                    "object_id": product,
+                    "kind": "investment_product",
+                    "name": "合成货币基金",
+                    "expected_seq": 0,
+                    "data": {"category": "money_fund"},
+                }
+            ],
+        )
+    )
+    assert registered["completion"] == "complete", registered
+    common = {
+        "fund_id": product,
+        "counterparty_id": ids["party"],
+        "classification": "readily_redeemable_held_not_over_one_year",
+        "cost_basis": "documented_cost",
+    }
+    purchased = fact(
+        ids,
+        "investment.money_fund_purchase",
+        {
+            **common,
+            "purchase_price_fen": "100",
+            "acquisition_fees_fen": "0",
+            "excludes_declared_unpaid_distributions": True,
+        },
+    )
+    redeemed = fact(
+        ids,
+        "investment.money_fund_redemption",
+        {
+            **common,
+            "costs": [
+                {
+                    "source": {"business_id": purchased["business_id"], "slot": "cost"},
+                    "amount_fen": "100",
+                }
+            ],
+            "net_proceeds_fen": "101",
+        },
+    )
+    received = movement(ids, redeemed, "primary", 101, direction="inflow")
+    saved = app.accounting_apply(command(company, received, redeemed, purchased))
+    assert saved["completion"] == "complete", saved
+    before = get(system, redeemed, received)
+    with app.storage.read_unit(company) as read:
+        (original_occurrence,) = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+    revised = deepcopy(redeemed)
+    revised["data"]["net_proceeds_fen"] = "100"
+    claim = recovery(ids, redeemed, 1)
+    if wrong_party:
+        claim["data"]["counterparty_id"] = ids["beneficiary"]
+    else:
+        del claim["data"]["counterparty_id"]
+    returned = movement(ids, claim, "recovery", 1, day="2026-01-16")
+    changed = app.accounting_apply(
+        command(
+            company,
+            mutations=[
+                {"op": "create", "expected_seq": 0, "fact": returned},
+                {"op": "create", "expected_seq": 0, "fact": claim},
+                {"op": "replace", "expected_seq": 1, "fact": revised},
+            ],
+        )
+    )
+    if wrong_party:
+        assert changed["completion"] == "not_saved", changed
+        assert changed["error"] == "dependency_conflict", changed
+        assert get(system, redeemed, received) == before
+        assert get(system, claim, returned)["businesses"] == []
+        return
+    assert changed["completion"] == "complete", changed
+    current = get(system, claim)["businesses"][0]
+    assert current["results"][0]["target"]["values"]["treatment"] == "overreceipt_refund"
+    with app.storage.read_unit(company) as read:
+        definitions = app.ledger.resource_definitions(
+            [{"business_id": claim["business_id"], "slot": "recovery"}], "obligation", read
+        )
+        assert definitions[0].value["direction"] == "payable"
+        assert definitions[0].value["account_code"] == "2241"
+        assert definitions[0].value["party_id"] == ids["party"]
+        assert definitions[0].value["cashflow_weights"] == [
+            {"category": "investment_recovery", "weight": "1"}
+        ]
+        actual = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
+        assert next(item.value for item in actual if item.value["direction"] == "inflow") == (
+            original_occurrence.value
+        )
+        assert (
+            sum(
+                int(item.value["amount_fen"]) * (1 if item.value["direction"] == "inflow" else -1)
+                for item in actual
+            )
+            == 100
+        )
+        assert all(
+            item.value["cashflow_parts"]
+            == [{"category": "investment_recovery", "amount_fen": item.value["amount_fen"]}]
+            for item in actual
+        )
+        balances = app.ledger.resolve(
+            [
+                {"business_id": redeemed["business_id"], "slot": "primary"},
+                {"business_id": claim["business_id"], "slot": "recovery"},
+            ],
+            "obligation",
+            read,
+        )
+        assert [item["balance"]["remaining_fen"] for item in balances] == ["0", "0"]
+    settled = get(system, revised, received, claim, returned)
+    replayed = app.accounting_apply(command(company, revised, received, claim, returned))
+    assert replayed["changes"] == "none"
+    assert get(system, revised, received, claim, returned) == settled
 
 
 @pytest.mark.parametrize("order", [(0, 1, 2), (2, 1, 0), (1, 2, 0)])

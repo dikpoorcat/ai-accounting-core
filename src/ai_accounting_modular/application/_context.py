@@ -1,11 +1,18 @@
 """One-submission overlays; formal identities remain the ledger's responsibility."""
 
 from collections import defaultdict
+from contextlib import contextmanager
 from copy import deepcopy
 
-from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    EvaluatedSlot,
+    ResourceCutoff,
+    validate_contract,
+)
 
 from ._changes import fact_digest
+from ._resources import check_scope as check_resource_scope
 
 
 class DomainRegistry:
@@ -85,11 +92,14 @@ class SubmissionContext:
         self._stored_results = {}
         self._dependencies = ()
         self._candidate = None
+        self._candidate_complete = False
+        self._active_slots = frozenset()
 
     def add_description(self, description):
         self._dependencies += tuple(description["dependencies"])
 
     def begin_candidate(self, descriptions, correction_period):
+        self._candidate_complete = False
         self._result_cache.clear()
         self._dependencies = tuple(
             edge for _, description in descriptions for edge in description["dependencies"]
@@ -98,10 +108,45 @@ class SubmissionContext:
             [business for _, description in descriptions for business in description["businesses"]],
             self.read_context,
             correction_period=correction_period,
+            publications=[
+                item for _, description in descriptions for item in description["publications"]
+            ],
+            resource_uses=[edge for edge in self._dependencies if edge["read_mode"] == "use"],
         )
+
+    @contextmanager
+    def result_scope(self, slots):
+        previous = self._active_slots
+        self._active_slots = frozenset(slots)
+        try:
+            yield
+        finally:
+            self._active_slots = previous
+
+    def _check_aggregate_scope(self, collection, period_from, period_to):
+        self._periods(period_from, period_to)
+        if period_from is None or period_to is None:
+            raise ContractError("invalid_input", "核算集合读取必须给出完整月份范围。")
+        if not any(
+            (edge["consumer_business_id"], edge["consumer_result_slot"]) in self._active_slots
+            and edge["producer_kind"] == "aggregate"
+            and edge["producer_id"] == collection
+            and edge["period_from"] <= period_from <= period_to <= edge["period_to"]
+            for edge in self._dependencies
+        ):
+            raise ContractError("dependency_conflict", "当前结果槽未声明覆盖本次集合读取的依赖。")
+
+    def tax_sales(self, period_from, period_to):
+        self._check_aggregate_scope("tax_sales", period_from, period_to)
+        return self._candidate.tax_sales(period_from, period_to)
+
+    def pre_tax(self, period_from, period_to):
+        self._check_aggregate_scope("pre_tax", period_from, period_to)
+        return self._candidate.pre_tax(period_from, period_to)
 
     def complete_candidate(self):
         self._candidate.complete()
+        self._candidate_complete = True
 
     def add_fact(self, fact):
         self._facts[fact["business_id"]] = deepcopy(fact)
@@ -200,7 +245,7 @@ class SubmissionContext:
             if edge["producer_kind"] == producer_kind
             and edge["producer_id"] in producer_ids
             and edge["relation_kind"] == relation_kind
-            and edge["read_mode"] != "collection"
+            and edge["read_mode"] in ("fact", "result")
         )
         return tuple(
             fact
@@ -234,14 +279,53 @@ class SubmissionContext:
     def resource_definitions(self, refs, kind):
         return self._candidate.resource_definitions(refs, kind)
 
-    def resource_states(self, refs, kind, cutoff, *, excluding_consumer=None):
+    def _check_resource_read(self, refs, kind, cutoff, single, multiple):
+        if not self._candidate_complete:
+            if not isinstance(cutoff, ResourceCutoff):
+                raise ContractError("invalid_input", "资源读取须提供明确截止月份及可选实际日。")
+            if any(
+                not isinstance(item, tuple) or len(item) != 2
+                for item in ([single] if single is not None else []) + list(multiple)
+            ):
+                raise ContractError("invalid_input", "排除范围须由明确业务及结果槽组成。")
+            excluded = frozenset(([single] if single is not None else []) + list(multiple))
+            check_resource_scope(self, refs, kind, cutoff, excluded)
+            for definition in self._candidate.resource_definitions(refs, kind):
+                if not any(
+                    edge["read_mode"] == "result"
+                    and edge["producer_kind"] == "business"
+                    and edge["producer_id"] == definition.source["business_id"]
+                    and edge["producer_public_slot"] == definition.source["result_slot"]
+                    and (edge["consumer_business_id"], edge["consumer_result_slot"])
+                    in self._active_slots
+                    for edge in self._dependencies
+                ):
+                    raise ContractError(
+                        "dependency_conflict", "余额依赖未声明实际生产该资源的结果槽。"
+                    )
+
+    def resource_states(
+        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+    ):
+        self._check_resource_read(refs, kind, cutoff, excluding_consumer, excluding_consumers)
         return self._candidate.resource_states(
-            refs, kind, cutoff, excluding_consumer=excluding_consumer
+            refs,
+            kind,
+            cutoff,
+            excluding_consumer=excluding_consumer,
+            excluding_consumers=excluding_consumers,
         )
 
-    def resource_windows(self, refs, kind, cutoff, *, excluding_consumer=None):
+    def resource_windows(
+        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+    ):
+        self._check_resource_read(refs, kind, cutoff, excluding_consumer, excluding_consumers)
         return self._candidate.resource_windows(
-            refs, kind, cutoff, excluding_consumer=excluding_consumer
+            refs,
+            kind,
+            cutoff,
+            excluding_consumer=excluding_consumer,
+            excluding_consumers=excluding_consumers,
         )
 
     def fund_movements(self, account_id, period_from, period_to):

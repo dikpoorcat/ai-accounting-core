@@ -20,7 +20,7 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 from ._cards import related
 from ._common import assets_in, finalize_plan, reject
 from ._consumption import consumption, slot_for
-from ._description import DescriptionContext, activation_months
+from ._description import DescriptionContext, activation_months, publications
 from ._description import dependencies as dependency_edges
 from ._facts import CALCULATORS, natural_key, role_issues, validate_fact
 from ._inputs import AssetInputs, batches, reference_key
@@ -36,7 +36,7 @@ class Assets:
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         context = DescriptionContext(context, changes)
-        businesses, dependencies, issues = [], [], []
+        businesses, dependencies, issues, published = [], [], [], []
         for change in changes:
             business_id = change.get("business_id", change.get("fact", {}).get("business_id"))
             responsibility = {
@@ -63,10 +63,12 @@ class Assets:
             businesses.append(responsibility)
             if not found:
                 dependencies.extend(dependency_edges(fact, slots, context))
+                published.extend(publications(fact, slots))
         result = {
             "domain": "assets",
             "businesses": businesses,
             "dependencies": dependencies,
+            "publications": published,
             "issues": issues,
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)

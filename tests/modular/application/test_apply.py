@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from ai_accounting_modular.application._context import SubmissionContext
+from ai_accounting_modular.application._repository import ApplicationRepository
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 
 from .conftest import get, initial_request, source
@@ -508,3 +509,66 @@ def test_result_input_reuses_validation_but_isolates_callers_and_read_units(asse
         ).get_result(business_id, "main")
         assert current.basis["input"]["amount_fen"] == "120000"
         assert current.source != original.source
+
+
+def test_publication_projection_failure_rolls_back_real_fact_adoption_sources_and_documents(
+    assembled, monkeypatch
+):
+    app, company_id = assembled
+    request = initial_request(company_id)
+    business_id = request["mutations"][0]["fact"]["business_id"]
+    assert app.accounting_apply(request)["completion"] == "complete"
+    before = get(app, company_id, business_id)
+    documents = manifest_facts(app, company_id)
+    with app.storage.read_unit(company_id) as read:
+        publications = read.repository("application").publications([business_id])
+    additional = source("合成验收：该项实际属于二月，金额为900元。")
+    replacement = deepcopy(request)
+    replacement["command_id"] = str(uuid4())
+    replacement["sources"].append(additional)
+    replacement["mutations"][0].update(op="replace", expected_seq=1)
+    replacement["mutations"][0]["fact"]["period"] = "2026-02"
+    replacement["mutations"][0]["fact"]["data"]["amount_fen"] = "90000"
+    replacement["mutations"][0]["fact"]["evidence_ids"].append(additional["source_id"])
+    persist = ApplicationRepository.replace_publications
+
+    def fail_after_replacement(repository, ids, values):
+        assert persist(repository, ids, values)
+        raise ContractError("temporary_failure", "合成故障：发布索引保存后失败。")
+
+    monkeypatch.setattr(ApplicationRepository, "replace_publications", fail_after_replacement)
+    failed = app.accounting_apply(replacement)
+    assert failed["completion"] == "not_saved" and failed["error"] == "temporary_failure", failed
+    assert get(app, company_id, business_id) == before
+    assert manifest_facts(app, company_id) == documents
+    with app.storage.read_unit(company_id) as read:
+        assert read.repository("application").publications([business_id]) == publications
+        assert app.records.resolve_sources([additional["source_id"]], read) == ()
+
+
+def test_publication_projection_change_is_reported_without_claiming_new_accounting(
+    assembled, monkeypatch
+):
+    app, company_id = assembled
+    request = initial_request(company_id)
+    business_id = request["mutations"][0]["fact"]["business_id"]
+    assert app.accounting_apply(request)["completion"] == "complete"
+    before = get(app, company_id, business_id)
+    owner = app.registry.owner("operations.expense")
+    describe = owner.describe_change
+
+    def wider_declared_envelope(changes, context):
+        description = describe(changes, context)
+        for publication in description["publications"]:
+            publication["period_to"] = "2026-02"
+        return description
+
+    monkeypatch.setattr(owner, "describe_change", wider_declared_envelope)
+    updated = app.accounting_apply(request)
+    assert updated["completion"] == "complete", updated
+    assert updated["changes"] == "committed" and updated["accounting"] == "unchanged"
+    after = get(app, company_id, business_id)
+    assert after["head"] == before["head"] + 1
+    assert after["businesses"] == before["businesses"]
+    assert app.accounting_apply(request)["changes"] == "none"
+    assert get(app, company_id, business_id) == after

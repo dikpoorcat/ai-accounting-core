@@ -8,6 +8,7 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import canonical_json, content_digest, parse_fen
 
 from ._resource_rows import resource_rows
+from ._values import fail
 
 
 def _source_relation(reference):
@@ -35,20 +36,45 @@ def _basis_values(basis):
 
 
 def target_voucher(repo, row):
-    """Find the full effective target through heads that needed no new journal.
+    return target_vouchers(repo, [row])[row["result_id"]] if row is not None else None
 
-    A reversal without a replacement means a genuinely empty target. It must
-    stop inheritance just as an explicit withdrawal does.
+
+def target_vouchers(repo, heads):
+    """Select complete effective journals in batches, never add correction deltas.
+
+    Formal-only heads inherit their baseline. Withdrawal or a reversal without
+    replacement ends inheritance, including an explicitly empty corrected target.
     """
-    while row is not None and row["target_state"] != "withdrawn":
-        vouchers = repo.vouchers([row["result_id"]])
-        voucher = next((v for v in vouchers if v["role"] in ("original", "replacement")), None)
-        if voucher is not None:
-            return voucher
-        if any(v["role"] == "reversal" for v in vouchers) or row["baseline_result_id"] is None:
-            break
-        row = repo.result(row["baseline_result_id"])
-    return None
+    rows = {head["result_id"]: head for head in heads}
+    pending = {key: key for key in rows}
+    seen, result = set(), {}
+    while pending:
+        ids = set(pending.values())
+        missing = ids - rows.keys()
+        if missing:
+            rows.update((row["result_id"], row) for row in repo.results(missing))
+        grouped = defaultdict(list)
+        for voucher in repo.vouchers(ids):
+            grouped[voucher["result_id"]].append(voucher)
+        following = {}
+        for head_id, result_id in pending.items():
+            if (head_id, result_id) in seen or result_id not in rows:
+                fail("storage_corrupt", "完整正式目标的凭证基线不存在或形成循环。")
+            seen.add((head_id, result_id))
+            row, vouchers = rows[result_id], grouped[result_id]
+            own = next((v for v in vouchers if v["role"] in ("original", "replacement")), None)
+            if row["target_state"] == "withdrawn":
+                result[head_id] = None
+            elif own is not None:
+                result[head_id] = own
+            elif (
+                any(v["role"] == "reversal" for v in vouchers) or row["baseline_result_id"] is None
+            ):
+                result[head_id] = None
+            else:
+                following[head_id] = row["baseline_result_id"]
+        pending = following
+    return result
 
 
 def target_lines(repo, row):
@@ -69,6 +95,20 @@ def same_journal(existing_lines, planned_lines):
     return _line_totals(existing_lines) == _line_totals(planned_lines)
 
 
+def _formal_children(table, rows, *, frozen):
+    if table != "result_report_contribution" or not frozen:
+        return rows
+    values = []
+    for row in rows:
+        value = list(row)
+        if value[-1] is not None:
+            issue = json.loads(value[-1])
+            issue.pop("reusable_sources", None)
+            value[-1] = canonical_json(issue)
+        values.append(value)
+    return values
+
+
 def same_formal_output(repo, row, plan):
     if (
         row["target_digest"] != content_digest(plan["target"])
@@ -82,6 +122,8 @@ def same_formal_output(repo, row, plan):
             continue
         existing = [list(child.values())[1:] for child in repo.children(table, [row["result_id"]])]
         expected = [list(child)[1:] for child in desired]
+        existing = _formal_children(table, existing, frozen=row["state"] == "frozen")
+        expected = _formal_children(table, expected, frozen=row["state"] == "frozen")
         if sorted(existing, key=canonical_json) != sorted(expected, key=canonical_json):
             return False
     return True

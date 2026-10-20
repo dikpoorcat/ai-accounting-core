@@ -565,6 +565,8 @@ class CashflowWeight(TypedDict):
     category: CashflowCategory
     weight: PositiveFen
 
+type SourceId = Id
+
 type SourceLocation = SourceLocator
 
 class AmountRange(TypedDict):
@@ -627,7 +629,7 @@ class OperationsServiceSale(TypedDict):
 class OperationsExpense(TypedDict):
     creditor_id: Id
     creditor_kind: Literal['supplier', 'employee', 'individual']
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
     expense_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee']
     report_details: NotRequired[list[OperationsExpenseReportDetailsItem]]
     cooperation_id: NotRequired[Id]
@@ -669,10 +671,12 @@ class OperationsSaleReturn(TypedDict):
     credit_note_vat_fen: NonNegativeFen
     original_tax_period: NotRequired[Month]
     tax_ranges: NotRequired[list[AmountRange]]
+    tax_returns: NotRequired[list[TaxReturnPart]]
 
 class OperationsAdvanceRefund(TypedDict):
     advance_id: Id
     gross_fen: PositiveFen
+    tax_returns: NotRequired[list[TaxReturnPart]]
 
 class OperationsExpenseRecovery(TypedDict):
     expense_id: Id
@@ -718,7 +722,7 @@ type OperationsReimbursement = PersonalAdvance | ReimbursementAcceptance
 
 class OperationsOverpayment(TypedDict):
     source: BusinessRef
-    counterparty_id: Id
+    counterparty_id: NotRequired[Id]
     amount_fen: PositiveFen
 
 class PeopleEmployment(TypedDict):
@@ -1074,6 +1078,7 @@ class TaxCreditReturn(TypedDict):
     original_business_id: Id
     gross_fen: PositiveFen
     vat_fen: NonNegativeFen
+    tax_ranges: NotRequired[list[AmountRange]]
 
 class TaxesTaxCredit(TypedDict):
     original_assessment_id: Id
@@ -1086,6 +1091,9 @@ class TaxesTaxCredit(TypedDict):
     vat_credit_fen: NonNegativeFen
     surtax_credit_fen: NonNegativeFen
     exemption_reversal_fen: NonNegativeFen
+    urban_credit_fen: NotRequired[NonNegativeFen]
+    education_credit_fen: NotRequired[NonNegativeFen]
+    local_education_credit_fen: NotRequired[NonNegativeFen]
 
 class ActualVatDeclaration(TypedDict):
     type: Literal['vat']
@@ -1222,6 +1230,7 @@ class OpeningPayrollPayable(TypedDict):
     payroll_period: Month
     component: Literal['net', 'tax', 'employee_social', 'employee_housing', 'employer_social', 'employer_housing']
     amount_fen: PositiveFen
+    tax_period: NotRequired[Month]
 
 class OpeningEquity(TypedDict):
     type: Literal['equity']
@@ -1242,7 +1251,7 @@ type OpeningMemberData = OpeningBank | OpeningCash | OpeningObligation | Opening
 
 class OpeningMember(TypedDict):
     member_id: Id
-    evidence_ids: list[Id]
+    evidence_ids: list[SourceId]
     data: OpeningMemberData
 
 class OpeningPackage(TypedDict):
@@ -1270,6 +1279,7 @@ class ReportsContinuation(TypedDict):
     year_beginning_balance: list[PriorBalanceRow]
     prior_profit: list[PriorProfitRow]
     prior_cash: list[PriorCashRow]
+    income_tax_carry: NotRequired[IncomeTaxCarry]
 
 class FactOperationsServiceSale(TypedDict):
     business_id: Id
@@ -1703,7 +1713,7 @@ class PartialOperationsServiceSale(TypedDict):
 class PartialOperationsExpense(TypedDict):
     creditor_id: NotRequired[Id]
     creditor_kind: NotRequired[Literal['supplier', 'employee', 'individual']]
-    amount_fen: NotRequired[PositiveFen]
+    amount_fen: NotRequired[NonNegativeFen]
     expense_class: NotRequired[Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee']]
     report_details: NotRequired[list[PartialOperationsExpenseReportDetailsItem]]
     cooperation_id: NotRequired[Id]
@@ -1745,10 +1755,12 @@ class PartialOperationsSaleReturn(TypedDict):
     credit_note_vat_fen: NotRequired[NonNegativeFen]
     original_tax_period: NotRequired[Month]
     tax_ranges: NotRequired[list[PartialAmountRange]]
+    tax_returns: NotRequired[list[PartialTaxReturnPart]]
 
 class PartialOperationsAdvanceRefund(TypedDict):
     advance_id: NotRequired[Id]
     gross_fen: NotRequired[PositiveFen]
+    tax_returns: NotRequired[list[PartialTaxReturnPart]]
 
 class PartialOperationsExpenseRecovery(TypedDict):
     expense_id: NotRequired[Id]
@@ -2150,6 +2162,7 @@ class PartialTaxCreditReturn(TypedDict):
     original_business_id: NotRequired[Id]
     gross_fen: NotRequired[PositiveFen]
     vat_fen: NotRequired[NonNegativeFen]
+    tax_ranges: NotRequired[list[AmountRange]]
 
 class PartialTaxesTaxCredit(TypedDict):
     original_assessment_id: NotRequired[Id]
@@ -2162,6 +2175,9 @@ class PartialTaxesTaxCredit(TypedDict):
     vat_credit_fen: NotRequired[NonNegativeFen]
     surtax_credit_fen: NotRequired[NonNegativeFen]
     exemption_reversal_fen: NotRequired[NonNegativeFen]
+    urban_credit_fen: NotRequired[NonNegativeFen]
+    education_credit_fen: NotRequired[NonNegativeFen]
+    local_education_credit_fen: NotRequired[NonNegativeFen]
 
 class PartialActualVatDeclaration(TypedDict):
     type: NotRequired[Literal['vat']]
@@ -2298,6 +2314,7 @@ class PartialOpeningPayrollPayable(TypedDict):
     payroll_period: NotRequired[Month]
     component: NotRequired[Literal['net', 'tax', 'employee_social', 'employee_housing', 'employer_social', 'employer_housing']]
     amount_fen: NotRequired[PositiveFen]
+    tax_period: NotRequired[Month]
 
 class PartialOpeningEquity(TypedDict):
     type: NotRequired[Literal['equity']]
@@ -2318,7 +2335,7 @@ type PartialOpeningMemberData = PartialOpeningBank | PartialOpeningCash | Partia
 
 class PartialOpeningMember(TypedDict):
     member_id: NotRequired[Id]
-    evidence_ids: NotRequired[list[Id]]
+    evidence_ids: NotRequired[list[SourceId]]
     data: NotRequired[PartialOpeningMemberData]
 
 class PartialOpeningPackage(TypedDict):
@@ -2346,6 +2363,7 @@ class PartialReportsContinuation(TypedDict):
     year_beginning_balance: NotRequired[list[PartialPriorBalanceRow]]
     prior_profit: NotRequired[list[PartialPriorProfitRow]]
     prior_cash: NotRequired[list[PartialPriorCashRow]]
+    income_tax_carry: NotRequired[PartialIncomeTaxCarry]
 
 class PartialFactOperationsServiceSale(TypedDict):
     kind: Literal['operations.service_sale']
@@ -2740,7 +2758,7 @@ class TaxSale(TypedDict):
     filing_bucket: Literal['standard', 'used_asset']
     ranges: list[AmountRange]
 
-type ReportContribution = ReportContributionVariant1 | ReportContributionVariant2 | ReportContributionVariant3 | ReportContributionVariant4 | ReportContributionVariant5 | ReportContributionVariant6 | ReportContributionVariant7 | ReportContributionVariant8
+type ReportContribution = KnownReportContribution | UnknownReportContribution
 
 class ResultSourceRef(TypedDict):
     business_id: Id
@@ -2782,15 +2800,15 @@ class VatFilingFields(TypedDict):
 
 class VatAssessmentMetrics(TypedDict):
     type: Literal['vat']
-    net_sales_fen: NonNegativeFen
-    accrued_vat_fen: NonNegativeFen
+    net_sales_fen: Fen
+    accrued_vat_fen: Fen
     payable_vat_fen: NonNegativeFen
-    relief_fen: NonNegativeFen
+    relief_fen: NotRequired[NonNegativeFen]
     urban_fen: NonNegativeFen
     education_fen: NonNegativeFen
     local_education_fen: NonNegativeFen
     surtax_fen: NonNegativeFen
-    rounding_adjustment_fen: Fen
+    rounding_adjustment_fen: NotRequired[Fen]
     adopted_basis: Literal['calculated', 'actual']
     filing_fields: NotRequired[VatFilingFields]
     filing_state: Literal['ready', 'partial', 'unsupported_form']
@@ -3028,7 +3046,7 @@ class TargetTaxesActualDeclaration(TypedDict):
 class TargetTaxesTaxPoint(TypedDict):
     kind: Literal['taxes.tax_point']
     result_slot: Slot
-    values: TargetTaxesTaxPointValues
+    values: TaxPointResolution
 
 class TargetOpeningPackage(TypedDict):
     kind: Literal['opening.package']
@@ -3046,7 +3064,7 @@ class WithdrawnTarget(TypedDict):
     result_slot: Slot
     state: Literal['withdrawn']
 
-type ResultTarget = TargetOperationsServiceSale | TargetOperationsExpense | TargetOperationsExpenseRecovery | TargetOperationsOtherIncome | TargetOperationsAdvance | TargetOperationsAdvanceFulfillment | TargetOperationsSaleReturn | TargetOperationsAdvanceRefund | TargetOperationsPassThrough | TargetOperationsPassThroughReturn | TargetOperationsDeposit | TargetOperationsReimbursement | TargetOperationsOverpayment | TargetPeopleEmployment | TargetPeopleContributionPolicy | TargetTaxesVatPolicy | TargetTaxesSurtaxPolicy | TargetTaxesUsedAssetVatPolicy | TargetTaxesIncomeTaxPolicy | TargetPeopleContributionActual | TargetPeopleRemuneration | TargetAssetsProjectCost | TargetAssetsProjectRelease | TargetAssetsAcquisition | TargetAssetsActivation | TargetAssetsDisposal | TargetAssetsConsumption | TargetFinancingOwnerFunding | TargetFinancingLoanContract | TargetFinancingLoanDrawdown | TargetFinancingInterestPeriod | TargetInvestmentMoneyFundPurchase | TargetInvestmentMoneyFundRedemption | TargetMoneyMovement | TargetMoneyTransfer | TargetMoneyBankStatement | TargetMoneyPlatformActivity | TargetMoneyReserveInternal | TargetMoneyReconciliation | TargetTaxesPrepaymentBasis | TargetTaxesAssessment | TargetTaxesTaxCredit | TargetTaxesActualDeclaration | TargetTaxesTaxPoint | TargetOpeningPackage | TargetReportsContinuation | WithdrawnTarget | CooperationResultTarget
+type ResultTarget = TargetOperationsServiceSale | TargetOperationsExpense | TargetOperationsExpenseRecovery | TargetOperationsOtherIncome | TargetOperationsAdvance | TargetOperationsAdvanceFulfillment | TargetOperationsSaleReturn | TargetOperationsAdvanceRefund | TargetOperationsPassThrough | TargetOperationsPassThroughReturn | TargetOperationsDeposit | TargetOperationsReimbursement | TargetOperationsOverpayment | TargetPeopleEmployment | TargetPeopleContributionPolicy | TargetTaxesVatPolicy | TargetTaxesSurtaxPolicy | TargetTaxesUsedAssetVatPolicy | TargetTaxesIncomeTaxPolicy | TargetPeopleContributionActual | TargetPeopleRemuneration | TargetAssetsProjectCost | TargetAssetsProjectRelease | TargetAssetsAcquisition | TargetAssetsActivation | TargetAssetsDisposal | TargetAssetsConsumption | TargetFinancingOwnerFunding | TargetFinancingLoanContract | TargetFinancingLoanDrawdown | TargetFinancingInterestPeriod | TargetInvestmentMoneyFundPurchase | TargetInvestmentMoneyFundRedemption | TargetMoneyMovement | TargetMoneyTransfer | TargetMoneyBankStatement | TargetMoneyPlatformActivity | TargetMoneyReserveInternal | TargetMoneyReconciliation | TargetTaxesPrepaymentBasis | TargetTaxesAssessment | TargetTaxesTaxCredit | TargetTaxesActualDeclaration | TargetTaxesTaxPoint | TargetOpeningPackage | TargetReportsContinuation | WithdrawnTarget | CooperationResultTarget | TargetOperationsTaxRelease | TargetTaxesIncomeTaxNetting
 
 class AdoptedObligationQuantity(TypedDict):
     type: Literal['obligation']
@@ -3145,7 +3163,7 @@ class AdoptedBalanceQuantity(TypedDict):
     balance_fen: Fen
     as_of_period: Month
 
-type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity
+type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity
 
 class AdoptedPeopleContributionPolicy(TypedDict):
     policy_business_id: Id
@@ -3233,7 +3251,7 @@ class AccountingOperationsServiceSale(TypedDict):
 class AccountingOperationsExpense(TypedDict):
     creditor_id: Id
     creditor_kind: Literal['supplier', 'employee', 'individual']
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
     expense_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee']
     report_details: NotRequired[list[AccountingOperationsExpenseReportDetailsItem]]
     cooperation_id: NotRequired[Id]
@@ -3275,10 +3293,12 @@ class AccountingOperationsSaleReturn(TypedDict):
     credit_note_vat_fen: NonNegativeFen
     original_tax_period: NotRequired[Month]
     tax_ranges: NotRequired[list[AccountingAmountRange]]
+    tax_returns: NotRequired[list[TaxReturnPart]]
 
 class AccountingOperationsAdvanceRefund(TypedDict):
     advance_id: Id
     gross_fen: PositiveFen
+    tax_returns: NotRequired[list[TaxReturnPart]]
 
 class AccountingOperationsExpenseRecovery(TypedDict):
     expense_id: Id
@@ -3324,7 +3344,7 @@ type AccountingOperationsReimbursement = AccountingPersonalAdvance | AccountingR
 
 class AccountingOperationsOverpayment(TypedDict):
     source: BusinessRef
-    counterparty_id: Id
+    counterparty_id: NotRequired[Id]
     amount_fen: PositiveFen
 
 class AccountingPeopleEmployment(TypedDict):
@@ -3668,6 +3688,7 @@ class AccountingTaxCreditReturn(TypedDict):
     original_business_id: Id
     gross_fen: PositiveFen
     vat_fen: NonNegativeFen
+    tax_ranges: NotRequired[list[AmountRange]]
 
 class AccountingTaxesTaxCredit(TypedDict):
     original_assessment_id: Id
@@ -3678,6 +3699,9 @@ class AccountingTaxesTaxCredit(TypedDict):
     vat_credit_fen: NonNegativeFen
     surtax_credit_fen: NonNegativeFen
     exemption_reversal_fen: NonNegativeFen
+    urban_credit_fen: NotRequired[NonNegativeFen]
+    education_credit_fen: NotRequired[NonNegativeFen]
+    local_education_credit_fen: NotRequired[NonNegativeFen]
 
 class AccountingActualVatDeclaration(TypedDict):
     type: Literal['vat']
@@ -3808,6 +3832,7 @@ class AccountingOpeningPayrollPayable(TypedDict):
     payroll_period: Month
     component: Literal['net', 'tax', 'employee_social', 'employee_housing', 'employer_social', 'employer_housing']
     amount_fen: PositiveFen
+    tax_period: NotRequired[Month]
 
 class AccountingOpeningEquity(TypedDict):
     type: Literal['equity']
@@ -3856,6 +3881,7 @@ class AccountingReportsContinuation(TypedDict):
     year_beginning_balance: list[AccountingPriorBalanceRow]
     prior_profit: list[AccountingPriorProfitRow]
     prior_cash: list[AccountingPriorCashRow]
+    income_tax_carry: NotRequired[AccountingIncomeTaxCarry]
 
 class BasisOperationsServiceSale(TypedDict):
     kind: Literal['operations.service_sale']
@@ -4368,7 +4394,7 @@ class WithdrawnBasis(TypedDict):
     explanation: str
     source_locations: list[SourceLocator]
 
-type AdoptedBasis = BasisOperationsServiceSale | BasisOperationsExpense | BasisOperationsOtherIncome | BasisOperationsAdvance | BasisOperationsAdvanceFulfillment | BasisOperationsSaleReturn | BasisOperationsAdvanceRefund | BasisOperationsExpenseRecovery | BasisOperationsPassThrough | BasisOperationsPassThroughReturn | BasisOperationsDeposit | BasisOperationsReimbursement | BasisOperationsOverpayment | BasisPeopleEmployment | BasisPeopleRemuneration | BasisPeopleContributionPolicy | BasisPeopleContributionActual | BasisAssetsProjectCost | BasisAssetsProjectRelease | BasisAssetsAcquisition | BasisAssetsActivation | BasisAssetsDisposal | BasisFinancingOwnerFunding | BasisFinancingLoanContract | BasisFinancingLoanDrawdown | BasisFinancingInterestPeriod | BasisInvestmentMoneyFundPurchase | BasisInvestmentMoneyFundRedemption | BasisMoneyMovement | BasisMoneyTransfer | BasisMoneyBankStatement | BasisMoneyReconciliation | BasisMoneyReserveInternal | BasisMoneyPlatformActivity | BasisTaxesVatPolicy | BasisTaxesSurtaxPolicy | BasisTaxesUsedAssetVatPolicy | BasisTaxesIncomeTaxPolicy | BasisTaxesPrepaymentBasis | BasisTaxesAssessment | BasisTaxesTaxCredit | BasisTaxesActualDeclaration | BasisTaxesTaxPoint | BasisOpeningPackage | BasisReportsContinuation | BasisAssetsConsumption | WithdrawnBasis | CooperationAdoptedBasis
+type AdoptedBasis = BasisOperationsServiceSale | BasisOperationsExpense | BasisOperationsOtherIncome | BasisOperationsAdvance | BasisOperationsAdvanceFulfillment | BasisOperationsSaleReturn | BasisOperationsAdvanceRefund | BasisOperationsExpenseRecovery | BasisOperationsPassThrough | BasisOperationsPassThroughReturn | BasisOperationsDeposit | BasisOperationsReimbursement | BasisOperationsOverpayment | BasisPeopleEmployment | BasisPeopleRemuneration | BasisPeopleContributionPolicy | BasisPeopleContributionActual | BasisAssetsProjectCost | BasisAssetsProjectRelease | BasisAssetsAcquisition | BasisAssetsActivation | BasisAssetsDisposal | BasisFinancingOwnerFunding | BasisFinancingLoanContract | BasisFinancingLoanDrawdown | BasisFinancingInterestPeriod | BasisInvestmentMoneyFundPurchase | BasisInvestmentMoneyFundRedemption | BasisMoneyMovement | BasisMoneyTransfer | BasisMoneyBankStatement | BasisMoneyReconciliation | BasisMoneyReserveInternal | BasisMoneyPlatformActivity | BasisTaxesVatPolicy | BasisTaxesSurtaxPolicy | BasisTaxesUsedAssetVatPolicy | BasisTaxesIncomeTaxPolicy | BasisTaxesPrepaymentBasis | BasisTaxesAssessment | BasisTaxesTaxCredit | BasisTaxesActualDeclaration | BasisTaxesTaxPoint | BasisOpeningPackage | BasisReportsContinuation | BasisAssetsConsumption | WithdrawnBasis | CooperationAdoptedBasis | BasisOperationsTaxRelease | BasisTaxesIncomeTaxNetting
 
 class CalculationRuleRef(TypedDict):
     key: str
@@ -4407,13 +4433,15 @@ class BusinessChangeResponsibility(TypedDict):
 class Dependency(TypedDict):
     consumer_business_id: Id
     consumer_result_slot: Slot
-    producer_kind: Literal['business', 'object', 'scope', 'calendar']
+    producer_kind: Literal['business', 'object', 'scope', 'calendar', 'aggregate']
     producer_id: str
     producer_public_slot: Slot
-    read_mode: Literal['fact', 'result', 'collection']
+    read_mode: Literal['fact', 'result', 'collection', 'use', 'balance']
     relation_kind: DependencyRelationKind
     period_from: NotRequired[Month]
     period_to: NotRequired[Month]
+    effective_on: NotRequired[Date]
+    excluded_result_slots: NotRequired[list[ResultSlotRef]]
 
 class ChangePlan(TypedDict):
     domain: Literal['operations', 'people', 'assets', 'financing', 'investment', 'money', 'taxes', 'opening', 'reports']
@@ -4421,12 +4449,14 @@ class ChangePlan(TypedDict):
     plans: list[PostingPlan]
     dependencies: list[Dependency]
     issues: list[FactIssue]
+    publications: list[ResultPublication]
 
 class ChangeDescription(TypedDict):
     domain: Literal['operations', 'people', 'assets', 'financing', 'investment', 'money', 'taxes', 'opening', 'reports']
     businesses: list[BusinessChangeResponsibility]
     dependencies: list[Dependency]
     issues: list[FactIssue]
+    publications: list[ResultPublication]
 
 class CooperationContract(TypedDict):
     profile: Literal['direct_joint_operation_cash_labor_v1']
@@ -4872,6 +4902,116 @@ class AdoptedCumulativeRangeQuantity(TypedDict):
     source: BusinessRef
     from_fen: NonNegativeFen
     to_fen: PositiveFen
+
+type ResultCollection = Literal['tax_sales', 'pre_tax']
+
+class ResultPublication(TypedDict):
+    business_id: Id
+    result_slot: Slot
+    collection: ResultCollection
+    period_from: Month
+    period_to: Month
+
+type TaxPointSegment = TaxPointSegmentVariant1 | TaxPointSegmentVariant2
+
+class TaxPointResolution(TypedDict):
+    target_business_id: Id
+    segments: list[TaxPointSegment]
+
+type KnownReportContribution = KnownReportContributionVariant1 | KnownReportContributionVariant2 | KnownReportContributionVariant3 | KnownReportContributionVariant4 | KnownReportContributionVariant5 | KnownReportContributionVariant6 | KnownReportContributionVariant7 | KnownReportContributionVariant8
+
+type UnknownReportContribution = UnknownReportContributionVariant1 | UnknownReportContributionVariant2 | UnknownReportContributionVariant3 | UnknownReportContributionVariant4 | UnknownReportContributionVariant5 | UnknownReportContributionVariant6 | UnknownReportContributionVariant7 | UnknownReportContributionVariant8
+
+class AdoptedTaxPointQuantity(TypedDict):
+    type: Literal['tax_point']
+    resolution: TaxPointResolution
+
+class TaxReturnPart(TypedDict):
+    original_tax_period: NotRequired[Month]
+    ranges: list[AmountRange]
+    vat_fen: NonNegativeFen
+    state: Literal['taxed', 'not_due']
+
+class PartialTaxReturnPart(TypedDict):
+    original_tax_period: NotRequired[Month]
+    ranges: NotRequired[list[AmountRange]]
+    vat_fen: NotRequired[NonNegativeFen]
+    state: NotRequired[Literal['taxed', 'not_due']]
+
+class TargetOperationsTaxRelease(TypedDict):
+    kind: Literal['operations.tax_release']
+    result_slot: Slot
+    values: TargetOperationsTaxReleaseValues
+
+class BasisOperationsTaxRelease(TypedDict):
+    kind: Literal['operations.tax_release']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: BasisOperationsTaxReleaseInput
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class ResultSlotRef(TypedDict):
+    business_id: Id
+    result_slot: Slot
+
+class TargetTaxesIncomeTaxNetting(TypedDict):
+    kind: Literal['taxes.income_tax_netting']
+    result_slot: Slot
+    values: TargetTaxesIncomeTaxNettingValues
+
+class BasisTaxesIncomeTaxNetting(TypedDict):
+    kind: Literal['taxes.income_tax_netting']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: BasisTaxesIncomeTaxNettingInput
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class IncomeTaxCarry(TypedDict):
+    tax_year: int
+    period_to: Month
+    cumulative_tax_fen: NonNegativeFen
+    source: SourceLocator
+
+class AccountingIncomeTaxCarry(TypedDict):
+    tax_year: int
+    period_to: Month
+    cumulative_tax_fen: NonNegativeFen
+
+class PartialIncomeTaxCarry(TypedDict):
+    tax_year: NotRequired[int]
+    period_to: NotRequired[Month]
+    cumulative_tax_fen: NotRequired[NonNegativeFen]
+    source: NotRequired[SourceLocator]
+
+class AdoptedIncomeTaxCumulativeQuantity(TypedDict):
+    type: Literal['income_tax_cumulative']
+    tax_year: int
+    period_to: Month
+    cumulative_tax_fen: NonNegativeFen
+
+class AdoptedTaxReturnQuantity(TypedDict):
+    type: Literal['tax_return']
+    business_id: Id
+    period: Month
+    tax_returns: list[TaxReturnPart]
+    effective_on: NotRequired[Date]
+
+class AdoptedOpeningBalanceQuantity(TypedDict):
+    type: Literal['opening_balance']
+    member_id: Id
+    account_code: AccountCode
+    debit_fen: NonNegativeFen
+    credit_fen: NonNegativeFen
+    party_id: NotRequired[Id]
+    object_id: NotRequired[Id]
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
@@ -9635,54 +9775,6 @@ class PartialVatAssessmentFilingProfile(TypedDict):
     form_scope: NotRequired[Literal['nonpilot', 'pilot_or_other']]
     source: NotRequired[PartialSourceLocation]
 
-class ReportContributionVariant1(TypedDict):
-    statement: Literal['profit']
-    line: Literal[6]
-    detail_code: Literal['tax_urban']
-    amount_fen: Fen
-
-class ReportContributionVariant2(TypedDict):
-    statement: Literal['profit']
-    line: Literal[10]
-    detail_code: Literal['tax_education', 'tax_local_education']
-    amount_fen: Fen
-
-class ReportContributionVariant3(TypedDict):
-    statement: Literal['profit']
-    line: Literal[12]
-    detail_code: Literal['sales_merchandise_repair']
-    amount_fen: Fen
-
-class ReportContributionVariant4(TypedDict):
-    statement: Literal['profit']
-    line: Literal[13]
-    detail_code: Literal['sales_advertising_promotion']
-    amount_fen: Fen
-
-class ReportContributionVariant5(TypedDict):
-    statement: Literal['profit']
-    line: Literal[15]
-    detail_code: Literal['management_startup']
-    amount_fen: Fen
-
-class ReportContributionVariant6(TypedDict):
-    statement: Literal['profit']
-    line: Literal[16]
-    detail_code: Literal['management_entertainment']
-    amount_fen: Fen
-
-class ReportContributionVariant7(TypedDict):
-    statement: Literal['profit']
-    line: Literal[17]
-    detail_code: Literal['management_research']
-    amount_fen: Fen
-
-class ReportContributionVariant8(TypedDict):
-    statement: Literal['profit']
-    line: Literal[19]
-    detail_code: Literal['finance_interest']
-    amount_fen: Fen
-
 class TargetOperationsServiceSaleValues(TypedDict):
     gross_fen: PositiveFen
     revenue_fen: NonNegativeFen
@@ -9692,7 +9784,7 @@ class TargetOperationsServiceSaleValues(TypedDict):
     deferred_vat_fen: NonNegativeFen
 
 class TargetOperationsExpenseValues(TypedDict):
-    amount_fen: PositiveFen
+    amount_fen: NonNegativeFen
     expense_or_income_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee', 'bank_interest', 'company_reward']
     report_detail_state: Literal['known', 'unestablished']
 
@@ -9723,6 +9815,7 @@ class TargetOperationsSaleReturnValues(TypedDict):
     revenue_reversed_fen: NonNegativeFen
     vat_reversed_fen: NonNegativeFen
     original_tax_period: NotRequired[Month]
+    tax_returns: NotRequired[list[TaxReturnPart]]
 
 class TargetOperationsAdvanceRefundValues(TypedDict):
     gross_fen: PositiveFen
@@ -9747,7 +9840,7 @@ class TargetOperationsReimbursementValues(TypedDict):
 
 class TargetOperationsOverpaymentValues(TypedDict):
     amount_fen: PositiveFen
-    treatment: Literal['overpayment_recovery']
+    treatment: Literal['overpayment_recovery', 'overreceipt_refund']
 
 class TargetPeopleEmploymentValues(TypedDict):
     employee_id: Id
@@ -9919,15 +10012,14 @@ class TargetTaxesTaxCreditValues(TypedDict):
     surtax_credit_fen: NonNegativeFen
     exemption_reversal_fen: NonNegativeFen
     disposition: Literal['refund', 'offset', 'refund_or_offset']
+    urban_credit_fen: NotRequired[NonNegativeFen]
+    education_credit_fen: NotRequired[NonNegativeFen]
+    local_education_credit_fen: NotRequired[NonNegativeFen]
 
 class TargetTaxesActualDeclarationValues(TypedDict):
     declaration_type: Literal['vat', 'income_tax', 'payroll']
     authoritative_source: Literal[True]
     tax_period_end: Month
-
-class TargetTaxesTaxPointValues(TypedDict):
-    target_business_id: Id
-    tax_sales: list[TaxSale]
 
 class TargetOpeningPackageValues(TypedDict):
     bookkeeping_start: Month
@@ -10020,6 +10112,141 @@ class CooperationAccountingPositionPeriodTotals(TypedDict):
     project_paid_fen: NonNegativeFen
     company_collected_fen: NonNegativeFen
     company_paid_fen: NonNegativeFen
+
+class TaxPointSegmentVariant1(TypedDict):
+    state: Literal['due']
+    ranges: list[AmountRange]
+    tax_period: Month
+    tax_on: NotRequired[Date]
+    trigger: Literal['contractual_entitlement', 'invoice', 'receipt', 'service_start', 'completion', 'explicit']
+    event_ids: list[Id]
+
+class TaxPointSegmentVariant2(TypedDict):
+    state: Literal['not_due']
+    ranges: list[AmountRange]
+
+class KnownReportContributionVariant1(TypedDict):
+    statement: Literal['profit']
+    line: Literal[6]
+    detail_code: Literal['tax_urban']
+    amount_fen: Fen
+
+class KnownReportContributionVariant2(TypedDict):
+    statement: Literal['profit']
+    line: Literal[10]
+    detail_code: Literal['tax_education', 'tax_local_education']
+    amount_fen: Fen
+
+class KnownReportContributionVariant3(TypedDict):
+    statement: Literal['profit']
+    line: Literal[12]
+    detail_code: Literal['sales_merchandise_repair']
+    amount_fen: Fen
+
+class KnownReportContributionVariant4(TypedDict):
+    statement: Literal['profit']
+    line: Literal[13]
+    detail_code: Literal['sales_advertising_promotion']
+    amount_fen: Fen
+
+class KnownReportContributionVariant5(TypedDict):
+    statement: Literal['profit']
+    line: Literal[15]
+    detail_code: Literal['management_startup']
+    amount_fen: Fen
+
+class KnownReportContributionVariant6(TypedDict):
+    statement: Literal['profit']
+    line: Literal[16]
+    detail_code: Literal['management_entertainment']
+    amount_fen: Fen
+
+class KnownReportContributionVariant7(TypedDict):
+    statement: Literal['profit']
+    line: Literal[17]
+    detail_code: Literal['management_research']
+    amount_fen: Fen
+
+class KnownReportContributionVariant8(TypedDict):
+    statement: Literal['profit']
+    line: Literal[19]
+    detail_code: Literal['finance_interest']
+    amount_fen: Fen
+
+class UnknownReportContributionVariant1(TypedDict):
+    statement: Literal['profit']
+    line: Literal[6]
+    detail_code: Literal['tax_urban']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant2(TypedDict):
+    statement: Literal['profit']
+    line: Literal[10]
+    detail_code: Literal['tax_education', 'tax_local_education']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant3(TypedDict):
+    statement: Literal['profit']
+    line: Literal[12]
+    detail_code: Literal['sales_merchandise_repair']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant4(TypedDict):
+    statement: Literal['profit']
+    line: Literal[13]
+    detail_code: Literal['sales_advertising_promotion']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant5(TypedDict):
+    statement: Literal['profit']
+    line: Literal[15]
+    detail_code: Literal['management_startup']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant6(TypedDict):
+    statement: Literal['profit']
+    line: Literal[16]
+    detail_code: Literal['management_entertainment']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant7(TypedDict):
+    statement: Literal['profit']
+    line: Literal[17]
+    detail_code: Literal['management_research']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class UnknownReportContributionVariant8(TypedDict):
+    statement: Literal['profit']
+    line: Literal[19]
+    detail_code: Literal['finance_interest']
+    state: Literal['unestablished']
+    issue: FactIssue
+
+class TargetOperationsTaxReleaseValues(TypedDict):
+    gross_fen: NonNegativeFen
+    net_sales_fen: NonNegativeFen
+    vat_fen: NonNegativeFen
+
+class BasisOperationsTaxReleaseInput(TypedDict):
+    tax_period: Month
+    ranges: list[AmountRange]
+
+class TargetTaxesIncomeTaxNettingValues(TypedDict):
+    tax_year: int
+    matched_fen: NonNegativeFen
+
+class BasisTaxesIncomeTaxNettingInput(TypedDict):
+    tax_year: int
+    tax_period_end: Month
+    stage: Literal['provision', 'annual']
+    cutoff: BasisTaxesIncomeTaxNettingInputCutoff
 
 class BalanceSheet1(TypedDict):
     name: Literal['货币资金']
@@ -10730,6 +10957,10 @@ class TargetAssetsConsumptionValuesItemsItem(TypedDict):
     closing_accumulated_fen: NonNegativeFen
     carrying_fen: NonNegativeFen
 
+class BasisTaxesIncomeTaxNettingInputCutoff(TypedDict):
+    period: Month
+    on: NotRequired[Date]
+
 __all__ = [
     'JsonValue',
     'Id',
@@ -10821,6 +11052,7 @@ __all__ = [
     'ReportRequest',
     'ErrorResponse',
     'CashflowWeight',
+    'SourceId',
     'SourceLocation',
     'AmountRange',
     'CostUse',
@@ -11439,6 +11671,26 @@ __all__ = [
     'AdoptedEmploymentQuantity',
     'AdoptedContributionActualQuantity',
     'AdoptedCumulativeRangeQuantity',
+    'ResultCollection',
+    'ResultPublication',
+    'TaxPointSegment',
+    'TaxPointResolution',
+    'KnownReportContribution',
+    'UnknownReportContribution',
+    'AdoptedTaxPointQuantity',
+    'TaxReturnPart',
+    'PartialTaxReturnPart',
+    'TargetOperationsTaxRelease',
+    'BasisOperationsTaxRelease',
+    'ResultSlotRef',
+    'TargetTaxesIncomeTaxNetting',
+    'BasisTaxesIncomeTaxNetting',
+    'IncomeTaxCarry',
+    'AccountingIncomeTaxCarry',
+    'PartialIncomeTaxCarry',
+    'AdoptedIncomeTaxCumulativeQuantity',
+    'AdoptedTaxReturnQuantity',
+    'AdoptedOpeningBalanceQuantity',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

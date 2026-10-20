@@ -1,8 +1,17 @@
 """Collect owner responsibilities, find explicit dependants, evaluate complete slots."""
 
 from collections import defaultdict, deque
+from heapq import heapify, heappop, heappush
 
-from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    resource_use_affects,
+    validate_contract,
+)
+
+from ._publications import normalize as normalize_publications
+from ._publications import overlaps
+from ._resources import normalize as normalize_resource_dependency
 
 
 def _membership(edge):
@@ -30,6 +39,7 @@ def _dependencies(edges, responsibilities):
             raise ContractError("invalid_input", "依赖范围起月不能晚于末月。")
         key = tuple(edge[field] for field in identity_fields)
         previous = indexed.get(key)
+        normalize_resource_dependency(edge, previous)
         if previous is not None:
             for field, choose in (("period_from", min), ("period_to", max)):
                 bounds = previous.get(field), edge.get(field)
@@ -37,6 +47,7 @@ def _dependencies(edges, responsibilities):
                     edge.pop(field, None)
                 else:
                     edge[field] = choose(bounds)
+        normalize_resource_dependency(edge)
         indexed[key] = edge
     return [indexed[key] for key in sorted(indexed)]
 
@@ -110,6 +121,9 @@ def collect_changes(changes, changed_objects, context, registry):
                 if responsibility.get("fact") != source.get("fact"):
                     raise ContractError("invalid_input", "领域责任必须使用本单完整正确事实。")
                 context.declare_slots(responsibility)
+            description["publications"] = normalize_publications(
+                description["publications"], description["businesses"]
+            )
             if description["issues"]:
                 raise ContractError(
                     "needs_information",
@@ -118,20 +132,33 @@ def collect_changes(changes, changed_objects, context, registry):
                 )
             descriptions.append((owner, description))
             context.add_description(description)
+            # Every included publisher may have a changed amount even when its
+            # fact, result slot and publication range are all unchanged.
+            include(
+                repo.aggregate_observers(
+                    [
+                        *repo.publications(expected),
+                        *description["publications"],
+                    ]
+                )
+            )
             old_edges = repo.dependencies(expected)
+            include(repo.resource_observers([*old_edges, *description["dependencies"]]))
             for business in description["businesses"]:
                 business_id = business["business_id"]
                 before = [
                     edge
                     for edge in old_edges
                     if edge["consumer_business_id"] == business_id
-                    and edge["read_mode"] != "collection"
+                    and edge["read_mode"] in ("fact", "result")
+                    and edge["producer_kind"] in ("business", "object")
                 ]
                 after = [
                     edge
                     for edge in description["dependencies"]
                     if edge["consumer_business_id"] == business_id
-                    and edge["read_mode"] != "collection"
+                    and edge["read_mode"] in ("fact", "result")
+                    and edge["producer_kind"] in ("business", "object")
                 ]
                 old_members = {_membership(edge) for edge in before}
                 new_members = {_membership(edge) for edge in after}
@@ -162,7 +189,10 @@ def collect_changes(changes, changed_objects, context, registry):
 
 def evaluate(descriptions, context, ledger, correction_period):
     context.begin_candidate(descriptions, correction_period)
-    owners, edges = {}, {}
+    owners, edges, reasons = {}, {}, {}
+    publications = [item for _, description in descriptions for item in description["publications"]]
+    dependencies = [edge for _, description in descriptions for edge in description["dependencies"]]
+    uses = [edge for edge in dependencies if edge["read_mode"] == "use"]
     for owner, description in descriptions:
         for responsibility in description["businesses"]:
             for slot in responsibility["complete_result_slots"]:
@@ -179,23 +209,43 @@ def evaluate(descriptions, context, ledger, correction_period):
                 producer = edge["producer_id"], edge["producer_public_slot"]
                 if producer in owners:
                     edges[consumer].add(producer)
+                    reasons[consumer, producer] = "业务结果"
                 elif edge["producer_id"] in context._slots:
                     raise ContractError("dependency_conflict", "本单退出的结果仍被另一业务采用。")
+            elif edge["producer_kind"] == "aggregate":
+                for publication in publications:
+                    if overlaps(publication, edge):
+                        producer = publication["business_id"], publication["result_slot"]
+                        edges[consumer].add(producer)
+                        reasons[consumer, producer] = (
+                            f"{edge['producer_id']}[{edge['period_from']}..{edge['period_to']}]"
+                        )
+            elif edge["read_mode"] == "balance":
+                if not any(
+                    item["read_mode"] == "result"
+                    and item["producer_kind"] == "business"
+                    and item["producer_id"] == edge["producer_id"]
+                    and (item["consumer_business_id"], item["consumer_result_slot"]) == consumer
+                    for item in dependencies
+                ):
+                    raise ContractError("invalid_input", "余额依赖还须明确资源定义的生产结果槽。")
+                for use in uses:
+                    if resource_use_affects(use, edge):
+                        producer = use["consumer_business_id"], use["consumer_result_slot"]
+                        edges[consumer].add(producer)
+                        reasons[consumer, producer] = "资源余额"
     plans = {}
-    while len(plans) < len(owners):
-        ready = sorted(key for key in owners if key not in plans and edges[key] <= plans.keys())
-        if not ready:
-            raise ContractError("dependency_conflict", "本单核算依赖形成循环，不能拆开发布。")
-        for business_id, result_slot in ready:
-            ledger.prepare_result(
-                business_id, result_slot, context.read_context, correction_period=correction_period
-            )
+    for business_id, result_slot in ordered_slots(edges, reasons):
+        ledger.prepare_result(
+            business_id, result_slot, context.read_context, correction_period=correction_period
+        )
+        with context.result_scope(((business_id, result_slot),)):
             plan = owners[business_id, result_slot].evaluate_slot(business_id, result_slot, context)
-            validate_contract("business-facts.schema.json", "PostingPlan", plan)
-            if (plan["business_id"], plan["result_slot"]) != (business_id, result_slot):
-                raise ContractError("invalid_input", "领域返回了其他业务或其他槽的核算计划。")
-            plans[business_id, result_slot] = plan
-            context.add_plan(plan)
+        validate_contract("business-facts.schema.json", "PostingPlan", plan)
+        if (plan["business_id"], plan["result_slot"]) != (business_id, result_slot):
+            raise ContractError("invalid_input", "领域返回了其他业务或其他槽的核算计划。")
+        plans[business_id, result_slot] = plan
+        context.add_plan(plan)
     result = tuple(
         (
             owner,
@@ -214,7 +264,9 @@ def evaluate(descriptions, context, ledger, correction_period):
     context.validate_occurrences(list(plans.values()))
     for _, description in descriptions:
         for edge in description["dependencies"]:
-            if edge["producer_kind"] in ("scope", "calendar"):
+            if edge["read_mode"] in ("use", "balance"):
+                continue
+            if edge["producer_kind"] in ("scope", "calendar", "aggregate"):
                 continue
             if edge["producer_kind"] == "object":
                 found = context.get_object(edge["producer_id"])
@@ -225,5 +277,46 @@ def evaluate(descriptions, context, ledger, correction_period):
             if found is None:
                 raise ContractError("dependency_conflict", "声明的业务关联缺少当前有效来源。")
     for owner, plan in result:
-        owner.validate_candidate(plan, context)
+        with context.result_scope(
+            (business["business_id"], slot)
+            for business in plan["businesses"]
+            for slot in business["complete_result_slots"]
+        ):
+            owner.validate_candidate(plan, context)
     return result
+
+
+def ordered_slots(edges, reasons):
+    """A deterministic Kahn traversal; only actual pending slots are graph nodes."""
+    remaining = {key: len(producers) for key, producers in edges.items()}
+    consumers = defaultdict(set)
+    for consumer, producers in edges.items():
+        for producer in producers:
+            consumers[producer].add(consumer)
+    ready = [key for key, count in remaining.items() if count == 0]
+    heapify(ready)
+    ordered = []
+    while ready:
+        node = heappop(ready)
+        ordered.append(node)
+        del remaining[node]
+        for consumer in consumers[node]:
+            remaining[consumer] -= 1
+            if remaining[consumer] == 0:
+                heappush(ready, consumer)
+    if remaining:
+        node, path, positions = min(remaining), [], {}
+        while node not in positions:
+            positions[node] = len(path)
+            path.append(node)
+            node = min(producer for producer in edges[node] if producer in remaining)
+        cycle = path[positions[node] :] + [node]
+        pieces = [f"{cycle[0][0]}/{cycle[0][1]}"]
+        for consumer, producer in zip(cycle[:-1], cycle[1:], strict=True):
+            piece = f" --{reasons[consumer, producer]}→ {producer[0]}/{producer[1]}"
+            if sum(map(len, pieces)) + len(piece) > 1800:
+                pieces.append(f" …（循环共{len(cycle) - 1}个结果槽）")
+                break
+            pieces.append(piece)
+        raise ContractError("dependency_conflict", "核算依赖循环：" + "".join(pieces))
+    return tuple(ordered)

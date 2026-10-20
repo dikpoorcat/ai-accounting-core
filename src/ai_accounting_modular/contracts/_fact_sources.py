@@ -1,4 +1,4 @@
-"""Source identities follow declared SourceLocator schemas, never JSON key names."""
+"""Source identities follow declared source schemas, never JSON key names."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from ._wire_types import Fact
 @dataclass(frozen=True)
 class _Plan:
     capture: bool = False
+    capture_id: bool = False
     properties: tuple[tuple[str, _Plan], ...] = ()
     items: _Plan | None = None
     children: tuple[_Plan, ...] = ()
@@ -27,6 +28,7 @@ class _Plan:
     def empty(self):
         return not (
             self.capture
+            or self.capture_id
             or self.properties
             or self.items
             or self.children
@@ -37,6 +39,8 @@ class _Plan:
     def source_paths(self, value, pointer=""):
         if self.capture:
             yield value["source_id"], pointer + "/source_id"
+        if self.capture_id:
+            yield value, pointer
         if isinstance(value, dict):
             for name, child in self.properties:
                 if name in value:
@@ -69,6 +73,7 @@ def _child_uri(uri, *parts):
 def _source_plan():
     documents, registry = _bundle()
     source_schema = documents["core.schema.json"]["$defs"]["SourceLocator"]
+    source_id_schema = documents["core.schema.json"]["$defs"]["SourceId"]
     compiled, active = {}, set()
 
     def predicate(uri):
@@ -85,6 +90,8 @@ def _source_plan():
             plan = _EMPTY
         elif node is source_schema:
             plan = _Plan(capture=True)
+        elif node is source_id_schema:
+            plan = _Plan(capture_id=True)
         else:
             children = []
             if "$ref" in node:

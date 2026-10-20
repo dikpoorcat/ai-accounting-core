@@ -17,8 +17,11 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
+from . import _aggregation
 from ._balances import obligation_remaining, sum_amounts, unique_movements
 from ._planning import bind_plan
+from ._publications import Publications
+from ._resource_promises import ResourceUses, exclusions
 from ._resource_view import (
     ResourceRepository,
     definitions,
@@ -30,9 +33,11 @@ from ._values import check_plan, fail, unique
 
 
 class CandidateLedger:
-    """Definitions while evaluating; complete states only after all slots arrive."""
+    """Definitions and promised local windows; full state after every slot arrives."""
 
-    def __init__(self, responsibilities, unit, correction_period=None):
+    def __init__(
+        self, responsibilities, unit, correction_period=None, *, publications=(), resource_uses=None
+    ):
         if unit.view != "current":
             fail("invalid_input", "候选资源只能建立在当前公司工作单元。")
         supplied = [deepcopy(item) for item in responsibilities]
@@ -48,6 +53,8 @@ class CandidateLedger:
             (item["business_id"], slot) for item in items for slot in item["complete_result_slots"]
         }
         self._plans = {}
+        self._publications = Publications(items, publications)
+        self._resource_uses = ResourceUses(items, resource_uses)
         self._complete = False
 
     def stage(self, plan):
@@ -55,6 +62,8 @@ class CandidateLedger:
         if self._complete:
             fail("invalid_operation", "完整候选集合不能继续添加或修改计划。")
         check_plan(plan)
+        self._publications.check_plan(plan)
+        self._resource_uses.check_plan(plan)
         key = plan["business_id"], plan["result_slot"]
         if key not in self._expected:
             fail("invalid_input", "候选计划不在已声明的完整责任槽内。")
@@ -91,8 +100,28 @@ class CandidateLedger:
         ids = tuple(dict.fromkeys(ref["business_id"] for ref in refs))
         return definitions(self._repo, self._repo.current_heads(ids) if ids else (), refs, kind)
 
-    def resource_states(self, refs, kind, cutoff, *, excluding_consumer=None):
-        windows = self.resource_windows(refs, kind, cutoff, excluding_consumer=excluding_consumer)
+    def tax_sales(self, period_from, period_to):
+        self._unit.repository("ledger")
+        self._publications.require_ready("tax_sales", period_from, period_to, self._plans)
+        return _aggregation.tax_sales(self._repo, period_from, period_to)
+
+    def pre_tax(self, period_from, period_to):
+        self._unit.repository("ledger")
+        self._publications.require_ready("pre_tax", period_from, period_to, self._plans)
+        return _aggregation.pre_tax(
+            self._repo, self._plans, period_from, period_to, self._unit.start_period
+        )
+
+    def resource_states(
+        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+    ):
+        windows = self.resource_windows(
+            refs,
+            kind,
+            cutoff,
+            excluding_consumer=excluding_consumer,
+            excluding_consumers=excluding_consumers,
+        )
         for window in windows:
             if window.uncertain_uses:
                 raise ContractError(
@@ -115,23 +144,22 @@ class CandidateLedger:
                 )
         return tuple(window.certain for window in windows)
 
-    def resource_windows(self, refs, kind, cutoff, *, excluding_consumer=None):
+    def resource_windows(
+        self, refs, kind, cutoff, *, excluding_consumer=None, excluding_consumers=()
+    ):
         self._unit.repository("ledger")
-        if not self._complete:
-            fail("invalid_operation", "候选结果尚未齐备，不能读取不完整余额。")
         if not isinstance(cutoff, ResourceCutoff):
             fail("invalid_input", "候选资源必须明确经济截止月及可选实际日。")
-        if excluding_consumer is not None:
-            if not isinstance(excluding_consumer, tuple) or len(excluding_consumer) != 2:
-                fail("invalid_input", "只能排除一个明确的消费者结果槽。")
-            validate_contract("core.schema.json", "Id", excluding_consumer[0])
-            validate_contract("core.schema.json", "Slot", excluding_consumer[1])
+        validate_resource_refs(refs, kind)
+        excluded = exclusions(excluding_consumer, excluding_consumers)
+        if not self._complete:
+            self._resource_uses.require_ready(refs, kind, cutoff, excluded, self._plans)
         if self._time_version != self._repo.version:
             self._times = ResultTimes(self._repo)
             self._time_version = self._repo.version
         resources = self.resource_definitions(refs, kind)
         self._repo.prepare_states(resources)
-        return tuple(self._window(resource, cutoff, excluding_consumer) for resource in resources)
+        return tuple(self._window(resource, cutoff, excluded) for resource in resources)
 
     def fund_movements(self, account_id, period_from, period_to):
         self._unit.repository("ledger")
@@ -142,7 +170,7 @@ class CandidateLedger:
     def _visibility(self, row, table, cutoff, excluded):
         """True is certain, False is outside, None is a month-only boundary use."""
         head = self._repo.result(row["result_id"])
-        if excluded == (head["business_id"], head["result_slot"]):
+        if (head["business_id"], head["result_slot"]) in excluded:
             return False
         period = head["business_period"]
         if period > cutoff.period:

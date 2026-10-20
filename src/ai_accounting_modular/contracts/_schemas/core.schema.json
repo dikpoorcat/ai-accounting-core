@@ -5311,6 +5311,9 @@
         "weight"
       ],
       "additionalProperties": false
+    },
+    "SourceId": {
+      "$ref": "#/$defs/Id"
     }
   }
 }

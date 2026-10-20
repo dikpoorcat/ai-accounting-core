@@ -9,6 +9,8 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 from ._balances import unique_movements, validate_capacities
 from ._formal_output import same_journal, target_voucher
 from ._planning import PlannedAdoption, bind_plan, check_source_references
+from ._publications import Publications
+from ._resource_promises import ResourceUses
 from ._values import check_plan, fail
 
 
@@ -23,8 +25,12 @@ def adopt(change_plans, uow, correction_period, reference):
     changes = list(change_plans)
     plans = {}
     responsibilities = {}
+    publications = []
+    resource_uses = []
     for change in changes:
         validate_contract("business-facts.schema.json", "ChangePlan", change)
+        publications.extend(change["publications"])
+        resource_uses.extend(edge for edge in change["dependencies"] if edge["read_mode"] == "use")
         if change["issues"]:
             raise ContractError(
                 "needs_information",
@@ -50,6 +56,11 @@ def adopt(change_plans, uow, correction_period, reference):
             fail("invalid_input", "采用计划与本业务声明的完整结果槽不一致。")
     if any(biz not in responsibilities for biz, _ in plans):
         fail("invalid_input", "采用计划缺少对应业务责任。")
+    declared = Publications(responsibilities.values(), publications)
+    uses = ResourceUses(responsibilities.values(), resource_uses)
+    for plan in plans.values():
+        declared.check_plan(plan)
+        uses.check_plan(plan)
     if not responsibilities:
         completed[0] = True
         return (), (), False
