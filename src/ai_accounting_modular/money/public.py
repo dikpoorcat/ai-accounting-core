@@ -4,7 +4,10 @@ from ai_accounting_modular.contracts.public import (
     BusinessRef,
     DirectRelation,
     EvaluationContext,
+    LedgerScope,
+    PageQuery,
     ReadContext,
+    ReadPage,
     ResourceCutoff,
     UnitOfWork,
     validate_contract,
@@ -28,7 +31,18 @@ from ._payments import (
     settlement,
 )
 from ._period import MoneyPeriodCheck, check_period
-from ._queries import MoneyPage, MoneyQuery, cursor, page_movements, position
+from ._read_activity import account_activity as _account_activity
+from ._read_activity import query_movements as _query_movements
+from ._read_statements import query_rows
+from ._read_types import AccountActivity as AccountActivity
+from ._read_types import FundsActivity as FundsActivity
+from ._read_types import MovementQuery as MovementQuery
+from ._read_types import MovementView as MovementView
+from ._read_types import OriginalRowView as OriginalRowView
+from ._read_types import ReconciliationGroup as ReconciliationGroup
+from ._read_types import SettlementPart as SettlementPart
+from ._read_types import StatementActivity as StatementActivity
+from ._read_types import StatementQuery as StatementQuery
 from ._reconciliation import (
     groups_from_rows,
     previous_period,
@@ -431,31 +445,24 @@ class Money:
             fail("当前银行核对缺少正式采用结果。", "storage_corrupt")
         return tuple({"fact": fact, "result": by_id[fact["business_id"]]} for fact in facts)
 
-    def query_movements(self, query: MoneyQuery, read_context: ReadContext) -> MoneyPage:
+    def account_activity(self, scope: LedgerScope, read_context: ReadContext) -> FundsActivity:
+        if self._ledger is None or self._identity is None:
+            fail("资金活动读取未装配正式账务及账户端口。", "unsupported_business")
+        return _account_activity(self, scope, read_context)
+
+    def query_movements(
+        self, scope: LedgerScope, query: MovementQuery, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[MovementView]:
         if self._ledger is None:
             fail("真实资金查询未装配正式账务读取端口。", "unsupported_business")
-        # Validate the query before it can initiate a resource-scope read.
-        position(query, read_context, "movements")
-        definitions = self._ledger.fund_movements(
-            query.account_id, query.period_from, query.period_to, read_context
-        )
-        return page_movements(query, read_context, definitions)
+        return _query_movements(self, scope, query, page, read_context)
 
-    def query_statement_rows(self, query: MoneyQuery, read_context: ReadContext) -> MoneyPage:
-        after, signature = position(query, read_context, "statement_rows")
-        if after is not None and (len(after) != 2 or not all(type(item) is str for item in after)):
-            fail("原行分页位置无效。", "invalid_input")
-        count, rows = read_context.repository("money").statement_page(
-            query.account_id, query.period_from, query.period_to, after, query.limit
-        )
-        has_more = len(rows) > query.limit
-        rows = rows[: query.limit]
-        return MoneyPage(
-            tuple(rows),
-            count,
-            read_context.head,
-            cursor(signature, [rows[-1]["actual_on"], rows[-1]["row_id"]]) if has_more else None,
-        )
+    def query_statement_rows(
+        self, scope: LedgerScope, query: StatementQuery, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[OriginalRowView]:
+        if self._ledger is None:
+            fail("原行读取未装配正式账务端口。", "unsupported_business")
+        return query_rows(self, scope, query, page, read_context)
 
 
 def create_money(*, ledger=None, identity=None) -> Money:

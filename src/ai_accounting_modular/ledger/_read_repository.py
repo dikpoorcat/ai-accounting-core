@@ -1,0 +1,358 @@
+"""Narrow directory SQL; payloads are read only after selecting page identities."""
+
+from ai_accounting_modular.contracts.public import canonical_json
+
+from ._read_selection import business_kind, selected
+
+HEAD_FIELDS = ",".join(
+    "r." + key
+    for key in (
+        "result_id",
+        "business_id",
+        "result_slot",
+        "generation",
+        "business_period",
+        "posting_period",
+        "state",
+        "target_state",
+        "baseline_result_id",
+        "calculation_key",
+        "calculation_revision",
+        "basis_digest",
+        "target_digest",
+    )
+)
+
+
+def _in(column, values, clauses, args):
+    if values:
+        clauses.append(f"{column} IN (SELECT value FROM json_each(?))")
+        args.append(canonical_json(list(values)))
+
+
+class ReadRepository:
+    def read_first_recorded(self, keys, *, as_of=None):
+        where = " WHERE (l.debit_fen<>0 OR l.credit_fen<>0)"
+        args = [
+            canonical_json(
+                [{"account_code": key.account_code, "object_id": key.object_id} for key in keys]
+            )
+        ]
+        if as_of is not None:
+            where += " AND v.period<=?"
+            args.append(as_of)
+        sql = (
+            "WITH ranked AS (SELECT CAST(wanted.key AS INTEGER) query_index,v.result_id,"
+            "v.period AS first_period,ROW_NUMBER() OVER(PARTITION BY wanted.key "
+            "ORDER BY v.period,v.number,v.voucher_id) position "
+            "FROM json_each(?) wanted JOIN voucher_line l "
+            "ON l.account_code=json_extract(wanted.value,'$.account_code') "
+            "AND (json_extract(wanted.value,'$.object_id') IS NULL "
+            "OR l.object_id=json_extract(wanted.value,'$.object_id')) "
+            "JOIN voucher v ON v.voucher_id=l.voucher_id" + where + ") "
+            f"SELECT m.query_index,m.first_period,{HEAD_FIELDS} FROM ranked m "
+            "JOIN adopted_result r ON r.result_id=m.result_id WHERE m.position=1"
+        )
+        return [dict(row) for row in self._session.fetchall(sql, tuple(args))]
+
+    def read_heads(self, result_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                f"SELECT {HEAD_FIELDS} FROM adopted_result r WHERE r.result_id IN "
+                "(SELECT value FROM json_each(?))",
+                (canonical_json(list(result_ids)),),
+            )
+        ]
+
+    def read_event_scope(self, query, selection):
+        parts, parameters = [], []
+        for table, event_id, period, component in (
+            ("settlement", "x.settlement_id", "x.period", "x.method"),
+            ("obligation_reclassification", "x.relation_id", "r.business_period", "x.mode"),
+        ):
+            predicate, selected_args = selected("r", selection.as_of)
+            clauses = [f"{period}>=?", f"{period}<=?", predicate]
+            args = [query.period_from, query.period_to, *selected_args]
+            _in("r.business_id", query.consumer_business_ids, clauses, args)
+            _in(component, query.components, clauses, args)
+            if query.source_refs:
+                clauses.append(
+                    "EXISTS(SELECT 1 FROM json_each(?) wanted "
+                    "WHERE json_extract(wanted.value,'$.business_id')=x.source_business_id "
+                    "AND json_extract(wanted.value,'$.slot')=x.source_public_slot)"
+                )
+                args.append(canonical_json(list(query.source_refs)))
+            if query.source_business_kinds:
+                producer_selected, producer_args = selected("producer", selection.as_of)
+                clauses.append(
+                    "EXISTS(SELECT 1 FROM obligation definition "
+                    "JOIN adopted_result producer ON producer.result_id=definition.result_id "
+                    "WHERE producer.business_id=x.source_business_id "
+                    "AND definition.public_slot=x.source_public_slot "
+                    f"AND {producer_selected} AND {business_kind('producer')} "
+                    "IN (SELECT value FROM json_each(?)))"
+                )
+                args.extend((*producer_args, canonical_json(list(query.source_business_kinds))))
+            if query.movement_ids:
+                if table == "settlement":
+                    _in("x.movement_id", query.movement_ids, clauses, args)
+                else:
+                    clauses.append("0")
+            day = "json_extract(r.basis_json,'$.effective_on')"
+            joins = ""
+            if table == "settlement":
+                joins = (
+                    "LEFT JOIN result_fund_movement m ON m.result_id=x.result_id "
+                    "AND m.movement_id=x.movement_id "
+                )
+                day = (
+                    "CASE WHEN x.method='money' THEN m.actual_on "
+                    f"ELSE COALESCE(x.actual_on,{day}) END"
+                )
+            metadata = ",".join(
+                "r." + name
+                for name in (
+                    "business_id",
+                    "result_slot",
+                    "generation",
+                    "posting_period",
+                    "state",
+                    "target_state",
+                    "baseline_result_id",
+                    "calculation_key",
+                    "calculation_revision",
+                    "basis_digest",
+                    "target_digest",
+                )
+            )
+            sql = (
+                f"SELECT r.result_id,{metadata},'{table}' AS use_table,"
+                f"{period} AS event_period,{event_id} AS event_id,"
+                f"{day} AS event_day FROM {table} x JOIN adopted_result r "
+                "ON r.result_id=x.result_id " + joins + "WHERE " + " AND ".join(clauses)
+            )
+            parts.append(sql)
+            parameters.extend(args)
+        return " UNION ALL ".join(parts), tuple(parameters)
+
+    def read_event_identities(self, sql, args):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM (" + sql + ") ORDER BY event_period,event_day IS NULL,"
+                "COALESCE(event_day,''),use_table,event_id,result_id",
+                args,
+            )
+        ]
+
+    def read_event_page(self, sql, args, *, after=None, limit=20):
+        where = ""
+        if after is not None:
+            where = (
+                " WHERE (event_period,event_day IS NULL,COALESCE(event_day,''),"
+                "use_table,event_id,result_id)>(?,?,?,?,?,?)"
+            )
+            args = (*args, *after)
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM (" + sql + ")" + where + " ORDER BY event_period,event_day IS NULL,"
+                "COALESCE(event_day,''),use_table,event_id,result_id LIMIT ?",
+                (*args, limit),
+            )
+        ]
+
+    def read_event_payloads(self, headers):
+        result = {}
+        for table, event_id in (
+            ("settlement", "settlement_id"),
+            ("obligation_reclassification", "relation_id"),
+        ):
+            wanted = [
+                {"result_id": row["result_id"], "event_id": row["event_id"]}
+                for row in headers
+                if row["use_table"] == table
+            ]
+            if not wanted:
+                continue
+            rows = self._session.fetchall(
+                f"SELECT x.* FROM json_each(?) wanted JOIN {table} x "
+                "ON x.result_id=json_extract(wanted.value,'$.result_id') "
+                f"AND x.{event_id}=json_extract(wanted.value,'$.event_id')",
+                (canonical_json(wanted),),
+            )
+            result.update(((table, row["result_id"], row[event_id]), dict(row)) for row in rows)
+        return result
+
+    def read_position_rows(self, kind, cutoff, selection):
+        table = "obligation" if kind == "obligation" else "cost_lot"
+        predicate, source_args = selected("r", selection.as_of)
+        use_predicate, use_args = selected("u", selection.as_of)
+        if kind == "obligation":
+            sql = (
+                "WITH used AS (SELECT s.source_business_id,s.source_public_slot,"
+                "SUM(CASE WHEN s.method='money' THEN s.amount_fen ELSE 0 END) money,"
+                "SUM(CASE WHEN s.method='agency' THEN s.amount_fen ELSE 0 END) agency,"
+                "SUM(CASE WHEN s.method='offset' THEN s.amount_fen ELSE 0 END) offset "
+                "FROM settlement s JOIN adopted_result u ON u.result_id=s.result_id "
+                f"WHERE u.business_period<=? AND {use_predicate} "
+                "GROUP BY s.source_business_id,s.source_public_slot),"
+                "reclassified AS (SELECT x.source_business_id,x.source_public_slot,"
+                "SUM(CASE WHEN x.mode='transfer' THEN x.amount_fen ELSE 0 END) transferred,"
+                "SUM(CASE WHEN x.mode='reclassify_excess' THEN x.amount_fen ELSE 0 END) excess "
+                "FROM obligation_reclassification x "
+                "JOIN adopted_result u ON u.result_id=x.result_id "
+                f"WHERE u.business_period<=? AND {use_predicate} "
+                "GROUP BY x.source_business_id,x.source_public_slot) "
+                "SELECT d.*,COALESCE(s.money,0) money,COALESCE(s.agency,0) agency,"
+                "COALESCE(s.offset,0) offset,COALESCE(x.transferred,0) transferred,"
+                "COALESCE(x.excess,0) excess,0 consumed,"
+            )
+            joins = (
+                "LEFT JOIN used s ON s.source_business_id=r.business_id "
+                "AND s.source_public_slot=d.public_slot "
+                "LEFT JOIN reclassified x ON x.source_business_id=r.business_id "
+                "AND x.source_public_slot=d.public_slot "
+            )
+            args = (cutoff, *use_args, cutoff, *use_args)
+        else:
+            sql = (
+                "WITH used AS (SELECT c.source_business_id,c.source_public_slot,"
+                "SUM(c.amount_fen) consumed FROM cost_consumption c "
+                "JOIN adopted_result u ON u.result_id=c.result_id "
+                f"WHERE u.business_period<=? AND {use_predicate} "
+                "GROUP BY c.source_business_id,c.source_public_slot) "
+                "SELECT d.*,0 money,0 agency,0 offset,0 transferred,0 excess,"
+                "COALESCE(s.consumed,0) consumed,"
+            )
+            joins = (
+                "LEFT JOIN used s ON s.source_business_id=r.business_id "
+                "AND s.source_public_slot=d.public_slot "
+            )
+            args = (cutoff, *use_args)
+        head = ",".join(
+            "r." + key
+            for key in (
+                "business_id",
+                "result_slot",
+                "generation",
+                "posting_period",
+                "state",
+                "target_state",
+                "baseline_result_id",
+                "calculation_key",
+                "calculation_revision",
+                "basis_digest",
+                "target_digest",
+            )
+        )
+        sql += head + ",r.business_period AS owner_business_period "
+        sql += f"FROM {table} d JOIN adopted_result r ON r.result_id=d.result_id " + joins
+        sql += f"WHERE r.business_period<=? AND {predicate} ORDER BY r.business_id,d.public_slot"
+        return [dict(row) for row in self._session.fetchall(sql, (*args, cutoff, *source_args))]
+
+    def read_result_scope(
+        self, scope, kinds, selection, *, flow=False, business_ids=(), result_slots=()
+    ):
+        first, last = scope["period_from"], scope["period_to"]
+        clauses, args = [], []
+        if flow and selection.view == "as_posted":
+            clauses.extend(("r.posting_period>=?", "r.posting_period<=?"))
+            args.extend((first, min(last, selection.as_of)))
+        else:
+            predicate, selected_args = selected("r", selection.as_of)
+            clauses.extend((predicate, "r.business_period<=?"))
+            args.extend((*selected_args, last))
+            if flow:
+                clauses.append("r.business_period>=?")
+                args.append(first)
+        _in(business_kind(), kinds, clauses, args)
+        _in("r.business_id", business_ids, clauses, args)
+        _in("r.result_slot", result_slots, clauses, args)
+        return "adopted_result r", " AND ".join(clauses), tuple(args)
+
+    def read_identity_rows(self, table, where, args):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                f"SELECT {HEAD_FIELDS} FROM {table} WHERE {where} "
+                "ORDER BY r.business_id,r.result_slot,r.posting_period,r.result_id",
+                args,
+            )
+        ]
+
+    def read_result_page(self, table, where, args, *, after=None, limit=20, flow=False):
+        fields = (
+            ("r.posting_period", "r.business_id", "r.result_slot", "r.result_id")
+            if flow
+            else ("r.business_id", "r.result_slot", "r.result_id")
+        )
+        if after is not None:
+            where += " AND (" + ",".join(fields) + ")>(" + ",".join("?" for _ in fields) + ")"
+            args = (*args, *after)
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                f"SELECT {HEAD_FIELDS},{business_kind()} AS business_kind FROM {table} "
+                f"WHERE {where} ORDER BY " + ",".join(fields) + " LIMIT ?",
+                (*args, limit),
+            )
+        ]
+
+    def read_voucher_scope(self, scope, kinds, selected_view, business_ids=(), roles=()):
+        clauses = ["v.period>=?", "v.period<=?"]
+        args = [scope["period_from"], scope["period_to"]]
+        if selected_view.as_of is not None:
+            clauses.append("v.period<=?")
+            args.append(selected_view.as_of)
+        _in("r.business_id", business_ids, clauses, args)
+        _in(business_kind(), kinds, clauses, args)
+        _in("v.role", roles, clauses, args)
+        return (
+            "voucher v JOIN adopted_result r ON r.result_id=v.result_id",
+            " AND ".join(clauses),
+            tuple(args),
+        )
+
+    def read_voucher_identities(self, table, where, args):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                f"SELECT v.*,r.generation,r.basis_digest,r.target_digest FROM {table} "
+                f"WHERE {where} ORDER BY v.period,v.number,v.voucher_id",
+                args,
+            )
+        ]
+
+    def read_voucher_page(self, table, where, args, *, after=None, limit=20):
+        if after is not None:
+            where += " AND (v.period,v.number,v.voucher_id)>(?,?,?)"
+            args = (*args, *after)
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                f"SELECT v.*,{HEAD_FIELDS} FROM {table} WHERE {where} "
+                "ORDER BY v.period,v.number,v.voucher_id LIMIT ?",
+                (*args, limit),
+            )
+        ]
+
+    def read_vouchers(self, voucher_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM voucher WHERE voucher_id IN (SELECT value FROM json_each(?))",
+                (canonical_json(list(voucher_ids)),),
+            )
+        ]
+
+    def read_voucher_lines(self, voucher_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM voucher_line WHERE voucher_id IN (SELECT value FROM json_each(?)) "
+                "ORDER BY voucher_id,line_no",
+                (canonical_json(list(voucher_ids)),),
+            )
+        ]

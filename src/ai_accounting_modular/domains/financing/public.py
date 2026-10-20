@@ -10,8 +10,11 @@ from ai_accounting_modular.contracts.public import (
     DirectRelation,
     EvaluationContext,
     Fact,
+    LedgerScope,
+    PageQuery,
     PostingPlan,
     ReadContext,
+    ReadPage,
     UnitOfWork,
     validate_contract,
 )
@@ -39,6 +42,11 @@ from ._cooperation_position import position_plan
 from ._funds import purchase, redemption
 from ._interest import interest, validate_interest
 from ._loans import contract, drawdown, owner_funding
+from ._read_funds import activity as fund_activity
+from ._read_funds import query_events as fund_events
+from ._read_types import MoneyFundActivity as MoneyFundActivity
+from ._read_types import MoneyFundEvent as MoneyFundEvent
+from ._read_types import MoneyFundProduct as MoneyFundProduct
 from ._repository import FinancingRepository
 
 _CALCULATORS = {
@@ -63,8 +71,9 @@ def repository_factory() -> RepositoryFactory:
 
 
 class Financing:
-    def __init__(self, family: Literal["financing", "investment"]):
+    def __init__(self, family: Literal["financing", "investment"], *, ledger=None, identity=None):
         self.family = family
+        self._ledger, self._identity = ledger, identity
         self.supported_kinds = FINANCING_KINDS if family == "financing" else INVESTMENT_KINDS
 
     def declare_relations(self, changes, context) -> tuple[DirectRelation, ...]:
@@ -200,10 +209,24 @@ class Financing:
             return ()
         return read_context.repository("domains.financing").query(query)
 
+    def money_fund_activity(
+        self, scope: LedgerScope, read_context: ReadContext
+    ) -> MoneyFundActivity:
+        if self.family != "investment" or self._ledger is None or self._identity is None:
+            fail("基金活动读取未装配投资、正式账务及产品端口。", "unsupported_business")
+        return fund_activity(self, scope, read_context)
+
+    def query_money_fund_events(
+        self, scope: LedgerScope, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[MoneyFundEvent]:
+        if self.family != "investment" or self._ledger is None:
+            fail("基金事件读取未装配投资及正式账务端口。", "unsupported_business")
+        return fund_events(self, scope, page, read_context)
+
 
 def create_financing() -> Financing:
     return Financing("financing")
 
 
-def create_investment() -> Financing:
-    return Financing("investment")
+def create_investment(*, ledger=None, identity=None) -> Financing:
+    return Financing("investment", ledger=ledger, identity=identity)

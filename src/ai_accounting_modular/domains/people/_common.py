@@ -14,12 +14,12 @@ def reject(message, *, code="dependency_conflict"):
     raise ContractError(code, message)
 
 
-def problem(fact, field, message, *, code="missing_fact", precision=()):
+def problem(fact, field, message, *, code="missing_fact", precision=(), meaning="薪酬核算依据"):
     return {
         "code": code,
         "business_id": fact["business_id"],
         "field": field,
-        "meaning": "薪酬核算依据",
+        "meaning": meaning,
         "message": message,
         "allowed_precision": list(precision),
         "reusable_sources": [{"source_id": x} for x in fact["evidence_ids"][:500]],

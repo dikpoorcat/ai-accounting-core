@@ -5,8 +5,9 @@ from uuid import uuid4
 
 import pytest
 
+from ai_accounting_modular.contracts.public import PageQuery
 from ai_accounting_modular.domains.financing.public import create_financing, create_investment
-from ai_accounting_modular.money.public import MoneyQuery
+from ai_accounting_modular.money.public import MovementQuery
 
 from ._support import (
     BANK,
@@ -45,7 +46,15 @@ def test_real_six_fact_chain_and_fund_settlements_are_balanced_idempotent(assemb
     assert result(app, company, contract)["vouchers"] == []
     with app.storage.read_unit(company) as read:
         money = app.money.query_movements(
-            MoneyQuery(account_id=BANK, period_from="2026-01", period_to="2026-01"), read
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(BANK),
+            PageQuery(),
+            read,
         )
         assert (
             sum(
@@ -161,7 +170,15 @@ def test_redemption_zero_proceeds_keeps_resource_but_creates_no_cash(assembled):
     with app.storage.read_unit(company) as read:
         assert (
             app.money.query_movements(
-                MoneyQuery(account_id=BANK, period_from="2026-01", period_to="2026-01"), read
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(BANK),
+                PageQuery(),
+                read,
             ).items
             == ()
         )
@@ -278,7 +295,15 @@ def test_owner_equity_cash_and_loan_funding_do_not_create_profit(assembled):
     assert actual.get("completion") == "complete", actual
     with app.storage.read_unit(company) as read:
         movements = app.money.query_movements(
-            MoneyQuery(account_id=CASH, period_from="2026-01", period_to="2026-01"), read
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(CASH),
+            PageQuery(),
+            read,
         )
         assert movements.items[0]["movement"]["cashflow_parts"] == [
             {"category": "capital_receipts", "amount_fen": "100000"}

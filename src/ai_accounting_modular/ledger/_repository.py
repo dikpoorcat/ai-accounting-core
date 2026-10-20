@@ -15,24 +15,10 @@ from ._output_digest import (
     output_digests,
     verify_output_digests,
 )
+from ._read_repository import ReadRepository
+from ._read_selection import selected as _selected
 from ._resource_rows import resource_rows
 from ._values import fail
-
-
-def _selected(alias, as_of):
-    if as_of is None:
-        return (
-            f"EXISTS(SELECT 1 FROM result_slot_current c WHERE c.head_result_id={alias}.result_id)",
-            (),
-        )
-    return (
-        f"EXISTS(SELECT 1 FROM adopted_result r WHERE r.result_id={alias}.result_id "
-        "AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
-        "WHERE newer.business_id=r.business_id AND newer.result_slot=r.result_slot "
-        "AND newer.posting_period<=? AND newer.posting_period>r.posting_period))",
-        (as_of, as_of),
-    )
-
 
 _CHILD_TABLES = (
     "result_source",
@@ -79,7 +65,7 @@ _HEAD_FIELDS = ",".join(
 )
 
 
-class LedgerRepository:
+class LedgerRepository(ReadRepository):
     def snapshot_records(self):
         """Complete ledger-owned persisted records for an offline integrity audit."""
         return {
@@ -385,17 +371,6 @@ class LedgerRepository:
         row = self._session.fetchone("SELECT * FROM adopted_result WHERE result_id=?", (result_id,))
         return dict(row) if row else None
 
-    def formal_heads_through(self, as_of, business_ids=()):
-        sql = "SELECT * FROM adopted_result WHERE 1=1"
-        args = []
-        if as_of is not None:
-            sql += " AND posting_period<=?"
-            args.append(as_of)
-        if business_ids:
-            sql += " AND business_id IN (SELECT value FROM json_each(?))"
-            args.append(canonical(list(business_ids)))
-        return [dict(row) for row in self._session.fetchall(sql, tuple(args))]
-
     def is_closed(self, period, *, start_period=None):
         if start_period is not None and period < start_period:
             return False
@@ -684,9 +659,12 @@ class LedgerRepository:
             "r.basis_digest,r.target_digest FROM result_fund_movement m "
             "JOIN adopted_result r ON r.result_id=m.result_id "
             + selection
-            + "WHERE m.account_id=? AND m.period>=? AND m.period<=?"
+            + "WHERE m.period>=? AND m.period<=?"
         )
-        args = [account_id, period_from, period_to]
+        args = [period_from, period_to]
+        if account_id is not None:
+            sql += " AND m.account_id=?"
+            args.append(account_id)
         if as_of is not None:
             sql += (
                 " AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "

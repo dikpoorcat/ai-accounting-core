@@ -976,6 +976,7 @@ class BankStatementRow(TypedDict):
     direction: Literal['inflow', 'outflow']
     amount_fen: PositiveFen
     counterparty_text: NotRequired[str]
+    memo: NotRequired[str]
 
 class MoneyBankStatement(TypedDict):
     funds_account_id: Id
@@ -997,6 +998,9 @@ class PlatformOriginalRow(TypedDict):
     actual_on: Date
     direction: Literal['inflow', 'outflow']
     amount_fen: PositiveFen
+    memo: NotRequired[str]
+    reference: NotRequired[str]
+    counterparty_text: NotRequired[str]
 
 class MoneyPlatformActivity(TypedDict):
     platform_account_id: Id
@@ -1645,7 +1649,7 @@ class FactReportsContinuation(TypedDict):
     evidence_ids: list[Id]
     data: ReportsContinuation
 
-type Fact = FactOperationsServiceSale | FactOperationsExpense | FactOperationsOtherIncome | FactOperationsAdvance | FactOperationsAdvanceFulfillment | FactOperationsSaleReturn | FactOperationsAdvanceRefund | FactOperationsExpenseRecovery | FactOperationsPassThrough | FactOperationsPassThroughReturn | FactOperationsDeposit | FactOperationsReimbursement | FactOperationsOverpayment | FactPeopleEmployment | FactPeopleRemuneration | FactPeopleContributionPolicy | FactPeopleContributionActual | FactAssetsProjectCost | FactAssetsProjectRelease | FactAssetsAcquisition | FactAssetsActivation | FactAssetsDisposal | FactFinancingOwnerFunding | FactFinancingLoanContract | FactFinancingLoanDrawdown | FactFinancingInterestPeriod | FactInvestmentMoneyFundPurchase | FactInvestmentMoneyFundRedemption | FactMoneyMovement | FactMoneyTransfer | FactMoneyBankStatement | FactMoneyReconciliation | FactMoneyReserveInternal | FactMoneyPlatformActivity | FactTaxesVatPolicy | FactTaxesSurtaxPolicy | FactTaxesUsedAssetVatPolicy | FactTaxesIncomeTaxPolicy | FactTaxesPrepaymentBasis | FactTaxesAssessment | FactTaxesTaxCredit | FactTaxesActualDeclaration | FactTaxesTaxPoint | FactOpeningPackage | FactReportsContinuation | CooperationFact
+type Fact = FactOperationsServiceSale | FactOperationsExpense | FactOperationsOtherIncome | FactOperationsAdvance | FactOperationsAdvanceFulfillment | FactOperationsSaleReturn | FactOperationsAdvanceRefund | FactOperationsExpenseRecovery | FactOperationsPassThrough | FactOperationsPassThroughReturn | FactOperationsDeposit | FactOperationsReimbursement | FactOperationsOverpayment | FactPeopleEmployment | FactPeopleRemuneration | FactPeopleContributionPolicy | FactPeopleContributionActual | FactAssetsProjectCost | FactAssetsProjectRelease | FactAssetsAcquisition | FactAssetsActivation | FactAssetsDisposal | FactFinancingOwnerFunding | FactFinancingLoanContract | FactFinancingLoanDrawdown | FactFinancingInterestPeriod | FactInvestmentMoneyFundPurchase | FactInvestmentMoneyFundRedemption | FactMoneyMovement | FactMoneyTransfer | FactMoneyBankStatement | FactMoneyReconciliation | FactMoneyReserveInternal | FactMoneyPlatformActivity | FactTaxesVatPolicy | FactTaxesSurtaxPolicy | FactTaxesUsedAssetVatPolicy | FactTaxesIncomeTaxPolicy | FactTaxesPrepaymentBasis | FactTaxesAssessment | FactTaxesTaxCredit | FactTaxesActualDeclaration | FactTaxesTaxPoint | FactOpeningPackage | FactReportsContinuation | CooperationFact | FactPeopleRelationship
 
 class PartialBusinessRef(TypedDict):
     business_id: NotRequired[Id]
@@ -2063,6 +2067,7 @@ class PartialBankStatementRow(TypedDict):
     direction: NotRequired[Literal['inflow', 'outflow']]
     amount_fen: NotRequired[PositiveFen]
     counterparty_text: NotRequired[str]
+    memo: NotRequired[str]
 
 class PartialMoneyBankStatement(TypedDict):
     funds_account_id: NotRequired[Id]
@@ -2084,6 +2089,9 @@ class PartialPlatformOriginalRow(TypedDict):
     actual_on: NotRequired[Date]
     direction: NotRequired[Literal['inflow', 'outflow']]
     amount_fen: NotRequired[PositiveFen]
+    memo: NotRequired[str]
+    reference: NotRequired[str]
+    counterparty_text: NotRequired[str]
 
 class PartialMoneyPlatformActivity(TypedDict):
     platform_account_id: NotRequired[Id]
@@ -2732,7 +2740,7 @@ class PartialFactReportsContinuation(TypedDict):
     evidence_ids: NotRequired[list[Id]]
     data: NotRequired[PartialReportsContinuation]
 
-type PartialFact = PartialFactOperationsServiceSale | PartialFactOperationsExpense | PartialFactOperationsOtherIncome | PartialFactOperationsAdvance | PartialFactOperationsAdvanceFulfillment | PartialFactOperationsSaleReturn | PartialFactOperationsAdvanceRefund | PartialFactOperationsExpenseRecovery | PartialFactOperationsPassThrough | PartialFactOperationsPassThroughReturn | PartialFactOperationsDeposit | PartialFactOperationsReimbursement | PartialFactOperationsOverpayment | PartialFactPeopleEmployment | PartialFactPeopleRemuneration | PartialFactPeopleContributionPolicy | PartialFactPeopleContributionActual | PartialFactAssetsProjectCost | PartialFactAssetsProjectRelease | PartialFactAssetsAcquisition | PartialFactAssetsActivation | PartialFactAssetsDisposal | PartialFactFinancingOwnerFunding | PartialFactFinancingLoanContract | PartialFactFinancingLoanDrawdown | PartialFactFinancingInterestPeriod | PartialFactInvestmentMoneyFundPurchase | PartialFactInvestmentMoneyFundRedemption | PartialFactMoneyMovement | PartialFactMoneyTransfer | PartialFactMoneyBankStatement | PartialFactMoneyReconciliation | PartialFactMoneyReserveInternal | PartialFactMoneyPlatformActivity | PartialFactTaxesVatPolicy | PartialFactTaxesSurtaxPolicy | PartialFactTaxesUsedAssetVatPolicy | PartialFactTaxesIncomeTaxPolicy | PartialFactTaxesPrepaymentBasis | PartialFactTaxesAssessment | PartialFactTaxesTaxCredit | PartialFactTaxesActualDeclaration | PartialFactTaxesTaxPoint | PartialFactOpeningPackage | PartialFactReportsContinuation | CooperationPartialFact
+type PartialFact = PartialFactOperationsServiceSale | PartialFactOperationsExpense | PartialFactOperationsOtherIncome | PartialFactOperationsAdvance | PartialFactOperationsAdvanceFulfillment | PartialFactOperationsSaleReturn | PartialFactOperationsAdvanceRefund | PartialFactOperationsExpenseRecovery | PartialFactOperationsPassThrough | PartialFactOperationsPassThroughReturn | PartialFactOperationsDeposit | PartialFactOperationsReimbursement | PartialFactOperationsOverpayment | PartialFactPeopleEmployment | PartialFactPeopleRemuneration | PartialFactPeopleContributionPolicy | PartialFactPeopleContributionActual | PartialFactAssetsProjectCost | PartialFactAssetsProjectRelease | PartialFactAssetsAcquisition | PartialFactAssetsActivation | PartialFactAssetsDisposal | PartialFactFinancingOwnerFunding | PartialFactFinancingLoanContract | PartialFactFinancingLoanDrawdown | PartialFactFinancingInterestPeriod | PartialFactInvestmentMoneyFundPurchase | PartialFactInvestmentMoneyFundRedemption | PartialFactMoneyMovement | PartialFactMoneyTransfer | PartialFactMoneyBankStatement | PartialFactMoneyReconciliation | PartialFactMoneyReserveInternal | PartialFactMoneyPlatformActivity | PartialFactTaxesVatPolicy | PartialFactTaxesSurtaxPolicy | PartialFactTaxesUsedAssetVatPolicy | PartialFactTaxesIncomeTaxPolicy | PartialFactTaxesPrepaymentBasis | PartialFactTaxesAssessment | PartialFactTaxesTaxCredit | PartialFactTaxesActualDeclaration | PartialFactTaxesTaxPoint | PartialFactOpeningPackage | PartialFactReportsContinuation | CooperationPartialFact | PartialFactPeopleRelationship
 
 type CashflowCategory = Literal['none', 'customer_receipts', 'other_operating_receipts', 'materials_services_payments', 'employee_payments', 'tax_payments', 'other_operating_payments', 'investment_recovery', 'investment_income', 'asset_disposal', 'investment_acquisition', 'asset_acquisition', 'loan_receipts', 'capital_receipts', 'loan_repayment', 'interest_payments', 'profit_distributions']
 
@@ -4913,7 +4921,7 @@ class CooperationAdoptedCooperationCashSource(TypedDict):
 
 type CooperationShare = Rate
 
-type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.remuneration', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
+type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.relationship', 'people.remuneration', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
 
 class AdoptedEmploymentQuantity(TypedDict):
     type: Literal['employment']
@@ -5053,6 +5061,42 @@ class CooperationTradeQuantity(TypedDict):
 type ResourceComponent = Literal['money', 'agency', 'offset', 'transfer', 'reclassify_excess', 'cost']
 
 type ResourceComponents = list[ResourceComponent]
+
+type PeopleRelationshipState = Literal['regular', 'unpaid_leave', 'departed', 'labor', 'labor_ended']
+
+type PeopleRelationshipMoment = Month | Date
+
+class PeopleRelationshipSegment(TypedDict):
+    state: PeopleRelationshipState
+    effective_from: PeopleRelationshipMoment
+    relationship_start: NotRequired[Literal[True]]
+
+class PartialPeopleRelationshipSegment(TypedDict):
+    state: NotRequired[PeopleRelationshipState]
+    effective_from: NotRequired[PeopleRelationshipMoment]
+    relationship_start: NotRequired[Literal[True]]
+
+class PeopleRelationship(TypedDict):
+    person_id: Id
+    segments: list[PeopleRelationshipSegment]
+
+class PartialPeopleRelationship(TypedDict):
+    person_id: NotRequired[Id]
+    segments: NotRequired[list[PartialPeopleRelationshipSegment]]
+
+class FactPeopleRelationship(TypedDict):
+    business_id: Id
+    kind: Literal['people.relationship']
+    period: Month
+    evidence_ids: list[Id]
+    data: PeopleRelationship
+
+class PartialFactPeopleRelationship(TypedDict):
+    kind: Literal['people.relationship']
+    business_id: NotRequired[Id]
+    period: NotRequired[Month]
+    evidence_ids: NotRequired[list[Id]]
+    data: NotRequired[PartialPeopleRelationship]
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
@@ -11745,6 +11789,14 @@ __all__ = [
     'CooperationTradeQuantity',
     'ResourceComponent',
     'ResourceComponents',
+    'PeopleRelationshipState',
+    'PeopleRelationshipMoment',
+    'PeopleRelationshipSegment',
+    'PartialPeopleRelationshipSegment',
+    'PeopleRelationship',
+    'PartialPeopleRelationship',
+    'FactPeopleRelationship',
+    'PartialFactPeopleRelationship',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

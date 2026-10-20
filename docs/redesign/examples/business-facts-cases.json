@@ -55,7 +55,8 @@
     "vat-assessment": "0a14afe7-5a37-57c0-816f-0fce1d92e09f",
     "income-assessment": "f64a14a7-359d-51a1-a3f6-7cbe83ff7bc8",
     "actual-payroll": "ff36d2ea-d02a-526d-9bea-0f8b9ded4f32",
-    "tax-row": "63fed563-1b4c-5989-b2c8-fcaad9d9e2a1"
+    "tax-row": "63fed563-1b4c-5989-b2c8-fcaad9d9e2a1",
+    "relationship": "44b05895-1c7d-5507-a84f-2acfbca43383"
   },
   "valid_cases": [
     {
@@ -1713,7 +1714,10 @@
               },
               "actual_on": "2026-01-15",
               "direction": "outflow",
-              "amount_fen": "100000"
+              "amount_fen": "100000",
+              "memo": "合成原行摘要",
+              "counterparty_text": "合成对方原文",
+              "reference": "synthetic-row-reference"
             }
           ]
         }
@@ -1722,7 +1726,8 @@
         "schema": "valid",
         "no_voucher": true,
         "row_count": 1,
-        "invented_reference": false
+        "invented_reference": false,
+        "management_text_not_accounting": true
       }
     },
     {
@@ -1781,7 +1786,10 @@
               },
               "actual_on": "2026-01-15",
               "direction": "outflow",
-              "amount_fen": "10000"
+              "amount_fen": "10000",
+              "memo": "合成原行摘要",
+              "counterparty_text": "合成对方原文",
+              "reference": "synthetic-row-reference"
             }
           ]
         }
@@ -1789,7 +1797,8 @@
       "then": {
         "schema": "valid",
         "no_voucher": true,
-        "company_money_effect_fen": "0"
+        "company_money_effect_fen": "0",
+        "management_text_not_accounting": true
       }
     },
     {
@@ -2894,6 +2903,68 @@
         "no_voucher": true,
         "no_invented_prior_transactions": true
       }
+    },
+    {
+      "case_id": "B46",
+      "kind": "people.relationship",
+      "given": [
+        "同一人员的完整当前正确时间线；归档月不代替状态生效月份，工资及缴费事实另行办理。"
+      ],
+      "when": {
+        "business_id": "44b05895-1c7d-5507-a84f-2acfbca43383",
+        "kind": "people.relationship",
+        "period": "2026-05",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "person_id": "31136407-8d14-51dd-a6bd-029b948b102b",
+          "segments": [
+            {
+              "state": "labor",
+              "effective_from": "2026-01",
+              "relationship_start": true
+            },
+            {
+              "state": "regular",
+              "effective_from": "2026-02-10"
+            },
+            {
+              "state": "unpaid_leave",
+              "effective_from": "2026-03"
+            },
+            {
+              "state": "regular",
+              "effective_from": "2026-04-18"
+            },
+            {
+              "state": "departed",
+              "effective_from": "2026-05"
+            }
+          ]
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "no_voucher": true,
+        "complete_result_slots": [],
+        "february": {
+          "employee_member": true,
+          "labor_member": true,
+          "period_end_state": "regular"
+        },
+        "march": {
+          "employee_member": true,
+          "labor_member": false,
+          "period_end_state": "unpaid_leave"
+        },
+        "may": {
+          "employee_member": null,
+          "labor_member": false,
+          "period_end_state": "departed"
+        },
+        "closed_month_correction_changes_accounting": false
+      }
     }
   ],
   "negative_cases": [
@@ -3432,6 +3503,77 @@
         "schema": "valid",
         "business": "rejected",
         "reason": "明细出现就须完整分类，不能自动把未分10000填其他"
+      }
+    },
+    {
+      "case_id": "N18",
+      "based_on": "B46",
+      "when": {
+        "business_id": "44b05895-1c7d-5507-a84f-2acfbca43383",
+        "kind": "people.relationship",
+        "period": "2026-05",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "person_id": "31136407-8d14-51dd-a6bd-029b948b102b",
+          "segments": [
+            {
+              "state": "labor",
+              "effective_from": "2026-01"
+            },
+            {
+              "state": "regular",
+              "effective_from": "2026-02-30"
+            },
+            {
+              "state": "unpaid_leave",
+              "effective_from": "2026-03"
+            },
+            {
+              "state": "regular",
+              "effective_from": "2026-04-18"
+            },
+            {
+              "state": "departed",
+              "effective_from": "2026-05"
+            }
+          ]
+        }
+      },
+      "then": {
+        "schema": "invalid",
+        "reason": "月精度和实际日均须有效，不把不存在的实际日当作月份。"
+      }
+    },
+    {
+      "case_id": "N19",
+      "based_on": "B46",
+      "when": {
+        "business_id": "44b05895-1c7d-5507-a84f-2acfbca43383",
+        "kind": "people.relationship",
+        "period": "2026-05",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "person_id": "31136407-8d14-51dd-a6bd-029b948b102b",
+          "segments": [
+            {
+              "state": "regular",
+              "effective_from": "2026-03-12"
+            },
+            {
+              "state": "labor",
+              "effective_from": "2026-02"
+            }
+          ]
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "business": "rejected",
+        "reason": "确认顺序与实际月份矛盾，不能调换或猜日期使其通过。"
       }
     }
   ],

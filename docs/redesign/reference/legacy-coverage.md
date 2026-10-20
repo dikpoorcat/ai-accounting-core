@@ -157,7 +157,7 @@
 
 | 旧输入组合 | 新承接 |
 | --- | --- |
-| payroll/payroll_bounded、profile、contribution policy/actual、税额依据 | `people.employment/contribution_policy/contribution_actual/remuneration`；一人一工资月一个根，有据税额嵌入报酬，不把工资确认另建审批事实。 |
+| payroll/payroll_bounded、profile、contribution policy/actual、税额依据 | `people.relationship`保存当前正确人员关系，`people.employment`仅管缴费参数，另由contribution_policy/contribution_actual/remuneration承接缴费及报酬；一人一工资月一个根，有据税额嵌入报酬，不另建工资审批。 |
 | labor/labor_accrual/labor_project_cost | remuneration的劳务严格变体；费用/项目去向、未扣未报/有据税额分别明确。 |
 | 工资计划/无变更/变化通知、disbursement_basis | 当前工作安排及已有资料复用；必要申报代发口径嵌入工资事实，留差额不重记税，不保旧确认链。 |
 | 三种实际付款、平台原行、备用金组合 | `money.movement`按真实资金性质变体；`money.platform_activity`仅保存原行，`money.reserve_internal`只处置来源。 |

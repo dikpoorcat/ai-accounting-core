@@ -92,7 +92,7 @@ def _modules():
         asset_accounting,
         taxes.create_taxes(),
         financing.create_financing(),
-        financing.create_investment(),
+        financing.create_investment(ledger=bookkeeping, identity=identities),
         funds,
         opening.create_opening(asset_accounting=asset_accounting),
         reporting.create_reporting(),

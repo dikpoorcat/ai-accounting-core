@@ -28,7 +28,6 @@ def row_wire(row, kind, *, position=None):
             or source["source_id"] != row["source_id"]
             or row["direction"] not in {"in", "out"}
             or row["actual_on"][:7] != row["period"]
-            or row["memo"] is not None
         ):
             raise ValueError("original row projection mismatch")
         value = {
@@ -38,7 +37,7 @@ def row_wire(row, kind, *, position=None):
             "direction": "inflow" if row["direction"] == "in" else "outflow",
             "amount_fen": str(row["amount_fen"]),
         }
-        for field in ("reference", "counterparty_text"):
+        for field in ("reference", "counterparty_text", "memo"):
             if row[field] is not None:
                 value[field] = row[field]
         definition = "BankStatementRow" if kind == "money.bank_statement" else "PlatformOriginalRow"

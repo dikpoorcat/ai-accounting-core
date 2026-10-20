@@ -2044,6 +2044,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 500
+        },
+        "memo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "原始流水用途或摘要；仅作管理显示，来源为本行原始资料，不改变核算。"
         }
       },
       "required": [
@@ -2154,6 +2160,22 @@
         },
         "amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "memo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "原始流水用途或摘要；仅作管理显示，来源为本行原始资料，不改变核算。"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "counterparty_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
         }
       },
       "required": [
@@ -5538,6 +5560,9 @@
         },
         {
           "$ref": "#/$defs/CooperationFact"
+        },
+        {
+          "$ref": "#/$defs/FactPeopleRelationship"
         }
       ]
     },
@@ -7136,6 +7161,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 500
+        },
+        "memo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "原始流水用途或摘要；仅作管理显示，来源为本行原始资料，不改变核算。"
         }
       }
     },
@@ -7225,6 +7256,22 @@
         },
         "amount_fen": {
           "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "memo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "原始流水用途或摘要；仅作管理显示，来源为本行原始资料，不改变核算。"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "counterparty_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
         }
       }
     },
@@ -10013,6 +10060,9 @@
         },
         {
           "$ref": "#/$defs/CooperationPartialFact"
+        },
+        {
+          "$ref": "#/$defs/PartialFactPeopleRelationship"
         }
       ]
     },
@@ -20221,7 +20271,10 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "producer_kind": {
-          "enum": ["business", "object"]
+          "enum": [
+            "business",
+            "object"
+          ]
         },
         "producer_id": {
           "$ref": "core.schema.json#/$defs/Id"
@@ -20307,7 +20360,10 @@
         },
         "notify_effect": {
           "type": "string",
-          "enum": ["result", "description"]
+          "enum": [
+            "result",
+            "description"
+          ]
         }
       },
       "required": [
@@ -20321,8 +20377,18 @@
       ],
       "allOf": [
         {
-          "if": {"required": ["notify_effect"]},
-          "then": {"properties": {"read_mode": {"const": "collection"}}}
+          "if": {
+            "required": [
+              "notify_effect"
+            ]
+          },
+          "then": {
+            "properties": {
+              "read_mode": {
+                "const": "collection"
+              }
+            }
+          }
         },
         {
           "if": {
@@ -20557,7 +20623,9 @@
         },
         "retained_results": {
           "type": "array",
-          "items": {"$ref": "core.schema.json#/$defs/ResultRef"},
+          "items": {
+            "$ref": "core.schema.json#/$defs/ResultRef"
+          },
           "uniqueItems": true
         },
         "dependencies": {
@@ -23353,6 +23421,7 @@
         "people.contribution_actual",
         "people.contribution_policy",
         "people.employment",
+        "people.relationship",
         "people.remuneration",
         "reports.continuation",
         "taxes.actual_declaration",
@@ -24658,6 +24727,209 @@
       "minItems": 1,
       "maxItems": 6,
       "uniqueItems": true
+    },
+    "PeopleRelationshipState": {
+      "type": "string",
+      "enum": [
+        "regular",
+        "unpaid_leave",
+        "departed",
+        "labor",
+        "labor_ended"
+      ]
+    },
+    "PeopleRelationshipMoment": {
+      "anyOf": [
+        {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        {
+          "$ref": "core.schema.json#/$defs/Date"
+        }
+      ],
+      "description": "有据的人员关系生效月份或实际日；月精度不补造日期。"
+    },
+    "PeopleRelationshipSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/PeopleRelationshipState"
+        },
+        "effective_from": {
+          "$ref": "#/$defs/PeopleRelationshipMoment"
+        },
+        "relationship_start": {
+          "const": true,
+          "description": "仅在有来源确认本段生效时确实开始这份雇佣或劳务关系时提供；省略不推断，复工不等于入职。"
+        }
+      },
+      "required": [
+        "state",
+        "effective_from"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "relationship_start"
+            ]
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "regular",
+                  "unpaid_leave",
+                  "labor"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PartialPeopleRelationshipSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/PeopleRelationshipState"
+        },
+        "effective_from": {
+          "$ref": "#/$defs/PeopleRelationshipMoment"
+        },
+        "relationship_start": {
+          "const": true,
+          "description": "仅在有来源确认本段生效时确实开始这份雇佣或劳务关系时提供；省略不推断，复工不等于入职。"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "relationship_start"
+            ]
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "regular",
+                  "unpaid_leave",
+                  "labor"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PeopleRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "person_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/PeopleRelationshipSegment"
+          },
+          "description": "按已确认先后列出的当前正确状态时间线；不保存操作和纠错版本。"
+        }
+      },
+      "required": [
+        "person_id",
+        "segments"
+      ]
+    },
+    "PartialPeopleRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "person_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/PartialPeopleRelationshipSegment"
+          },
+          "description": "按已确认先后列出的当前正确状态时间线；不保存操作和纠错版本。"
+        }
+      }
+    },
+    "FactPeopleRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "const": "people.relationship"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month",
+          "description": "此份关系资料的归档月份，不作为工资、缴费或会计核算期间。"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "data": {
+          "$ref": "#/$defs/PeopleRelationship"
+        }
+      },
+      "required": [
+        "business_id",
+        "kind",
+        "period",
+        "evidence_ids",
+        "data"
+      ]
+    },
+    "PartialFactPeopleRelationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "people.relationship"
+        },
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month",
+          "description": "此份关系资料的归档月份，不作为工资、缴费或会计核算期间。"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "data": {
+          "$ref": "#/$defs/PartialPeopleRelationship"
+        }
+      },
+      "required": [
+        "kind"
+      ]
     }
   }
 }

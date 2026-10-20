@@ -10,7 +10,7 @@ from ai_accounting_modular.application.public import repository_factory as appli
 from ai_accounting_modular.contracts.public import validate_contract
 from ai_accounting_modular.domains.assets.public import create_assets
 from ai_accounting_modular.domains.assets.public import repository_factory as assets_repository
-from ai_accounting_modular.domains.financing.public import create_financing
+from ai_accounting_modular.domains.financing.public import create_financing, create_investment
 from ai_accounting_modular.domains.financing.public import (
     repository_factory as financing_repository,
 )
@@ -294,7 +294,7 @@ class ReviewBook:
             return result
 
 
-def assemble(root, start="2026-01"):
+def assemble(root, start="2026-01", *, include_investment=False):
     catalog = root / "catalog.sqlite3"
     create_catalog(catalog, OwnerProfile(str(uuid4()), "独立验收负责人", "synthetic-password"))
     storage = Storage(
@@ -334,6 +334,7 @@ def assemble(root, start="2026-01"):
             create_operations(),
             create_taxes(),
             create_financing(),
+            *([create_investment()] if include_investment else []),
             create_assets(),
             create_people(),
             money,

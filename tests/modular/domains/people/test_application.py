@@ -10,13 +10,14 @@ import pytest
 
 from ai_accounting_modular.application.public import create_application
 from ai_accounting_modular.application.public import repository_factory as app_repository
+from ai_accounting_modular.contracts.public import PageQuery
 from ai_accounting_modular.domains.people.public import create_people
 from ai_accounting_modular.domains.people.public import repository_factory as people_repository
 from ai_accounting_modular.identity.public import create_identity
 from ai_accounting_modular.identity.public import repository_factory as identity_repository
 from ai_accounting_modular.ledger.public import create_ledger
 from ai_accounting_modular.ledger.public import repository_factory as ledger_repository
-from ai_accounting_modular.money.public import MoneyQuery, create_money
+from ai_accounting_modular.money.public import MovementQuery, create_money
 from ai_accounting_modular.money.public import repository_factory as money_repository
 from ai_accounting_modular.records.public import create_records
 from ai_accounting_modular.records.public import repository_factory as records_repository
@@ -333,7 +334,17 @@ def test_paid_wage_misclassification_recalculates_payment_without_changing_real_
     app, company_id = assembled_with_money
     wage, paid, bank = _seed_paid_wage(assembled_with_money)
     with app.storage.read_unit(company_id) as read:
-        before = app.money.query_movements(MoneyQuery(bank, "2026-01", "2026-01"), read)
+        before = app.money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(bank),
+            PageQuery(),
+            read,
+        )
     labor = case("B17L")
     labor["business_id"] = wage["business_id"]
     labor["data"]["person_id"] = PERSON
@@ -351,8 +362,18 @@ def test_paid_wage_misclassification_recalculates_payment_without_changing_real_
         ("1002", "0", "100000"),
     ]
     with app.storage.read_unit(company_id) as read:
-        after = app.money.query_movements(MoneyQuery(bank, "2026-01", "2026-01"), read)
-        assert before.total == after.total == 1
+        after = app.money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(bank),
+            PageQuery(),
+            read,
+        )
+        assert before.filtered_count == after.filtered_count == 1
         original, current = before.items[0]["movement"], after.items[0]["movement"]
         for field in (
             "movement_id",
@@ -387,7 +408,17 @@ def test_paid_remuneration_conflict_rolls_back_without_losing_real_payment(
         wage = labor
     before = get(app, company_id, wage["business_id"], paid["business_id"])
     with app.storage.read_unit(company_id) as read:
-        before_money = app.money.query_movements(MoneyQuery(bank, "2026-01", "2026-01"), read)
+        before_money = app.money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(bank),
+            PageQuery(),
+            read,
+        )
     if change == "withdraw":
         call = {
             "contract": "ai-accounting-modular/1",
@@ -411,7 +442,17 @@ def test_paid_remuneration_conflict_rolls_back_without_losing_real_payment(
     assert result["error"] == "dependency_conflict", result
     assert get(app, company_id, wage["business_id"], paid["business_id"]) == before
     with app.storage.read_unit(company_id) as read:
-        after_money = app.money.query_movements(MoneyQuery(bank, "2026-01", "2026-01"), read)
+        after_money = app.money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(bank),
+            PageQuery(),
+            read,
+        )
         assert after_money.items == before_money.items
 
 

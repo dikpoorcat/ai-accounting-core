@@ -7,6 +7,8 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
+from ._relationships import ordered_bounds
+
 
 def _read_fact(row):
     try:
@@ -21,6 +23,8 @@ def _read_fact(row):
             or not fact["kind"].startswith("people.")
         ):
             raise ValueError("stored fact identity mismatch")
+        if fact["kind"] == "people.relationship":
+            ordered_bounds(fact)
         return fact
     except (ContractError, ValueError) as error:
         raise ContractError("storage_corrupt", "薪酬当前事实与其身份或格式不一致。") from error
@@ -57,6 +61,24 @@ class PeopleRepository:
             args,
         )
         return tuple(_read_fact(row) for row in rows)
+
+    def relationships(self, person_ids):
+        if not person_ids:
+            return {}
+        rows = self._session.fetchall(
+            "SELECT business_id,schema_key,effective_on,main_object_id,data_json FROM people_fact "
+            "WHERE main_object_id IN (SELECT value FROM json_each(?)) "
+            "AND schema_key='people.relationship' ORDER BY business_id",
+            (canonical_json(list(person_ids)),),
+        )
+        facts = {}
+        for row in rows:
+            fact = _read_fact(row)
+            person_id = fact["data"]["person_id"]
+            if person_id in facts:
+                raise ContractError("storage_corrupt", "同一人员出现多份当前关系时间线。")
+            facts[person_id] = fact
+        return facts
 
     def save(self, fact):
         data = fact["data"]

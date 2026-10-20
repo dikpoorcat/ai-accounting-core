@@ -7,8 +7,9 @@ from uuid import uuid4
 
 import pytest
 
+from ai_accounting_modular.contracts.public import PageQuery
 from ai_accounting_modular.domains.operations.public import create_operations
-from ai_accounting_modular.money.public import MoneyQuery
+from ai_accounting_modular.money.public import MovementQuery
 
 from .conftest import Context
 from .test_application import assemble, get, payment, request, seed
@@ -34,7 +35,17 @@ def collected(ids, excess, value):
 
 
 def actual_cashflow(money, account_id, read):
-    movements = money.query_movements(MoneyQuery(account_id, "2026-01", "2026-01"), read)
+    movements = money.query_movements(
+        {
+            "company_id": read.company_id,
+            "period_from": "2026-01",
+            "period_to": "2026-01",
+            "view": read.view,
+        },
+        MovementQuery(account_id),
+        PageQuery(),
+        read,
+    )
     totals = defaultdict(int)
     for value in movements.items:
         actual = value["movement"]
@@ -140,7 +151,7 @@ def test_paid_wage_corrected_to_zero_keeps_known_cashflow_until_complete_actual_
         assert original["amount_fen"] == "0"
         assert original["cashflow_weights"] == [{"category": "employee_payments", "weight": "1"}]
         movements, net = actual_cashflow(money, ids["bank"], read)
-        assert movements.total == 1 and net == {"employee_payments": 100000}
+        assert movements.filtered_count == 1 and net == {"employee_payments": 100000}
         assert movements.items[0]["movement"]["amount_fen"] == "100000"
     assert get(app, company, paid["business_id"])["businesses"][0]["fact"] == paid
 
@@ -149,7 +160,7 @@ def test_paid_wage_corrected_to_zero_keeps_known_cashflow_until_complete_actual_
     assert result["completion"] == "complete", result
     with storage.read_unit(company) as read:
         movements, net = actual_cashflow(money, ids["bank"], read)
-        assert movements.total == 2 and net == {}
+        assert movements.filtered_count == 2 and net == {}
         assert {value["movement"]["direction"] for value in movements.items} == {
             "inflow",
             "outflow",
@@ -255,7 +266,7 @@ def test_mixed_formal_weights_recover_only_the_cash_excess_interval(tmp_path, wi
             {"category": "other_operating_payments", "weight": "1"}
         ]
         movements, net = actual_cashflow(money, ids["bank"], read)
-        assert movements.total == 2 and net == {"employee_payments": 1}
+        assert movements.filtered_count == 2 and net == {"employee_payments": 1}
         by_direction = {
             value["movement"]["direction"]: value["movement"] for value in movements.items
         }

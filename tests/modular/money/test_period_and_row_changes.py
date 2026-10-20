@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.money.public import MoneyQuery
+from ai_accounting_modular.contracts.public import PageQuery
+from ai_accounting_modular.money.public import MovementQuery, StatementQuery
 
 from .test_application import assemble, get, payment, request, seed
 
@@ -69,8 +70,18 @@ def test_tax_payment_uses_formal_production_time_and_preserves_tax_attribution(
         assert obligation["obligation"]["business_period"] == attribution
         assert obligation["balance"]["adopted_result"]["business_period"] == production
         assert obligation["balance"]["remaining_fen"] == ("0" if succeeds else "10000")
-        actual = money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read)
-        assert actual.total == (1 if succeeds else 0)
+        actual = money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(ids["bank"]),
+            PageQuery(),
+            read,
+        )
+        assert actual.filtered_count == (1 if succeeds else 0)
         if succeeds:
             assert actual.items[0]["movement"]["amount_fen"] == "10000"
             assert actual.items[0]["movement"]["actual_on"] == "2026-01-20"
@@ -176,13 +187,36 @@ def test_two_open_months_can_atomically_exchange_misassigned_original_row_identi
             for fact in money.export_current([first["business_id"], second["business_id"]], read)
         }
         assert actual == {fact["business_id"]: fact for fact in changed}
-        rows = money.query_statement_rows(MoneyQuery(account_id, "2026-01", "2026-02"), read)
-        assert rows.total == 2
-        assert [(row["row_id"], row["actual_on"], row["amount_fen"]) for row in rows.items] == [
+        rows = money.query_statement_rows(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-02",
+                "view": read.view,
+            },
+            StatementQuery(account_id),
+            PageQuery(),
+            read,
+        )
+        assert rows.filtered_count == 2
+        assert [(row.row_id, row.actual_on, str(row.amount_fen)) for row in rows.items] == [
             (second["data"]["rows"][0]["row_id"], "2026-01-10", "200"),
             (first["data"]["rows"][0]["row_id"], "2026-02-10", "100"),
         ]
-        assert money.query_movements(MoneyQuery(account_id, "2026-01", "2026-02"), read).total == 0
+        assert (
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-02",
+                    "view": read.view,
+                },
+                MovementQuery(account_id),
+                PageQuery(),
+                read,
+            ).filtered_count
+            == 0
+        )
     saved = get(app, company, first["business_id"], second["business_id"])
     assert saved["head"] == before["head"] + 1
     assert {item["state"]["seq"] for item in saved["businesses"]} == {2}
@@ -216,12 +250,20 @@ def test_withdrawal_and_row_reassignment_are_order_independent_in_one_unit(tmp_p
             second["business_id"],
             replacement["business_id"],
         }
-        rows = money.query_statement_rows(MoneyQuery(account_id, "2026-01", "2026-03"), read)
-        assert rows.total == 2
-        moved = next(
-            row for row in rows.items if row["row_id"] == first["data"]["rows"][0]["row_id"]
+        rows = money.query_statement_rows(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-03",
+                "view": read.view,
+            },
+            StatementQuery(account_id),
+            PageQuery(),
+            read,
         )
-        assert (moved["business_id"], moved["actual_on"], moved["amount_fen"]) == (
+        assert rows.filtered_count == 2
+        moved = next(row for row in rows.items if row.row_id == first["data"]["rows"][0]["row_id"])
+        assert (moved.business_id, moved.actual_on, str(moved.amount_fen)) == (
             replacement["business_id"],
             "2026-03-10",
             "100",

@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.domains.financing.public import create_investment
-from ai_accounting_modular.money.public import MoneyQuery
+from ai_accounting_modular.money.public import MovementQuery
 
 from ._support import (
     BANK,
@@ -36,7 +36,17 @@ def movements(app, company):
     with app.storage.read_unit(company) as read:
         return tuple(
             x["movement"]
-            for x in app.money.query_movements(MoneyQuery(BANK, "2026-01", "2026-03"), read).items
+            for x in app.money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-03",
+                    "view": read.view,
+                },
+                MovementQuery(BANK),
+                PageQuery(),
+                read,
+            ).items
         )
 
 
@@ -259,7 +269,17 @@ def test_platform_funding_binds_original_once_without_second_cash(assembled):
     actual = app.accounting_apply(request(company, owner, activity))
     assert actual["completion"] == "complete", actual
     with app.storage.read_unit(company) as read:
-        funds = app.money.query_movements(MoneyQuery(PLATFORM, "2026-01", "2026-01"), read)
+        funds = app.money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(PLATFORM),
+            PageQuery(),
+            read,
+        )
     assert len(funds.items) == 1
     assert result(app, company, activity)["vouchers"] == []
 

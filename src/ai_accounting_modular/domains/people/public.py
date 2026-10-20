@@ -19,6 +19,13 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 
 from ._common import problem
 from ._contributions import actual, check_actual, check_policy, employment, policy
+from ._relationships import (
+    PersonRelationship,
+    RelationshipSegment,
+    checked_person_ids,
+    ordered_bounds,
+    project_relationship,
+)
 from ._remuneration import remuneration
 from ._repository import PeopleRepository
 
@@ -28,6 +35,15 @@ _CALCULATORS = {
     "people.contribution_actual": actual,
     "people.remuneration": remuneration,
 }
+_KINDS = (*_CALCULATORS, "people.relationship")
+
+__all__ = [
+    "People",
+    "PersonRelationship",
+    "RelationshipSegment",
+    "create_people",
+    "repository_factory",
+]
 
 
 def repository_factory() -> RepositoryFactory:
@@ -47,17 +63,21 @@ def _roles(fact):
 
 def _role_issues(fact, context):
     issues = []
+    meaning = "人员关系管理引用" if fact["kind"] == "people.relationship" else "薪酬核算依据"
     for field, object_id, kind in _roles(fact):
         obj = context.get_object(object_id)
         if obj is None:
-            issues.append(problem(fact, field, "所引用的人员或项目尚未在本公司登记。"))
+            issues.append(
+                problem(fact, field, "所引用的人员或项目尚未在本公司登记。", meaning=meaning)
+            )
         elif obj["kind"] != kind:
             issues.append(
                 problem(
                     fact,
                     field,
-                    "薪酬须引用人员，资本化去向须引用项目；账户不能冒充。",
+                    "人员关系及薪酬须引用人员，资本化去向须引用项目；账户不能冒充。",
                     code="incompatible_object_kind",
+                    meaning=meaning,
                 )
             )
     return issues
@@ -87,6 +107,8 @@ def _references(fact):
 
 def _natural_key(fact):
     data, kind = fact["data"], fact["kind"]
+    if kind == "people.relationship":
+        return f"people:relationship:{data['person_id']}"
     if kind == "people.remuneration" and data["type"] == "wage":
         return f"people:wage:{data['person_id']}:{fact['period']}"
     if kind == "people.contribution_actual":
@@ -123,16 +145,18 @@ def _direct_dependencies(fact):
 
 def _validate(fact):
     validate_contract("business-facts.schema.json", "Fact", fact)
-    if fact["kind"] not in _CALCULATORS:
+    if fact["kind"] not in _KINDS:
         raise ContractError("unsupported_business", "用工薪酬模块不能承接其他业务类型。")
-    if fact["kind"] == "people.contribution_policy":
+    if fact["kind"] == "people.relationship":
+        ordered_bounds(fact)
+    elif fact["kind"] == "people.contribution_policy":
         check_policy(fact)
     elif fact["kind"] == "people.contribution_actual":
         check_actual(fact)
 
 
 class People:
-    supported_kinds = tuple(_CALCULATORS)
+    supported_kinds = _KINDS
 
     def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         edges = []
@@ -140,14 +164,20 @@ class People:
             if change["op"] in {"withdraw", "handoff_out"}:
                 continue
             fact = change.get("fact") or context.get_fact(change["business_id"])
-            edges.extend(_direct_dependencies(fact))
-        return tuple(
-            {
-                key: edge[key]
-                for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
-            }
-            for edge in edges
-        )
+            references = [(object_id, "object", "identity") for _, object_id, _ in _roles(fact)]
+            references.extend(
+                (producer, "business", relation) for producer, _, relation in _references(fact)
+            )
+            edges.extend(
+                {
+                    "consumer_business_id": fact["business_id"],
+                    "producer_kind": kind,
+                    "producer_id": producer,
+                    "relation_kind": relation,
+                }
+                for producer, kind, relation in references
+            )
+        return tuple(edges)
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         responsibilities, dependencies, issues, publications = [], [], [], []
@@ -171,7 +201,9 @@ class People:
             if fact["business_id"] != business_id:
                 raise ContractError("invalid_input", "薪酬责任与事实身份不一致。")
             responsibility.update(
-                fact=deepcopy(fact), complete_result_slots=["main"], natural_key=_natural_key(fact)
+                fact=deepcopy(fact),
+                complete_result_slots=[] if fact["kind"] == "people.relationship" else ["main"],
+                natural_key=_natural_key(fact),
             )
             responsibilities.append(responsibility)
             if fact["kind"] == "people.remuneration":
@@ -185,7 +217,8 @@ class People:
                     }
                 )
             issues.extend(_role_issues(fact, context))
-            dependencies.extend(_direct_dependencies(fact))
+            if fact["kind"] != "people.relationship":
+                dependencies.extend(_direct_dependencies(fact))
         result = {
             "domain": "people",
             "businesses": responsibilities,
@@ -205,6 +238,8 @@ class People:
         if fact is None:
             raise ContractError("dependency_conflict", "用工薪酬的当前事实不存在。")
         _validate(fact)
+        if fact["kind"] == "people.relationship":
+            raise ContractError("invalid_input", "人员关系管理事实没有核算结果槽。")
         issues = _role_issues(fact, context)
         if issues:
             raise ContractError(
@@ -223,7 +258,7 @@ class People:
         if plan["domain"] != "people":
             raise ContractError("invalid_input", "薪酬不能校验其他领域的变更。")
         # Shared ledger validation owns settlement/cost capacities. People has no
-        # additional aggregate resource constraint for these four fact kinds.
+        # additional aggregate resource constraint. Relationships have no slots.
 
     def apply_current(self, plan: ChangePlan, uow: UnitOfWork) -> None:
         validate_contract("business-facts.schema.json", "ChangePlan", plan)
@@ -239,6 +274,18 @@ class People:
 
     def export_current(self, ids, read_context: ReadContext) -> tuple[Fact, ...]:
         return read_context.repository("domains.people").get(ids)
+
+    def relationships(
+        self, person_ids, period: str, read_context: ReadContext
+    ) -> tuple[PersonRelationship, ...]:
+        """Current correct management history, including when money is read as posted."""
+        ids = checked_person_ids(person_ids)
+        validate_contract("core.schema.json", "Month", period)
+        facts = read_context.repository("domains.people").relationships(ids)
+        return tuple(
+            project_relationship(person_id, period, facts.get(person_id), read_context)
+            for person_id in ids
+        )
 
     def query_current(self, query: BusinessQuery, read_context: ReadContext) -> tuple[Fact, ...]:
         validate_contract("core.schema.json", "BusinessQuery", query)

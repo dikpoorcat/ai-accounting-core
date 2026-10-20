@@ -127,7 +127,7 @@ def accounting_input(fact):
     for field in ("return_source", "boundary_source"):
         data.pop(field, None)
     for row in data.get("rows", ()):
-        for field in ("source", "reference", "counterparty_text"):
+        for field in ("source", "reference", "counterparty_text", "memo"):
             row.pop(field, None)
     return data
 

@@ -7,6 +7,7 @@ import pytest
 
 from ai_accounting_modular.application.public import create_application
 from ai_accounting_modular.application.public import repository_factory as app_repository
+from ai_accounting_modular.contracts.public import PageQuery
 from ai_accounting_modular.domains.operations.public import create_operations
 from ai_accounting_modular.domains.operations.public import (
     repository_factory as operations_repository,
@@ -15,7 +16,12 @@ from ai_accounting_modular.identity.public import create_identity
 from ai_accounting_modular.identity.public import repository_factory as identity_repository
 from ai_accounting_modular.ledger.public import LedgerQuery, create_ledger
 from ai_accounting_modular.ledger.public import repository_factory as ledger_repository
-from ai_accounting_modular.money.public import MoneyQuery, create_money, stable_occurrence_id
+from ai_accounting_modular.money.public import (
+    MovementQuery,
+    StatementQuery,
+    create_money,
+    stable_occurrence_id,
+)
 from ai_accounting_modular.money.public import repository_factory as money_repository
 from ai_accounting_modular.records.public import create_records
 from ai_accounting_modular.records.public import repository_factory as records_repository
@@ -185,8 +191,18 @@ def test_expense_then_actual_payment_is_one_formal_bank_movement_and_retry_does_
     assert app.accounting_apply(call)["accounting"] == "unchanged"
     assert get(app, company, ids["business"]) == original
     with storage.read_unit(company) as read:
-        movements = money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read)
-        assert movements.total == 1
+        movements = money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(ids["bank"]),
+            PageQuery(),
+            read,
+        )
+        assert movements.filtered_count == 1
         assert movements.items[0]["movement"]["amount_fen"] == "100000"
         obligation = ledger.resolve(
             [{"business_id": ids["expense"], "slot": "primary"}], "obligation", read
@@ -227,9 +243,17 @@ def test_expense_and_payment_can_arrive_together_in_reverse_input_order(system):
     assert response["completion"] == "complete", response
     with storage.read_unit(company) as read:
         assert (
-            money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read).items[0][
-                "movement"
-            ]["amount_fen"]
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(ids["bank"]),
+                PageQuery(),
+                read,
+            ).items[0]["movement"]["amount_fen"]
             == "2345"
         )
 
@@ -251,10 +275,31 @@ def test_replacement_preserves_occurrence_and_voucher_number_and_withdrawal_remo
     with storage.read_unit(company) as read:
         current = ledger.get_results([ids["business"]], read)[0]
         assert current["reference"]["voucher_number"] == old["reference"]["voucher_number"]
-        assert money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read).total == 0
-        actual = money.query_movements(MoneyQuery(ids["cash"], "2026-01", "2026-01"), read).items[
-            0
-        ]["movement"]
+        assert (
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(ids["bank"]),
+                PageQuery(),
+                read,
+            ).filtered_count
+            == 0
+        )
+        actual = money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(ids["cash"]),
+            PageQuery(),
+            read,
+        ).items[0]["movement"]
         assert actual["movement_id"] == stable_occurrence_id(ids["business"], "funds")
         assert actual["amount_fen"] == "40000"
     response = app.accounting_apply(
@@ -265,7 +310,20 @@ def test_replacement_preserves_occurrence_and_voucher_number_and_withdrawal_remo
     )
     assert response["completion"] == "complete", response
     with storage.read_unit(company) as read:
-        assert money.query_movements(MoneyQuery(ids["cash"], "2026-01", "2026-01"), read).total == 0
+        assert (
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(ids["cash"]),
+                PageQuery(),
+                read,
+            ).filtered_count
+            == 0
+        )
         balance = ledger.resolve(
             [{"business_id": ids["expense"], "slot": "primary"}], "obligation", read
         )[0]["balance"]
@@ -283,7 +341,20 @@ def test_bank_and_cash_share_capacity_and_overpay_rolls_back_the_entire_second_u
     assert response["error"] == "dependency_conflict"
     assert get(app, company, ids["expense"], ids["business"]) == before
     with storage.read_unit(company) as read:
-        assert money.query_movements(MoneyQuery(ids["cash"], "2026-01", "2026-01"), read).total == 0
+        assert (
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(ids["cash"]),
+                PageQuery(),
+                read,
+            ).filtered_count
+            == 0
+        )
         assert (
             ledger.resolve(
                 [{"business_id": ids["expense"], "slot": "primary"}], "obligation", read
@@ -369,16 +440,42 @@ def test_original_rows_and_full_reconciliation_same_unit_do_not_duplicate_any_mo
     with storage.read_unit(company) as read:
         assert money.export_current([statement["business_id"]], read)[0] == statement
         page1 = money.query_statement_rows(
-            MoneyQuery(ids["bank"], "2026-01", "2026-01", limit=1), read
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            StatementQuery(ids["bank"]),
+            PageQuery(limit=1),
+            read,
         )
         page2 = money.query_statement_rows(
-            MoneyQuery(ids["bank"], "2026-01", "2026-01", limit=1, cursor=page1.next_cursor), read
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            StatementQuery(ids["bank"]),
+            PageQuery(limit=1, cursor=page1.next_cursor),
+            read,
         )
-        assert page1.total == page2.total == 2
-        assert page1.items[0]["actual_on"] == "2026-01-10"
-        assert page2.items[0]["actual_on"] == "2026-01-20"
-        actual = money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read)
-        assert actual.total == 2
+        assert page1.filtered_count == page2.filtered_count == 2
+        assert page1.items[0].actual_on == "2026-01-10"
+        assert page2.items[0].actual_on == "2026-01-20"
+        actual = money.query_movements(
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(ids["bank"]),
+            PageQuery(),
+            read,
+        )
+        assert actual.filtered_count == 2
         assert sum(int(item["movement"]["amount_fen"]) for item in actual.items) == 200000
         assert ledger.query_vouchers(LedgerQuery(), read).total == 3
         results = money.reconciliation(
@@ -441,7 +538,20 @@ def test_reconciliation_observes_a_new_unmatched_movement_and_rolls_it_back(syst
     assert response["error"] == "dependency_conflict"
     assert get(app, company, check["business_id"], statement["business_id"]) == before
     with storage.read_unit(company) as read:
-        assert money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read).total == 2
+        assert (
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(ids["bank"]),
+                PageQuery(),
+                read,
+            ).filtered_count
+            == 2
+        )
 
 
 def test_operating_advance_offset_clears_two_rights_without_creating_another_payment(system):
@@ -480,7 +590,20 @@ def test_operating_advance_offset_clears_two_rights_without_creating_another_pay
     result = app.accounting_apply(request(company, offset, advance))
     assert result["completion"] == "complete", result
     with storage.read_unit(company) as read:
-        assert money.query_movements(MoneyQuery(ids["bank"], "2026-01", "2026-01"), read).total == 0
+        assert (
+            money.query_movements(
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(ids["bank"]),
+                PageQuery(),
+                read,
+            ).filtered_count
+            == 0
+        )
         balances = ledger.resolve(
             [
                 {"business_id": advance["business_id"], "slot": "advance"},

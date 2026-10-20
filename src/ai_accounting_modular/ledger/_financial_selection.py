@@ -32,6 +32,7 @@ class Selection:
             {},
         )
         self.used = set()
+        self._balance_cubes = {}
         self._details = {}
         boundaries = repo.financial_boundaries(as_of=end if view == "as_posted" else None)
         self.opening = self.continuation = None

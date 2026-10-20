@@ -6,8 +6,9 @@ from uuid import uuid4
 
 import pytest
 
+from ai_accounting_modular.contracts.public import PageQuery
 from ai_accounting_modular.ledger.public import LedgerQuery
-from ai_accounting_modular.money.public import MoneyQuery
+from ai_accounting_modular.money.public import MovementQuery
 
 from .test_application import assemble, get, request
 
@@ -69,9 +70,17 @@ def test_one_real_gross_bank_payment_settles_complete_net_group_and_known_reserv
     assert result["completion"] == "complete", result
     with storage.read_unit(company) as read:
         movements = money.query_movements(
-            MoneyQuery(payment["data"]["funds_account_id"], "2026-01", "2026-01"), read
+            {
+                "company_id": read.company_id,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": read.view,
+            },
+            MovementQuery(payment["data"]["funds_account_id"]),
+            PageQuery(),
+            read,
         )
-        assert movements.total == 1
+        assert movements.filtered_count == 1
         actual = movements.items[0]["movement"]
         assert actual["amount_fen"] == "1000000"
         assert actual["cashflow_parts"] == [
@@ -111,8 +120,16 @@ def test_gross_group_rejects_incomplete_or_untrue_model_without_any_formal_payme
     with storage.read_unit(company) as read:
         assert (
             money.query_movements(
-                MoneyQuery(payment["data"]["funds_account_id"], "2026-01", "2026-01"), read
-            ).total
+                {
+                    "company_id": read.company_id,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": read.view,
+                },
+                MovementQuery(payment["data"]["funds_account_id"]),
+                PageQuery(),
+                read,
+            ).filtered_count
             == 0
         )
 

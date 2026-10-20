@@ -9,6 +9,7 @@ from ai_accounting_modular.contracts.public import parse_fen
 from ai_accounting_modular.ledger.opening.public import is_zero_origin
 from ai_accounting_modular.ledger.reporting.public import balance_totals
 
+from ._balance_cube import balance_cube, previous
 from ._balances import obligation_remaining, sum_amounts
 from ._financial_cells import known, zeros
 from ._profit import is_profit_account
@@ -169,8 +170,8 @@ def positions(selection, cutoff, column):
                 )
                 for line in range(1, 54)
             }
-    opening = selection.opening_rows()
-    if opening is None:
+    cube = balance_cube(selection, cutoff)
+    if cube is None:
         return {
             line: selection.issues.unknown(
                 f"/balance_sheet/{line}/{column}",
@@ -180,14 +181,9 @@ def positions(selection, cutoff, column):
             for line in range(1, 54)
         }
     heads = list(selection.stock(cutoff).values()) if cutoff >= selection.start else []
-    journals = selection.lines(heads)
-    rows = [*opening, *(line for lines in journals.values() for line in lines)]
     grouped = defaultdict(int)
-    for value in rows:
-        key = value["account_code"], value.get("party_id")
-        grouped[key] = sum_amounts(
-            (grouped[key], parse_fen(value["debit_fen"]), -parse_fen(value["credit_fen"]))
-        )
+    for (code, party, _), amount in cube.items():
+        grouped[code, party] = sum_amounts((grouped[code, party], amount))
     resource_heads = [*heads, selection.opening]
     resources = _resource_positions(selection, resource_heads)
     totals = defaultdict(int)
@@ -248,11 +244,6 @@ def positions(selection, cutoff, column):
             "存在尚未建立报表含义的正式非零余额。",
         )
     return result
-
-
-def previous(period):
-    year, month = int(period[:4]), int(period[5:])
-    return f"{year if month > 1 else year - 1:04d}-{month - 1 if month > 1 else 12:02d}"
 
 
 def cash_before(selection, first, last, column):

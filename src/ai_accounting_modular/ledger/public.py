@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -15,14 +16,28 @@ from ai_accounting_modular.contracts.public import (
     MAX_FEN,
     ChangePlan,
     ContractError,
+    LedgerScope,
+    PageQuery,
+    QuerySelection,
     ReadContext,
+    ReadPage,
+    ResultRef,
     UnitOfWork,
+    Voucher,
+    query_selection,
     validate_contract,
 )
 from ai_accounting_modular.contracts.public import canonical_json as canonical
 from ai_accounting_modular.contracts.public import content_digest as digest
 
-from . import _aggregation, _financial
+from . import (
+    _aggregation,
+    _financial,
+    _financial_reads,
+    _read_contents,
+    _read_events,
+    _read_positions,
+)
 from ._adoption import adopt as _adopt
 from ._balances import balance_wire, obligation_balances
 from ._candidate import CandidateLedger
@@ -42,6 +57,54 @@ from ._resource_view import fund_movements as _fund_movements
 from ._snapshot import AdoptedBusinessVersion as AdoptedBusinessVersion
 from ._snapshot import LedgerSnapshot
 from ._snapshot import verify_snapshot as _verify_snapshot
+from ._types import (
+    AccountBalance as AccountBalance,
+)
+from ._types import (
+    AccountBalanceKey as AccountBalanceKey,
+)
+from ._types import (
+    AdoptedContent as AdoptedContent,
+)
+from ._types import (
+    AdoptedDirectoryEntry as AdoptedDirectoryEntry,
+)
+from ._types import (
+    AdoptedValues as AdoptedValues,
+)
+from ._types import (
+    CostPositionQuery as CostPositionQuery,
+)
+from ._types import (
+    FinancialSummary as FinancialSummary,
+)
+from ._types import (
+    ObligationPositionQuery as ObligationPositionQuery,
+)
+from ._types import (
+    PositionAmounts as PositionAmounts,
+)
+from ._types import (
+    PositionPage as PositionPage,
+)
+from ._types import (
+    PositionTotal as PositionTotal,
+)
+from ._types import (
+    ResourcePosition as ResourcePosition,
+)
+from ._types import (
+    SettlementEvent as SettlementEvent,
+)
+from ._types import (
+    SettlementEventQuery as SettlementEventQuery,
+)
+from ._types import (
+    VoucherDirectoryEntry as VoucherDirectoryEntry,
+)
+from ._types import (
+    VoucherLocator as VoucherLocator,
+)
 from ._values import fail, unique
 
 
@@ -136,6 +199,102 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def query_settlement_events(
+        self,
+        query: SettlementEventQuery,
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> ReadPage[SettlementEvent]:
+        return _read_events.query_settlement_events(query, page, read_context, selection)
+
+    def query_obligation_positions(
+        self,
+        query: ObligationPositionQuery,
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> PositionPage:
+        return _read_positions.query_positions(
+            query, page, read_context, selection, kind="obligation"
+        )
+
+    def query_cost_positions(
+        self,
+        query: CostPositionQuery,
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> PositionPage:
+        return _read_positions.query_positions(query, page, read_context, selection, kind="cost")
+
+    def financial_summary(self, scope: LedgerScope, read_context: ReadContext) -> FinancialSummary:
+        return _financial_reads.financial_summary(scope, read_context)
+
+    def account_balances(
+        self,
+        keys: Sequence[AccountBalanceKey],
+        period: str,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> tuple[AccountBalance, ...]:
+        return _financial_reads.account_balances(keys, period, read_context, selection)
+
+    def query_adopted_directory(
+        self,
+        scope: LedgerScope,
+        kinds: tuple[str, ...],
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        business_ids=(),
+        result_slots=(),
+    ) -> ReadPage[AdoptedDirectoryEntry]:
+        return _read_contents.query_adopted(
+            scope, kinds, page, read_context, business_ids=business_ids, result_slots=result_slots
+        )
+
+    def query_adopted_values(
+        self,
+        scope: LedgerScope,
+        kinds: tuple[str, ...],
+        page: PageQuery,
+        read_context: ReadContext,
+    ) -> ReadPage[AdoptedValues]:
+        return _read_contents.query_adopted(scope, kinds, page, read_context, flow=True)
+
+    def get_adopted_contents(
+        self,
+        locators: Sequence[ResultRef],
+        read_context: ReadContext,
+    ) -> tuple[AdoptedContent, ...]:
+        return _read_contents.get_adopted_contents(locators, read_context)
+
+    def query_voucher_directory(
+        self,
+        scope: LedgerScope,
+        kinds: tuple[str, ...],
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        business_ids=(),
+        roles=(),
+    ) -> ReadPage[VoucherDirectoryEntry]:
+        return _read_contents.query_voucher_directory(
+            scope, kinds, page, read_context, business_ids=business_ids, roles=roles
+        )
+
+    def get_vouchers(
+        self,
+        locators: Sequence[VoucherLocator],
+        read_context: ReadContext,
+    ) -> tuple[Voucher, ...]:
+        return _read_contents.get_vouchers(locators, read_context)
+
     def verify_snapshot(self, read_context: ReadContext) -> LedgerSnapshot:
         return _verify_snapshot(read_context)
 
@@ -159,28 +318,27 @@ class Ledger:
     def closed_through(self, read_context: ReadContext):
         return read_context.repository("ledger").closed_through()
 
-    def query_cashflow_contributions(self, query: LedgerQuery, read_context: ReadContext):
+    def query_cashflow_contributions(
+        self, query: LedgerQuery, read_context: ReadContext, *, selection=None
+    ):
         """Formal adoption-month history, just like query_vouchers; never actual money count."""
         self._validate_query(query)
         if query.roles:
             fail("invalid_input", "现金流采用明细不接受凭证角色筛选。")
         repo = read_context.repository("ledger")
-        if read_context.view not in ("current", "as_posted") or (
-            read_context.view == "as_posted" and read_context.as_of is None
-        ):
-            fail("invalid_input", "正式现金流读取口径与截止月不一致。")
+        selected = query_selection(read_context, selection)
         last = (
             query.period_to
-            or read_context.as_of
+            or selected.as_of
             or repo.latest_adoption_period()
             or read_context.start_period
         )
-        if read_context.view == "as_posted":
-            last = min(last, read_context.as_of)
+        if selected.view == "as_posted":
+            last = min(last, selected.as_of)
         first = query.period_from or read_context.start_period
-        selection = Selection(repo, read_context.view, last, read_context.start_period, Issues())
-        items = _cashflow_contributions(selection, first, last, query.business_ids)
-        return self._page(items, query, read_context, "cashflow_contributions")
+        selector = Selection(repo, selected.view, last, read_context.start_period, Issues())
+        items = _cashflow_contributions(selector, first, last, query.business_ids)
+        return self._page(items, query, read_context, "cashflow_contributions", selected)
 
     def latest_period(self, read_context: ReadContext):
         """Latest economic month already represented by formal results."""
@@ -205,47 +363,45 @@ class Ledger:
             retained_results=retained_results,
         )
 
-    def _current_aggregate_view(self, context):
-        if context.view != "current" or context.as_of is not None:
+    def _current_aggregate_view(self, context, selection=None):
+        selected = query_selection(context, selection)
+        if selected.view != "current":
             fail(
                 "unsupported_business", "本取数端口当前只支持完整当前目标，尚未交付as_posted口径。"
             )
-        return self._resource_view(context)
+        return self._resource_view(context, selected)
 
-    def tax_sales(self, period_from, period_to, read_context: ReadContext):
+    def tax_sales(self, period_from, period_to, read_context: ReadContext, *, selection=None):
         return _aggregation.tax_sales(
-            self._current_aggregate_view(read_context), period_from, period_to
+            self._current_aggregate_view(read_context, selection), period_from, period_to
         )
 
-    def pre_tax(self, period_from, period_to, read_context: ReadContext):
+    def pre_tax(self, period_from, period_to, read_context: ReadContext, *, selection=None):
         return _aggregation.pre_tax(
-            self._current_aggregate_view(read_context),
+            self._current_aggregate_view(read_context, selection),
             {},
             period_from,
             period_to,
             read_context.start_period,
         )
 
-    def resource_definitions(self, refs, kind, read_context: ReadContext):
+    def resource_definitions(self, refs, kind, read_context: ReadContext, *, selection=None):
         validate_resource_refs(refs, kind)
         if not refs:
             return ()
         ids = tuple(dict.fromkeys(ref["business_id"] for ref in refs))
-        repo = self._resource_view(read_context)
+        repo = self._resource_view(read_context, selection)
         return definitions(repo, repo.current_heads(ids), refs, kind)
 
-    def _resource_view(self, context):
-        if context.view not in ("current", "as_posted") or (
-            context.view == "as_posted" and context.as_of is None
-        ):
-            fail("invalid_input", "资源读取口径与采用截止月不一致。")
-        return context.repository("ledger").resource_view(
-            as_of=context.as_of if context.view == "as_posted" else None
-        )
+    def _resource_view(self, context, selection=None):
+        selected = query_selection(context, selection)
+        return context.repository("ledger").resource_view(as_of=selected.as_of)
 
-    def fund_movements(self, account_id, period_from, period_to, read_context: ReadContext):
+    def fund_movements(
+        self, account_id, period_from, period_to, read_context: ReadContext, *, selection=None
+    ):
         return _fund_movements(
-            self._resource_view(read_context),
+            self._resource_view(read_context, selection),
             account_id,
             period_from,
             period_to,
@@ -256,14 +412,16 @@ class Ledger:
     ) -> PreparedResult:
         return _prepare_result(business_id, result_slot, uow, correction_period)
 
-    def get_result_source(self, business_id, result_slot, context: ReadContext, *, plan=None):
+    def get_result_source(
+        self, business_id, result_slot, context: ReadContext, *, plan=None, selection=None
+    ):
         validate_contract("core.schema.json", "Slot", result_slot)
         if plan is not None:
             validate_contract("business-facts.schema.json", "PostingPlan", plan)
             if (plan["business_id"], plan["result_slot"]) != (business_id, result_slot):
                 fail("invalid_input", "同单来源计划与所请求业务槽不一致。")
             return dict(bind_plan(plan, context).source_ref)
-        _, heads = self._heads(LedgerQuery((business_id,)), context)
+        _, heads = self._heads(LedgerQuery((business_id,)), context, selection)
         row = next((h for h in heads if h["result_slot"] == result_slot), None)
         if row is None:
             fail("dependency_conflict", "所需正式来源尚未采用。")
@@ -302,14 +460,13 @@ class Ledger:
         if query.period_from and query.period_to and query.period_from > query.period_to:
             fail("invalid_input", "查询起月不能晚于末月。")
 
-    def _heads(self, query, context):
+    def _heads(self, query, context, selection=None):
         self._validate_query(query)
         repo = context.repository("ledger")
-        if context.view == "as_posted":
-            if context.as_of is None:
-                fail("invalid_input", "历史月末读取须明确截止月。")
-            heads = repo.heads_through(context.as_of, query.business_ids)
-        elif context.view == "current":
+        selected = query_selection(context, selection)
+        if selected.view == "as_posted":
+            heads = repo.heads_through(selected.as_of, query.business_ids)
+        elif selected.view == "current":
             heads = repo.current_heads(query.business_ids)
         else:
             fail("invalid_input", "未知的正式读取口径。")
@@ -323,7 +480,9 @@ class Ledger:
             )
         ]
 
-    def get_results(self, business_ids, read_context: ReadContext, *, result_refs=()):
+    def get_results(
+        self, business_ids, read_context: ReadContext, *, result_refs=(), selection=None
+    ):
         if len(result_refs) > 500:
             fail("invalid_input", "一次最多读取500个精确正式结果。")
         if not business_ids and not result_refs:
@@ -331,7 +490,7 @@ class Ledger:
         repo = read_context.repository("ledger")
         heads = []
         if business_ids:
-            _, heads = self._heads(LedgerQuery(tuple(business_ids)), read_context)
+            _, heads = self._heads(LedgerQuery(tuple(business_ids)), read_context, selection)
         selected = {row["result_id"]: row for row in heads}
         for ref in result_refs:
             validate_contract("core.schema.json", "ResultRef", ref)
@@ -350,17 +509,14 @@ class Ledger:
             selected[row["result_id"]] = row
         return self._views(repo, selected.values())
 
-    def get_result_refs(self, business_ids, read_context: ReadContext):
+    def get_result_refs(self, business_ids, read_context: ReadContext, *, selection=None):
         query = LedgerQuery(tuple(business_ids))
         self._validate_query(query)
-        if read_context.view not in ("current", "as_posted") or (
-            read_context.view == "as_posted" and read_context.as_of is None
-        ):
-            fail("invalid_input", "正式结果引用的读取口径与截止月不一致。")
+        selected = query_selection(read_context, selection)
         if not business_ids:
             return ()
         rows = read_context.repository("ledger").result_references(
-            business_ids, as_of=read_context.as_of if read_context.view == "as_posted" else None
+            business_ids, as_of=selected.as_of
         )
         return tuple(validate_contract("core.schema.json", "ResultRef", row) for row in rows)
 
@@ -394,14 +550,15 @@ class Ledger:
             views.append(view)
         return tuple(views)
 
-    def _page(self, items, query, context, collection):
+    def _page(self, items, query, context, collection, selection=None):
+        selected = query_selection(context, selection)
         identity = digest(
             {
                 "company_id": context.company_id,
                 "database_id": context.database_id,
                 "head": context.head,
-                "view": context.view,
-                "as_of": context.as_of,
+                "view": selected.view,
+                "as_of": selected.as_of,
                 "business_ids": list(query.business_ids),
                 "from": query.period_from,
                 "to": query.period_to,
@@ -438,55 +595,124 @@ class Ledger:
             ).decode("ascii")
         return LedgerPage(tuple(page), len(items), context.head, next_cursor)
 
-    def query_results(self, query: LedgerQuery, read_context: ReadContext):
-        repo, heads = self._heads(query, read_context)
-        items = list(self._views(repo, heads))
-        return self._page(items, query, read_context, "results")
-
-    def query_vouchers(self, query: LedgerQuery, read_context: ReadContext):
+    def _query_scope(self, query, read_context, selection):
         self._validate_query(query)
-        if read_context.view not in ("current", "as_posted") or (
-            read_context.view == "as_posted" and read_context.as_of is None
-        ):
-            fail("invalid_input", "凭证读取口径与截止月不一致。")
+        selected = query_selection(read_context, selection)
         repo = read_context.repository("ledger")
-        # Voucher history is formal posting history; current-head resource
-        # selection cannot erase already frozen original/correction vouchers.
-        heads = repo.formal_heads_through(
-            read_context.as_of if read_context.view == "as_posted" else None, query.business_ids
+        last = (
+            query.period_to
+            or selected.as_of
+            or max(
+                repo.latest_period() or read_context.start_period,
+                repo.latest_adoption_period() or read_context.start_period,
+                query.period_from or read_context.start_period,
+            )
         )
-        by_id = {h["result_id"]: h for h in heads}
-        vouchers = repo.vouchers(list(by_id))
-        grouped = {key: [] for key in by_id}
-        for voucher in vouchers:
-            grouped[voucher["result_id"]].append(voucher)
-        references = {key: _reference(row, repo, grouped[key]) for key, row in by_id.items()}
-        items = [
-            _voucher_wire(v, by_id[v["result_id"]], repo, references[v["result_id"]])
-            for v in vouchers
-            if (not query.roles or v["role"] in query.roles)
-            and (query.period_from is None or v["period"] >= query.period_from)
-            and (query.period_to is None or v["period"] <= query.period_to)
+        first = query.period_from or min(read_context.start_period, last)
+        scope = {
+            "company_id": read_context.company_id,
+            "period_from": first,
+            "period_to": last,
+            "view": selected.view,
+        }
+        if selected.as_of is not None:
+            scope["as_of"] = selected.as_of
+        return scope
+
+    def query_results(self, query: LedgerQuery, read_context: ReadContext, *, selection=None):
+        scope = self._query_scope(query, read_context, selection)
+        page = _read_contents.query_adopted(
+            scope,
+            (),
+            PageQuery(query.limit, query.cursor),
+            read_context,
+            business_ids=query.business_ids,
+            economic_from=query.period_from,
+        )
+        repo = read_context.repository("ledger")
+        heads = repo.results([item.reference["result_id"] for item in page.items])
+        items = self._views(repo, heads)
+        return LedgerPage(items, page.filtered_count, read_context.head, page.next_cursor)
+
+    def query_vouchers(self, query: LedgerQuery, read_context: ReadContext, *, selection=None):
+        scope = self._query_scope(query, read_context, selection)
+        page = self.query_voucher_directory(
+            scope,
+            (),
+            PageQuery(query.limit, query.cursor),
+            read_context,
+            business_ids=query.business_ids,
+            roles=query.roles,
+        )
+        locators = [
+            VoucherLocator(item.voucher_id, item.result["result_id"], item.result["generation"])
+            for item in page.items
         ]
-        return self._page(items, query, read_context, "vouchers")
+        return LedgerPage(
+            self.get_vouchers(locators, read_context),
+            page.filtered_count,
+            read_context.head,
+            page.next_cursor,
+        )
 
-    def query_obligations(self, query: LedgerQuery, read_context: ReadContext):
-        repo, heads = self._heads(query, read_context)
-        items = self._obligations(repo, heads, read_context)
-        return self._page(items, query, read_context, "obligations")
+    def query_obligations(self, query: LedgerQuery, read_context: ReadContext, *, selection=None):
+        scope = self._query_scope(query, read_context, selection)
+        positions = _read_positions.query_positions(
+            ObligationPositionQuery(scope["period_to"], business_ids=query.business_ids),
+            PageQuery(query.limit, query.cursor),
+            read_context,
+            selection,
+            kind="obligation",
+            economic_from=query.period_from,
+        ).page
+        repo = read_context.repository("ledger")
+        heads = {
+            row["result_id"]: row
+            for row in repo.read_heads(
+                {item.definition.source["result_id"] for item in positions.items}
+            )
+        }
+        items = []
+        for item in positions.items:
+            definition, amounts = item.definition, item.amounts
+            wire = definition.value
+            row = {
+                **wire,
+                "public_slot": wire["slot"],
+                "party_id": wire.get("party_id"),
+                "amount_fen": amounts.amount_fen,
+            }
+            totals = {
+                "money": amounts.money_settled_fen,
+                "agency": amounts.agency_settled_fen,
+                "offset": amounts.offset_settled_fen,
+                "transfer": amounts.transferred_out_fen,
+                "reclassify_excess": amounts.excess_reclassified_fen,
+            }
+            value = {
+                "obligation": wire,
+                "balance": balance_wire(
+                    row,
+                    totals,
+                    amounts.remaining_fen,
+                    _read_contents.reference(heads[definition.source["result_id"]]),
+                ),
+            }
+            validate_contract("core.schema.json", "ObligationView", value)
+            items.append(value)
+        return LedgerPage(
+            tuple(items), positions.filtered_count, read_context.head, positions.next_cursor
+        )
 
-    def _obligations(self, repo, heads, read_context):
+    def _obligations(self, repo, heads, read_context, selection=None):
+        selected = query_selection(read_context, selection)
         by_id = {h["result_id"]: h for h in heads}
-        vouchers = repo.vouchers(list(by_id))
-        grouped = {key: [] for key in by_id}
-        for voucher in vouchers:
-            grouped[voucher["result_id"]].append(voucher)
-        references = {key: _reference(row, repo, grouped[key]) for key, row in by_id.items()}
+        references = {key: _read_contents.reference(row) for key, row in by_id.items()}
         items = []
         for ob, totals, remaining in obligation_balances(
             repo,
             heads,
-            through=read_context.as_of if read_context.view == "as_posted" else None,
+            through=selected.as_of,
         ):
             row = by_id[ob["result_id"]]
             wire = resource_definition("obligation", row, ob, stored_source_reference(row)).value
@@ -499,7 +725,14 @@ class Ledger:
         items.sort(key=lambda x: (x["obligation"]["business_id"], x["obligation"]["slot"]))
         return items
 
-    def resolve(self, refs, kind: Literal["result", "obligation", "cost", "funds"], read_context):
+    def resolve(
+        self,
+        refs,
+        kind: Literal["result", "obligation", "cost", "funds"],
+        read_context,
+        *,
+        selection=None,
+    ):
         if not refs:
             return ()
         if len(refs) > 500:
@@ -508,13 +741,20 @@ class Ledger:
             validate_contract("core.schema.json", "BusinessRef", ref)
         ids = tuple(dict.fromkeys(r["business_id"] for r in refs))
         if kind == "result":
-            values = self.get_results(ids, read_context)
+            wanted = {(ref["business_id"], ref["slot"]) for ref in refs}
+            result_refs = [
+                ref
+                for ref in self.get_result_refs(ids, read_context, selection=selection)
+                if (ref["business_id"], ref["result_slot"]) in wanted
+            ]
+            values = self.get_results([], read_context, result_refs=result_refs)
             mapped = {
                 (x["reference"]["business_id"], x["reference"]["result_slot"]): x for x in values
             }
         elif kind == "obligation":
-            repo, heads = self._heads(LedgerQuery(ids), read_context)
-            values = self._obligations(repo, heads, read_context)
+            repo = self._resource_view(read_context, selection)
+            heads = repo.current_heads(ids)
+            values = self._obligations(repo, heads, read_context, selection)
             mapped = {(x["obligation"]["business_id"], x["obligation"]["slot"]): x for x in values}
         else:
             fail("unsupported_business", "该资源解析能力尚未交付。")

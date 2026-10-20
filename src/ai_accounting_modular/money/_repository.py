@@ -13,7 +13,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from ._original_rows import ROW_TABLES as _ROW_TABLES
-from ._original_rows import load_rows, row_wire
+from ._original_rows import load_rows
 
 
 class MoneyRepository:
@@ -224,7 +224,7 @@ class MoneyRepository:
                     fact["period"],
                     "in" if row["direction"] == "inflow" else "out",
                     parse_fen(row["amount_fen"]),
-                    None,
+                    row.get("memo"),
                     row.get("counterparty_text"),
                 ),
             )
@@ -252,41 +252,6 @@ class MoneyRepository:
                 args,
             )
         )
-
-    def statement_page(self, account_id, period_from, period_to, after, limit):
-        common = " account_id=? AND period>=? AND period<=?"
-        args = [account_id, period_from, period_to]
-        unions = [
-            f"SELECT *, '{kind}' AS source_kind FROM {table} WHERE" + common
-            for kind, table in (
-                ("bank", "bank_statement_row"),
-                ("platform", "platform_activity_row"),
-            )
-        ]
-        source = "(" + " UNION ALL ".join(unions) + ")"
-        count = self._session.fetchone("SELECT COUNT(*) AS n FROM " + source, args * 2)["n"]
-        query = "SELECT * FROM " + source
-        params = args * 2
-        if after is not None:
-            query += " WHERE (actual_on,row_id)>(?,?)"
-            params.extend(after)
-        query += " ORDER BY actual_on,row_id LIMIT ?"
-        params.append(limit + 1)
-        result = []
-        for row in self._session.fetchall(query, params):
-            kind = (
-                "money.bank_statement"
-                if row["source_kind"] == "bank"
-                else "money.platform_activity"
-            )
-            value = {
-                **row_wire(row, kind),
-                "business_id": row["business_id"],
-                "account_id": row["account_id"],
-                "source_kind": row["source_kind"],
-            }
-            result.append(value)
-        return count, result
 
     def groups(self, business_id):
         rows = self._session.fetchall(

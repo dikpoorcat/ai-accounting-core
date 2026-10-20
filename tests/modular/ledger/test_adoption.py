@@ -1006,7 +1006,10 @@ def test_frozen_no_impact_recalculation_reuses_head_source_and_voucher_without_w
     with store.read_unit(COMPANY) as context:
         assert context.head == head
         assert ledger.query_vouchers(LedgerQuery(), context).total == 1
-        assert len(context.repository("ledger").formal_heads_through(None)) == 1
+        assert (
+            context.repository("ledger")._session.fetchone("SELECT COUNT(*) FROM adopted_result")[0]
+            == 1
+        )
 
 
 def test_non_accounting_date_supplement_to_frozen_fact_does_not_create_correction(store):

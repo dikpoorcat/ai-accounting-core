@@ -9,7 +9,8 @@ from .test_period_and_row_changes import row_system
 
 @pytest.mark.parametrize("kind", ["bank", "platform"])
 @pytest.mark.parametrize(
-    "corruption", ["missing", "amount", "source_location", "position", "account", "missing_digest"]
+    "corruption",
+    ["missing", "amount", "memo", "source_location", "position", "account", "missing_digest"],
 )
 def test_owner_export_rejects_incomplete_or_changed_normalized_original_rows(
     tmp_path, kind, corruption
@@ -28,6 +29,8 @@ def test_owner_export_rejects_incomplete_or_changed_normalized_original_rows(
             session.execute(f"DELETE FROM {table} WHERE row_id=?", (row_id,))
         elif corruption == "amount":
             session.execute(f"UPDATE {table} SET amount_fen=101 WHERE row_id=?", (row_id,))
+        elif corruption == "memo":
+            session.execute(f"UPDATE {table} SET memo='注入的损坏文字' WHERE row_id=?", (row_id,))
         elif corruption == "source_location":
             session.execute(
                 f"UPDATE {table} SET source_location="

@@ -349,10 +349,13 @@ class ResourceRepository:
                 if row["result_id"] not in self.sources:
                     self.sources[row["result_id"]] = stored_source_reference(row)
             self._scopes[key] = rows
+        staged = (
+            (row for rows in self._staged_accounts.values() for row in rows)
+            if account_id is None
+            else self._staged_accounts[account_id]
+        )
         return [row for row in self._scopes[key] if row["result_id"] not in self.shadowed] + [
-            row
-            for row in self._staged_accounts[account_id]
-            if period_from <= row["period"] <= period_to
+            row for row in staged if period_from <= row["period"] <= period_to
         ]
 
 
@@ -414,7 +417,8 @@ def definitions(repo, heads, refs, kind):
 
 
 def fund_movements(repo, account_id, period_from, period_to):
-    validate_contract("core.schema.json", "Id", account_id)
+    if account_id is not None:
+        validate_contract("core.schema.json", "Id", account_id)
     validate_contract("core.schema.json", "Month", period_from)
     validate_contract("core.schema.json", "Month", period_to)
     if period_from > period_to:
@@ -429,8 +433,7 @@ def fund_movements(repo, account_id, period_from, period_to):
     result.sort(
         key=lambda item: (
             item.value["actual_on"],
-            item.reference["business_id"],
-            item.reference["slot"],
+            item.value["movement_id"],
         )
     )
     return tuple(result)
