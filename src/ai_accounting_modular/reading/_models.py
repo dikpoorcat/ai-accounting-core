@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
+from ._collections import prepare_model
 from ._types import ModelDelivery, ReadingImpact
 
 FORMAT_VERSION = 1
@@ -164,9 +165,10 @@ def run_pending(reader, company_id, limit):
                 snapshot = reader.ledger.financial_snapshot(scope, read)
                 validate_contract("reporting.schema.json", "FinancialSnapshot", snapshot)
                 payload = {"snapshot": semantic(snapshot)}
+                model = prepare_model(payload)
             with reader.storage.maintenance_unit(company_id) as unit:
                 published = unit.repository("reading").publish(
-                    scope_key, component, wanted, FORMAT_VERSION, payload
+                    scope_key, component, wanted, FORMAT_VERSION, model
                 )
             if published:
                 completed.append(scope_key)
