@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import MAX_FEN, ContractError, ResourceCutoff
 from ai_accounting_modular.ledger.public import LedgerQuery, create_ledger, repository_factory
 from ai_accounting_modular.storage.public import (
     CompanySpec,
@@ -245,6 +245,7 @@ def expense(amount="100000", *, seq=0, business_id=BUSINESS):
                 "expected_seq": seq,
                 "op": "replace" if seq else "create",
                 "fact": fact,
+                "natural_key": None,
                 "complete_result_slots": ["main"],
             }
         ],
@@ -321,6 +322,7 @@ def test_open_withdraw_removes_result_and_resources_without_history(store):
                 "business_id": BUSINESS,
                 "expected_seq": 1,
                 "op": "withdraw",
+                "natural_key": None,
                 "complete_result_slots": [],
             }
         ],
@@ -876,6 +878,7 @@ def test_new_consumer_cannot_reference_a_source_withdrawn_in_same_unit(store):
                 "business_id": BUSINESS,
                 "expected_seq": 1,
                 "op": "withdraw",
+                "natural_key": None,
                 "complete_result_slots": [],
             }
         ],
@@ -1022,6 +1025,7 @@ def test_later_adoption_in_same_unit_cannot_leave_a_new_consumer_dangling(store)
                 "business_id": BUSINESS,
                 "expected_seq": 1,
                 "op": "withdraw",
+                "natural_key": None,
                 "complete_result_slots": [],
             }
         ],
@@ -1448,3 +1452,378 @@ def test_real_object_rename_recalculation_reuses_complete_formal_result(frozen, 
         current = identity.get_batch([supplier["object_id"]], context)[0]
         assert current["name"] == renamed["name"]
         assert current["seq"] == 2
+
+
+# Candidate queries deliberately use legal plans with independently specified
+# expected quantities; they do not write temporary accounting results.
+
+
+def _candidate(ledger, uow, changes, *, reverse=False, correction_period=None):
+    candidate = ledger.begin_candidate(
+        [responsibility for change in changes for responsibility in change["businesses"]],
+        uow,
+        correction_period=correction_period,
+    )
+    plans = [plan for change in changes for plan in change["plans"]]
+    for plan in reversed(plans) if reverse else plans:
+        candidate.stage(plan)
+    return candidate.complete()
+
+
+def _payment_at(
+    amount="100000",
+    *,
+    period="2026-01",
+    day="05",
+    seq=0,
+    business_id=PAYMENT,
+    movement_id=MOVEMENT,
+):
+    change = payment()
+    responsibility, plan = change["businesses"][0], change["plans"][0]
+    responsibility.update(op="replace" if seq else "create", expected_seq=seq)
+    fact = responsibility["fact"]
+    responsibility["business_id"] = fact["business_id"] = plan["business_id"] = business_id
+    fact.update(period=period, effective_on=f"{period}-{day}")
+    fact["data"]["amount_fen"] = amount
+    fact["data"]["allocations"][0]["amount_fen"] = amount
+    plan["accounting_period"] = period
+    plan["basis"].update(period=period, effective_on=fact["effective_on"])
+    plan["target"]["values"].update(amount_fen=amount, settled_fen=amount)
+    for row in plan["lines"]:
+        row["debit_fen"] = amount if row["debit_fen"] != "0" else "0"
+        row["credit_fen"] = amount if row["credit_fen"] != "0" else "0"
+    plan["settlements"][0].update(period=period, actual_on=fact["effective_on"], amount_fen=amount)
+    plan["settlements"][0]["consumer"]["business_id"] = business_id
+    plan["settlements"][0]["movement_id"] = movement_id
+    plan["settlements"][0]["settlement_id"] = str(uuid4())
+    plan["fund_movements"][0]["movement_id"] = movement_id
+    plan["fund_movements"][0].update(actual_on=fact["effective_on"], amount_fen=amount)
+    plan["fund_movements"][0]["cashflow_parts"][0]["amount_fen"] = amount
+    return change
+
+
+def test_candidate_definitions_hide_replaced_old_slots_and_require_complete_set(store):
+    ledger = create_ledger()
+    with store.write_unit(COMPANY) as uow:
+        ledger.adopt([expense()], uow)
+    replacement = expense("80000", seq=1)
+    with store.write_unit(COMPANY) as uow:
+        candidate = ledger.begin_candidate(replacement["businesses"], uow)
+        ref = {"business_id": BUSINESS, "slot": "primary"}
+        with pytest.raises(ContractError, match="尚未完成"):
+            candidate.resource_definitions([ref], "obligation")
+        with pytest.raises(ContractError, match="全部"):
+            candidate.complete()
+        candidate.stage(replacement["plans"][0])
+        definition = candidate.resource_definitions([ref], "obligation")[0]
+        assert definition.value["amount_fen"] == "80000"
+        assert definition.source == ledger.get_result_source(
+            BUSINESS, "main", uow, plan=replacement["plans"][0]
+        )
+        with pytest.raises(ContractError, match="不完整余额"):
+            candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01"))
+        candidate.complete()
+        assert (
+            candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01"))[
+                0
+            ].remaining_fen
+            == 80000
+        )
+        with pytest.raises(ContractError, match="不能继续"):
+            candidate.stage(replacement["plans"][0])
+    # Candidate evaluation alone never overwrites the formal result.
+    assert result(store)["target"]["values"]["amount_fen"] == "100000"
+
+
+def test_candidate_month_day_signed_balance_order_and_exact_sources(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    changes = [expense("80000"), _payment_at(period="2026-02", day="07")]
+    ref = {"business_id": BUSINESS, "slot": "primary"}
+    with store.write_unit(COMPANY) as uow:
+        forward = _candidate(ledger, uow, changes)
+        reverse = _candidate(ledger, uow, changes, reverse=True)
+        jan = forward.resource_states([ref], "obligation", ResourceCutoff("2026-01"))[0]
+        early = forward.resource_states(
+            [ref], "obligation", ResourceCutoff("2026-02", "2026-02-06")
+        )[0]
+        paid = forward.resource_states(
+            [ref], "obligation", ResourceCutoff("2026-02", "2026-02-07")
+        )[0]
+        assert jan.remaining_fen == early.remaining_fen == 80000
+        assert paid.money_settled_fen == 100000 and paid.remaining_fen == -20000
+        assert (
+            paid
+            == reverse.resource_states(
+                [ref], "obligation", ResourceCutoff("2026-02", "2026-02-07")
+            )[0]
+        )
+        assert len(paid.uses) == 1
+        assert paid.uses[0].source == ledger.get_result_source(
+            PAYMENT, "main", uow, plan=changes[1]["plans"][0]
+        )
+        excluded = forward.resource_states(
+            [ref], "obligation", ResourceCutoff("2026-02"), excluding_consumer=(PAYMENT, "main")
+        )[0]
+        assert excluded.remaining_fen == 80000 and not excluded.uses
+        with pytest.raises(ContractError):
+            forward.resource_definitions([{"business_id": BUSINESS, "slot": "funds"}], "funds")
+
+
+def test_candidate_replacement_and_withdrawal_remove_previous_consumption(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    with store.write_unit(COMPANY) as uow:
+        ledger.adopt([expense(), payment()], uow)
+    ref = {"business_id": BUSINESS, "slot": "primary"}
+    replacement = _payment_at("40000", seq=1)
+    withdrawn = {
+        "domain": "money",
+        "businesses": [
+            {
+                "business_id": PAYMENT,
+                "expected_seq": 1,
+                "op": "withdraw",
+                "natural_key": None,
+                "complete_result_slots": [],
+            }
+        ],
+        "plans": [],
+        "dependencies": [],
+        "issues": [],
+    }
+    with store.write_unit(COMPANY) as uow:
+        candidate = _candidate(ledger, uow, [replacement])
+        state = candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01"))[0]
+        assert state.money_settled_fen == 40000 and state.remaining_fen == 60000
+        assert len(state.uses) == 1
+        without = _candidate(ledger, uow, [withdrawn])
+        state = without.resource_states([ref], "obligation", ResourceCutoff("2026-01"))[0]
+        assert state.money_settled_fen == 0 and state.remaining_fen == 100000
+        with pytest.raises(ContractError, match="不存在"):
+            without.resource_definitions([{"business_id": PAYMENT, "slot": "funds"}], "funds")
+    assert result(store, PAYMENT)["target"]["values"]["amount_fen"] == "100000"
+
+
+def test_candidate_reclassification_uses_economic_month_not_posting_correction_month(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    with store.write_unit(COMPANY) as uow:
+        uow.repository("application").business(RECOVERY, kind="operations.overpayment")
+        ledger.adopt([expense("80000"), payment(), recovery()], uow)
+        uow.repository("ledger").freeze_heads("2026-01")
+    changed = recovery()
+    changed["businesses"][0].update(op="replace", expected_seq=1)
+    changed["plans"][0]["basis"]["adopted_quantities"] = [
+        {
+            "type": "obligation",
+            "source": {"business_id": BUSINESS, "slot": "primary"},
+            "account_code": "2202",
+            "direction": "payable",
+            "amount_fen": "80000",
+            "party_id": SUPPLIER,
+        }
+    ]
+    frozen_recovery = result(store, RECOVERY)["reference"]["result_id"]
+    with store.write_unit(COMPANY) as uow:
+        candidate = _candidate(ledger, uow, [changed], correction_period="2026-03")
+        state = candidate.resource_states(
+            [{"business_id": BUSINESS, "slot": "primary"}], "obligation", ResourceCutoff("2026-01")
+        )[0]
+        assert state.excess_reclassified_fen == 20000 and state.remaining_fen == 0
+        reclassification = next(use for use in state.uses if use.kind == "reclassification")
+        assert reclassification.source["result_id"] != frozen_recovery
+        assert {use.value.get("mode") for use in state.uses} == {None, "reclassify_excess"}
+
+
+def test_resource_definitions_read_formal_funds_without_balance_or_private_tables(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    with store.write_unit(COMPANY) as uow:
+        ledger.adopt([expense(), payment()], uow)
+    with store.read_unit(COMPANY) as context:
+        definition = ledger.resource_definitions(
+            [{"business_id": PAYMENT, "slot": "funds"}], "funds", context
+        )[0]
+        assert definition.value["movement_id"] == MOVEMENT
+        assert definition.value["amount_fen"] == "100000"
+        assert definition.value["direction"] == "outflow"
+        assert definition.source == ledger.get_result_source(PAYMENT, "main", context)
+
+
+def test_candidate_overflow_is_structured_and_invalid_adoption_rolls_back(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    second_id = "50000000-0000-4000-8000-000000000099"
+    second_movement = "90000000-0000-4000-8000-000000000099"
+    # A second independent real event; equal amounts are not duplicate identity.
+    second = _payment_at(str(MAX_FEN), business_id=second_id, movement_id=second_movement)
+    with store.write_unit(COMPANY) as uow:
+        candidate = _candidate(
+            ledger, uow, [expense(str(MAX_FEN)), _payment_at(str(MAX_FEN)), second]
+        )
+        with pytest.raises(ContractError) as error:
+            candidate.resource_states(
+                [{"business_id": BUSINESS, "slot": "primary"}],
+                "obligation",
+                ResourceCutoff("2026-01"),
+            )
+        assert error.value.code == "invalid_input" and "64" in error.value.message
+    with pytest.raises(ContractError):
+        with store.write_unit(COMPANY) as uow:
+            candidate = _candidate(ledger, uow, [expense("80000"), payment()])
+            assert (
+                candidate.resource_states(
+                    [{"business_id": BUSINESS, "slot": "primary"}],
+                    "obligation",
+                    ResourceCutoff("2026-01"),
+                )[0].remaining_fen
+                == -20000
+            )
+            ledger.adopt([expense("80000"), payment()], uow)
+    with store.read_unit(COMPANY) as context:
+        assert ledger.get_results([BUSINESS, PAYMENT], context) == ()
+
+
+def test_candidate_excludes_only_one_consumer_and_funds_scope_is_complete(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    sibling_id = "50000000-0000-4000-8000-000000000099"
+    sibling_movement = "90000000-0000-4000-8000-000000000099"
+    first = _payment_at("30000")
+    sibling = _payment_at("20000", business_id=sibling_id, movement_id=sibling_movement)
+    with store.write_unit(COMPANY) as uow:
+        candidate = _candidate(ledger, uow, [expense(), first, sibling], reverse=True)
+        state = candidate.resource_states(
+            [{"business_id": BUSINESS, "slot": "primary"}],
+            "obligation",
+            ResourceCutoff("2026-01"),
+            excluding_consumer=(PAYMENT, "main"),
+        )[0]
+        assert state.money_settled_fen == 20000 and state.remaining_fen == 80000
+        movements = candidate.fund_movements(BANK, "2026-01", "2026-01")
+        assert [item.value["movement_id"] for item in movements] == [MOVEMENT, sibling_movement]
+        assert sum(int(item.value["amount_fen"]) for item in movements) == 50000
+        assert candidate.fund_movements(BANK, "2026-02", "2026-02") == ()
+    with store.write_unit(COMPANY) as uow:
+        ledger.adopt([expense(), first], uow)
+    replacement = _payment_at("40000", period="2026-02", seq=1)
+    with store.write_unit(COMPANY) as uow:
+        candidate = _candidate(ledger, uow, [replacement])
+        assert candidate.fund_movements(BANK, "2026-01", "2026-01") == ()
+        feb = candidate.fund_movements(BANK, "2026-02", "2026-02")
+        assert len(feb) == 1 and feb[0].value["amount_fen"] == "40000"
+        ledger.adopt([replacement], uow)
+        # The complete overlay remains coherent after adopt in this same unit.
+        assert candidate.fund_movements(BANK, "2026-02", "2026-02") == feb
+    with store.read_unit(COMPANY) as context:
+        assert ledger.fund_movements(BANK, "2026-01", "2026-01", context) == ()
+        assert ledger.fund_movements(BANK, "2026-02", "2026-02", context) == feb
+
+
+def test_candidate_rejects_duplicate_actual_occurrence_and_source_future_month(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    duplicate = _payment_at("20000", business_id="50000000-0000-4000-8000-000000000099")
+    with store.write_unit(COMPANY) as uow:
+        with pytest.raises(ContractError, match="重复采用"):
+            _candidate(ledger, uow, [expense(), _payment_at("30000"), duplicate])
+    future = expense()
+    future["businesses"][0]["fact"]["period"] = "2026-02"
+    plan = future["plans"][0]
+    plan["accounting_period"] = plan["basis"]["period"] = "2026-02"
+    plan["obligations"][0]["business_period"] = "2026-02"
+    with pytest.raises(ContractError, match="不能早于来源"):
+        with store.write_unit(COMPANY) as uow:
+            ledger.adopt([future, payment()], uow)
+    with store.read_unit(COMPANY) as context:
+        assert ledger.get_results([BUSINESS, PAYMENT], context) == ()
+
+
+def test_resource_attributed_period_does_not_replace_formal_production_time(store):
+    ledger = create_ledger()
+    source = expense()
+    source["plans"][0]["obligations"][0]["business_period"] = "2025-12"
+    with store.write_unit(COMPANY) as uow:
+        ledger.adopt([source], uow)
+        candidate = ledger.begin_candidate([], uow).complete()
+        ref = {"business_id": BUSINESS, "slot": "primary"}
+        assert (
+            candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01"))[
+                0
+            ].remaining_fen
+            == 100000
+        )
+        with pytest.raises(ContractError, match="尚未成立"):
+            candidate.resource_states([ref], "obligation", ResourceCutoff("2025-12"))
+    with store.read_unit(COMPANY) as context:
+        definition = ledger.resource_definitions([ref], "obligation", context)[0]
+        assert definition.value["business_period"] == "2025-12"
+
+
+def test_known_nonmoney_day_filters_same_month_and_preserves_persisted_semantics(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    claim = recovery()
+    claim["businesses"][0]["fact"]["effective_on"] = "2026-01-20"
+    claim["plans"][0]["basis"]["effective_on"] = "2026-01-20"
+    changes = [expense("80000"), payment(), claim]
+    ref = {"business_id": BUSINESS, "slot": "primary"}
+    before = deepcopy(changes)
+    with store.write_unit(COMPANY) as uow:
+        uow.repository("application").business(RECOVERY, kind="operations.overpayment")
+        candidate = _candidate(ledger, uow, changes, reverse=True)
+        early = candidate.resource_states(
+            [ref], "obligation", ResourceCutoff("2026-01", "2026-01-10")
+        )[0]
+        late = candidate.resource_states(
+            [ref], "obligation", ResourceCutoff("2026-01", "2026-01-20")
+        )[0]
+        assert early.excess_reclassified_fen == 0 and early.remaining_fen == -20000
+        assert late.excess_reclassified_fen == 20000 and late.remaining_fen == 0
+        ledger.adopt(changes, uow)
+    assert changes == before
+    with store.write_unit(COMPANY) as uow:
+        saved = ledger.begin_candidate([], uow).complete()
+        assert (
+            saved.resource_states([ref], "obligation", ResourceCutoff("2026-01", "2026-01-10"))[0]
+            == early
+        )
+        assert (
+            saved.resource_states([ref], "obligation", ResourceCutoff("2026-01", "2026-01-20"))[0]
+            == late
+        )
+
+
+def test_month_only_nonmoney_change_needs_day_only_for_ambiguous_partial_month(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    with store.write_unit(COMPANY) as uow:
+        candidate = _candidate(ledger, uow, [expense("80000"), payment(), recovery()])
+        ref = {"business_id": BUSINESS, "slot": "primary"}
+        for cutoff in (
+            ResourceCutoff("2026-01"),
+            ResourceCutoff("2026-01", "2026-01-31"),
+            ResourceCutoff("2026-02", "2026-02-01"),
+        ):
+            assert candidate.resource_states([ref], "obligation", cutoff)[0].remaining_fen == 0
+        with pytest.raises(ContractError) as error:
+            candidate.resource_states([ref], "obligation", ResourceCutoff("2026-01", "2026-01-10"))
+        assert error.value.code == "needs_information"
+        assert error.value.fact_issues[0]["business_id"] == RECOVERY
+        assert error.value.fact_issues[0]["field"] == "/effective_on"
+        assert error.value.fact_issues[0]["allowed_precision"] == ["day"]
+
+
+def test_actual_money_cannot_precede_known_necessary_source_day(store):
+    ledger = create_ledger()
+    seed_payment(store)
+    original = expense()
+    original["businesses"][0]["fact"]["effective_on"] = "2026-01-10"
+    original["plans"][0]["basis"]["effective_on"] = "2026-01-10"
+    with pytest.raises(ContractError, match="必要实际日"):
+        with store.write_unit(COMPANY) as uow:
+            ledger.adopt([original, payment()], uow)
+    with store.read_unit(COMPANY) as context:
+        assert ledger.get_results([BUSINESS, PAYMENT], context) == ()

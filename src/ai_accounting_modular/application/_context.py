@@ -3,7 +3,7 @@
 from collections import defaultdict
 from copy import deepcopy
 
-from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot
+from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, validate_contract
 
 from ._changes import fact_digest
 
@@ -56,15 +56,52 @@ class DomainRegistry:
 
 
 class SubmissionContext:
-    def __init__(self, unit, registry, identity, ledger, records, *, objects=(), facts=None):
+    def __init__(
+        self,
+        unit,
+        registry,
+        identity,
+        ledger,
+        records,
+        *,
+        objects=(),
+        facts=None,
+        money=None,
+        evaluation_period_to,
+        previous_period_to=None,
+    ):
         self.read_context = unit
         self._registry, self._identity = registry, identity
         self._ledger, self._records = ledger, records
+        self._money = money
+        self.evaluation_period_to = evaluation_period_to
+        self.previous_period_to = previous_period_to or evaluation_period_to
         self._objects = {obj["object_id"]: obj for obj in objects}
         self._facts = dict(facts or {})
         self._plans = {}
         self._slots = {}
         self._fact_cache = {}
+        self._result_cache = {}
+        self._stored_results = {}
+        self._dependencies = ()
+        self._candidate = None
+
+    def add_description(self, description):
+        self._dependencies += tuple(description["dependencies"])
+
+    def begin_candidate(self, descriptions, correction_period):
+        self._result_cache.clear()
+        self._dependencies = tuple(
+            edge for _, description in descriptions for edge in description["dependencies"]
+        )
+        self._candidate = self._ledger.begin_candidate(
+            [business for _, description in descriptions for business in description["businesses"]],
+            self.read_context,
+            correction_period=correction_period,
+        )
+
+    def complete_candidate(self):
+        self._candidate.complete()
 
     def add_fact(self, fact):
         self._facts[fact["business_id"]] = deepcopy(fact)
@@ -73,7 +110,10 @@ class SubmissionContext:
         self._slots[responsibility["business_id"]] = set(responsibility["complete_result_slots"])
 
     def add_plan(self, plan):
-        self._plans[plan["business_id"], plan["result_slot"]] = plan
+        self._candidate.stage(plan)
+        key = plan["business_id"], plan["result_slot"]
+        self._plans[key] = plan
+        self._result_cache.pop(key, None)
 
     def get_fact(self, business_id):
         if business_id in self._facts:
@@ -91,12 +131,141 @@ class SubmissionContext:
         values = self._identity.get_batch([object_id], self.read_context)
         return values[0] if values else None
 
-    def related_facts(self, producer_id, relation_kind):
-        raise ContractError(
-            "unsupported_business", "按当前依赖及同单事实查询相关业务的能力尚未交付。"
+    def _current_facts(self, ids):
+        ids = sorted(set(ids))
+        missing = [key for key in ids if key not in self._facts and key not in self._fact_cache]
+        repo = self.read_context.repository("application")
+        for offset in range(0, len(missing), 500):
+            batch = missing[offset : offset + 500]
+            heads = repo.heads(batch)
+            loaded = {
+                fact["business_id"]: fact
+                for fact in self._registry.export_heads(list(heads.values()), self.read_context)
+            }
+            self._fact_cache.update({key: loaded.get(key) for key in batch})
+        return tuple(
+            deepcopy(value)
+            for key in ids
+            if (value := self._facts.get(key) if key in self._facts else self._fact_cache.get(key))
+            is not None
         )
 
+    @staticmethod
+    def _periods(period_from, period_to):
+        for period in (period_from, period_to):
+            if period is not None:
+                validate_contract("core.schema.json", "Month", period)
+        if period_from and period_to and period_from > period_to:
+            raise ContractError("invalid_input", "事实范围起月不能晚于末月。")
+
+    def related_facts(
+        self,
+        producer_id,
+        relation_kind,
+        *,
+        producer_kind="business",
+        period_from=None,
+        period_to=None,
+    ):
+        return self.related_facts_many(
+            (producer_id,),
+            relation_kind,
+            producer_kind=producer_kind,
+            period_from=period_from,
+            period_to=period_to,
+        )
+
+    def related_facts_many(
+        self,
+        producer_ids,
+        relation_kind,
+        *,
+        producer_kind="business",
+        period_from=None,
+        period_to=None,
+    ):
+        if len(producer_ids) > 500:
+            raise ContractError("invalid_input", "一次最多查询500个关联来源身份。")
+        for producer_id in producer_ids:
+            validate_contract("core.schema.json", "Id", producer_id)
+        producer_ids = set(producer_ids)
+        self._periods(period_from, period_to)
+        if producer_kind not in ("business", "object"):
+            raise ContractError("invalid_input", "相关事实须指明业务或对象关系。")
+        repo = self.read_context.repository("application")
+        ids = set(repo.related_ids(producer_kind, producer_ids, relation_kind)) - self._slots.keys()
+        ids.update(
+            edge["consumer_business_id"]
+            for edge in self._dependencies
+            if edge["producer_kind"] == producer_kind
+            and edge["producer_id"] in producer_ids
+            and edge["relation_kind"] == relation_kind
+            and edge["read_mode"] != "collection"
+        )
+        return tuple(
+            fact
+            for fact in self._current_facts(ids)
+            if (period_from is None or fact["period"] >= period_from)
+            and (period_to is None or fact["period"] <= period_to)
+        )
+
+    def facts_in_scope(self, kinds, period_from, period_to):
+        self._periods(period_from, period_to)
+        if not kinds or period_from is None or period_to is None:
+            raise ContractError("invalid_input", "事实集合查询须给出种类和完整月份范围。")
+        for kind in kinds:
+            validate_contract("business-facts.schema.json", "FactKind", kind)
+        heads = self.read_context.repository("application").scope_heads(
+            kinds, period_from, period_to
+        )
+        ids = {head["business_id"] for head in heads} | {
+            key
+            for key, fact in self._facts.items()
+            if fact is not None
+            and fact["kind"] in kinds
+            and period_from <= fact["period"] <= period_to
+        }
+        return tuple(
+            fact
+            for fact in self._current_facts(ids)
+            if fact["kind"] in kinds and period_from <= fact["period"] <= period_to
+        )
+
+    def resource_definitions(self, refs, kind):
+        return self._candidate.resource_definitions(refs, kind)
+
+    def resource_states(self, refs, kind, cutoff, *, excluding_consumer=None):
+        return self._candidate.resource_states(
+            refs, kind, cutoff, excluding_consumer=excluding_consumer
+        )
+
+    def fund_movements(self, account_id, period_from, period_to):
+        return self._candidate.fund_movements(account_id, period_from, period_to)
+
+    def movement_id(self, business_id, public_slot):
+        if self._money is None:
+            raise ContractError("invalid_operation", "实际资金身份模块尚未装配。")
+        return self._money.stable_occurrence_id(business_id, public_slot)
+
+    def fund_sources(self, fact, fund_movements):
+        if self._money is None:
+            raise ContractError("invalid_operation", "实际资金来源模块尚未装配。")
+        return self._money.fund_sources(fact, fund_movements, self)
+
+    def validate_occurrences(self, plans):
+        if not any(plan["fund_movements"] for plan in plans):
+            return
+        if self._money is None:
+            raise ContractError("invalid_operation", "实际资金来源模块尚未装配。")
+        self._money.validate_occurrences(plans, self)
+
     def get_result(self, business_id, result_slot):
+        key = business_id, result_slot
+        if key not in self._result_cache:
+            self._result_cache[key] = self._load_result(business_id, result_slot)
+        return deepcopy(self._result_cache[key])
+
+    def _load_result(self, business_id, result_slot):
         plan = self._plans.get((business_id, result_slot))
         if plan is not None:
             source = self._ledger.get_result_source(
@@ -107,14 +276,12 @@ class SubmissionContext:
             if result_slot not in self._slots[business_id]:
                 return None
             raise ContractError("dependency_conflict", "同单所需结果槽尚未完成，须先声明正确依赖。")
-        found = next(
-            (
-                item
+        if business_id not in self._stored_results:
+            self._stored_results[business_id] = {
+                item["reference"]["result_slot"]: item
                 for item in self._ledger.get_results([business_id], self.read_context)
-                if item["reference"]["result_slot"] == result_slot
-            ),
-            None,
-        )
+            }
+        found = self._stored_results[business_id].get(result_slot)
         if found is None:
             return None
         return EvaluatedSlot(
@@ -123,18 +290,10 @@ class SubmissionContext:
             found["basis"],
         )
 
-    def resolve(self, refs, kind):
-        if any(ref["business_id"] in self._slots for ref in refs):
-            raise ContractError(
-                "unsupported_business",
-                "同单公开资源解析尚未由账务模块交付；不能以旧余额代替本单结果。",
-            )
-        return list(self._ledger.resolve(refs, kind, self.read_context))
-
     def resolve_sources(self, ids):
         return self.require_sources(ids)
 
-    def require_sources(self, ids, *, field="/evidence_ids", business_id=None):
+    def require_sources(self, ids, *, field="/evidence_ids", business_id=None, source_paths=None):
         sources = []
         for offset in range(0, len(ids), 500):
             sources.extend(
@@ -150,7 +309,13 @@ class SubmissionContext:
                 batch = missing[offset : offset + 40]
                 issue = {
                     "code": "source_not_found",
-                    "field": f"{field}/{batch[0][0]}" if len(batch) == 1 else field,
+                    "field": (
+                        field + source_paths[batch[0][1]][0]
+                        if source_paths is not None and len(batch) == 1
+                        else f"{field}/{batch[0][0]}"
+                        if len(batch) == 1
+                        else field
+                    ),
                     "meaning": "当前事实或对象档案实际引用的来源身份",
                     "message": "这些来源尚未在本公司登记："
                     + "、".join(source_id for _, source_id in batch),

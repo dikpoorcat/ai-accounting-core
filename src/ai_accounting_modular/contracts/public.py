@@ -1,7 +1,19 @@
 """The public entry point for shared wire types and process-local contracts."""
 
-from ._contexts import EvaluatedSlot, EvaluationContext, ReadContext, UnitOfWork
+from ._allocation import cumulative_shares
+from ._contexts import (
+    EvaluatedSlot,
+    EvaluationContext,
+    ReadContext,
+    ResourceCutoff,
+    ResourceDefinition,
+    ResourceKind,
+    ResourceState,
+    ResourceUse,
+    UnitOfWork,
+)
 from ._errors import ContractError
+from ._fact_sources import fact_source_ids, fact_source_paths
 from ._scalars import (
     MAX_FEN,
     MIN_FEN,
@@ -35,14 +47,22 @@ __all__ = [
     "EvaluatedSlot",
     "EvaluationContext",
     "ReadContext",
+    "ResourceCutoff",
+    "ResourceDefinition",
+    "ResourceKind",
+    "ResourceState",
+    "ResourceUse",
     "UnitOfWork",
     "ContractError",
+    "fact_source_ids",
+    "fact_source_paths",
     "checked_fen",
     "format_fen",
     "parse_fen",
     "parse_percent",
     "parse_rate",
     "sum_fen",
+    "cumulative_shares",
     "canonical_json",
     "content_digest",
     "loads_json",

@@ -449,10 +449,62 @@ def test_missing_object_source_identifies_the_actual_object_input(assembled):
         assert read.head == 0
 
 
-def test_related_fact_port_is_a_structured_unsupported_capability(assembled):
+def test_related_fact_port_reads_an_empty_explicit_group(assembled):
     app, company_id = assembled
     with app.storage.read_unit(company_id) as read:
-        context = SubmissionContext(read, app.registry, app.identity, app.ledger, app.records)
-        with pytest.raises(ContractError) as failed:
-            context.related_facts(str(uuid4()), "calculation")
-        assert failed.value.code == "unsupported_business"
+        context = SubmissionContext(
+            read,
+            app.registry,
+            app.identity,
+            app.ledger,
+            app.records,
+            evaluation_period_to="2026-01",
+        )
+        assert context.related_facts(str(uuid4()), "calculation") == ()
+        assert context.related_facts_many((), "calculation") == ()
+        with pytest.raises(ContractError, match="500"):
+            context.related_facts_many([str(uuid4()) for _ in range(501)], "calculation")
+
+
+def test_result_input_reuses_validation_but_isolates_callers_and_read_units(assembled, monkeypatch):
+    app, company_id = assembled
+    request = initial_request(company_id)
+    business_id = request["mutations"][0]["fact"]["business_id"]
+    assert app.accounting_apply(request)["completion"] == "complete"
+    calls, load = [], app.ledger.get_results
+
+    def counted(ids, read):
+        calls.append(tuple(ids))
+        return load(ids, read)
+
+    monkeypatch.setattr(app.ledger, "get_results", counted)
+    with app.storage.read_unit(company_id) as read:
+        context = SubmissionContext(
+            read,
+            app.registry,
+            app.identity,
+            app.ledger,
+            app.records,
+            evaluation_period_to="2026-01",
+        )
+        original = context.get_result(business_id, "main")
+        copy = context.get_result(business_id, "main")
+        copy.target["values"]["amount_fen"] = "1"
+        copy.basis["input"]["amount_fen"] = "1"
+        assert context.get_result(business_id, "main") == original
+        assert context.get_result(business_id, "absent") is None
+    assert calls == [(business_id,)]
+    request["mutations"][0].update(op="replace", expected_seq=1)
+    request["mutations"][0]["fact"]["data"]["amount_fen"] = "120000"
+    assert app.accounting_apply(request)["completion"] == "complete"
+    with app.storage.read_unit(company_id) as read:
+        current = SubmissionContext(
+            read,
+            app.registry,
+            app.identity,
+            app.ledger,
+            app.records,
+            evaluation_period_to="2026-01",
+        ).get_result(business_id, "main")
+        assert current.basis["input"]["amount_fen"] == "120000"
+        assert current.source != original.source

@@ -65,7 +65,11 @@ class OperationsRepository:
             "INSERT INTO op_fact(business_id,schema_key,effective_on,main_object_id,data_json) "
             "VALUES(?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET "
             "schema_key=excluded.schema_key,effective_on=excluded.effective_on,"
-            "main_object_id=excluded.main_object_id,data_json=excluded.data_json",
+            "main_object_id=excluded.main_object_id,data_json=excluded.data_json "
+            "WHERE schema_key IS NOT excluded.schema_key "
+            "OR effective_on IS NOT excluded.effective_on "
+            "OR main_object_id IS NOT excluded.main_object_id "
+            "OR data_json IS NOT excluded.data_json",
             (
                 fact["business_id"],
                 fact["kind"],

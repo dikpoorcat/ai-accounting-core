@@ -11,6 +11,8 @@ from ai_accounting_modular.contracts.public import (
     BusinessGet,
     ContractError,
     canonical_json,
+    fact_source_ids,
+    fact_source_paths,
     schema_document,
     validate_contract,
 )
@@ -32,9 +34,10 @@ def repository_factory():
 
 
 class Application:
-    def __init__(self, storage, identity, ledger, records, domains):
+    def __init__(self, storage, identity, ledger, records, domains, money=None):
         self.storage, self.identity, self.ledger, self.records = storage, identity, ledger, records
         self.registry = DomainRegistry(domains)
+        self.money = money
 
     def accounting_apply(self, request: ApplyRequest) -> ApplyResult | dict:
         try:
@@ -125,6 +128,12 @@ class Application:
                 RecordsContext(unit, request["command_id"]),
             )
             self.records.apply_current(records_plan, unit)
+            previous_period_to = max(
+                self.storage.company_metadata(unit).start_period,
+                repo.working_period_to() or "0001-01",
+                repo.latest_period() or "0001-01",
+                self.ledger.latest_period(unit) or "0001-01",
+            )
             context = SubmissionContext(
                 unit,
                 self.registry,
@@ -133,13 +142,23 @@ class Application:
                 self.records,
                 objects=identity_plan.objects,
                 facts={change.business_id: change.fact for change in changes},
+                money=self.money,
+                evaluation_period_to=max(
+                    [
+                        previous_period_to,
+                        *(change.fact["period"] for change in changes if change.fact),
+                    ]
+                ),
+                previous_period_to=previous_period_to,
             )
             for index, change in enumerate(changes):
                 if change.fact:
+                    paths = fact_source_paths(mutations[index]["fact"])
                     context.require_sources(
-                        mutations[index]["fact"]["evidence_ids"],
+                        tuple(paths),
                         business_id=change.business_id,
-                        field=f"/mutations/{index}/fact/evidence_ids",
+                        field=f"/mutations/{index}/fact",
+                        source_paths=paths,
                     )
             for index, obj in enumerate(request.get("objects", ())):
                 context.require_sources(
@@ -149,14 +168,54 @@ class Application:
                 changes, identity_plan.changed_ids, context, self.registry
             )
             plans = evaluate(descriptions, context, self.ledger, request.get("correction_period"))
+            natural_keys = {
+                responsibility["business_id"]: responsibility["natural_key"]
+                for _, plan in plans
+                for responsibility in plan["businesses"]
+            }
+            responsibilities = {
+                item["business_id"]: item for _, plan in plans for item in plan["businesses"]
+            }
+            prior_heads = repo.heads(responsibilities)
+            proposed = [
+                (
+                    key,
+                    item["fact"]["kind"] if "fact" in item else prior_heads[key]["kind"],
+                    natural_keys[key] if "fact" in item else None,
+                )
+                for key, item in responsibilities.items()
+            ]
+            repo.validate_natural_keys(proposed)
+            changed_keys = {
+                key: value
+                for key, _, value in proposed
+                if key not in prior_heads or prior_heads[key]["natural_key"] != value
+            }
+            repo.clear_natural_keys(list(changed_keys))
             for change in changes:
                 if change.changed:
-                    repo.save(change.head(request["command_id"]))
+                    repo.save(
+                        change.head(
+                            request["command_id"], natural_key=natural_keys[change.business_id]
+                        )
+                    )
+            direct_changes = {change.business_id for change in changes if change.changed}
+            for business_id, key in changed_keys.items():
+                if business_id not in direct_changes:
+                    repo.update_natural_key(business_id, key)
+            repo.advance_working_period(
+                context.evaluation_period_to, self.storage.company_metadata(unit).start_period
+            )
             self.identity.apply_current(identity_plan, unit)
             for object_id, ids in identity_plan.source_uses.items():
                 self.records.replace_source_uses("object", object_id, ids, unit)
             for owner, plan in plans:
                 owner.apply_current(plan, unit)
+            posting_plans = [posting for _, plan in plans for posting in plan["plans"]]
+            if any(posting["fund_movements"] for posting in posting_plans):
+                if self.money is None:
+                    raise ContractError("invalid_operation", "实际资金身份模块尚未装配。")
+                self.money.register_occurrences(posting_plans, unit)
             adoption = self.ledger.adopt(
                 [plan for _, plan in plans],
                 unit,
@@ -173,13 +232,20 @@ class Application:
                     self.records.replace_source_uses(
                         "business",
                         change.business_id,
-                        change.fact["evidence_ids"] if change.fact else (),
+                        fact_source_ids(change.fact) if change.fact else (),
                         unit,
                     )
             keys = set()
+            if context.evaluation_period_to > previous_period_to:
+                keys.add("company")
             for change in changes:
                 if change.changed:
-                    for head in (change.before, change.head(request["command_id"])):
+                    for head in (
+                        change.before,
+                        change.head(
+                            request["command_id"], natural_key=natural_keys[change.business_id]
+                        ),
+                    ):
                         if head and head["period"]:
                             keys.add(f"facts:{head['family']}:{head['period']}")
             if identity_plan.changed_ids:
@@ -201,7 +267,12 @@ class Application:
                     head["period"]
                     for change in changes
                     if change.changed
-                    for head in (change.before, change.head(request["command_id"]))
+                    for head in (
+                        change.before,
+                        change.head(
+                            request["command_id"], natural_key=natural_keys[change.business_id]
+                        ),
+                    )
                     if head and head["period"]
                 }
                 | {ref["posting_period"] for ref in adoption.results}
@@ -210,7 +281,7 @@ class Application:
                 {key: obj[key] for key in ("object_id", "seq", "content_digest")}
                 for obj in identity_plan.objects
             ]
-            changed = bool(keys)
+            changed = bool(keys or changed_keys or adoption.changed)
             result.update(
                 changes="committed" if changed else "none",
                 accounting="saved" if adoption.changed else "unchanged",
@@ -249,7 +320,7 @@ class Application:
             sources = {}
             if "sources" in query["include"]:
                 source_ids = sorted(
-                    {source_id for fact in facts.values() for source_id in fact["evidence_ids"]}
+                    {source_id for fact in facts.values() for source_id in fact_source_ids(fact)}
                 )
                 for offset in range(0, len(source_ids), 500):
                     sources.update(
@@ -282,7 +353,7 @@ class Application:
                     item["fact"] = fact
                 if "sources" in query["include"]:
                     item["sources"] = (
-                        [sources[source_id] for source_id in fact["evidence_ids"]] if fact else []
+                        [sources[source_id] for source_id in fact_source_ids(fact)] if fact else []
                     )
                 businesses.append(item)
             return validate_contract(
@@ -307,5 +378,5 @@ class Application:
             return self.records.document_status(read)
 
 
-def create_application(*, storage, identity, ledger, records, domains):
-    return Application(storage, identity, ledger, records, domains)
+def create_application(*, storage, identity, ledger, records, domains, money=None):
+    return Application(storage, identity, ledger, records, domains, money)

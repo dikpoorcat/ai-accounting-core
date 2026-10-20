@@ -39,9 +39,11 @@
 
 `storage.public` 提供新合成目录和公司库、单公司读写事务、维护事务、结构核验与数据库一致副本。维护文档、读取模型和文件任务不改变业务版本；已有目标不覆盖，创建中断可明确接续。
 
-`ledger.public` 提供正式计划采用、凭证和义务读取、完整槽替换、保号更正、必要冻结基线和来源引用。正式状态变化与借贷变化分别处理。公共关账、完整期初、三表、其他资源查询及大规模性能尚需后续接通，不把合成计划测试当成全部业务已经实现。
+`ledger.public` 提供完整候选资源、正式计划采用、凭证和义务读取、完整槽替换、保号更正、必要冻结基线和来源引用。资源采用同时区分正式产生期、关联期及必要实际日。正式状态变化与借贷变化分别处理。公共关账、完整期初、三表和大规模性能尚需接通，不把合成计划测试当成全部业务已经实现。
 
-`identity.public` 保存并检索当前对象档案；`records.public` 保存来源、当前说明和未解事项，并增量发布最终标准文档。`application.public` 已通过真实费用链接通对象、来源、经营核算、正式账务与标准文档，支持保号更正、撤去恢复、防重和文件失败接续。当前经营支持费用、押金、代收代付责任、垫付转债、部分同月显式税点收入和预收预付；完整累计退款、实际资金、薪酬、资产、税费和投资仍按完整设计继续接通，不以当前子集替代交付目标。
+`identity.public` 保存并检索当前对象档案；`records.public` 保存来源、当前说明和未解事项，并增量发布最终标准文档。`application.public` 以一次原子办理接通各 owner，支持保号更正、撤去恢复、防重、连带重算、自然唯一性和文件失败接续；当前工作月份及最终文档随有效内容一起维护。
+
+经营模块已接通费用、押金、代收代付及返还、垫付转债、预收预付、履约和退款、费用退回、多付转追偿及其他实际收入。薪酬模块支持人员在册、缴费政策和实际缴费、工资、奖金及劳务。资产模块支持项目成本、完工转资产、直接或垫付批量取得、启用、折旧摊销及处置。资金模块承接各领域真实收付身份、付款、划转、抵销、托管和工资组合代发，以及银行/平台原行和完整银行核对。这些能力已通过真实模块组合验证，具体支持条件依业务规则和实际返回；完整税点推导、跨期税务计算、融资及投资仍需继续实现。
 
 应用入口的说明/待办办理、精确历史读取、跨类型交接以及网页和 MCP/CLI 装配尚未完成。读取目标和后台生成未装配时，SDK 不报告已经更新看板。当前运行验证使用新建合成公司。
 
@@ -52,7 +54,7 @@
 & '.tmp-kernel-venv/Scripts/python.exe' tools/generate_modular_storage.py --check
 & '.tmp-kernel-venv/Scripts/python.exe' tools/check_modular_boundaries.py
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/contracts tests/modular/storage tests/modular/ledger tests/modular/architecture
-& '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/identity tests/modular/domains/operations tests/modular/records tests/modular/application
+& '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/identity tests/modular/domains tests/modular/money tests/modular/records tests/modular/application
 ```
 
 ## 开发前如何核对

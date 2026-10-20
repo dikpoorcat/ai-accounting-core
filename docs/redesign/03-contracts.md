@@ -32,7 +32,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `command_id` | 本次请求 UUID，用于当前接续和诊断，不建立永久命令流水。 |
 | `mutations` | 0–500 项。每项是 create/replace/withdraw/restore 之一；同单一个 business_id 只能出现一次。仅保存对象、来源或当前待办时可为空，但整单不能无任何内容。 |
 | `objects` | 可选，最多 500 个本单需要新建/更新的对象。逐个比较对象当前序号，与业务同事务保存。 |
-| `sources` | 可选，本单采用的来源描述。文件须已在指定公司目录，内容摘要须实际匹配；来源 UUID 可跨业务复用。 |
+| `sources` | 可选，最多500项本单采用的来源描述。文件须已在指定公司目录，内容摘要须实际匹配；来源 UUID 可跨业务复用。 |
 | `notes` | 可选，公司现实说明或月份经营说明的当前正确正文，含 scope、expected_seq、text、evidence_ids；月份说明还须 expected_basis_head 与 AI 实际读到的依据一致，程序比较后绑定该 head，替换不留开放旧版。 |
 | `unresolved` | 可选，当前未解事项的完整替换集合；出现时必须同时给 unresolved_scope 和 expected_scope_head，按该范围当前头比较。省略不改，显式空数组清空该范围；不追加过去的问答。 |
 | `correction_period` | 本单确需更正闭期时必填，为开放月份，不早于受影响闭期；普通开放期更新不填。 |
@@ -115,9 +115,9 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | 提供者 | 固定能力 | 合同含义 |
 | --- | --- | --- |
 | identity.public | `plan_change(objects, context)`、`apply_current(plan, uow)`、`get_batch(ids, read_context)`、`find(query, read_context)` | 唯一维护对象及当前序号；批量返回 CurrentObject，不暴露私表。 |
-| domain.public | `describe_change(changes, context)`、`evaluate_slot(business_id, result_slot, context)`、`apply_current(plan, uow)`、`export_current(ids, read_context)`、`query_current(query, read_context)` | describe 返回 ChangeDescription，声明责任、完整槽集合、依赖和字段问题，不抢先计算正式结果。应用按槽拓扑调用 evaluate_slot 得 PostingPlan，末尾合成 ChangePlan 交 owner 保存。无自行提交、后台发任务或跨模块私表读取。 |
-| ledger.public | `adopt(change_plans, uow, correction_period=None)`、`resolve(refs, kind, read_context)`、`query_results/get_results/query_vouchers/query_obligations/query_settlements/query_fund_movements/query_tax_sales/query_report_contributions(query, read_context)`、`financial_snapshot(scope, read_context)` | 采用完整 ChangePlan 集合，事实序号和完整槽责任沿已有 businesses 传入，不让 ledger 跨读应用私表推测。统一核验债权债务和消耗约束、完整分页/聚合、正式资金/税务分类及三表口径。kind 明确 result/obligation/cost/funds，result 返回 ResultView 的完整正式 Target、必要 Basis 及 ResultRef；view 明确 current 或指定月末 as_posted，不可混用。 |
-| money.public | 同领域 describe/evaluate/apply/export/query 协议；`query_accounts/query_movements/query_statement_rows/reconciliation(query, read_context)` | 真实资金与对账结果，内部划转单独标记；银行原行不自动变成第二次付款。 |
+| domain.public | `describe_change(changes, context)`、`evaluate_slot(business_id, result_slot, context)`、`validate_candidate(plan, context)`、`apply_current(plan, uow)`、`export_current(ids, read_context)`、`query_current(query, read_context)` | describe 返回 ChangeDescription，声明责任、自然唯一键、完整槽集合、依赖和字段问题，不抢先计算正式结果。应用按槽拓扑求值，收齐完整候选后调用 validate_candidate 核验集合约束，再把 ChangePlan 交 owner 保存。最终核验不能改写计划、金额或采用依据。无自行提交、后台发任务或跨模块私表读取。 |
+| ledger.public | `begin_candidate(responsibilities, uow, correction_period=None)`、`resource_definitions(refs, kind, read_context)`、`fund_movements(account_id, period_from, period_to, read_context)`、`adopt(change_plans, uow, correction_period=None)`、正式结果和凭证等查询、`financial_snapshot(scope, read_context)` | 候选逐槽 stage，全部齐备后 complete。求值可读来源资源定义；完整后才能读资源余额及完整资金范围。ResourceDefinition 含公开身份、完整定义及精确采用来源；ResourceState 加入截至指定月份/必要实际日的清偿、转移、消耗及剩余量。采用和事务提交再次统一检查容量；正式读取明确 current 或指定月末 as_posted。完整查询与财务取数按各自合同返回。 |
+| money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。内部划转单独标记；银行原行不自动变成第二次付款。 |
 | ledger.opening / ledger.reporting | 同领域 describe/evaluate/apply/export/query 协议 | 分别承接 opening.package、reports.continuation 的事实写入和导出；共享 ledger 采用端口，不由 application 越界代写。 |
 | records.public | `plan_change(input, context)`、`apply_current(plan, uow)`、`resolve_sources(ids, read_context)`、`lease_source(source_id, read_context)`、`current_notes/current_issues(scope, read_context)`、`publish_documents(scopes, head)` | 唯一维护来源、说明和待办；lease_source返回受控读取租约，可流式校验/复制已登记原字节或有效说明，不让调用者解析私有路径、任意开文件或改内容。 |
 | storage.public | `read_unit(company_id)`、`write_unit(company_id)`、`maintenance_unit(company_id)`、`list_companies`、`company_metadata(read_context)`、目录/公司新建、结构验证及数据库一致快照/副本恢复 | 工作单元和一致点，不开放跨公司任意 SQL。模块仓储只接触自己的表；数据库副本操作不承接完整备份包和文档集合的编排。 |
@@ -137,6 +137,14 @@ reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过 
 代理代收代付采用严格 AgencyProof：只有合作 collection/payment 的正式 Target/Basis 产生，包含业务身份、agency 槽、原交易 source、方向、交易方、经营者、公司金额及期间，可选真实日。应用层按同一读快照或同单计划解析并传入 ledger；不保存第二份可编辑证明表。settlement.method=agency 须 agency_business_id/agency_public_slot，禁止 movement_id；金额合计必须等于有效证明，交易方、方向和原义务容量均须匹配。不产生公司资金发生或现金流。method=money 须真实 movement_id；offset 不伪造资金；转移及超付归类由独立 ObligationReclassification 承接。
 
 同现实事件误分类，仅按业务规则明示的跨 kind 转换办理 replace。首交 expense 与 direct acquisition 都仅 main：旧 owner 的内部 handoff_out 责任 complete_result_slots=[]、不带 fact、不生成计划，只清其私有当前正文，不改主头、当前来源或正式 main；新 owner 的 replace 责任给完整新 Fact 与 main，唯一生成新正式结果。应用层核对一出一入、相同身份/前提和允许转换，完整校验后在一个 UoW 交接，business_id 不变且 seq 只加一次，原凭证号保留。activation 是独立业务，其折旧等按正常依赖同单处理，不因此引入通用跨种类迁移框架。公开资源不兼容则 dependency_conflict；不能任意互换种类，也不能撤去再建绕过冻结引用。handoff_out 不属于 AI Mutation。
+
+每份业务责任必须声明 `natural_key`：确有自然唯一性时填写稳定键，否则为 null。应用统一检查最终责任集合，包含被连带重算的业务；同单互换唯一键合法，未参与的业务不能被挤掉。不得以姓名、数组顺序或资料行位置猜键。
+
+EvaluationContext 提供当前事实、对象和已求值结果，以及显式关系集合 `related_facts/related_facts_many`、指定 kind/月范围 `facts_in_scope`。集合读取叠加本单新建、更正和撤去，不扫描私有 JSON 猜关系。依赖的 fact 边采用事实，result 边才参与求值拓扑；collection 边订阅集合增删，scope 订阅指定业务种类及月份，calendar/work 订阅已进入的工作月份。重复依赖按同一身份合并通知范围，不改变业务本身的核算范围。
+
+ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时填写。义务和成本的 business_period 可以是税款、工资或原成本的关联期；是否已经成立取生产结果的核算期。资金按真实发生日截取，非资金按正式采用的必要实际日截取。只有月份的记录不补日；同月月中确实无法判断的关系才返回精确缺项，按月或月末核验不因此普遍追问日期。
+
+同一计算快照批量读取并复用已验证结果，返回值与调用者相互隔离；候选增加计划时更新相应索引，缓存不能跨提交沿用。公开读取单页500不限制合法事实产生的分录或证明数量；内部输出不能另加较小上限，迫使业务缩减或拆断原子关系。
 
 `ChangeSet` 是本次变化的业务类别、对象、期间、结果槽集合，不保存过去的事实正文。应用层按读取依赖表更新当前目标 head。它不是永久事件流，也不是由领域直接列出页面缓存键。
 
@@ -165,7 +173,7 @@ source_id 对应固定内容，字节或有效说明变更必须新建来源，�
 
 事实分片保存一个领域和事实所属月的当前有效业务；跨期合同按生效首月归档，后续业务通过稳定业务引用关联，不反复复制合同正文。公司身份在清单，objects/sources/work/notes 为固定分片；政策/期初仍按各自事实家族归月，不另造隐式格式。一个业务只归一个分片，移月时从旧片移除并加入新片。
 
-`current.json` 指向当前完整分片集合，含 format、company_identity、set_id、各分片相对路径/字节数/摘要。StandardPart 明确五种分片：FactShard、ObjectShard、SourceShard、WorkShard、NotesShard。事实片只含格式版本、归属、最终 Fact 数组及必要来源/对象引用，不含数据库连接、result_id、旧序号、冲正动作、请求日志或旧凭证编号。
+`current.json` 指向当前完整分片集合，含 format、company_identity、set_id、各分片相对路径/字节数/摘要。company_identity 的 working_period_to 保存已进入的工作月份，撤去该月唯一业务也不倒退；简化重建据此补齐资产等期间结果。缺省时取接账月与全部最终事实末月的较晚者，不采用电脑当前月。StandardPart 明确五种分片：FactShard、ObjectShard、SourceShard、WorkShard、NotesShard。事实片只含格式版本、归属、最终 Fact 数组及必要来源/对象引用，不含数据库连接、result_id、旧序号、冲正动作、请求日志或旧凭证编号。
 
 程序生成所有受影响片到临时文件，核对当前目标未变后，以一次持久原子替换发布 current.json；未变的分片复用。清单切换后删掉不再被当前清单引用的片和临时文件，不保留历次清单。读取/备份持有集合锁直到引用文件读完，清理不能删除正在使用的当前集合。发布中断时按当前清单读取完整旧集合，按数据库当前目标重生成完整新集合；不能读到一半新一半旧。
 

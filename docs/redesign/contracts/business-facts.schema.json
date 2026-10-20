@@ -360,6 +360,15 @@
         },
         "counterparty_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -1550,6 +1559,15 @@
         },
         "funds_account_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -1633,6 +1651,15 @@
         },
         "funds_account_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -5703,6 +5730,15 @@
         },
         "counterparty_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       }
     },
@@ -6585,6 +6621,15 @@
         },
         "funds_account_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       }
     },
@@ -6639,6 +6684,15 @@
         },
         "funds_account_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       }
     },
@@ -13219,6 +13273,15 @@
         },
         {
           "$ref": "#/$defs/AdoptedBalanceQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedEmploymentQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedContributionActualQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedCumulativeRangeQuantity"
         }
       ]
     },
@@ -13690,6 +13753,15 @@
         },
         "counterparty_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -14873,6 +14945,15 @@
         },
         "funds_account_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -14956,6 +15037,15 @@
         },
         "funds_account_id": {
           "$ref": "core.schema.json#/$defs/Id"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -16801,32 +16891,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -16864,32 +16950,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -16927,32 +17009,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -16990,32 +17068,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17053,32 +17127,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17116,32 +17186,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17179,32 +17245,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17242,32 +17304,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17305,32 +17363,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17368,32 +17422,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17431,32 +17481,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17494,32 +17540,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17557,32 +17599,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17620,32 +17658,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17683,32 +17717,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17746,32 +17776,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17809,32 +17835,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17872,32 +17894,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17935,32 +17953,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -17998,32 +18012,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18061,32 +18071,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18124,32 +18130,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18187,32 +18189,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18250,32 +18248,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18313,32 +18307,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18376,32 +18366,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18439,32 +18425,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18502,32 +18484,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18565,32 +18543,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18628,32 +18602,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18691,32 +18661,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18754,32 +18720,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18817,32 +18779,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18880,32 +18838,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -18943,32 +18897,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19006,32 +18956,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19069,32 +19015,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19132,32 +19074,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19195,32 +19133,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19258,32 +19192,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19321,32 +19251,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19384,32 +19310,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19447,32 +19369,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19510,32 +19428,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19573,32 +19487,28 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedQuantity"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AdoptedPolicy"
           },
-          "minItems": 0,
-          "maxItems": 100
+          "minItems": 0
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19630,8 +19540,7 @@
           "items": {
             "$ref": "#/$defs/ResultSourceRef"
           },
-          "minItems": 1,
-          "maxItems": 10000
+          "minItems": 1
         },
         "adopted_cards": {
           "type": "array",
@@ -19646,8 +19555,7 @@
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19685,8 +19593,7 @@
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -19917,8 +19824,7 @@
           "items": {
             "$ref": "#/$defs/CalculationRuleRef"
           },
-          "minItems": 1,
-          "maxItems": 100
+          "minItems": 1
         },
         "target": {
           "$ref": "#/$defs/ResultTarget"
@@ -19931,80 +19837,70 @@
           "items": {
             "$ref": "core.schema.json#/$defs/Line"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "obligations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/Obligation"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "settlements": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/Settlement"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "obligation_reclassifications": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/ObligationReclassification"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "cost_lots": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/CostLot"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "cost_consumptions": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/CostConsumption"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "fund_movements": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/FundMovement"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "agency_proofs": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/AgencyProof"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "tax_sales": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/TaxSale"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "report_contributions": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/ReportContribution"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         }
       },
       "required": [
@@ -20118,13 +20014,27 @@
           "minItems": 0,
           "maxItems": 10000,
           "uniqueItems": true
+        },
+        "natural_key": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "由业务所属模块生成的自然唯一键；没有自然唯一性的业务明确为null。"
         }
       },
       "required": [
         "business_id",
         "expected_seq",
         "op",
-        "complete_result_slots"
+        "complete_result_slots",
+        "natural_key"
       ],
       "allOf": [
         {
@@ -20190,11 +20100,15 @@
           "type": "string",
           "enum": [
             "business",
-            "object"
+            "object",
+            "scope",
+            "calendar"
           ]
         },
         "producer_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         },
         "producer_public_slot": {
           "$ref": "core.schema.json#/$defs/Slot"
@@ -20203,7 +20117,8 @@
           "type": "string",
           "enum": [
             "fact",
-            "result"
+            "result",
+            "collection"
           ]
         },
         "relation_kind": {
@@ -20248,10 +20163,81 @@
           "then": {
             "properties": {
               "read_mode": {
-                "const": "fact"
+                "enum": [
+                  "fact",
+                  "collection"
+                ]
               },
               "relation_kind": {
                 "const": "identity"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "producer_kind": {
+                "const": "scope"
+              }
+            },
+            "required": [
+              "producer_kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "producer_id": {
+                "$ref": "#/$defs/FactKind"
+              },
+              "producer_public_slot": {
+                "const": "main"
+              },
+              "read_mode": {
+                "const": "collection"
+              }
+            },
+            "required": [
+              "period_from",
+              "period_to"
+            ]
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "producer_kind": {
+                  "const": "calendar"
+                }
+              },
+              "required": [
+                "producer_kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "producer_id": {
+                  "const": "work"
+                },
+                "producer_public_slot": {
+                  "const": "main"
+                },
+                "read_mode": {
+                  "const": "collection"
+                },
+                "relation_kind": {
+                  "const": "calculation"
+                }
+              },
+              "required": [
+                "period_from",
+                "period_to"
+              ]
+            },
+            "else": {
+              "properties": {
+                "producer_id": {
+                  "$ref": "core.schema.json#/$defs/Id"
+                }
               }
             }
           }
@@ -20281,32 +20267,28 @@
           "items": {
             "$ref": "#/$defs/BusinessChangeResponsibility"
           },
-          "minItems": 1,
-          "maxItems": 500
+          "minItems": 1
         },
         "plans": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/PostingPlan"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "dependencies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/Dependency"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "issues": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/FactIssue"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -20340,24 +20322,21 @@
           "items": {
             "$ref": "#/$defs/BusinessChangeResponsibility"
           },
-          "minItems": 1,
-          "maxItems": 500
+          "minItems": 1
         },
         "dependencies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/Dependency"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "issues": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/FactIssue"
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "minItems": 0
         }
       },
       "required": [
@@ -20517,6 +20496,15 @@
         },
         "actual_on": {
           "$ref": "core.schema.json#/$defs/Date"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -20549,6 +20537,15 @@
         },
         "actual_on": {
           "$ref": "core.schema.json#/$defs/Date"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": []
@@ -21084,6 +21081,15 @@
         },
         "actual_on": {
           "$ref": "core.schema.json#/$defs/Date"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [
@@ -21169,6 +21175,15 @@
         },
         "actual_on": {
           "$ref": "core.schema.json#/$defs/Date"
+        },
+        "platform_row_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true
         }
       },
       "required": [],
@@ -22328,8 +22343,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22346,24 +22360,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22401,8 +22412,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22419,24 +22429,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22474,8 +22481,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22492,24 +22498,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22547,8 +22550,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22565,24 +22567,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22620,8 +22619,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22638,24 +22636,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22693,8 +22688,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22711,24 +22705,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22766,8 +22757,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22784,24 +22774,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22839,8 +22826,7 @@
           "items": {
             "$ref": "#/$defs/CooperationResultSourceRef"
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "adopted_quantities": {
           "type": "array",
@@ -22857,24 +22843,21 @@
               }
             ]
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "policies": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/CooperationAdoptedCooperationPolicy"
           },
-          "minItems": 1,
-          "maxItems": 1
+          "minItems": 1
         },
         "source_locations": {
           "type": "array",
           "items": {
             "$ref": "core.schema.json#/$defs/SourceLocator"
           },
-          "minItems": 1,
-          "maxItems": 1000
+          "minItems": 1
         }
       },
       "required": [
@@ -22972,6 +22955,127 @@
         }
       ],
       "description": "双方均承担正份额；严格大于0且小于1，等值的0.0或1.0同样拒绝。"
+    },
+    "FactKind": {
+      "type": "string",
+      "enum": [
+        "assets.acquisition",
+        "assets.activation",
+        "assets.disposal",
+        "assets.project_cost",
+        "assets.project_release",
+        "financing.interest_period",
+        "financing.loan_contract",
+        "financing.loan_drawdown",
+        "financing.owner_funding",
+        "investment.cooperation_collection",
+        "investment.cooperation_contract",
+        "investment.cooperation_distribution",
+        "investment.cooperation_exit",
+        "investment.cooperation_funding",
+        "investment.cooperation_operator_transfer",
+        "investment.cooperation_payment",
+        "investment.money_fund_purchase",
+        "investment.money_fund_redemption",
+        "money.bank_statement",
+        "money.movement",
+        "money.platform_activity",
+        "money.reconciliation",
+        "money.reserve_internal",
+        "money.transfer",
+        "opening.package",
+        "operations.advance",
+        "operations.advance_fulfillment",
+        "operations.advance_refund",
+        "operations.deposit",
+        "operations.expense",
+        "operations.expense_recovery",
+        "operations.other_income",
+        "operations.overpayment",
+        "operations.pass_through",
+        "operations.pass_through_return",
+        "operations.reimbursement",
+        "operations.sale_return",
+        "operations.service_sale",
+        "people.contribution_actual",
+        "people.contribution_policy",
+        "people.employment",
+        "people.remuneration",
+        "reports.continuation",
+        "taxes.actual_declaration",
+        "taxes.assessment",
+        "taxes.income_tax_policy",
+        "taxes.prepayment_basis",
+        "taxes.surtax_policy",
+        "taxes.tax_credit",
+        "taxes.tax_point",
+        "taxes.used_asset_vat_policy",
+        "taxes.vat_policy"
+      ]
+    },
+    "AdoptedEmploymentQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "employment"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "parameters": {
+          "$ref": "#/$defs/PeopleEmployment"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "parameters"
+      ]
+    },
+    "AdoptedContributionActualQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "contribution_actual"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "parameters": {
+          "$ref": "#/$defs/PeopleContributionActual"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "parameters"
+      ]
+    },
+    "AdoptedCumulativeRangeQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cumulative_range"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "from_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "to_fen": {
+          "$ref": "core.schema.json#/$defs/PositiveFen"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "from_fen",
+        "to_fen"
+      ]
     }
   }
 }

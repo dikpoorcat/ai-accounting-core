@@ -15,17 +15,19 @@ from ._common import (
     reject,
     sum_amounts,
 )
+from ._cumulative import Position, adopt_position, inherit_cashflow
 
 
 def _resource(context, ref):
-    items = context.resolve([ref], "obligation")
+    items = context.resource_definitions([ref], "obligation")
     if len(items) != 1:
         reject("当前公开债权债务不存在。")
     return items[0]
 
 
-def _adopt_obligation(plan, view):
-    ob = view["obligation"]
+def _adopt_obligation(plan, definition):
+    ob = definition.value
+    adopt_source(plan, definition)
     quantity = {
         "type": "obligation",
         "source": {"business_id": ob["business_id"], "slot": ob["slot"]},
@@ -38,7 +40,7 @@ def _adopt_obligation(plan, view):
     plan["basis"]["adopted_quantities"].append(quantity)
 
 
-def _transfer(plan, source, target, total):
+def _transfer(plan, source, target, total, *, mode="transfer"):
     plan["obligation_reclassifications"].append(
         {
             "relation_id": str(
@@ -58,7 +60,7 @@ def _transfer(plan, source, target, total):
             "source": source,
             "target": target,
             "amount_fen": format_fen(total),
-            "mode": "transfer",
+            "mode": mode,
         }
     )
 
@@ -141,8 +143,8 @@ def reimbursement(fact, context):
     parts = []
     for index, allocation in enumerate(allocations):
         ref = allocation["source"]
-        view = _resource(context, ref)
-        ob = view["obligation"]
+        definition = _resource(context, ref)
+        ob = definition.value
         if ob["direction"] != "payable" or "money" not in ob["allowed_settlements"]:
             reject("个人垫付只承接允许实际付款的公司原应付。")
         if "recipient_id" not in allocation:
@@ -160,9 +162,9 @@ def reimbursement(fact, context):
             )
         if allocation["recipient_id"] != ob.get("party_id"):
             reject("原债实际收款人必须与原债权人一致。")
-        source = referenced_result(fact, context, ref)
-        adopt_source(plan, source)
-        _adopt_obligation(plan, view)
+        if ob["business_period"] > fact["period"]:
+            reject("转债月份不能早于原公司债务成立月。")
+        _adopt_obligation(plan, definition)
         allocated = amount(allocation)
         line(
             plan,
@@ -197,4 +199,81 @@ def reimbursement(fact, context):
             {"category": category, "amount_fen": format_fen(value)}
             for category, value in sorted(grouped.items())
         ]
+    return plan
+
+
+def pass_through_return(fact, context):
+    data, total = fact["data"], amount(fact["data"])
+    source_id = data["pass_through_id"]
+    original = referenced_result(fact, context, {"business_id": source_id, "slot": "main"})
+    if original.target["kind"] != "operations.pass_through":
+        reject("代收退款必须引用原代收代付业务。")
+    collection = _resource(context, {"business_id": source_id, "slot": "collection"})
+    remittance = _resource(context, {"business_id": source_id, "slot": "remittance"})
+    plan = base_plan(
+        fact,
+        context,
+        {"amount_fen": data["amount_fen"], "treatment": "pass_through_return"},
+        adopt_effective_on="effective_on" in fact,
+    )
+    _adopt_obligation(plan, collection)
+    _adopt_obligation(plan, remittance)
+    payer, beneficiary = collection.value["party_id"], remittance.value["party_id"]
+    line(plan, "224105", debit=total, party=beneficiary, summary="转出未转付责任")
+    line(plan, "224105", credit=total, party=payer, summary="确认对原付款人的退款责任")
+    obligation(plan, "refund", payer, "payable", total, "224105", category="pass_through")
+    _transfer(
+        plan, remittance.reference, {"business_id": fact["business_id"], "slot": "refund"}, total
+    )
+    return plan
+
+
+def overpayment(fact, context):
+    data, total = fact["data"], amount(fact["data"])
+    original = _resource(context, data["source"])
+    ob = original.value
+    if (
+        ob["direction"] != "payable"
+        or ob.get("party_id") != data["counterparty_id"]
+        or ob["business_period"] > fact["period"]
+    ):
+        reject("超付追收必须引用不晚于本月成立、属于同一交易方的原应付。")
+    plan = base_plan(
+        fact,
+        context,
+        {"amount_fen": data["amount_fen"], "treatment": "overpayment_recovery"},
+        adopt_effective_on="effective_on" in fact,
+    )
+    _adopt_obligation(plan, original)
+    line(plan, "1221", debit=total, party=data["counterparty_id"], summary="确认实际超付追收")
+    line(
+        plan,
+        ob["account_code"],
+        credit=total,
+        party=data["counterparty_id"],
+        summary="重分类原债超付",
+    )
+    obligation(
+        plan,
+        "recovery",
+        data["counterparty_id"],
+        "receivable",
+        total,
+        "1221",
+        category="other",
+        cashflow=None,
+    )
+    if ob.get("cashflow_parts"):
+        original_amount = amount(ob)
+        end = sum_amounts((original_amount, total))
+        span = Position(original_amount, end, end)
+        inherit_cashflow(ob, plan["obligations"][0], span)
+        adopt_position(plan, data["source"], span)
+    _transfer(
+        plan,
+        data["source"],
+        {"business_id": fact["business_id"], "slot": "recovery"},
+        total,
+        mode="reclassify_excess",
+    )
     return plan

@@ -4,7 +4,12 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    EvaluatedSlot,
+    ResourceDefinition,
+    validate_contract,
+)
 from ai_accounting_modular.domains.operations.public import create_operations, repository_factory
 from ai_accounting_modular.ledger.public import create_ledger
 from ai_accounting_modular.ledger.public import repository_factory as ledger_factory
@@ -82,6 +87,7 @@ class Context:
     def __init__(self, unit, *facts):
         self.read_context = unit
         self.facts = {f["business_id"]: f for f in facts}
+        self.candidate = None
 
     def get_fact(self, business_id):
         return self.facts.get(business_id)
@@ -107,8 +113,18 @@ class Context:
             found["basis"],
         )
 
-    def resolve(self, refs, kind):
-        return create_ledger().resolve(refs, kind, self.read_context)
+    def resource_definitions(self, refs, kind):
+        if self.candidate is not None:
+            return self.candidate.resource_definitions(refs, kind)
+        return create_ledger().resource_definitions(refs, kind, self.read_context)
+
+    def resource_states(self, refs, kind, cutoff, *, excluding_consumer=None):
+        return self.candidate.resource_states(
+            refs, kind, cutoff, excluding_consumer=excluding_consumer
+        )
+
+    def related_facts(self, producer_id, relation_kind, **scope):
+        return tuple(self.facts.values())
 
 
 def fact(amount="100000", **extra):
@@ -178,8 +194,12 @@ def apply(storage, current, *, seq=0):
             ],
             context,
         )
+        context.candidate = ledger.begin_candidate(description["businesses"], unit)
         plan = operations.evaluate_slot(business_id, "main", context)
         change = {**description, "plans": [plan]}
+        context.candidate.stage(plan)
+        context.candidate.complete()
+        operations.validate_candidate(change, context)
         ledger.adopt([change], unit)
         operations.apply_current(change, unit)
     return plan
@@ -535,7 +555,7 @@ def test_same_month_tax_point_requires_enough_real_policy_precision():
     assert missing.value.fact_issues[0]["field"] == "/data/tax_point/tax_on"
 
 
-def test_pass_through_is_not_income_and_refund_requires_complete_balance_support(store):
+def test_pass_through_is_not_income_and_refund_cannot_exceed_actual_receipts(store):
     current = other_fact(
         "pass_through", {"payer_id": PARTY, "beneficiary_id": BENEFICIARY, "amount_fen": "100000"}
     )
@@ -548,8 +568,8 @@ def test_pass_through_is_not_income_and_refund_requires_complete_balance_support
     )
     with pytest.raises(ContractError) as invalid:
         apply(store, returned)
-    assert invalid.value.code == "unsupported_business"
-    assert "operations.pass_through_return" not in create_operations().supported_kinds
+    assert invalid.value.code == "dependency_conflict"
+    assert "operations.pass_through_return" in create_operations().supported_kinds
 
 
 def test_management_date_changes_fact_without_changing_adopted_expense_basis(store):
@@ -762,24 +782,23 @@ def test_future_tax_point_failure_cannot_leave_partial_fact_or_voucher(store):
         ("pass_through_return", {"pass_through_id": BUSINESS, "amount_fen": "20000"}),
     ],
 )
-def test_real_money_balance_dependent_paths_are_explicitly_unsupported(store, kind, data):
+def test_real_money_balance_paths_require_valid_original_definitions(store, kind, data):
     current = other_fact(kind, data)
     validate_contract("business-facts.schema.json", "Fact", current)
     operations = create_operations()
-    assert current["kind"] not in operations.supported_kinds
+    assert current["kind"] in operations.supported_kinds
     with store.read_unit(COMPANY) as unit:
         context = Context(unit, current)
-        with pytest.raises(ContractError) as description_error:
-            operations.describe_change(
-                [{"op": "create", "expected_seq": 0, "fact": current}], context
-            )
-        assert description_error.value.to_response()["code"] == "unsupported_business"
+        description = operations.describe_change(
+            [{"op": "create", "expected_seq": 0, "fact": current}], context
+        )
+        assert description["businesses"][0]["complete_result_slots"] == ["main"]
         with pytest.raises(ContractError) as evaluation_error:
             operations.evaluate_slot(current["business_id"], "main", context)
-        assert evaluation_error.value.to_response()["code"] == "unsupported_business"
+        assert evaluation_error.value.to_response()["code"] == "dependency_conflict"
     with pytest.raises(ContractError) as submit_error:
         apply(store, current)
-    assert submit_error.value.to_response()["code"] == "unsupported_business"
+    assert submit_error.value.to_response()["code"] == "dependency_conflict"
     with store.read_unit(COMPANY) as unit:
         assert operations.export_current([current["business_id"]], unit) == ()
         assert create_ledger().get_results([current["business_id"]], unit) == ()
@@ -893,3 +912,313 @@ def test_complete_report_details_sum_overflow_is_structured():
     with pytest.raises(ContractError) as rejected:
         create_operations().evaluate_slot(BUSINESS, "main", Context(None, current))
     assert rejected.value.code == "invalid_input"
+
+
+class LifecycleContext(Context):
+    """A strict original result plus its actual public resource definitions."""
+
+    def __init__(self, original, plan, *facts, policy_context=None):
+        super().__init__(None, original, *facts)
+        self.original, self.plan, self.policy_context = original, plan, policy_context
+        self.source = {
+            "business_id": original["business_id"],
+            "result_id": str(uuid4()),
+            "result_slot": "main",
+            "result_generation": 1,
+            "content_digest": "0" * 64,
+        }
+
+    def get_fact(self, business_id):
+        return super().get_fact(business_id) or (
+            self.policy_context.get_fact(business_id) if self.policy_context else None
+        )
+
+    def get_result(self, business_id, result_slot):
+        if business_id == self.original["business_id"]:
+            return EvaluatedSlot(self.source, self.plan["target"], self.plan["basis"])
+        return (
+            self.policy_context.get_result(business_id, result_slot)
+            if self.policy_context
+            else None
+        )
+
+    def resource_definitions(self, refs, kind):
+        return tuple(
+            ResourceDefinition(kind, ref, self.source, value)
+            for ref in refs
+            for value in self.plan["obligations"]
+            if ref == {"business_id": value["business_id"], "slot": value["slot"]}
+        )
+
+
+def customer_advance(*, taxed=True, total="103", known_vat=True):
+    sale = sale_fact()
+    tax_context = vat_context(sale)
+    value = other_fact(
+        "advance",
+        {
+            "side": "customer",
+            "counterparty_id": PARTY,
+            "amount_fen": total,
+            "tax_status": "due" if taxed else "not_due",
+        },
+    )
+    if known_vat:
+        value["data"]["vat"] = sale["data"]["vat"]
+    if taxed:
+        value["data"]["tax_point"] = sale["data"]["tax_point"]
+    tax_context.facts[value["business_id"]] = value
+    plan = create_operations().evaluate_slot(value["business_id"], "main", tax_context)
+    return value, plan, tax_context
+
+
+def advance_use(original, kind, gross, *, month="2026-02"):
+    current = other_fact(kind, {"advance_id": original["business_id"], "gross_fen": str(gross)})
+    current["period"] = month
+    return current
+
+
+def test_taxed_advance_fulfillment_and_refund_split_once_and_exhaust_original_values():
+    original, original_plan, policy = customer_advance()
+    first = advance_use(original, "advance_fulfillment", 17)
+    second = advance_use(original, "advance_refund", 31)
+    third = advance_use(original, "advance_fulfillment", 55, month="2026-03")
+    context = LifecycleContext(original, original_plan, third, first, second, policy_context=policy)
+    plans = [
+        create_operations().evaluate_slot(item["business_id"], "main", context)
+        for item in (first, second, third)
+    ]
+    assert (
+        sum(
+            int(
+                plan["target"]["values"].get(
+                    "revenue_fen", plan["target"]["values"].get("net_reversed_fen")
+                )
+            )
+            for plan in plans
+        )
+        == 100
+    )
+    assert (
+        sum(
+            int(
+                plan["target"]["values"].get(
+                    "vat_fen", plan["target"]["values"].get("vat_reversed_fen")
+                )
+            )
+            for plan in plans
+        )
+        == 3
+    )
+    assert plans[0]["tax_sales"] == plans[2]["tax_sales"] == []
+    negative = plans[1]["tax_sales"][0]
+    assert (
+        negative["tax_period"] == "2026-02"
+        and negative["source_business_id"] == second["business_id"]
+    )
+    assert int(negative["vat_fen"]) <= 0
+    for plan in plans:
+        assert sum(int(row["debit_fen"]) - int(row["credit_fen"]) for row in plan["lines"]) == 0
+        adopted = next(
+            item for item in plan["basis"]["adopted_quantities"] if item["type"] == "tax_sale"
+        )
+        assert adopted["sale"] == original_plan["tax_sales"][0]
+
+
+def test_untaxed_fulfillment_reuses_known_vat_but_requires_real_current_tax_point():
+    original, original_plan, policy = customer_advance(taxed=False)
+    first = advance_use(original, "advance_fulfillment", 17)
+    returned = advance_use(original, "advance_refund", 31)
+    last = advance_use(original, "advance_fulfillment", 55, month="2026-03")
+    for current in (first, last):
+        current["data"]["tax_point"] = {
+            "type": "explicit",
+            "tax_period": current["period"],
+            "source": {"source_id": SOURCE},
+        }
+    context = LifecycleContext(
+        original, original_plan, returned, last, first, policy_context=policy
+    )
+    plans = [
+        create_operations().evaluate_slot(item["business_id"], "main", context)
+        for item in (first, returned, last)
+    ]
+    assert plans[1]["tax_sales"] == []
+    assert sum(int(plan["target"]["values"].get("revenue_fen", "0")) for plan in plans) == 70
+    assert sum(int(plan["target"]["values"].get("vat_fen", "0")) for plan in plans) == 2
+    assert plans[0]["basis"]["input"]["vat"] == original["data"]["vat"]
+    assert "source" not in plans[0]["basis"]["input"]["tax_point"]
+    del first["data"]["tax_point"]
+    with pytest.raises(ContractError) as failed:
+        create_operations().evaluate_slot(first["business_id"], "main", context)
+    assert failed.value.code == "needs_information"
+    assert [item["field"] for item in failed.value.fact_issues] == ["/data/tax_point"]
+
+
+def test_advance_cumulative_capacity_and_inherited_optional_facts_are_checked():
+    original, original_plan, policy = customer_advance()
+    first = advance_use(original, "advance_fulfillment", 80)
+    second = advance_use(original, "advance_refund", 24)
+    context = LifecycleContext(original, original_plan, first, second, policy_context=policy)
+    with pytest.raises(ContractError) as failed:
+        create_operations().evaluate_slot(first["business_id"], "main", context)
+    assert failed.value.code == "dependency_conflict"
+    context.facts.pop(second["business_id"])
+    first["data"]["tax_point"] = {
+        "type": "explicit",
+        "tax_period": "2026-02",
+        "source": {"source_id": SOURCE},
+    }
+    with pytest.raises(ContractError) as failed:
+        create_operations().evaluate_slot(first["business_id"], "main", context)
+    assert failed.value.code == "invalid_input"
+
+
+def test_sale_return_adopts_original_tax_and_checks_complete_group():
+    original = sale_fact()
+    policy = vat_context(original)
+    original_plan = create_operations().evaluate_slot(original["business_id"], "main", policy)
+    first = other_fact(
+        "sale_return",
+        {
+            "sale_id": original["business_id"],
+            "customer_id": PARTY,
+            "gross_fen": "33000",
+            "credit_note_vat_fen": "1000",
+        },
+    )
+    second = other_fact(
+        "sale_return",
+        {
+            "sale_id": original["business_id"],
+            "customer_id": PARTY,
+            "gross_fen": "70000",
+            "credit_note_vat_fen": "2000",
+        },
+    )
+    first["period"], second["period"] = "2026-02", "2026-03"
+    context = LifecycleContext(original, original_plan, second, first, policy_context=policy)
+    for current in (first, second):
+        plan = create_operations().evaluate_slot(current["business_id"], "main", context)
+        assert plan["tax_sales"][0]["tax_period"] == current["period"]
+        assert plan["tax_sales"][0]["source_business_id"] == current["business_id"]
+        assert plan["tax_sales"][0]["nominal_rate"] == "0.03"
+        assert (
+            next(
+                item["sale"]
+                for item in plan["basis"]["adopted_quantities"]
+                if item["type"] == "tax_sale"
+            )
+            == original_plan["tax_sales"][0]
+        )
+    second["data"]["credit_note_vat_fen"] = "1999"
+    with pytest.raises(ContractError) as failed:
+        create_operations().evaluate_slot(first["business_id"], "main", context)
+    assert failed.value.code == "dependency_conflict"
+
+
+def test_expense_detail_recovery_uses_monotone_cumulative_shares():
+    original = fact(
+        "7",
+        report_details=[
+            {"code": "management_startup", "amount_fen": "3"},
+            {"code": "management_research", "amount_fen": "4"},
+        ],
+    )
+    original_plan = create_operations().evaluate_slot(BUSINESS, "main", Context(None, original))
+    returns = [
+        other_fact(
+            "expense_recovery",
+            {"expense_id": BUSINESS, "counterparty_id": PARTY, "amount_fen": str(value)},
+        )
+        for value in (1, 2, 4)
+    ]
+    context = LifecycleContext(original, original_plan, *reversed(returns))
+    totals = {}
+    for current in returns:
+        plan = create_operations().evaluate_slot(current["business_id"], "main", context)
+        for row in plan["report_contributions"]:
+            assert int(row["amount_fen"]) < 0
+            totals[row["detail_code"]] = totals.get(row["detail_code"], 0) + int(row["amount_fen"])
+    assert totals == {"management_startup": -3, "management_research": -4}
+
+
+def test_taxed_advance_accepts_same_tax_point_with_original_evidence():
+    original, original_plan, policy = customer_advance()
+    current = advance_use(original, "advance_fulfillment", 103)
+    current["data"]["tax_point"] = original["data"]["tax_point"].copy()
+    current["data"]["vat"] = original["data"]["vat"].copy()
+    context = LifecycleContext(original, original_plan, current, policy_context=policy)
+    plan = create_operations().evaluate_slot(current["business_id"], "main", context)
+    assert plan["target"]["values"]["revenue_fen"] == "100"
+    assert plan["tax_sales"] == []
+
+
+def test_explicit_return_range_reserves_space_before_assigning_implicit_ranges():
+    original = sale_fact()
+    policy = vat_context(original)
+    original_plan = create_operations().evaluate_slot(original["business_id"], "main", policy)
+    explicit = other_fact(
+        "sale_return",
+        {
+            "sale_id": original["business_id"],
+            "customer_id": PARTY,
+            "gross_fen": "70000",
+            "credit_note_vat_fen": "2000",
+            "tax_ranges": [{"from_fen": "33000", "to_fen": "103000"}],
+        },
+    )
+    implicit = other_fact(
+        "sale_return",
+        {
+            "sale_id": original["business_id"],
+            "customer_id": PARTY,
+            "gross_fen": "33000",
+            "credit_note_vat_fen": "1000",
+        },
+    )
+    explicit["period"], implicit["period"] = "2026-02", "2026-03"
+    context = LifecycleContext(original, original_plan, implicit, explicit, policy_context=policy)
+    plan = create_operations().evaluate_slot(implicit["business_id"], "main", context)
+    assert plan["tax_sales"][0]["ranges"] == [{"from_fen": "0", "to_fen": "33000"}]
+    implicit["data"]["tax_ranges"] = [{"from_fen": "30000", "to_fen": "63000"}]
+    with pytest.raises(ContractError) as failed:
+        create_operations().evaluate_slot(explicit["business_id"], "main", context)
+    assert failed.value.code == "dependency_conflict"
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_overpayment_recovery_inherits_original_cashflow_and_keeps_unknown(known):
+    original = fact("5")
+    original_plan = create_operations().evaluate_slot(BUSINESS, "main", Context(None, original))
+    source = original_plan["obligations"][0]
+    if known:
+        source["cashflow_parts"] = [
+            {"category": "employee_payments", "amount_fen": "2"},
+            {"category": "tax_payments", "amount_fen": "3"},
+        ]
+    else:
+        source.pop("cashflow_parts")
+    current = other_fact(
+        "overpayment",
+        {
+            "source": {"business_id": BUSINESS, "slot": "primary"},
+            "counterparty_id": PARTY,
+            "amount_fen": "2",
+        },
+    )
+    context = LifecycleContext(original, original_plan, current)
+    plan = create_operations().evaluate_slot(current["business_id"], "main", context)
+    if known:
+        assert plan["obligations"][0]["cashflow_parts"] == [
+            {"category": "employee_payments", "amount_fen": "1"},
+            {"category": "tax_payments", "amount_fen": "1"},
+        ]
+        span = next(
+            item
+            for item in plan["basis"]["adopted_quantities"]
+            if item["type"] == "cumulative_range"
+        )
+        assert (span["from_fen"], span["to_fen"]) == ("5", "7")
+    else:
+        assert "cashflow_parts" not in plan["obligations"][0]

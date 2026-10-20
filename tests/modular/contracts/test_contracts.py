@@ -287,6 +287,7 @@ def test_change_description_and_plan_have_distinct_responsibilities():
                 "business_id": "00000000-0000-4000-8000-000000000001",
                 "expected_seq": 1,
                 "op": "handoff_out",
+                "natural_key": None,
                 "complete_result_slots": [],
             }
         ],

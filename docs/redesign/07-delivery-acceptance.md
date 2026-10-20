@@ -69,7 +69,7 @@ F 合同完成后，各家庭可用公开账务/身份读取替身先实现纯�
 **owner：业务接入负责人。** 交付 `application/identity/agent/records/` 的各自边界与 `tests/modular/application/identity/agent/records/`。它是一次完整办理和资料接续任务，内部仍依架构拆模块；不把领域公式放进应用协调器。identity为独立身份模块，公开plan_change/apply_current/get_batch/find，records、reading和领域只读使用，不反向依赖application。
 
 - 输入为 ApplyRequest、对象/来源/当前待办/说明及各 owner 的计划端口；输出为 application.public、MCP/CLI 一次办理结果、当前文档集合及可接续状态。notes可独立办理，沿当前说明序号比较，不为修改说明伪造业务凭证。agent 引导老板并解释实际结果，不让 AI 编排采用、归档和缓存修复。
-- identity私有表为 `identity_object`；application私有表为 `business_head/current_dependency`；records私有表为 `source/source_use/current_issue/current_issue_scope/company_note/document_shard_head/document_set`。事实表、对象、正式结果及读取目标通过各 owner 的端口加入共同事务，应用层不能代写。来源边统一用source_use承接业务、对象、待办及说明，不复制多份可独立修改的引用。应用层负责备份快照plan，交给files接续，不拥有文件任务表。
+- identity私有表为 `identity_object`；application私有表为 `business_head/current_dependency/application_state`；records私有表为 `source/source_use/current_issue/current_issue_scope/company_note/document_shard_head/document_set`。application_state 只保存当前工作月范围，不存操作过程。事实表、对象、正式结果及读取目标通过各 owner 的端口加入共同事务，应用层不能代写。来源边统一用source_use承接业务、对象、待办及说明，不复制多份可独立修改的引用。应用层负责备份快照plan，交给files接续，不拥有文件任务表。
 - 允许改本包、AI 操作说明、模板和所属测试；不改老板看板布局，不设置审批、开放期请求流水或全部旧答复。文件任务只保存当前/有效交付及有界失败原因。
 - 复用旧 `kernel/materials.py` 的来源位置核对、`replay_document.py` 的解析经验及现有中文说明；退出旧固定步骤、批准、全部版本和依赖旧运行身份的重放。最终文档从实际保存的事实生成，Markdown 与 JSON 不分别编辑。
 - F 就绪后用明确计划替身验证原子协调和防重；records 可用公开事实导出替身独立验证跨月分片、清单切换、租约与失败接续。独立样例覆盖已有 create A+新 B、丢回复重试、scope 冲突、撤去墓碑、来源固定内容、晚到任务不覆盖新目标。

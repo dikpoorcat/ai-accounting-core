@@ -18,7 +18,6 @@ from ai_accounting_modular.contracts.public import (
     EvaluatedSlot,
     EvaluationContext,
     Fact,
-    JsonValue,
     ReadContext,
     ResultSourceRef,
     ResultTarget,
@@ -94,7 +93,15 @@ def test_evaluation_context_has_one_typed_protocol_for_public_dependencies():
     )
     assert get_type_hints(EvaluationContext.get_object)["return"] == CurrentObject | None
     assert get_type_hints(EvaluationContext.get_result)["return"] == EvaluatedSlot | None
-    assert get_type_hints(EvaluationContext.resolve)["return"] == list[JsonValue]
+    assert (
+        get_type_hints(EvaluationContext.resource_definitions)["return"]
+        == tuple[public.ResourceDefinition, ...]
+    )
+    assert (
+        get_type_hints(EvaluationContext.resource_states)["return"]
+        == tuple[public.ResourceState, ...]
+    )
+    assert get_type_hints(EvaluationContext.related_facts_many)["return"] == tuple[Fact, ...]
     assert get_type_hints(EvaluationContext.resolve_sources)["return"] == list[SourceLocator]
     assert list(inspect.signature(EvaluationContext.get_result).parameters) == [
         "self",
@@ -117,4 +124,7 @@ def test_related_facts_reuses_the_generated_dependency_enum():
         "self",
         "producer_id",
         "relation_kind",
+        "producer_kind",
+        "period_from",
+        "period_to",
     ]

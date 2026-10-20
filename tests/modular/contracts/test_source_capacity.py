@@ -67,15 +67,13 @@ def test_complete_business_sources_fit_the_legal_fact_capacity(count):
     assert len(validated["businesses"][0]["sources"]) == count
 
 
-def test_fact_and_complete_business_output_both_reject_1001_sources():
+def test_top_level_evidence_limit_does_not_limit_nested_source_output():
     view = business_view(1001)
     with pytest.raises(ContractError):
         validate_contract("business-facts.schema.json", "Fact", view["fact"])
-    # Isolate the output limit: an invalid fact must not mask a permissive
-    # BusinessView.sources definition.
+    # Nested SourceLocator references can exceed the top-level evidence limit.
     del view["fact"]
-    with pytest.raises(ContractError, match="/sources"):
-        validate_contract("core.schema.json", "BusinessView", view)
+    validate_contract("core.schema.json", "BusinessView", view)
 
 
 def test_source_batches_and_paged_output_keep_their_500_item_limit():

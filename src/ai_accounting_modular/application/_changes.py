@@ -35,13 +35,13 @@ class BusinessChange:
     def seq(self):
         return (self.before["seq"] if self.before else 0) + self.changed
 
-    def head(self, command_id):
+    def head(self, command_id, *, natural_key):
         fact, old = self.fact, self.before
         return {
             "business_id": self.business_id,
             "family": fact["kind"].split(".", 1)[0] if fact else old["family"],
             "kind": fact["kind"] if fact else old["kind"],
-            "natural_key": None if old is None else old["natural_key"],
+            "natural_key": natural_key if fact else None,
             "seq": self.seq,
             "state": "active" if fact else "withdrawn",
             "period": fact["period"] if fact else None,

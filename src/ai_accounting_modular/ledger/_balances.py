@@ -7,7 +7,28 @@ from collections import defaultdict
 
 from ai_accounting_modular.contracts.public import checked_fen, format_fen
 
+from ._timing import ResultTimes
 from ._values import agency_proof, fail
+
+
+def sum_amounts(values):
+    try:
+        return checked_fen(sum(checked_fen(value) for value in values))
+    except ValueError:
+        fail("invalid_input", "资源累计金额超出有符号64位整数分范围。")
+
+
+def obligation_remaining(amount, totals):
+    return sum_amounts(
+        (
+            amount,
+            -totals.get("money", 0),
+            -totals.get("offset", 0),
+            -totals.get("agency", 0),
+            -totals.get("transfer", 0),
+            totals.get("reclassify_excess", 0),
+        )
+    )
 
 
 def obligation_balances(repo, heads, *, through=None):
@@ -19,10 +40,10 @@ def obligation_balances(repo, heads, *, through=None):
     totals = defaultdict(lambda: defaultdict(int))
     for row in settlements:
         key = row["source_business_id"], row["source_public_slot"]
-        totals[key][row["method"]] += row["amount_fen"]
+        totals[key][row["method"]] = sum_amounts((totals[key][row["method"]], row["amount_fen"]))
     for row in relations:
         key = row["source_business_id"], row["source_public_slot"]
-        totals[key][row["mode"]] += row["amount_fen"]
+        totals[key][row["mode"]] = sum_amounts((totals[key][row["mode"]], row["amount_fen"]))
     results = []
     seen = set()
     for ob in obligations:
@@ -31,14 +52,7 @@ def obligation_balances(repo, heads, *, through=None):
             fail("dependency_conflict", "同业务的公开义务槽不唯一。")
         seen.add(key)
         total = totals[key]
-        remaining = checked_fen(
-            ob["amount_fen"]
-            - total["money"]
-            - total["offset"]
-            - total["agency"]
-            - total["transfer"]
-            + total["reclassify_excess"]
-        )
+        remaining = obligation_remaining(ob["amount_fen"], total)
         results.append((ob, dict(total), remaining))
     return results
 
@@ -54,6 +68,7 @@ def validate_capacities(repo, business_ids, retired_keys=()):
     """Check touched producers and all incoming consumers; no company-wide scan."""
     heads = repo.current_heads(business_ids)
     by_id = {h["result_id"]: h for h in heads}
+    times = ResultTimes(repo, heads)
     obligations = {}
     for ob, total, remaining in obligation_balances(repo, heads):
         key = by_id[ob["result_id"]]["business_id"], ob["public_slot"]
@@ -71,13 +86,16 @@ def validate_capacities(repo, business_ids, retired_keys=()):
     movement_map = {m["movement_id"]: m for m in movements}
     allocated = defaultdict(int)
     for row in repo.settlements_by_movements(movement_ids):
-        allocated[row["movement_id"]] += row["amount_fen"]
+        allocated[row["movement_id"]] = sum_amounts(
+            (allocated[row["movement_id"]], row["amount_fen"])
+        )
     agency_totals = defaultdict(int)
     for row in settlements:
         key = row["source_business_id"], row["source_public_slot"]
         ob = obligations.get(key)
         if ob is None:
             fail("dependency_conflict", "仍被清偿的义务不能退出。")
+        times.require_available(ob["result_id"], row["period"])
         if row["method"] not in json.loads(ob["allowed_settlements_json"]):
             fail("dependency_conflict", "该义务不允许此清偿方式。")
         expected_direction = "in" if ob["direction"] == "receivable" else "out"
@@ -91,6 +109,7 @@ def validate_capacities(repo, business_ids, retired_keys=()):
                 fail("dependency_conflict", "实际资金交易方与被清偿义务不符。")
             if row["actual_on"] is not None and row["actual_on"] != move["actual_on"]:
                 fail("dependency_conflict", "清偿实际日与同一真实资金实际日不符。")
+            times.require_available(ob["result_id"], row["period"], move["actual_on"])
             if allocated[move["movement_id"]] > move["amount_fen"]:
                 fail("dependency_conflict", "同一实际资金不能重复或超额清偿。")
         elif row["method"] == "agency":
@@ -109,9 +128,13 @@ def validate_capacities(repo, business_ids, retired_keys=()):
                 or proof["direction"] != {"in": "inflow", "out": "outflow"}[expected_direction]
             ):
                 fail("dependency_conflict", "代理清偿与正式证明的原义务、交易方或方向不符。")
-            agency_totals[row["result_id"]] += row["amount_fen"]
+            agency_totals[row["result_id"]] = sum_amounts(
+                (agency_totals[row["result_id"]], row["amount_fen"])
+            )
             if agency_totals[row["result_id"]] > int(proof["amount_fen"]):
                 fail("dependency_conflict", "代理清偿超出正式证明金额。")
+        if row["method"] != "money":
+            times.require_available(ob["result_id"], row["period"], times.usage_day(row))
     for result_id, total in agency_totals.items():
         adopted = repo.result(result_id)
         proof = agency_proof(
@@ -131,6 +154,8 @@ def validate_capacities(repo, business_ids, retired_keys=()):
             target = next((o for o in found if o["public_slot"] == target_key[1]), None)
         if source is None or target is None:
             fail("dependency_conflict", "义务重分类必须有完整的当前来源和目标。")
+        owner = times.head(row["result_id"])
+        times.require_available(source["result_id"], owner["business_period"], times.usage_day(row))
         if (source["direction"] == target["direction"]) != (row["mode"] == "transfer"):
             fail("dependency_conflict", "转债方向或超付追收方向不符。")
         if row["mode"] == "reclassify_excess" and source["party_id"] != target["party_id"]:
@@ -141,7 +166,8 @@ def validate_capacities(repo, business_ids, retired_keys=()):
             fail("dependency_conflict", "该义务不允许非资金转债。")
     target_totals = defaultdict(int)
     for row in repo.transfers_to(business_ids):
-        target_totals[row["target_business_id"], row["target_public_slot"]] += row["amount_fen"]
+        key = row["target_business_id"], row["target_public_slot"]
+        target_totals[key] = sum_amounts((target_totals[key], row["amount_fen"]))
     for key, total in target_totals.items():
         if key not in obligations or obligations[key]["amount_fen"] != total:
             fail("dependency_conflict", "转债或追收来源合计须与新义务金额一致。")
@@ -150,12 +176,16 @@ def validate_capacities(repo, business_ids, retired_keys=()):
         key = by_id[row["result_id"]]["business_id"], row["public_slot"]
         if key in lots:
             fail("dependency_conflict", "同业务的公开成本槽不唯一。")
-        lots[key] = row["amount_fen"]
+        lots[key] = row
     consumed = defaultdict(int)
     for row in repo.incoming("cost_consumption", business_ids):
-        consumed[row["source_business_id"], row["source_public_slot"]] += row["amount_fen"]
+        key = row["source_business_id"], row["source_public_slot"]
+        consumed[key] = sum_amounts((consumed[key], row["amount_fen"]))
+        if key in lots:
+            source = lots[key]
+            times.require_available(source["result_id"], row["period"], times.usage_day(row))
     for key, amount in consumed.items():
-        if key not in lots or amount > lots[key]:
+        if key not in lots or amount > lots[key]["amount_fen"]:
             fail("dependency_conflict", "来源成本不存在或已被超额消耗。")
     for key in retired_keys:
         if key in obligations or key in lots:

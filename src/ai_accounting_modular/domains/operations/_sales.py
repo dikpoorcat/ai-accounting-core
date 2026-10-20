@@ -115,24 +115,35 @@ def _adopt_policy(plan, policy, context):
 
 
 def _tax_sale(plan, fact, policy, vat, net, tax, gross):
-    params = policy["data"]
     plan["tax_sales"].append(
-        {
-            "source_business_id": fact["business_id"],
-            "tax_period": fact["data"]["tax_point"]["tax_period"],
-            "net_sales_fen": format_fen(net),
-            "vat_fen": format_fen(tax),
-            "nominal_rate": params["nominal_rate"],
-            "tax_base_rate": params["tax_base_rate"],
-            "payable_rate": params["tax_base_rate"]
-            if vat["waive_rate_reduction"]
-            else params["payable_rate"],
-            "invoice_kind": vat["invoice_kind"],
-            "exemption_eligible": vat["exemption_eligible"] and not vat["waive_exemption"],
-            "filing_bucket": "standard",
-            "ranges": [{"from_fen": "0", "to_fen": format_fen(gross)}],
-        }
+        tax_sale_values(
+            fact["business_id"],
+            fact["data"]["tax_point"]["tax_period"],
+            policy["data"],
+            vat,
+            net,
+            tax,
+            gross,
+        )
     )
+
+
+def tax_sale_values(business_id, period, params, vat, net, tax, gross):
+    return {
+        "source_business_id": business_id,
+        "tax_period": period,
+        "net_sales_fen": format_fen(net),
+        "vat_fen": format_fen(tax),
+        "nominal_rate": params["nominal_rate"],
+        "tax_base_rate": params["tax_base_rate"],
+        "payable_rate": params["tax_base_rate"]
+        if vat["waive_rate_reduction"]
+        else params["payable_rate"],
+        "invoice_kind": vat["invoice_kind"],
+        "exemption_eligible": vat["exemption_eligible"] and not vat["waive_exemption"],
+        "filing_bucket": "standard",
+        "ranges": [{"from_fen": "0", "to_fen": format_fen(gross)}],
+    }
 
 
 def service_sale(fact, context):

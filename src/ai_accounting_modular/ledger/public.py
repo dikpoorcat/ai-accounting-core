@@ -16,7 +16,6 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadContext,
     UnitOfWork,
-    format_fen,
     validate_contract,
 )
 from ai_accounting_modular.contracts.public import canonical_json as canonical
@@ -24,9 +23,16 @@ from ai_accounting_modular.contracts.public import content_digest as digest
 
 from ._adoption import adopt as _adopt
 from ._balances import balance_wire, obligation_balances
+from ._candidate import CandidateLedger
 from ._planning import PreparedResult, bind_plan, stored_source_reference
 from ._planning import prepare_result as _prepare_result
 from ._repository import LedgerRepository
+from ._resource_view import (
+    definitions,
+    resource_definition,
+    validate_resource_refs,
+)
+from ._resource_view import fund_movements as _fund_movements
 from ._values import fail, unique
 
 
@@ -112,6 +118,38 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def latest_period(self, read_context: ReadContext):
+        """Latest economic month already represented by formal results."""
+        return read_context.repository("ledger").latest_period()
+
+    def begin_candidate(self, responsibilities, uow: UnitOfWork, *, correction_period=None):
+        return CandidateLedger(responsibilities, uow, correction_period)
+
+    def resource_definitions(self, refs, kind, read_context: ReadContext):
+        validate_resource_refs(refs, kind)
+        if not refs:
+            return ()
+        ids = tuple(dict.fromkeys(ref["business_id"] for ref in refs))
+        repo = self._resource_view(read_context)
+        return definitions(repo, repo.current_heads(ids), refs, kind)
+
+    def _resource_view(self, context):
+        if context.view not in ("current", "as_posted") or (
+            context.view == "as_posted" and context.as_of is None
+        ):
+            fail("invalid_input", "资源读取口径与采用截止月不一致。")
+        return context.repository("ledger").resource_view(
+            as_of=context.as_of if context.view == "as_posted" else None
+        )
+
+    def fund_movements(self, account_id, period_from, period_to, read_context: ReadContext):
+        return _fund_movements(
+            self._resource_view(read_context),
+            account_id,
+            period_from,
+            period_to,
+        )
+
     def prepare_result(
         self, business_id, result_slot, uow: UnitOfWork, *, correction_period=None
     ) -> PreparedResult:
@@ -325,21 +363,7 @@ class Ledger:
             through=read_context.as_of if read_context.view == "as_posted" else None,
         ):
             row = by_id[ob["result_id"]]
-            wire = {
-                "business_id": row["business_id"],
-                "slot": ob["public_slot"],
-                "direction": ob["direction"],
-                "category": ob["category"],
-                "amount_fen": format_fen(ob["amount_fen"]),
-                "account_code": ob["account_code"],
-                "allowed_settlements": json.loads(ob["allowed_settlements_json"]),
-                "business_period": ob["business_period"],
-            }
-            for key in ("party_id", "due_on"):
-                if ob[key] is not None:
-                    wire[key] = ob[key]
-            if ob["cashflow_parts_json"] is not None:
-                wire["cashflow_parts"] = json.loads(ob["cashflow_parts_json"])
+            wire = resource_definition("obligation", row, ob, stored_source_reference(row)).value
             item = {
                 "obligation": wire,
                 "balance": balance_wire(ob, totals, remaining, references[row["result_id"]]),

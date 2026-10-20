@@ -240,13 +240,23 @@ scope_key TEXT PRIMARY KEY,
 ) STRICT;
 
 -- owner: application
+CREATE TABLE application_state (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ working_period_to TEXT NOT NULL CHECK(length(working_period_to)=7)
+) STRICT;
+
+-- owner: application
 CREATE TABLE current_dependency (
 consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
  consumer_result_slot TEXT NOT NULL,
- producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object')),
- producer_id TEXT NOT NULL CHECK(length(producer_id)=36),
+ producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar')),
+ producer_id TEXT NOT NULL CHECK(
+  (producer_kind IN ('business','object') AND length(producer_id)=36) OR
+  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR
+  (producer_kind='calendar' AND producer_id='work')
+ ),
  producer_public_slot TEXT NOT NULL,
- read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result')),
+ read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection')),
  relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),
  period_from TEXT,
  period_to TEXT,

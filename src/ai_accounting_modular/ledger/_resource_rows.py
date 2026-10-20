@@ -4,6 +4,85 @@ from __future__ import annotations
 
 from ai_accounting_modular.contracts.public import canonical_json, parse_fen
 
+_RESOURCE_COLUMNS = {
+    "obligation": (
+        "result_id",
+        "public_slot",
+        "party_id",
+        "direction",
+        "category",
+        "amount_fen",
+        "account_code",
+        "cashflow_parts_json",
+        "allowed_settlements_json",
+        "business_period",
+        "due_on",
+    ),
+    "settlement": (
+        "result_id",
+        "settlement_id",
+        "source_business_id",
+        "source_public_slot",
+        "consumer_public_slot",
+        "period",
+        "amount_fen",
+        "method",
+        "movement_id",
+        "agency_business_id",
+        "agency_public_slot",
+        "actual_on",
+    ),
+    "obligation_reclassification": (
+        "result_id",
+        "relation_id",
+        "mode",
+        "source_business_id",
+        "source_public_slot",
+        "target_business_id",
+        "target_public_slot",
+        "amount_fen",
+    ),
+    "cost_lot": (
+        "result_id",
+        "public_slot",
+        "object_id",
+        "category",
+        "amount_fen",
+        "business_period",
+    ),
+    "cost_consumption": (
+        "result_id",
+        "consumer_public_slot",
+        "source_business_id",
+        "source_public_slot",
+        "period",
+        "amount_fen",
+    ),
+    "result_fund_movement": (
+        "result_id",
+        "movement_id",
+        "public_slot",
+        "account_id",
+        "actual_on",
+        "period",
+        "direction",
+        "amount_fen",
+        "transfer_group_id",
+        "party_id",
+        "cashflow_parts_json",
+        "memo",
+    ),
+}
+
+
+def resource_records(result_id, plan):
+    """Candidate and persisted resources use the very same value conversion."""
+    rows = resource_rows(result_id, plan)
+    return {
+        table: [dict(zip(columns, row, strict=True)) for row in rows[table]]
+        for table, columns in _RESOURCE_COLUMNS.items()
+    }
+
 
 def _json(value, key):
     if key not in value:

@@ -75,6 +75,8 @@ def check_plan(plan: dict) -> None:
         for item in plan[name]:
             if item["consumer"]["business_id"] != plan["business_id"]:
                 fail("invalid_input", "清偿或成本消耗必须属于本计划业务。")
+            if item["period"] != plan["accounting_period"]:
+                fail("invalid_input", "清偿或成本消耗月份必须属于本计划核算月。")
     for item in plan["obligation_reclassifications"]:
         if item["owner_business_id"] != plan["business_id"]:
             fail("invalid_input", "重分类必须属于本计划业务。")

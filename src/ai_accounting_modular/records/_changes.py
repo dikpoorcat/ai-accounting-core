@@ -27,7 +27,7 @@ def _change_limits():
 
 
 def source_ids(ids, *, limit=500):
-    if not isinstance(ids, (list, tuple)) or len(ids) > limit:
+    if not isinstance(ids, (list, tuple)) or (limit is not None and len(ids) > limit):
         raise ContractError("invalid_input", f"一次最多引用{limit}份来源。")
     for source_id in ids:
         validate_contract("core.schema.json", "Id", source_id)

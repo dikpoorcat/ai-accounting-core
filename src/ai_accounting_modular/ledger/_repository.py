@@ -26,10 +26,26 @@ _CHILD_TABLES = (
 
 
 class LedgerRepository:
+    def latest_period(self):
+        return self._session.fetchone("SELECT MAX(business_period) FROM adopted_result")[0]
+
     def __init__(self, session: Any):
         self._session = session
         self._prepared = {}
         self._bound_plans = {}
+        self.resource_revision = 0
+        self._resource_views = {}
+
+    def resource_view(self, *, as_of=None):
+        from ._resource_view import ResourceRepository
+
+        if as_of not in self._resource_views:
+            self._resource_views[as_of] = ResourceRepository(self, as_of=as_of)
+        return self._resource_views[as_of]
+
+    def _resources_changed(self):
+        self.resource_revision += 1
+        self._resource_views.clear()
 
     def prepared(self, business_id, result_slot):
         return self._prepared.get((business_id, result_slot))
@@ -128,6 +144,7 @@ class LedgerRepository:
         ]
 
     def save_head(self, plan, fact_seq, *, result_id, generation, posting_period, baseline_id):
+        self._resources_changed()
         values = (
             result_id,
             plan["business_id"],
@@ -174,6 +191,7 @@ class LedgerRepository:
         )
 
     def clear_children(self, result_id):
+        self._resources_changed()
         for table in _CHILD_TABLES:
             self._session.execute(f"DELETE FROM {table} WHERE result_id=?", (result_id,))
 
@@ -255,6 +273,7 @@ class LedgerRepository:
         return number
 
     def write_resources(self, result_id, plan):
+        self._resources_changed()
         for table, rows in resource_rows(result_id, plan).items():
             if rows:
                 placeholders = ",".join("?" for _ in rows[0])
@@ -315,6 +334,28 @@ class LedgerRepository:
             )
         ]
 
+    def movement_scope(self, account_id, period_from, period_to, *, as_of=None):
+        selection = (
+            "JOIN result_slot_current c ON c.head_result_id=m.result_id " if as_of is None else ""
+        )
+        sql = (
+            "SELECT m.*,r.business_id,r.result_slot,r.business_period,r.generation,"
+            "r.baseline_result_id,r.calculation_key,r.calculation_revision,"
+            "r.basis_digest,r.target_digest FROM result_fund_movement m "
+            "JOIN adopted_result r ON r.result_id=m.result_id "
+            + selection
+            + "WHERE m.account_id=? AND m.period>=? AND m.period<=?"
+        )
+        args = [account_id, period_from, period_to]
+        if as_of is not None:
+            sql += (
+                " AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
+                "WHERE newer.business_id=r.business_id AND newer.result_slot=r.result_slot "
+                "AND newer.posting_period<=? AND newer.posting_period>r.posting_period)"
+            )
+            args += [as_of, as_of]
+        return [dict(row) for row in self._session.fetchall(sql, tuple(args))]
+
     def settlements_by_movements(self, movement_ids):
         return [
             dict(row)
@@ -338,6 +379,7 @@ class LedgerRepository:
         ]
 
     def freeze_heads(self, period):
+        self._resources_changed()
         self._session.execute(
             "UPDATE adopted_result SET state='frozen' WHERE posting_period=? AND state='open'",
             (period,),

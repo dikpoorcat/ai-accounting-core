@@ -11,6 +11,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     canonical_json,
     content_digest,
+    fact_source_ids,
     loads_json,
     validate_contract,
 )
@@ -28,6 +29,8 @@ _PART_FILE = re.compile(r"[a-z]+(?:--[0-9]{4}-[0-9]{2})?--[0-9a-f]{64}\.json")
 
 
 def validate_key(key):
+    if key == "company":
+        return key
     if not isinstance(key, str) or (key not in FIXED_KEYS and _FACT_KEY.fullmatch(key) is None):
         raise ContractError("invalid_input", "标准文档范围必须是固定片或明确的业务领域与月份。")
     if key.startswith("facts:"):
@@ -111,7 +114,7 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
             raise ContractError("invalid_input", "同一最终业务不能出现在多个标准分片。")
         seen.add(fact["business_id"])
         fact["evidence_ids"] = sorted(set(fact["evidence_ids"]))
-        used_sources.update(fact["evidence_ids"])
+        used_sources.update(fact_source_ids(fact))
         key = validate_key("facts:" + fact["kind"].split(".")[0] + ":" + fact["period"])
         if key not in selected:
             raise ContractError("invalid_input", "事实导出必须只覆盖本次选定的完整业务分片。")
@@ -202,6 +205,7 @@ def _markdown(manifest):
         "",
         "统一社会信用代码：" + company["credit_code"],
         "建账月份：" + company["start_period"],
+        "已进入的工作末月：" + company.get("working_period_to", company["start_period"]),
         "当前集合：`" + manifest["set_id"] + "`",
         "",
         "## 当前内容",

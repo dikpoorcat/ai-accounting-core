@@ -134,7 +134,7 @@ class Records:
             validate_contract("core.schema.json", "Id", owner_key)
         elif not isinstance(owner_key, str) or not 1 <= len(owner_key) <= 200:
             raise ContractError("invalid_input", "说明范围不能为空。")
-        ids = _changes.source_ids(evidence_ids, limit=1000)
+        ids = _changes.source_ids(evidence_ids, limit=None if owner_kind == "business" else 1000)
         repository = uow.repository("records")
         _changes._missing_sources(ids, repository.sources(ids))
         if repository.uses(owner_kind, owner_key) != ids:

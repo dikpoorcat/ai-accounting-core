@@ -16,10 +16,14 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
+from ._advances import advance_fulfillment, advance_refund
+from ._candidate_checks import validate_candidate as validate_operating_candidate
 from ._common import issue
 from ._expenses import check_expense, expense
-from ._relationships import deposit, pass_through, reimbursement
+from ._income import other_income
+from ._relationships import deposit, overpayment, pass_through, pass_through_return, reimbursement
 from ._repository import OperationsRepository
+from ._returns import expense_recovery, sale_return
 from ._roles import object_roles, role_issues
 from ._sales import advance, check_advance_tax_status, service_sale
 
@@ -30,6 +34,13 @@ _CALCULATORS = {
     "operations.reimbursement": reimbursement,
     "operations.service_sale": service_sale,
     "operations.advance": advance,
+    "operations.pass_through_return": pass_through_return,
+    "operations.overpayment": overpayment,
+    "operations.other_income": other_income,
+    "operations.expense_recovery": expense_recovery,
+    "operations.sale_return": sale_return,
+    "operations.advance_fulfillment": advance_fulfillment,
+    "operations.advance_refund": advance_refund,
 }
 
 
@@ -42,8 +53,24 @@ def _main_object(fact):
     return roles[0].object_id if roles else None
 
 
-def _references(fact):
+def _references(fact, context):
     data, kind = fact["data"], fact["kind"]
+    if kind in {"operations.advance_fulfillment", "operations.advance_refund"}:
+        refs = [{"business_id": data["advance_id"], "slot": "main"}]
+        if kind == "operations.advance_fulfillment":
+            original = context.get_fact(data["advance_id"])
+            vat = data.get("vat") or (original or {}).get("data", {}).get("vat")
+            if vat:
+                refs.append({"business_id": vat["policy_id"], "slot": "main"})
+        return refs
+    if kind == "operations.expense_recovery":
+        return [{"business_id": data["expense_id"], "slot": "main"}]
+    if kind == "operations.sale_return":
+        return [{"business_id": data["sale_id"], "slot": "main"}]
+    if kind == "operations.overpayment":
+        return [data["source"]]
+    if kind == "operations.pass_through_return":
+        return [{"business_id": data["pass_through_id"], "slot": "main"}]
     if kind == "operations.reimbursement":
         return [x["source"] for x in data.get("allocations", data.get("sources", ()))]
     if "vat" in data:
@@ -85,6 +112,7 @@ class Operations:
                 "expected_seq": change["expected_seq"],
                 "op": op,
                 "complete_result_slots": [],
+                "natural_key": None,
             }
             if op in {"withdraw", "handoff_out"}:
                 responsibilities.append(responsibility)
@@ -117,23 +145,74 @@ class Operations:
                         "relation_kind": "identity",
                     }
                 )
-            for ref in _references(fact):
+            if fact["kind"] == "operations.other_income":
+                account_id = fact["data"]["funds_account_id"]
+                account = context.get_object(account_id)
+                if account is not None and account["kind"] == "platform_account":
+                    dependencies.append(
+                        {
+                            "consumer_business_id": business_id,
+                            "consumer_result_slot": "main",
+                            "producer_kind": "object",
+                            "producer_id": account_id,
+                            "producer_public_slot": "main",
+                            "read_mode": "collection",
+                            "relation_kind": "identity",
+                            "period_from": fact["period"],
+                            "period_to": fact["period"],
+                        }
+                    )
+            for ref in _references(fact, context):
                 policy_only = (
                     fact["kind"] == "operations.advance"
                     and fact["data"]["side"] == "customer"
                     and fact["data"]["tax_status"] == "not_due"
                 )
-                dependencies.append(
-                    {
-                        "consumer_business_id": business_id,
-                        "consumer_result_slot": "main",
-                        "producer_kind": "business",
-                        "producer_id": ref["business_id"],
-                        "producer_public_slot": "main",
-                        "read_mode": "fact" if policy_only else "result",
-                        "relation_kind": "policy" if policy_only else "calculation",
-                    }
-                )
+                money_sensitive = fact["kind"] in {
+                    "operations.pass_through_return",
+                    "operations.overpayment",
+                }
+                edge = {
+                    "consumer_business_id": business_id,
+                    "consumer_result_slot": "main",
+                    "producer_kind": "business",
+                    "producer_id": ref["business_id"],
+                    "producer_public_slot": "main",
+                    "read_mode": "fact" if policy_only else "result",
+                    "relation_kind": "settlement"
+                    if money_sensitive
+                    else "policy"
+                    if policy_only
+                    else "calculation",
+                }
+                dependencies.append(edge)
+                if money_sensitive:
+                    dependencies.append(
+                        {
+                            **edge,
+                            "read_mode": "collection",
+                            "period_from": "0001-01",
+                            "period_to": fact["period"],
+                        }
+                    )
+                if fact["kind"] in {
+                    "operations.expense_recovery",
+                    "operations.sale_return",
+                    "operations.advance_fulfillment",
+                    "operations.advance_refund",
+                } and ref["business_id"] in {
+                    fact["data"].get("expense_id"),
+                    fact["data"].get("sale_id"),
+                    fact["data"].get("advance_id"),
+                }:
+                    dependencies.append(
+                        {
+                            **edge,
+                            "read_mode": "collection",
+                            "period_from": "0001-01",
+                            "period_to": "9999-12",
+                        }
+                    )
         result = {
             "domain": "operations",
             "businesses": responsibilities,
@@ -166,6 +245,12 @@ class Operations:
         plan = calculator(fact, context)
         validate_contract("business-facts.schema.json", "PostingPlan", plan)
         return plan
+
+    def validate_candidate(self, plan, context):
+        validate_contract("business-facts.schema.json", "ChangePlan", plan)
+        if plan["domain"] != "operations" or plan["issues"]:
+            raise ContractError("invalid_input", "经营候选计划不属于本模块或仍有未解问题。")
+        validate_operating_candidate(plan, context)
 
     def apply_current(self, plan: ChangePlan, uow: UnitOfWork) -> None:
         validate_contract("business-facts.schema.json", "ChangePlan", plan)

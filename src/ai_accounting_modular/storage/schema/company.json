@@ -1,5 +1,5 @@
 {
-  "fingerprint": "18efae89a04588400d1335bf1d932f9182104355ea60590ec4e30d02642a54de",
+  "fingerprint": "8ed219756eda4740b4a1abd77994385712bd334d6db5fe57b30ac0ce969ae327",
   "kind": "company",
   "objects": [
     {
@@ -31,6 +31,13 @@
       "type": "index"
     },
     {
+      "name": "application_state",
+      "owner": "application",
+      "sql": "CREATE TABLE application_state (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n working_period_to TEXT NOT NULL CHECK(length(working_period_to)=7)\n) STRICT",
+      "table": "application_state",
+      "type": "table"
+    },
+    {
       "name": "business_head",
       "owner": "application",
       "sql": "CREATE TABLE business_head (\nbusiness_id TEXT PRIMARY KEY CHECK(length(business_id)=36),\n family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),\n kind TEXT NOT NULL,\n natural_key TEXT,\n seq INTEGER NOT NULL CHECK(seq>=1),\n state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),\n period TEXT,\n archive_month TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n latest_op TEXT NOT NULL CHECK(latest_op IN ('create','replace','withdraw','restore')),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),\n CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))\n) STRICT",
@@ -40,7 +47,7 @@
     {
       "name": "current_dependency",
       "owner": "application",
-      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object')),\n producer_id TEXT NOT NULL CHECK(length(producer_id)=36),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
+      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work')\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
       "table": "current_dependency",
       "type": "table"
     },

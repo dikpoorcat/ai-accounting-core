@@ -14,6 +14,7 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError, val
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from ._dispatch import install_guards, one_of
 from ._errors import ContractError
 from ._scalars import MAX_FEN, MIN_FEN, parse_fen
 from ._wire_types import JsonValue
@@ -147,6 +148,7 @@ _Validator = validators.extend(
         "x-integer-minimum": _integer_bound,
         "x-integer-maximum": _integer_bound,
         "x-fen-int64": _wire_fen,
+        "oneOf": one_of,
     },
     type_checker=Draft202012Validator.TYPE_CHECKER.redefine(
         "integer", lambda checker, value: type(value) is int
@@ -156,7 +158,7 @@ _Validator = validators.extend(
 
 @lru_cache(maxsize=1)
 def _bundle():
-    documents = {}
+    documents, roots = {}, []
     registry = Registry()
     root = files("ai_accounting_modular.contracts").joinpath("_schemas")
     for name in _SCHEMAS:
@@ -164,14 +166,18 @@ def _bundle():
         documents[name] = document
         if name == "dashboard-response-v1.json":
             for namespace, schema in document.items():
+                uri = _BASE + "dashboard/" + namespace
                 registry = registry.with_resource(
-                    _BASE + "dashboard/" + namespace,
+                    uri,
                     Resource.from_contents(schema, default_specification=DRAFT202012),
                 )
+                roots.append((schema, uri))
         else:
             resource = Resource.from_contents(document, default_specification=DRAFT202012)
             for uri in {_BASE + name, document["$id"]}:
                 registry = registry.with_resource(uri, resource)
+            roots.append((document, document["$id"]))
+    install_guards((schema, registry.resolver(base_uri=uri)) for schema, uri in roots)
     return documents, registry
 
 

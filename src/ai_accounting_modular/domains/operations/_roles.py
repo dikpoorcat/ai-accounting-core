@@ -4,8 +4,12 @@ from dataclasses import dataclass
 
 from ._common import issue
 
-_KINDS = {"party": frozenset({"person", "organization"}), "person": frozenset({"person"})}
-_LABELS = {"party": "人员或组织", "person": "人员"}
+_KINDS = {
+    "party": frozenset({"person", "organization"}),
+    "person": frozenset({"person"}),
+    "funds": frozenset({"bank_account", "cash_account", "platform_account"}),
+}
+_LABELS = {"party": "人员或组织", "person": "人员", "funds": "公司实际资金账户"}
 _PARTY_FIELDS = frozenset({"customer_id", "counterparty_id", "beneficiary_id"})
 _ROLE_FIELDS = (
     "creditor_id",
@@ -14,6 +18,7 @@ _ROLE_FIELDS = (
     "payer_id",
     "beneficiary_id",
     "employee_id",
+    "funds_account_id",
 )
 
 
@@ -40,6 +45,8 @@ def object_roles(fact):
             role = "person"
         elif field == "payer_id":
             role = "person" if kind == "operations.reimbursement" else "party"
+        elif field == "funds_account_id":
+            role = "funds"
         else:
             continue
         roles.append(ObjectRole("/data/" + field, object_id, role))

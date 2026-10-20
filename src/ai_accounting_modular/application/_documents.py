@@ -35,6 +35,10 @@ def capture(application, read):
         "accounting_standard": "small_enterprise",
         "currency": "CNY",
         "start_period": metadata.start_period,
+        "working_period_to": max(
+            metadata.start_period,
+            read.repository("application").working_period_to() or metadata.start_period,
+        ),
     }
     return application.records.capture_documents(identity, facts, objects, read, scopes=scopes)
 

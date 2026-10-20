@@ -227,6 +227,7 @@ class CompanyIdentity(TypedDict):
     accounting_standard: Literal['small_enterprise']
     currency: Literal['CNY']
     start_period: Month
+    working_period_to: NotRequired[Month]
 
 class DocumentManifest(TypedDict):
     format: Literal['ai-accounting-standard/1']
@@ -638,6 +639,7 @@ class OperationsOtherIncome(TypedDict):
     amount_fen: PositiveFen
     funds_account_id: Id
     counterparty_id: NotRequired[Id]
+    platform_row_ids: NotRequired[list[Id]]
 
 class CustomerAdvance(TypedDict):
     side: Literal['customer']
@@ -872,6 +874,7 @@ class FinancingOwnerFunding(TypedDict):
     funding_kind: Literal['loan', 'capital']
     amount_fen: PositiveFen
     funds_account_id: Id
+    platform_row_ids: NotRequired[list[Id]]
 
 class FinancingLoanContract(TypedDict):
     lender_id: Id
@@ -888,6 +891,7 @@ class FinancingLoanDrawdown(TypedDict):
     contract_id: Id
     principal_fen: PositiveFen
     funds_account_id: Id
+    platform_row_ids: NotRequired[list[Id]]
 
 class FinancingInterestPeriod(TypedDict):
     principal_source: BusinessRef
@@ -1711,6 +1715,7 @@ class PartialOperationsOtherIncome(TypedDict):
     amount_fen: NotRequired[PositiveFen]
     funds_account_id: NotRequired[Id]
     counterparty_id: NotRequired[Id]
+    platform_row_ids: NotRequired[list[Id]]
 
 class PartialCustomerAdvance(TypedDict):
     side: NotRequired[Literal['customer']]
@@ -1945,6 +1950,7 @@ class PartialFinancingOwnerFunding(TypedDict):
     funding_kind: NotRequired[Literal['loan', 'capital']]
     amount_fen: NotRequired[PositiveFen]
     funds_account_id: NotRequired[Id]
+    platform_row_ids: NotRequired[list[Id]]
 
 class PartialFinancingLoanContract(TypedDict):
     lender_id: NotRequired[Id]
@@ -1961,6 +1967,7 @@ class PartialFinancingLoanDrawdown(TypedDict):
     contract_id: NotRequired[Id]
     principal_fen: NotRequired[PositiveFen]
     funds_account_id: NotRequired[Id]
+    platform_row_ids: NotRequired[list[Id]]
 
 class PartialFinancingInterestPeriod(TypedDict):
     principal_source: NotRequired[PartialBusinessRef]
@@ -3139,7 +3146,7 @@ class AdoptedBalanceQuantity(TypedDict):
     balance_fen: Fen
     as_of_period: Month
 
-type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity
+type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity
 
 class AdoptedPeopleContributionPolicy(TypedDict):
     policy_business_id: Id
@@ -3238,6 +3245,7 @@ class AccountingOperationsOtherIncome(TypedDict):
     amount_fen: PositiveFen
     funds_account_id: Id
     counterparty_id: NotRequired[Id]
+    platform_row_ids: NotRequired[list[Id]]
 
 class AccountingCustomerAdvance(TypedDict):
     side: Literal['customer']
@@ -3470,6 +3478,7 @@ class AccountingFinancingOwnerFunding(TypedDict):
     funding_kind: Literal['loan', 'capital']
     amount_fen: PositiveFen
     funds_account_id: Id
+    platform_row_ids: NotRequired[list[Id]]
 
 class AccountingFinancingLoanContract(TypedDict):
     lender_id: Id
@@ -3486,6 +3495,7 @@ class AccountingFinancingLoanDrawdown(TypedDict):
     contract_id: Id
     principal_fen: PositiveFen
     funds_account_id: Id
+    platform_row_ids: NotRequired[list[Id]]
 
 class AccountingFinancingInterestPeriod(TypedDict):
     principal_source: BusinessRef
@@ -4393,14 +4403,15 @@ class BusinessChangeResponsibility(TypedDict):
     op: Literal['create', 'replace', 'withdraw', 'restore', 'recalculate', 'handoff_out']
     fact: NotRequired[Fact]
     complete_result_slots: list[Slot]
+    natural_key: str | None
 
 class Dependency(TypedDict):
     consumer_business_id: Id
     consumer_result_slot: Slot
-    producer_kind: Literal['business', 'object']
-    producer_id: Id
+    producer_kind: Literal['business', 'object', 'scope', 'calendar']
+    producer_id: str
     producer_public_slot: Slot
-    read_mode: Literal['fact', 'result']
+    read_mode: Literal['fact', 'result', 'collection']
     relation_kind: DependencyRelationKind
     period_from: NotRequired[Month]
     period_to: NotRequired[Month]
@@ -4456,6 +4467,7 @@ class CooperationFunding(TypedDict):
     amount_fen: PositiveFen
     funds_account_id: Id
     actual_on: Date
+    platform_row_ids: NotRequired[list[Id]]
 
 class CooperationPartialFunding(TypedDict):
     contract_id: NotRequired[Id]
@@ -4463,6 +4475,7 @@ class CooperationPartialFunding(TypedDict):
     amount_fen: NotRequired[PositiveFen]
     funds_account_id: NotRequired[Id]
     actual_on: NotRequired[Date]
+    platform_row_ids: NotRequired[list[Id]]
 
 class CooperationFactFunding(TypedDict):
     business_id: Id
@@ -4567,6 +4580,7 @@ class CooperationDistribution(TypedDict):
     amount_fen: PositiveFen
     funds_account_id: Id
     actual_on: Date
+    platform_row_ids: NotRequired[list[Id]]
 
 class CooperationPartialDistribution(TypedDict):
     contract_id: NotRequired[Id]
@@ -4575,6 +4589,7 @@ class CooperationPartialDistribution(TypedDict):
     amount_fen: NotRequired[PositiveFen]
     funds_account_id: NotRequired[Id]
     actual_on: NotRequired[Date]
+    platform_row_ids: NotRequired[list[Id]]
 
 class CooperationFactDistribution(TypedDict):
     business_id: Id
@@ -4840,6 +4855,24 @@ class CooperationAdoptedCooperationCashSource(TypedDict):
     cumulative_company_before_fen: NonNegativeFen
 
 type CooperationShare = Rate
+
+type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.remuneration', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
+
+class AdoptedEmploymentQuantity(TypedDict):
+    type: Literal['employment']
+    source: BusinessRef
+    parameters: PeopleEmployment
+
+class AdoptedContributionActualQuantity(TypedDict):
+    type: Literal['contribution_actual']
+    source: BusinessRef
+    parameters: PeopleContributionActual
+
+class AdoptedCumulativeRangeQuantity(TypedDict):
+    type: Literal['cumulative_range']
+    source: BusinessRef
+    from_fen: NonNegativeFen
+    to_fen: PositiveFen
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
@@ -11403,6 +11436,10 @@ __all__ = [
     'CooperationAdoptedBasis',
     'CooperationAdoptedCooperationCashSource',
     'CooperationShare',
+    'FactKind',
+    'AdoptedEmploymentQuantity',
+    'AdoptedContributionActualQuantity',
+    'AdoptedCumulativeRangeQuantity',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',
