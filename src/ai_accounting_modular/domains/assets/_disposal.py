@@ -23,15 +23,20 @@ from ._common import (
     result_for,
     source,
 )
-from ._consumption import cards_from_activation, slot_for
+from ._consumption import slot_for
+from ._origins import opening_card, unique_origin
 
 
 def disposal_state(fact, context):
     asset_id = fact["data"]["asset_id"]
+    acquired = unique_origin(fact, context, asset_id)
+    if acquired["period"] > fact["period"]:
+        reject("资产处置不能早于公司的取得或建账期初。")
+    if acquired["kind"] == "opening.package":
+        main, card = opening_card(acquired, context, asset_id)
+        return _closing_card(fact, context, acquired, main, card, context.read_context.start_period)
     acquired, acquired_card = acquisition_card(fact, context, asset_id)
-    if acquired["period"] > fact["period"] or (
-        acquired.get("effective_on") and acquired["effective_on"] > fact["effective_on"]
-    ):
+    if acquired.get("effective_on") and acquired["effective_on"] > fact["effective_on"]:
         reject("资产处置不能早于公司的取得。")
     acquisition_result = result_for(context, acquired["business_id"])
     enabled = one_related(fact, context, asset_id, "assets.activation", required=False)
@@ -40,16 +45,21 @@ def disposal_state(fact, context):
     if enabled["period"] > fact["period"]:
         reject("处置后的资产不能仍保留未来启用。")
     main = result_for(context, enabled["business_id"])
-    card = next(item for item in cards_from_activation(main) if item["asset_id"] == asset_id)
+    card = deepcopy(context.adopted_asset_card(main, asset_id))
     day = next(item for item in enabled["data"]["items"] if item["asset_id"] == asset_id).get(
         "in_use_on"
     )
     if day and day > fact["effective_on"]:
         reject("资产处置实际日不能早于其实际启用日。")
-    end = consumption_end(card, context)
-    accumulated, results = 0, [main]
-    if card["consumption_start"] <= end:
-        final = result_for(context, enabled["business_id"], slot_for(end))
+    return _closing_card(fact, context, enabled, main, card, card["consumption_start"])
+
+
+def _closing_card(fact, context, owner_fact, main, card, first_period):
+    asset_id = card["asset_id"]
+    end = min(consumption_end(card, context), fact["period"])
+    accumulated, results = parse_fen(card["accumulated_fen"]), [main]
+    if max(card["consumption_start"], first_period) <= end:
+        final = result_for(context, owner_fact["business_id"], slot_for(end))
         row = next(
             (item for item in final.target["values"]["items"] if item["asset_id"] == asset_id), None
         )

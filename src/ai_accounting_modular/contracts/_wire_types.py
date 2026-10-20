@@ -1211,9 +1211,9 @@ class OpeningLoan(TypedDict):
     type: Literal['loan']
     contract_id: Id
     lender_id: Id
-    principal_fen: PositiveFen
+    principal_fen: NonNegativeFen
     accrued_interest_fen: NonNegativeFen
-    interest_start_on: Date
+    interest_start_on: NotRequired[Date]
 
 class OpeningTax(TypedDict):
     type: Literal['tax']
@@ -2295,7 +2295,7 @@ class PartialOpeningLoan(TypedDict):
     type: NotRequired[Literal['loan']]
     contract_id: NotRequired[Id]
     lender_id: NotRequired[Id]
-    principal_fen: NotRequired[PositiveFen]
+    principal_fen: NotRequired[NonNegativeFen]
     accrued_interest_fen: NotRequired[NonNegativeFen]
     interest_start_on: NotRequired[Date]
 
@@ -3813,9 +3813,9 @@ class AccountingOpeningLoan(TypedDict):
     type: Literal['loan']
     contract_id: Id
     lender_id: Id
-    principal_fen: PositiveFen
+    principal_fen: NonNegativeFen
     accrued_interest_fen: NonNegativeFen
-    interest_start_on: Date
+    interest_start_on: NotRequired[Date]
 
 class AccountingOpeningTax(TypedDict):
     type: Literal['tax']

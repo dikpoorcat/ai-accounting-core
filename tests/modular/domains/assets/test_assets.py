@@ -3,6 +3,7 @@
 import json
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -34,9 +35,8 @@ def case(name):
 class Context:
     """Input transport and result binding only; no asset amount formula here."""
 
-    read_context = None
-
-    def __init__(self, *facts, period_to="2026-05"):
+    def __init__(self, *facts, period_to="2026-05", start_period="2026-01"):
+        self.read_context = SimpleNamespace(start_period=start_period)
         self.evaluation_period_to = period_to
         self.facts = {fact["business_id"]: deepcopy(fact) for fact in facts}
         self.objects, self.results, self.plans = {}, {}, {}
@@ -65,7 +65,18 @@ class Context:
             return data["items"]
         if fact["kind"] == "assets.disposal":
             return [data]
+        if fact["kind"] == "opening.package":
+            return [
+                member["data"] for member in data["members"] if member["data"]["type"] == "asset"
+            ]
         return []
+
+    def facts_in_scope(self, kinds, period_from, period_to):
+        return tuple(
+            deepcopy(fact)
+            for fact in self.facts.values()
+            if fact["kind"] in kinds and period_from <= fact["period"] <= period_to
+        )
 
     def get_fact(self, business_id):
         return deepcopy(self.facts.get(business_id))

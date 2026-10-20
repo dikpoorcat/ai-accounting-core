@@ -7,13 +7,13 @@ from ai_accounting_modular.contracts.public import (
     canonical_json,
     loads_json,
     parse_fen,
+    restore_fact_collection,
+    split_fact_collection,
     validate_contract,
 )
 
-_ROW_TABLES = {
-    "money.bank_statement": "bank_statement_row",
-    "money.platform_activity": "platform_activity_row",
-}
+from ._original_rows import ROW_TABLES as _ROW_TABLES
+from ._original_rows import load_rows, row_wire
 
 
 class MoneyRepository:
@@ -21,37 +21,46 @@ class MoneyRepository:
         self._session = session
 
     def _facts(self, rows):
-        result = []
-        for row in rows:
-            try:
+        try:
+            projected = []
+            for row in rows:
                 fact = loads_json(row["data_json"])
                 kind = fact["kind"]
                 expected_schema = kind + ("/storage_projection/1" if kind in _ROW_TABLES else "")
                 if (
                     fact["business_id"] != row["business_id"]
+                    or type(kind) is not str
                     or not kind.startswith("money.")
                     or row["schema_key"] != expected_schema
                     or fact.get("effective_on") != row["effective_on"]
+                    or kind in _ROW_TABLES
+                    and row["main_object_id"] != self._main_object(fact)
                 ):
                     raise ValueError("stored money fact identity mismatch")
+                projected.append(fact)
+            collections = {}
+            for kind in _ROW_TABLES:
+                parents = {f["business_id"]: f for f in projected if f["kind"] == kind}
+                collections.update(load_rows(self._session, parents, kind))
+            result = []
+            for fact in projected:
+                kind = fact["kind"]
                 if kind in _ROW_TABLES:
-                    if "rows" in fact["data"]:
-                        raise ValueError("normalized rows duplicated in parent")
-                    fact["data"]["rows"] = self.rows_for_business(
-                        row["business_id"], _ROW_TABLES[kind]
-                    )
-                validate_contract("business-facts.schema.json", "Fact", fact)
-            except (ContractError, KeyError, TypeError, ValueError) as error:
-                raise ContractError("storage_corrupt", "资金当前事实或原行结构不完整。") from error
-            result.append(fact)
-        return tuple(result)
+                    fact = restore_fact_collection(fact, "rows", collections[fact["business_id"]])
+                else:
+                    validate_contract("business-facts.schema.json", "Fact", fact)
+                result.append(fact)
+            return tuple(result)
+        except (ContractError, KeyError, TypeError, ValueError) as error:
+            raise ContractError("storage_corrupt", "资金当前事实或原行结构不完整。") from error
 
     def get(self, ids):
         if not ids:
             return ()
         return self._facts(
             self._session.fetchall(
-                "SELECT business_id,schema_key,effective_on,data_json FROM money_fact "
+                "SELECT business_id,schema_key,effective_on,main_object_id,data_json "
+                "FROM money_fact "
                 "WHERE business_id IN (SELECT value FROM json_each(?)) ORDER BY business_id",
                 (canonical_json(list(ids)),),
             )
@@ -72,9 +81,8 @@ class MoneyRepository:
         args.append(query["limit"])
         return self._facts(
             self._session.fetchall(
-                "SELECT business_id,schema_key,effective_on,data_json FROM money_fact WHERE "
-                + " AND ".join(clauses)
-                + " ORDER BY business_id LIMIT ?",
+                "SELECT business_id,schema_key,effective_on,main_object_id,data_json "
+                "FROM money_fact WHERE " + " AND ".join(clauses) + " ORDER BY business_id LIMIT ?",
                 args,
             )
         )
@@ -177,15 +185,15 @@ class MoneyRepository:
             self._row_conflict(*by_id[conflicts[0]["row_id"]])
 
     def _save_fact(self, fact, main_object_id=None):
-        body = deepcopy(fact)
         kind = fact["kind"]
-        data = body["data"]
         account = self._main_object(fact, main_object_id)
         schema = kind
         if kind in _ROW_TABLES:
-            rows = data.pop("rows")
+            body, rows = split_fact_collection(fact, "rows")
             schema += "/storage_projection/1"
             self._insert_rows(fact, _ROW_TABLES[kind], rows, account)
+        else:
+            body = deepcopy(fact)
         self._session.execute(
             "INSERT INTO money_fact(business_id,schema_key,effective_on,main_object_id,data_json) "
             "VALUES(?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET "
@@ -220,33 +228,6 @@ class MoneyRepository:
                     row.get("counterparty_text"),
                 ),
             )
-
-    def rows_for_business(self, business_id, table):
-        if table not in _ROW_TABLES.values():
-            raise ValueError("unknown money row table")
-        rows = self._session.fetchall(
-            f"SELECT * FROM {table} WHERE business_id=? "
-            "ORDER BY json_extract(source_location,'$.position'),row_id",
-            (business_id,),
-        )
-        result = []
-        for row in rows:
-            saved = loads_json(row["source_location"])
-            source = saved["source"]
-            if saved["row_id"] != row["row_id"] or source["source_id"] != row["source_id"]:
-                raise ContractError("storage_corrupt", "原行的身份或资料定位不一致。")
-            value = {
-                "row_id": row["row_id"],
-                "source": source,
-                "actual_on": row["actual_on"],
-                "direction": "inflow" if row["direction"] == "in" else "outflow",
-                "amount_fen": str(row["amount_fen"]),
-            }
-            for field in ("reference", "counterparty_text"):
-                if row[field] is not None:
-                    value[field] = row[field]
-            result.append(value)
-        return result
 
     def register_occurrence(self, business_id, slot, movement_id):
         self._session.execute(
@@ -293,20 +274,17 @@ class MoneyRepository:
         params.append(limit + 1)
         result = []
         for row in self._session.fetchall(query, params):
-            source = loads_json(row["source_location"])["source"]
+            kind = (
+                "money.bank_statement"
+                if row["source_kind"] == "bank"
+                else "money.platform_activity"
+            )
             value = {
-                "row_id": row["row_id"],
+                **row_wire(row, kind),
                 "business_id": row["business_id"],
                 "account_id": row["account_id"],
-                "source": source,
                 "source_kind": row["source_kind"],
-                "actual_on": row["actual_on"],
-                "direction": "inflow" if row["direction"] == "in" else "outflow",
-                "amount_fen": str(row["amount_fen"]),
             }
-            for field in ("reference", "counterparty_text"):
-                if row[field] is not None:
-                    value[field] = row[field]
             result.append(value)
         return count, result
 

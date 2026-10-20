@@ -3,12 +3,14 @@
 from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
+    AdoptedAssetQuantity,
     BusinessQuery,
     ChangeDescription,
     ChangePlan,
     ContractError,
     EvaluationContext,
     Fact,
+    OpeningAssetSlots,
     PostingPlan,
     ReadContext,
     ResourceCutoff,
@@ -17,13 +19,17 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from ._cards import related
 from ._common import assets_in, finalize_plan, reject
 from ._consumption import consumption, slot_for
 from ._description import DescriptionContext, activation_months, publications
 from ._description import dependencies as dependency_edges
 from ._facts import CALCULATORS, natural_key, role_issues, validate_fact
 from ._inputs import AssetInputs, batches, reference_key
+from ._opening import cards as opening_cards
+from ._opening import describe as describe_opening
+from ._opening import evaluate as evaluate_opening
+from ._opening import validate as validate_opening
+from ._origins import validate_origins
 from ._repository import AssetsRepository
 
 
@@ -113,14 +119,7 @@ class Assets:
         facts = [item["fact"] for item in plan["businesses"] if "fact" in item]
         context = AssetInputs(context)
         context.load_assets(item["asset_id"] for fact in facts for item in assets_in(fact))
-        for responsibility in plan["businesses"]:
-            fact = responsibility.get("fact")
-            if fact is None:
-                continue
-            for card in assets_in(fact):
-                for kind in ("assets.acquisition", "assets.activation", "assets.disposal"):
-                    if len(related(context, card["asset_id"], kind)) > 1:
-                        reject("同一资产不能有多个有效取得、启用或处置。")
+        validate_origins(context, (card["asset_id"] for fact in facts for card in assets_in(fact)))
         # All calculations used immutable definitions. Only now inspect complete
         # candidate capacities, including siblings, replacements and withdrawals.
         by_period = {}
@@ -154,6 +153,24 @@ class Assets:
             else:
                 validate_fact(responsibility["fact"])
                 repo.save(responsibility["fact"])
+
+    def describe_opening_assets(self, fact: Fact, context: EvaluationContext) -> OpeningAssetSlots:
+        return describe_opening(fact, context)
+
+    def opening_asset_cards(
+        self, fact: Fact, context: EvaluationContext
+    ) -> tuple[AdoptedAssetQuantity, ...]:
+        return opening_cards(fact, context)
+
+    def evaluate_opening_asset_slot(
+        self, fact: Fact, result_slot: str, context: EvaluationContext
+    ) -> PostingPlan:
+        return evaluate_opening(fact, result_slot, context)
+
+    def validate_opening_asset_candidate(
+        self, plan: ChangePlan, context: EvaluationContext
+    ) -> None:
+        validate_opening(plan, context)
 
     def export_current(self, ids, read_context: ReadContext) -> tuple[Fact, ...]:
         return read_context.repository("domains.assets").get(ids)

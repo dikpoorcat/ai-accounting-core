@@ -6,6 +6,7 @@ from ai_accounting_modular.contracts.public import (
     YearMonth,
     format_fen,
 )
+from ai_accounting_modular.ledger.opening.public import is_zero_origin
 
 from ._actual import check_actual, declarations
 from ._common import (
@@ -88,13 +89,11 @@ def _carry(fact, context, plan):
     ]
     if len(openings) > 1 or len(continuations) > 1:
         reject("所得税接账起点或累计接续来源不唯一。")
+    opening = None
     if openings:
         opening = result_for(
             fact, context, openings[0]["business_id"], "opening.package", "/data/income_tax_carry"
         )
-        if opening.basis["input"]["basis"] == "newly_established" and start[:4] == f"{year:04d}":
-            adopt_source(plan, opening.source)
-            return 0
     if continuations:
         source = result_for(
             fact,
@@ -115,6 +114,13 @@ def _carry(fact, context, plan):
             adopt_source(plan, source.source)
             plan["basis"]["adopted_quantities"].append(dict(quantities[0]))
             return amount(quantities[0]["cumulative_tax_fen"])
+    elif (
+        opening is not None
+        and start[:4] == f"{year:04d}"
+        and is_zero_origin(opening.target, opening.basis)
+    ):
+        adopt_source(plan, opening.source)
+        return 0
     missing(
         fact,
         "/data/income_tax_carry",

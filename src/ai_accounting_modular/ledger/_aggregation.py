@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
     parse_fen,
     validate_contract,
 )
+from ai_accounting_modular.ledger.opening.public import is_zero_origin
 
 from ._balances import sum_amounts
 from ._formal_output import target_vouchers
@@ -80,8 +81,6 @@ def _prior_profit(heads, plans, period_from, period_to, start_period):
         fail("dependency_conflict", "税前利润的接账期初或接续依据不唯一。")
     if period_to >= start_period and openings:
         opening, basis = openings[0]
-        if basis["input"]["basis"] == "newly_established" and period_from[:4] == start_period[:4]:
-            return (0, 0, 0), opening, "new_company_zero"
         if continuations:
             continuation, adopted = continuations[0]
             data = adopted["input"]
@@ -106,6 +105,11 @@ def _prior_profit(heads, plans, period_from, period_to, start_period):
                 ):
                     fail("storage_corrupt", "正式接续利润表的损益勾稽不一致。")
                 return values, continuation, column
+        elif period_from[:4] == start_period[:4]:
+            key = opening["business_id"], opening["result_slot"]
+            target = plans[key]["target"] if key in plans else json.loads(opening["target_json"])
+            if is_zero_origin(target, basis):
+                return (0, 0, 0), opening, "new_company_zero"
     return None, None, None
 
 

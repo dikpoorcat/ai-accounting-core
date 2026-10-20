@@ -4,27 +4,33 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
 
 from ._errors import ContractError
 from ._scalars import checked_fen, parse_fen
 from ._validation import validate_contract
 from ._wire_types import (
+    AdoptedAssetQuantity,
     AdoptedBasis,
     BusinessRef,
+    ChangePlan,
     CostConsumption,
     CostLot,
     CurrentObject,
+    Dependency,
     DependencyRelationKind,
     Fact,
     FactIssue,
     FundMovement,
     Obligation,
     ObligationReclassification,
+    PostingPlan,
     PretaxFields,
+    ResultPublication,
     ResultSourceRef,
     ResultTarget,
     Settlement,
+    Slot,
     SourceLocator,
     TaxSale,
 )
@@ -366,3 +372,32 @@ class EvaluationContext(Protocol):
     ) -> tuple[ResourceDefinition, ...]:
         """Complete actual funds in the explicit account/month range."""
         ...
+
+
+class OpeningAssetSlots(TypedDict):
+    """Additional asset responsibilities; the opening owner retains its main slot."""
+
+    complete_result_slots: list[Slot]
+    dependencies: list[Dependency]
+    publications: list[ResultPublication]
+    issues: list[FactIssue]
+
+
+class OpeningAssetAccounting(Protocol):
+    """Injected asset calculations; no extra facts, repositories or AI commands."""
+
+    def describe_opening_assets(
+        self, fact: Fact, context: EvaluationContext
+    ) -> OpeningAssetSlots: ...
+
+    def opening_asset_cards(
+        self, fact: Fact, context: EvaluationContext
+    ) -> tuple[AdoptedAssetQuantity, ...]: ...
+
+    def evaluate_opening_asset_slot(
+        self, fact: Fact, result_slot: str, context: EvaluationContext
+    ) -> PostingPlan: ...
+
+    def validate_opening_asset_candidate(
+        self, plan: ChangePlan, context: EvaluationContext
+    ) -> None: ...

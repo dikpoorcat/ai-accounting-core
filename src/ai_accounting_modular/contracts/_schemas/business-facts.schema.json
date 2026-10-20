@@ -3241,7 +3241,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "principal_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "accrued_interest_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -3255,8 +3255,44 @@
         "contract_id",
         "lender_id",
         "principal_fen",
-        "accrued_interest_fen",
-        "interest_start_on"
+        "accrued_interest_fen"
+      ],
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "properties": {
+                "principal_fen": {
+                  "$ref": "core.schema.json#/$defs/PositiveFen"
+                }
+              }
+            },
+            {
+              "properties": {
+                "accrued_interest_fen": {
+                  "$ref": "core.schema.json#/$defs/PositiveFen"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "if": {
+            "properties": {
+              "principal_fen": {
+                "$ref": "core.schema.json#/$defs/PositiveFen"
+              }
+            },
+            "required": [
+              "principal_fen"
+            ]
+          },
+          "then": {
+            "required": [
+              "interest_start_on"
+            ]
+          }
+        }
       ]
     },
     "OpeningTax": {
@@ -8012,7 +8048,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "principal_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "accrued_interest_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -8020,7 +8056,35 @@
         "interest_start_on": {
           "$ref": "core.schema.json#/$defs/Date"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "principal_fen",
+              "accrued_interest_fen"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "principal_fen": {
+                    "$ref": "core.schema.json#/$defs/PositiveFen"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "accrued_interest_fen": {
+                    "$ref": "core.schema.json#/$defs/PositiveFen"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
     },
     "PartialOpeningTax": {
       "type": "object",
@@ -16468,7 +16532,7 @@
           "$ref": "core.schema.json#/$defs/Id"
         },
         "principal_fen": {
-          "$ref": "core.schema.json#/$defs/PositiveFen"
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
         },
         "accrued_interest_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -16482,8 +16546,44 @@
         "contract_id",
         "lender_id",
         "principal_fen",
-        "accrued_interest_fen",
-        "interest_start_on"
+        "accrued_interest_fen"
+      ],
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "properties": {
+                "principal_fen": {
+                  "$ref": "core.schema.json#/$defs/PositiveFen"
+                }
+              }
+            },
+            {
+              "properties": {
+                "accrued_interest_fen": {
+                  "$ref": "core.schema.json#/$defs/PositiveFen"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "if": {
+            "properties": {
+              "principal_fen": {
+                "$ref": "core.schema.json#/$defs/PositiveFen"
+              }
+            },
+            "required": [
+              "principal_fen"
+            ]
+          },
+          "then": {
+            "required": [
+              "interest_start_on"
+            ]
+          }
+        }
       ]
     },
     "AccountingOpeningTax": {

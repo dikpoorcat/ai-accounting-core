@@ -4,15 +4,16 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import parse_fen
 
+from ._card_rules import monthly_base
 from ._cards import consumption_end
 from ._common import (
     ACCUMULATED,
     CONSUMPTION,
     add_months,
-    base_plan,
     checked,
     line,
     month_number,
+    new_plan,
     reject,
     result_for,
     total,
@@ -23,7 +24,7 @@ def slot_for(month):
     return "depreciation:" + month
 
 
-def cards_from_activation(result):
+def cards_from_result(result):
     return [
         deepcopy(item)
         for item in result.basis["adopted_quantities"]
@@ -34,11 +35,7 @@ def cards_from_activation(result):
 def monthly_amount(card, opening, completed):
     cost, residual = parse_fen(card["cost_fen"]), parse_fen(card["residual_fen"])
     amount, life = cost - residual, card["useful_life_months"]
-    base = (
-        (2 * amount + life) // (2 * life)
-        if card["rounding"] == "round_half_up_card"
-        else amount // life
-    )
+    base = monthly_base(card)
     if completed < 0 or completed >= life or opening != base * completed:
         reject("摊折必须接续真实采用的上月累计，不能覆盖冻结卡片或补造期初。")
     return amount - opening if completed == life - 1 else base
@@ -48,23 +45,31 @@ def consumption(fact, month, context):
     main = result_for(context, fact["business_id"])
     cards = [
         card
-        for card in cards_from_activation(main)
+        for card in cards_from_result(main)
         if card["consumption_start"] <= month <= consumption_end(card, context)
     ]
     if not cards:
         reject("本月没有仍需摊折的有效资产卡片。", "invalid_input")
-    plan = base_plan(fact, context, {})
     slot = slot_for(month)
-    plan.update(result_slot=slot, accounting_period=month, calculation_key="assets.consumption")
-    plan["rule_refs"][0]["key"] = "assets.consumption"
+    plan = new_plan(fact["business_id"], "assets.consumption", month, slot)
     sources = [deepcopy(main.source)]
     adopted, items = [], []
     previous = None
     previous_items = {}
     for card in cards:
         completed = month_number(month) - month_number(card["consumption_start"])
-        opening = 0
-        if completed:
+        first = (
+            max(context.read_context.start_period, card["consumption_start"])
+            if fact["kind"] == "opening.package"
+            else card["consumption_start"]
+        )
+        if month < first:
+            reject("不能为建账前月份制造摊折结果。", "invalid_input")
+        opening = parse_fen(card["accumulated_fen"])
+        if month == first:
+            if card["completed_months"] != completed:
+                reject("首次本期摊折须直接接续来源卡片的已摊月数。")
+        else:
             if previous is None:
                 previous = result_for(context, fact["business_id"], slot_for(add_months(month, -1)))
                 sources.append(deepcopy(previous.source))

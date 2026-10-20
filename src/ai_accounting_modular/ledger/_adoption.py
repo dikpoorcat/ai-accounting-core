@@ -11,7 +11,7 @@ from ._formal_output import same_journal, target_voucher
 from ._planning import PlannedAdoption, bind_plan, check_source_references
 from ._publications import Publications
 from ._resource_promises import ResourceUses
-from ._values import check_plan, fail
+from ._values import check_bookkeeping_period, check_plan, fail
 
 
 def adopt(change_plans, uow, correction_period, reference):
@@ -46,6 +46,7 @@ def adopt(change_plans, uow, correction_period, reference):
             responsibilities[business_id] = responsibility
         for plan in change["plans"]:
             check_plan(plan)
+            check_bookkeeping_period(plan, uow.start_period)
             key = plan["business_id"], plan["result_slot"]
             if key in plans:
                 fail("invalid_input", "同一结果槽不能产生两份采用计划。")

@@ -92,15 +92,10 @@ def base_plan(fact, context, values):
                 item["source"]["slot"],
             )
         )
-    plan = {
-        "business_id": fact["business_id"],
-        "result_slot": "main",
-        "accounting_period": fact["period"],
-        "calculation_key": kind,
-        "calculation_revision": 1,
-        "rule_refs": [{"key": kind, "revision": 1, "policy_business_ids": [], "official_urls": []}],
-        "target": {"kind": kind, "result_slot": "main", "values": values},
-        "basis": {
+    plan = new_plan(fact["business_id"], kind, fact["period"])
+    plan.update(
+        target={"kind": kind, "result_slot": "main", "values": values},
+        basis={
             "kind": kind,
             "result_slot": "main",
             "period": fact["period"],
@@ -110,6 +105,18 @@ def base_plan(fact, context, values):
             "policies": [],
             "source_locations": context.resolve_sources(fact["evidence_ids"]),
         },
+    )
+    return plan
+
+
+def new_plan(business_id, kind, period, slot="main"):
+    plan = {
+        "business_id": business_id,
+        "result_slot": slot,
+        "accounting_period": period,
+        "calculation_key": kind,
+        "calculation_revision": 1,
+        "rule_refs": [{"key": kind, "revision": 1, "policy_business_ids": [], "official_urls": []}],
     }
     for name in (
         "lines",
@@ -245,6 +252,15 @@ def result_for(context, business_id, slot="main"):
 
 
 def assets_in(fact):
+    if fact["kind"] == "opening.package":
+        return sorted(
+            (
+                member["data"]
+                for member in fact["data"]["members"]
+                if member["data"]["type"] == "asset"
+            ),
+            key=lambda item: item["asset_id"],
+        )
     if fact["kind"] == "assets.acquisition":
         data = fact["data"]
         return (

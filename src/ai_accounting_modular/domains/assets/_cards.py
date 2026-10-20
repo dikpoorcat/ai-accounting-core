@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import parse_fen
 
+from ._card_rules import validate_card
 from ._common import (
     CAPITAL,
     PENDING,
@@ -49,6 +50,8 @@ def _activated_cards(fact, context):
     cards = []
     for item in assets_in(fact):
         asset_id = item["asset_id"]
+        if context.assets_related(asset_id, "opening.package"):
+            reject("期初在用资产从期初卡片直接接续，不能再次取得并启用。")
         acquired, card = acquisition_card(fact, context, asset_id)
         if acquired["period"] > fact["period"]:
             reject("资产不能在公司取得之前启用。")
@@ -61,40 +64,19 @@ def _activated_cards(fact, context):
                 reject("实际启用日必须属于明确的启用月。", "invalid_input")
             if acquired.get("effective_on") and acquired["effective_on"] > in_use:
                 reject("资产实际启用日不能早于公司实际取得日。")
-        cost, residual, life = (
-            parse_fen(card["cost_fen"]),
-            parse_fen(item["residual_fen"]),
-            item["useful_life_months"],
-        )
-        if residual >= cost or cost - residual < life:
-            reject("可摊金额必须小于或等于原价，且足够每月分到至少一分。", "invalid_input")
-        if card["asset_type"] == "intangible" and (
-            residual != 0 or item["rounding"] != "floor_final_remainder"
-        ):
-            reject("无形资产残值须为零，采用整分均摊、末月收余数。", "invalid_input")
-        monthly = (
-            (2 * (cost - residual) + life) // (2 * life)
-            if item["rounding"] == "round_half_up_card"
-            else (cost - residual) // life
-        )
-        if monthly * (life - 1) >= cost - residual:
-            reject("所选卡片舍入会在寿命末月之前耗尽可摊金额。", "invalid_input")
-        cards.append(
-            (
-                acquired,
-                {
-                    "type": "asset_card",
-                    **card,
-                    "accumulated_fen": "0",
-                    "completed_months": 0,
-                    "consumption_start": add_months(fact["period"], card["asset_type"] == "fixed"),
-                    "useful_life_months": life,
-                    "residual_fen": item["residual_fen"],
-                    "benefit_area": item["benefit_area"],
-                    "rounding": item["rounding"],
-                },
-            )
-        )
+        card = {
+            "type": "asset_card",
+            **card,
+            "accumulated_fen": "0",
+            "completed_months": 0,
+            "consumption_start": add_months(fact["period"], card["asset_type"] == "fixed"),
+            "useful_life_months": item["useful_life_months"],
+            "residual_fen": item["residual_fen"],
+            "benefit_area": item["benefit_area"],
+            "rounding": item["rounding"],
+        }
+        validate_card(card)
+        cards.append((acquired, card))
     return cards
 
 

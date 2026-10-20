@@ -95,6 +95,31 @@ def check_plan(plan: dict) -> None:
         fail("invalid_input", "代理清偿证明必须由已采用的合作实际收付目标唯一产生。")
 
 
+def check_bookkeeping_period(plan: dict, start_period: str) -> None:
+    """Historical contract facts are useful; opening balances are not old postings."""
+    if plan["accounting_period"] >= start_period:
+        return
+    collections = (
+        "lines",
+        "obligations",
+        "settlements",
+        "obligation_reclassifications",
+        "cost_lots",
+        "cost_consumptions",
+        "fund_movements",
+        "agency_proofs",
+        "tax_sales",
+        "report_contributions",
+    )
+    if any(plan[name] for name in collections) or any(
+        value["type"] == "opening_balance" for value in plan["basis"]["adopted_quantities"]
+    ):
+        fail(
+            "invalid_input",
+            "建账前的余额或未清业务须由期初接续，不能生成建账前的凭证、资金或资源变化。",
+        )
+
+
 def agency_proof(business_id, target, basis):
     kind = target["kind"]
     if kind not in ("investment.cooperation_collection", "investment.cooperation_payment"):

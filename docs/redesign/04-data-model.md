@@ -47,7 +47,7 @@ effective_on 和 main_object_id 同样是领域维护的检索投影，调用方
 
 工资按一人一个核算月建立业务根；奖金和劳务按真实事项分别保存，同月可以多笔。不把全公司工资放进一个巨型 JSON。银行和平台原行、期初成员有稳定独立身份，规范化到明细表；对应 JSON 是同一事实的输入/导出形状。保存后以所属明细表为唯一持久正文，根 JSON 中不再复制 rows/members，导出由仓储按固定顺序合成并重新校验完整 Schema。
 
-上述拆分仅允许合同明示的三处：money.bank_statement.data.rows、money.platform_activity.data.rows、opening.package.data.members；schema_key 在存储中标为同类型的 storage_projection/1，严格省去该数组，其余字段与原 Schema 相同。导出补回明细后校验完整 Fact，current_digest 仍取完整事实。不得自行再拆一份隐藏 JSON 变体。
+上述拆分仅允许合同明示的三处：money.bank_statement.data.rows、money.platform_activity.data.rows、opening.package.data.members；schema_key 在存储中标为同类型的 storage_projection/1。父 JSON 省去数组，只增加有序完整明细的 collection_digest，不复制明细正文。完整导出先核对明细身份、顺序、所属及摘要，再恢复并严格校验 Fact；返回内容不含存储摘要，current_digest 仍取完整事实。三处共用拆分与恢复规则，批量导出按明细类型读取，不逐个父项查询。普通行分页只核验命中行，不冒充全清单完整性核验。
 
 自有资金账户可以在公司建账以后新开。有据填写 opened_period 与 zero_at_opening=true，才允许从明确开户月零起点开始核对；已有余额须走期初或明确接续，不向对象资料开放任意 starting_balance。缺少这项不能阻止无关业务，只在确需该起点的核对中返回具体缺项。
 

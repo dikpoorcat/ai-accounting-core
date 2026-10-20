@@ -77,3 +77,40 @@ def test_opening_payroll_tax_keeps_payroll_month_and_withholding_month_separate(
     value["component"] = "net"
     with pytest.raises(ContractError):
         validate_contract("business-facts.schema.json", "OpeningPayrollPayable", value)
+
+
+@pytest.mark.parametrize("definition", ["OpeningLoan", "AccountingOpeningLoan"])
+def test_only_outstanding_principal_needs_a_future_interest_start(definition):
+    value = {
+        "type": "loan",
+        "contract_id": IDENTITY,
+        "lender_id": IDENTITY,
+        "principal_fen": "0",
+        "accrued_interest_fen": "100",
+    }
+    validate_contract("business-facts.schema.json", definition, value)
+    with pytest.raises(ContractError):
+        validate_contract(
+            "business-facts.schema.json", definition, {**value, "accrued_interest_fen": "0"}
+        )
+    value["principal_fen"] = "1000"
+    with pytest.raises(ContractError):
+        validate_contract("business-facts.schema.json", definition, value)
+    value["interest_start_on"] = "2026-07-01"
+    validate_contract("business-facts.schema.json", definition, value)
+
+
+def test_partial_opening_loan_can_be_incomplete_but_cannot_assert_both_components_are_zero():
+    value = {"type": "loan", "principal_fen": "0"}
+    validate_contract("business-facts.schema.json", "PartialOpeningLoan", value)
+    with pytest.raises(ContractError):
+        validate_contract(
+            "business-facts.schema.json",
+            "PartialOpeningLoan",
+            {**value, "accrued_interest_fen": "0"},
+        )
+    validate_contract(
+        "business-facts.schema.json",
+        "PartialOpeningLoan",
+        {"type": "loan", "principal_fen": "100"},
+    )

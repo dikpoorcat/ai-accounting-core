@@ -5,7 +5,7 @@ from collections import defaultdict
 from ._common import assets_in, reject
 
 _BATCH = 500
-_ASSET_KINDS = {"assets.acquisition", "assets.activation", "assets.disposal"}
+_ASSET_KINDS = {"assets.acquisition", "assets.activation", "assets.disposal", "opening.package"}
 
 
 def batches(values):
@@ -32,9 +32,11 @@ class AssetInputs:
         self._shadowed = set(shadowed)
         self._results, self._objects, self._costs = {}, {}, {}
         self._cards, self._activation_cards = {}, {}
+        self._adopted_cards = {}
         self._related = defaultdict(dict)
         self._indexed_facts = set()
         self._loaded_assets = set()
+        self._scopes_loaded = False
         for fact in self._facts.values():
             self._index_relations(fact)
 
@@ -65,7 +67,20 @@ class AssetInputs:
             self._related[item["asset_id"]][fact["business_id"]] = fact
 
     def load_assets(self, asset_ids):
-        missing = sorted(set(asset_ids) - self._loaded_assets)
+        requested = set(asset_ids)
+        if requested and not self._scopes_loaded:
+            start = self.read_context.start_period
+            facts = (
+                *self._context.facts_in_scope(("opening.package",), start, start),
+                *self._context.facts_in_scope(
+                    ("assets.disposal",), start, self.evaluation_period_to
+                ),
+            )
+            for fact in facts:
+                if fact["business_id"] not in self._shadowed:
+                    self._index_relations(fact)
+            self._scopes_loaded = True
+        missing = sorted(requested - self._loaded_assets)
         for batch in batches(missing):
             facts = self._context.related_facts_many(batch, "identity", producer_kind="object")
             for fact in facts:
@@ -90,6 +105,21 @@ class AssetInputs:
         if business_id not in self._activation_cards:
             self._activation_cards[business_id] = build()
         return self._activation_cards[business_id]
+
+    def adopted_asset_card(self, result, asset_id):
+        key = result.source["business_id"], result.source["result_slot"]
+        if key not in self._adopted_cards:
+            cards = [
+                item for item in result.basis["adopted_quantities"] if item["type"] == "asset_card"
+            ]
+            mapped = {item["asset_id"]: item for item in cards}
+            if len(mapped) != len(cards):
+                reject("正式来源对同一资产提供了重复卡片依据。")
+            self._adopted_cards[key] = mapped
+        card = self._adopted_cards[key].get(asset_id)
+        if card is None:
+            reject("正式来源缺少本资产的必要卡片依据。")
+        return card
 
     def load_costs(self, refs):
         missing = {reference_key(ref): ref for ref in refs if reference_key(ref) not in self._costs}

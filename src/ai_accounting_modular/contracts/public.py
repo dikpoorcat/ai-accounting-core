@@ -4,6 +4,8 @@ from ._allocation import cumulative_shares
 from ._contexts import (
     EvaluatedSlot,
     EvaluationContext,
+    OpeningAssetAccounting,
+    OpeningAssetSlots,
     PretaxView,
     ReadContext,
     ResourceCutoff,
@@ -16,6 +18,7 @@ from ._contexts import (
     UnitOfWork,
 )
 from ._errors import ContractError
+from ._fact_collections import restore_fact_collection, split_fact_collection
 from ._fact_sources import fact_source_ids, fact_source_paths
 from ._resource_dependencies import (
     check_resource_dependency,
@@ -54,6 +57,8 @@ __all__ = [
     "YearMonth",
     "EvaluatedSlot",
     "EvaluationContext",
+    "OpeningAssetAccounting",
+    "OpeningAssetSlots",
     "PretaxView",
     "ReadContext",
     "ResourceCutoff",
@@ -65,6 +70,8 @@ __all__ = [
     "TaxSaleView",
     "UnitOfWork",
     "ContractError",
+    "restore_fact_collection",
+    "split_fact_collection",
     "fact_source_ids",
     "fact_source_paths",
     "check_resource_dependency",

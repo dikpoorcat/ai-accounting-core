@@ -29,7 +29,7 @@ from ._resource_view import (
     validate_resource_refs,
 )
 from ._timing import ResultTimes
-from ._values import check_plan, fail, unique
+from ._values import check_bookkeeping_period, check_plan, fail, unique
 
 
 class CandidateLedger:
@@ -62,6 +62,7 @@ class CandidateLedger:
         if self._complete:
             fail("invalid_operation", "完整候选集合不能继续添加或修改计划。")
         check_plan(plan)
+        check_bookkeeping_period(plan, self._unit.start_period)
         self._publications.check_plan(plan)
         self._resource_uses.check_plan(plan)
         key = plan["business_id"], plan["result_slot"]
