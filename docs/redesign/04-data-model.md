@@ -81,7 +81,7 @@ current_publication 按业务、结果槽和 tax_sales/pre_tax 集合保存当�
 
 每次计划声明该业务**完整结果槽集合**。未返回的旧槽、义务或成本必须处理退出；存在实际清偿、消耗或冻结必要引用时，不能静默删除。无凭证但有正式核算意义的结果同样采用，纯管理资料不伪造零额凭证。
 
-关账先完成该月可确定的核算和必要检查，再在同一事务冻结结果、凭证、必要依据及三表，保存 period_close。无审批记录、预览采用表或密码批准表。closed 月份不接收新的原地采用；更正必须落到明确开放期。
+关账先完成该月可确定的核算和必要检查，再在同一事务冻结结果、凭证、必要依据及三表，保存 period_close。basis_json采用reporting.CloseBasis，只含公司、数据库、月份和该月完整正式结果源的摘要；结果及来源正文由原有冻结表保存，不复制一份关账流水。report_json保存严格FinancialSnapshot并核对report_digest。无审批记录、预览采用表或密码批准表。closed 月份不接收新的原地采用；更正必须落到明确开放期。
 
 ## 义务、付款与成本不重复计算
 
@@ -123,7 +123,9 @@ document_set 对应一套 current.json 清单。数据库与清单确认之间�
 
 ## 文件任务与备份一致点
 
-file_task 由独立 files 模块维护，仅有 backup/report_export 两类，每种 scope 只保当前计划。它通过 host 注入的生产者 Protocol 获取严格 FilePlan，不反向依赖业务应用。相同语义计划的 pending/running/succeeded 直接复用，即使 request_id 不同；最终失败的新显式请求才替换。同一开放报表被新结果替代则过期，旧文件清理；旧任务退出后可返回不存在，不保存所有过期任务身份。备份保留当前包和上一份有效包的滚动能力，与用户指定清理的旧体系备份分开。
+file_task 由独立 files 模块维护，仅有 backup/report_export 两类，每种 scope 只保当前计划。它通过 host 注入的生产者 Protocol 获取严格 FilePlan，不反向依赖业务应用。备份是整公司捕获，生产者的scope固定为company，只滚动当前包及上一份有效包；报表按公司、季度和格式维护当前任务。相同语义计划的 pending/running/succeeded 直接复用，即使 request_id 不同；最终失败的新显式请求才替换。同一开放报表被新结果替代则过期，旧文件清理；旧任务退出后可返回不存在，不保存所有过期任务身份。新体系备份与用户指定清理的旧体系备份分开。
+
+任务只保存创建当前任务的 creator_request_id；运行中复用它的其他请求不积累别名。attempts 记录至多3次执行，也作为完成写回的代次条件。输出暂存固定为公司根内 runtime/file-tasks/<task_id>，备份捕获另用 runtime/tasks/<capture_id>；后者的UUID保存到当前行，过期清空计划后仍能接续清理。expired 不含旧计划、交付路径和金额，保留必要身份、清理定位及错误，清理成功后退出。清理不删除外部有效备份包。失败后新任务复用同一捕获时，先取得后继租约并清理旧输出，再原子替换任务，提交后释放旧租约，不能先删除仍要使用的输入。
 
 BackupPlan 绑定捕获的数据库 head、完整 BackupManifest 和 CapturedFile 集合，文件只从公司根或本任务 capture 根按受控相对路径读取；capture 根为 runtime/tasks/<capture_id>，不是任意主机路径。语义 scope_head 根据 format、结构指纹、database_id/head、document_set_id、按包内路径/摘要/大小排序的必要文档及来源清单计算，不包含临时 capture_id/本地文件位置、派生缓存、file_task 状态或整个快照数据库字节摘要，避免循环或无意义失效；包内真实数据库文件摘要仍必须验证。ReportExportPlan 只接受 status=ready 的完整 FinancialSnapshot，同时捕获 organization 公司标题资料、显示变体和模板版本；其语义头覆盖财务内容/selection、范围、公司标题、变体、模板，排除无关全局 snapshot.head 和请求用 scope.expected_head。worker 使用计划中的公司标题，不临时读新名字拼进旧预览。两种计划存当前任务，不成为第二份可编辑账务。
 

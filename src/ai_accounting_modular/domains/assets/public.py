@@ -29,7 +29,7 @@ from ._opening import cards as opening_cards
 from ._opening import describe as describe_opening
 from ._opening import evaluate as evaluate_opening
 from ._opening import validate as validate_opening
-from ._origins import validate_origins
+from ._origins import require_existing_origins, validate_origins
 from ._repository import AssetsRepository
 
 
@@ -60,6 +60,12 @@ class Assets:
                 reject("资产变更缺少相同业务身份的完整事实。", "invalid_input")
             found = role_issues(fact, context)
             issues.extend(found)
+            if (
+                not found
+                and change["op"] in {"replace", "restore", "recalculate"}
+                and fact["kind"] in {"assets.activation", "assets.disposal"}
+            ):
+                require_existing_origins(fact, context)
             slots = ["main"]
             if fact["kind"] == "assets.activation" and not found:
                 slots.extend(slot_for(month) for month in activation_months(fact, context))

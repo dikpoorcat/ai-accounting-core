@@ -20,7 +20,7 @@ from ai_accounting_modular.identity.public import IdentityContext
 from ai_accounting_modular.records.public import RecordsChange, RecordsContext
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _documents
+from . import _documents, _handoff
 from ._changes import classify
 from ._context import DomainRegistry, SubmissionContext
 from ._planning import collect_changes, evaluate
@@ -116,7 +116,11 @@ class Application:
                 )
                 for mutation in mutations
             ]
-            self.registry.export_heads(list(heads.values()), unit)
+            previous_facts = {
+                fact["business_id"]: fact
+                for fact in self.registry.export_heads(list(heads.values()), unit)
+            }
+            handoffs = _handoff.prepare(changes, previous_facts, self.registry)
             for change in changes:
                 if change.fact:
                     self.registry.owner(change.fact["kind"])
@@ -165,16 +169,12 @@ class Application:
                     obj.get("evidence_ids", ()), field=f"/objects/{index}/evidence_ids"
                 )
             descriptions = collect_changes(
-                changes, identity_plan.changed_ids, context, self.registry
+                changes, identity_plan.changed_ids, context, self.registry, handoffs
             )
+            responsibilities = _handoff.active_responsibilities(descriptions, handoffs)
             plans = evaluate(descriptions, context, self.ledger, request.get("correction_period"))
             natural_keys = {
-                responsibility["business_id"]: responsibility["natural_key"]
-                for _, plan in plans
-                for responsibility in plan["businesses"]
-            }
-            responsibilities = {
-                item["business_id"]: item for _, plan in plans for item in plan["businesses"]
+                business_id: item["natural_key"] for business_id, item in responsibilities.items()
             }
             prior_heads = repo.heads(responsibilities)
             proposed = [
@@ -220,10 +220,9 @@ class Application:
                 [plan for _, plan in plans],
                 unit,
                 correction_period=request.get("correction_period"),
+                explanation=request.get("explanation"),
             )
-            touched = [
-                business["business_id"] for _, plan in plans for business in plan["businesses"]
-            ]
+            touched = sorted(responsibilities)
             dependencies = [edge for _, plan in plans for edge in plan["dependencies"]]
             projection_changed = False
             if touched:
@@ -263,6 +262,7 @@ class Application:
 
             def check_projection():
                 self.registry.export_heads(list(final_heads.values()), unit)
+                _handoff.verify_released(handoffs, unit)
 
             unit.check_before_commit(check_projection)
             result = self._base_response(request)

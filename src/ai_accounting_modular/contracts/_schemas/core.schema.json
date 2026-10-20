@@ -1482,9 +1482,7 @@
           "$ref": "#/$defs/Month"
         },
         "expected_head": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500
+          "$ref": "#/$defs/Digest"
         },
         "object_ids": {
           "type": "array",
@@ -2058,9 +2056,12 @@
           ]
         },
         "scope_head": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 500
+          "$ref": "#/$defs/Digest"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
         },
         "path": {
           "type": "string",
@@ -2091,9 +2092,36 @@
         "company_id",
         "kind",
         "state",
-        "scope_head"
+        "scope_head",
+        "attempts"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "error_code": ["message"],
+        "message": ["error_code"]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"state": {"const": "succeeded"}},
+            "required": ["state"]
+          },
+          "then": {
+            "required": ["path", "sha256", "byte_size"],
+            "not": {"anyOf": [{"required": ["error_code"]}, {"required": ["message"]}]}
+          },
+          "else": {
+            "not": {"anyOf": [{"required": ["path"]}, {"required": ["sha256"]}, {"required": ["byte_size"]}]}
+          }
+        },
+        {
+          "if": {
+            "properties": {"state": {"enum": ["failed", "expired"]}},
+            "required": ["state"]
+          },
+          "then": {"required": ["error_code", "message"]}
+        }
+      ]
     },
     "ContextScope": {
       "type": "object",

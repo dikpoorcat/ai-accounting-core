@@ -152,6 +152,10 @@ class SubmissionContext:
         self._facts[fact["business_id"]] = deepcopy(fact)
 
     def declare_slots(self, responsibility):
+        if responsibility["op"] == "handoff_out":
+            return
+        if responsibility["business_id"] in self._slots:
+            raise ContractError("invalid_input", "同一业务不能重复声明有效采用责任。")
         self._slots[responsibility["business_id"]] = set(responsibility["complete_result_slots"])
 
     def add_plan(self, plan):

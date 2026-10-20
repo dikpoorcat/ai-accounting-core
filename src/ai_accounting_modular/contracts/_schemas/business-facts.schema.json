@@ -19678,7 +19678,7 @@
         "explanation": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 2000
         },
         "source_locations": {
           "type": "array",

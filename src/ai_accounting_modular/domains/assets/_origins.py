@@ -35,6 +35,13 @@ def unique_origin(fact, context, asset_id):
     return origins[0]
 
 
+def require_existing_origins(fact, context):
+    """An existing consumer must leave with its source or adopt a real replacement."""
+    for item in assets_in(fact):
+        if not origin_facts(context, item["asset_id"]):
+            reject("已成立的资产启用或处置失去成本来源，须在本单接续真实来源或退出相关后续业务。")
+
+
 def opening_card(fact, context, asset_id):
     result = result_for(context, fact["business_id"])
     if result.target["kind"] != "opening.package":

@@ -1,5 +1,5 @@
 {
-  "fingerprint": "14b6fc04649ef29906956096e2a294d9a1a3b0d72db5716437a95dddeb427cdd",
+  "fingerprint": "10325cf61d31e035d97dacd9a65f366e79d4ba39df2d8e8d0d19b5fd6a1d10fb",
   "kind": "company",
   "objects": [
     {
@@ -159,7 +159,7 @@
     {
       "name": "file_task",
       "owner": "files",
-      "sql": "CREATE TABLE file_task (\ntask_id TEXT PRIMARY KEY CHECK(length(task_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('backup','report_export')),\n state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),\n scope_key TEXT NOT NULL,\n scope_head TEXT NOT NULL,\n plan_schema TEXT NOT NULL,\n plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),\n output_path TEXT,\n output_sha256 TEXT CHECK(output_sha256 IS NULL OR length(output_sha256)=64),\n output_bytes INTEGER CHECK(output_bytes>=0),\n error_code TEXT,\n error_message TEXT,\n UNIQUE(kind,scope_key),\n CHECK(state<>'succeeded' OR (output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL))\n) STRICT",
+      "sql": "CREATE TABLE file_task (\ntask_id TEXT PRIMARY KEY CHECK(length(task_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('backup','report_export')),\n state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),\n scope_key TEXT NOT NULL,\n scope_head TEXT NOT NULL CHECK(length(scope_head)=64),\n creator_request_id TEXT NOT NULL CHECK(length(creator_request_id) BETWEEN 1 AND 500),\n attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),\n capture_id TEXT CHECK(capture_id IS NULL OR length(capture_id)=36),\n plan_schema TEXT,\n plan_json TEXT CHECK(plan_json IS NULL OR json_valid(plan_json)),\n output_path TEXT,\n output_sha256 TEXT CHECK(output_sha256 IS NULL OR length(output_sha256)=64),\n output_bytes INTEGER CHECK(output_bytes>=0),\n error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 100),\n error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 2000),\n UNIQUE(kind,scope_key),\n CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind='report_export' AND capture_id IS NULL)),\n CHECK((state='expired' AND plan_schema IS NULL AND plan_json IS NULL)\n    OR (state<>'expired' AND plan_schema IS NOT NULL AND plan_json IS NOT NULL)),\n CHECK((state='succeeded' AND output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL)\n    OR (state<>'succeeded' AND output_path IS NULL AND output_sha256 IS NULL AND output_bytes IS NULL)),\n CHECK((error_code IS NULL)=(error_message IS NULL)),\n CHECK(state NOT IN ('failed','expired') OR error_code IS NOT NULL),\n CHECK(state<>'succeeded' OR error_code IS NULL)\n) STRICT",
       "table": "file_task",
       "type": "table"
     },

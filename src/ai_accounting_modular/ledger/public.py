@@ -21,10 +21,13 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.contracts.public import canonical_json as canonical
 from ai_accounting_modular.contracts.public import content_digest as digest
 
-from . import _aggregation
+from . import _aggregation, _financial
 from ._adoption import adopt as _adopt
 from ._balances import balance_wire, obligation_balances
 from ._candidate import CandidateLedger
+from ._cashflow import contributions as _cashflow_contributions
+from ._financial_cells import Issues
+from ._financial_selection import Selection
 from ._planning import PreparedResult, bind_plan, stored_source_reference
 from ._planning import prepare_result as _prepare_result
 from ._repository import LedgerRepository
@@ -119,6 +122,32 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def financial_snapshot(self, scope, read_context: ReadContext):
+        return _financial.snapshot(scope, read_context)
+
+    def query_cashflow_contributions(self, query: LedgerQuery, read_context: ReadContext):
+        """Formal adoption-month history, just like query_vouchers; never actual money count."""
+        self._validate_query(query)
+        if query.roles:
+            fail("invalid_input", "现金流采用明细不接受凭证角色筛选。")
+        repo = read_context.repository("ledger")
+        if read_context.view not in ("current", "as_posted") or (
+            read_context.view == "as_posted" and read_context.as_of is None
+        ):
+            fail("invalid_input", "正式现金流读取口径与截止月不一致。")
+        last = (
+            query.period_to
+            or read_context.as_of
+            or repo.latest_adoption_period()
+            or read_context.start_period
+        )
+        if read_context.view == "as_posted":
+            last = min(last, read_context.as_of)
+        first = query.period_from or read_context.start_period
+        selection = Selection(repo, read_context.view, last, read_context.start_period, Issues())
+        items = _cashflow_contributions(selection, first, last, query.business_ids)
+        return self._page(items, query, read_context, "cashflow_contributions")
+
     def latest_period(self, read_context: ReadContext):
         """Latest economic month already represented by formal results."""
         return read_context.repository("ledger").latest_period()
@@ -205,9 +234,16 @@ class Ledger:
         return stored_source_reference(row)
 
     def adopt(
-        self, change_plans: list[ChangePlan], uow: UnitOfWork, *, correction_period=None
+        self,
+        change_plans: list[ChangePlan],
+        uow: UnitOfWork,
+        *,
+        correction_period=None,
+        explanation=None,
     ) -> AdoptionResult:
-        refs, retired, changed = _adopt(change_plans, uow, correction_period, _reference)
+        refs, retired, changed = _adopt(
+            change_plans, uow, correction_period, _reference, explanation
+        )
         return AdoptionResult(refs, retired, changed)
 
     def _validate_query(self, query):

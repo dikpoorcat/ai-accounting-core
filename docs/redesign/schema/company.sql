@@ -661,16 +661,26 @@ task_id TEXT PRIMARY KEY CHECK(length(task_id)=36),
  kind TEXT NOT NULL CHECK(kind IN ('backup','report_export')),
  state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),
  scope_key TEXT NOT NULL,
- scope_head TEXT NOT NULL,
- plan_schema TEXT NOT NULL,
- plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),
+ scope_head TEXT NOT NULL CHECK(length(scope_head)=64),
+ creator_request_id TEXT NOT NULL CHECK(length(creator_request_id) BETWEEN 1 AND 500),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+ capture_id TEXT CHECK(capture_id IS NULL OR length(capture_id)=36),
+ plan_schema TEXT,
+ plan_json TEXT CHECK(plan_json IS NULL OR json_valid(plan_json)),
  output_path TEXT,
  output_sha256 TEXT CHECK(output_sha256 IS NULL OR length(output_sha256)=64),
  output_bytes INTEGER CHECK(output_bytes>=0),
- error_code TEXT,
- error_message TEXT,
+ error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 100),
+ error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 2000),
  UNIQUE(kind,scope_key),
- CHECK(state<>'succeeded' OR (output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL))
+ CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind='report_export' AND capture_id IS NULL)),
+ CHECK((state='expired' AND plan_schema IS NULL AND plan_json IS NULL)
+    OR (state<>'expired' AND plan_schema IS NOT NULL AND plan_json IS NOT NULL)),
+ CHECK((state='succeeded' AND output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL)
+    OR (state<>'succeeded' AND output_path IS NULL AND output_sha256 IS NULL AND output_bytes IS NULL)),
+ CHECK((error_code IS NULL)=(error_message IS NULL)),
+ CHECK(state NOT IN ('failed','expired') OR error_code IS NOT NULL),
+ CHECK(state<>'succeeded' OR error_code IS NULL)
 ) STRICT;
 
 CREATE INDEX file_task_scope ON file_task(kind,scope_key,state,task_id);

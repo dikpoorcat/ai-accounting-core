@@ -52,7 +52,7 @@ def _dependencies(edges, responsibilities):
     return [indexed[key] for key in sorted(indexed)]
 
 
-def collect_changes(changes, changed_objects, context, registry):
+def collect_changes(changes, changed_objects, context, registry, handoffs):
     repo = context.read_context.repository("application")
     grouped, included = defaultdict(list), set()
     queue = deque(("object", object_id) for object_id in changed_objects)
@@ -62,6 +62,9 @@ def collect_changes(changes, changed_objects, context, registry):
             continue
         mutation = change.mutation
         kind = mutation["fact"]["kind"] if "fact" in mutation else change.before["kind"]
+        if change.business_id in handoffs:
+            outgoing = handoffs[change.business_id]
+            grouped[outgoing.old_owner].append(outgoing.outgoing())
         if not change.changed:
             mutation = {
                 "op": "recalculate",
@@ -132,19 +135,25 @@ def collect_changes(changes, changed_objects, context, registry):
                 )
             descriptions.append((owner, description))
             context.add_description(description)
+            # The adopting owner notifies old and new relationships once. The
+            # outgoing owner only removes its private body, never the public root.
+            notifying = [item for item in description["businesses"] if item["op"] != "handoff_out"]
+            if not notifying:
+                continue
+            notifying_ids = [item["business_id"] for item in notifying]
             # Every included publisher may have a changed amount even when its
             # fact, result slot and publication range are all unchanged.
             include(
                 repo.aggregate_observers(
                     [
-                        *repo.publications(expected),
+                        *repo.publications(notifying_ids),
                         *description["publications"],
                     ]
                 )
             )
-            old_edges = repo.dependencies(expected)
+            old_edges = repo.dependencies(notifying_ids)
             include(repo.resource_observers([*old_edges, *description["dependencies"]]))
-            for business in description["businesses"]:
+            for business in notifying:
                 business_id = business["business_id"]
                 before = [
                     edge

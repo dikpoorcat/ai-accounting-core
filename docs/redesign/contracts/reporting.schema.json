@@ -2857,6 +2857,18 @@
       ],
       "additionalProperties": false
     },
+    "CloseBasis": {
+      "type": "object",
+      "properties": {
+        "format": {"const": "ai-accounting-close-basis/1"},
+        "company_id": {"$ref": "core.schema.json#/$defs/Id"},
+        "database_id": {"$ref": "core.schema.json#/$defs/Id"},
+        "period": {"$ref": "core.schema.json#/$defs/Month"},
+        "result_digest": {"$ref": "core.schema.json#/$defs/Digest"}
+      },
+      "required": ["format", "company_id", "database_id", "period", "result_digest"],
+      "additionalProperties": false
+    },
     "CashflowContribution": {
       "type": "object",
       "properties": {

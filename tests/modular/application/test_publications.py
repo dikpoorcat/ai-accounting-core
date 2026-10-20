@@ -319,7 +319,7 @@ def run(system, owner, mutations):
             facts={change.business_id: change.fact for change in changes},
             evaluation_period_to="2026-12",
         )
-        descriptions = collect_changes(changes, (), context, registry)
+        descriptions = collect_changes(changes, (), context, registry, {})
         plans = evaluate(descriptions, context, ledger, None)
         return plans, ledger.candidate
 

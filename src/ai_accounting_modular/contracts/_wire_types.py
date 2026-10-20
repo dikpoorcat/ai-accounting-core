@@ -150,7 +150,7 @@ class LedgerScope(TypedDict):
     period_to: Month
     view: Literal['current', 'as_posted']
     as_of: NotRequired[Month]
-    expected_head: NotRequired[str]
+    expected_head: NotRequired[Digest]
     object_ids: NotRequired[list[Id]]
 
 class Line(TypedDict):
@@ -245,7 +245,8 @@ class TaskReceipt(TypedDict):
     company_id: Id
     kind: Literal['backup', 'report_export']
     state: Literal['pending', 'running', 'succeeded', 'failed', 'expired']
-    scope_head: str
+    scope_head: Digest
+    attempts: int
     path: NotRequired[str]
     sha256: NotRequired[Digest]
     byte_size: NotRequired[int]
@@ -5187,6 +5188,13 @@ class FinancialSnapshot(TypedDict):
     pre_tax: PretaxFields
     checks: list[Check]
     issues: list[FactIssue]
+
+class CloseBasis(TypedDict):
+    format: Literal['ai-accounting-close-basis/1']
+    company_id: Id
+    database_id: Id
+    period: Month
+    result_digest: Digest
 
 class CashflowContribution(TypedDict):
     business_id: Id
@@ -11703,6 +11711,7 @@ __all__ = [
     'Check',
     'PretaxFields',
     'FinancialSnapshot',
+    'CloseBasis',
     'CashflowContribution',
     'Head',
     'ReviewMaterialsQuery',

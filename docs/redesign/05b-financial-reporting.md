@@ -2,13 +2,13 @@
 
 # 财务三表和统一取数
 
-本文规定 ledger 的首交计算，不是已实现功能。机器合同为 [reporting.schema.json](contracts/reporting.schema.json)，独立数字例为 [reporting-cases.json](examples/reporting-cases.json)。适用小企业会计准则、人民币、按月或完整自然季度查询，适用2013年起报告；不把三张表等同完整法定报表及附注或报税系统。
+本文规定 ledger 的统一取数。机器合同为 [reporting.schema.json](contracts/reporting.schema.json)，独立数字例为 [reporting-cases.json](examples/reporting-cases.json)。适用小企业会计准则、人民币、按月或完整自然季度查询，适用2013年起报告；三张表不等同完整法定报表及附注或报税系统。
 
 准则依据为财政部 [小企业会计准则](https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf) 第79—88条及 [科目和报表附录](https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf) 第67—82页。表号沿用附录；本体系自设细目和营运款分类是本设计的明确应用。报表主项的业务范围不由前端或导出模板选择。
 
 ## 一次读取和期间
 
-`ledger.public.financial_snapshot(scope, read_context)` 返回严格 FinancialSnapshot，使用同一个只读事务和head。scope为core.LedgerScope：整家公司，不接受object_ids；period_from/to为同年单月或完整自然季度，不能跨年。as_posted的as_of省略时取period_to，提供时也须相等；current不提供as_of。非法范围返回invalid_input，不偷偷补月。字段和金额不得以任意字典扩展。
+`ledger.public.financial_snapshot(scope, read_context)` 返回严格 FinancialSnapshot，使用同一个事务快照和head。scope为core.LedgerScope：整家公司，不接受object_ids；period_from/to为同年单月或完整自然季度，不能跨年。报表按scope明确选择view；ReadContext.view是其他查询的默认口径，不要求为查看另一种口径重开连接。as_posted的as_of省略时取period_to，提供时也须相等；current不提供as_of。非法范围返回invalid_input，不偷偷补月。字段和金额不得以任意字典扩展。
 
 | 数据 | 固定含义 |
 | --- | --- |
@@ -28,6 +28,8 @@
 - `current`：每个业务当前完整目标一次，按目标所属月计入，反映已知最终事实；不能再加旧冻结或冲正，否则重复。
 - `as_posted`：关账月采用冻结目标，后续发现期采用正式补差；开放月只用该月当前完整补差，旧开放版本被替换。目标、受控分录、资金分类和报表明细同时选取同一代结果，不能金额用冻结、分类读当前事实。
 - ledger自己的余额/发生额选择器产生BS和PL主项。query_report_contributions只补规定的PL细目；query_fund_movements及正式采用头产生现金流。三者不相互叠加同一金额。TaxSale供税务/申报取数，不能作为第二份财报收入。
+
+已关账单月的as_posted优先读取通过Schema和摘要核验的已存三表。历史季度按末月采用的mapping_version和该截止月的正式数据计算；映射版本一经采用不回写，新规则使用新版本。季度不能简单相加三份不同截止月的旧月报，或相减旧累计额，否则可能混用更正前后的期初和未知值。closed_periods属于当前查询元数据，按关账表读取，不覆盖保存的历史金额。
 
 期初与接续是报表边界基数，整份报告的年初、当期开始及期末，统一使用本次截止月下实际采用的同一份基数；current使用当前基数。更正期初不等于当期收到一笔现金，也不补造历史凭证。例如一月冻结期初100，二月有据更正为200：按一月截止读取仍是100，二月报告各比较时点使用当时已采用的200，再加各期真实发生；不能一列用100、另一列用200而制造虚假现金差额。
 

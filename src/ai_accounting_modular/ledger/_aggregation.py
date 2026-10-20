@@ -5,7 +5,6 @@ import json
 from ai_accounting_modular.contracts.public import (
     PretaxView,
     TaxSaleView,
-    content_digest,
     format_fen,
     parse_fen,
     validate_contract,
@@ -14,7 +13,7 @@ from ai_accounting_modular.ledger.opening.public import is_zero_origin
 
 from ._balances import sum_amounts
 from ._formal_output import target_vouchers
-from ._profit import pretax_values, profit_rows
+from ._profit import has_unmapped_line, pretax_basis_digest, pretax_values, profit_rows
 from ._publications import month_range
 from ._values import fail
 
@@ -131,6 +130,8 @@ def pre_tax(repo, plans, period_from, period_to, start_period):
             if head["result_id"] in repo.heads
             else (journals[head["result_id"]] or {}).get("lines", [])
         )
+        if has_unmapped_line(lines):
+            fail("storage_corrupt", "正式发生包含未映射的非零科目，不能将其作为零损益取数。")
         rows = profit_rows(lines)
         if not any(value for line, value in rows.items() if line != 31):
             continue
@@ -169,22 +170,8 @@ def pre_tax(repo, plans, period_from, period_to, start_period):
     if basis_head is not None:
         key = basis_head["business_id"], basis_head["result_slot"]
         sources[key] = repo.source(basis_head["result_id"])
-    digest = content_digest(
-        {
-            "period_from": period_from,
-            "period_to": period_to,
-            "results": sorted(slices, key=lambda item: (item["business_id"], item["result_slot"])),
-            "prior": {
-                "kind": prior_kind,
-                "values": list(prior) if prior is not None else None,
-                "source": (
-                    [basis_head["business_id"], basis_head["result_slot"]]
-                    if basis_head is not None
-                    else None
-                ),
-            },
-            "start_period": start_period if period_from < start_period else None,
-        }
+    digest = pretax_basis_digest(
+        period_from, period_to, start_period, slices, prior, basis_head, prior_kind
     )
     fields = {"period_from": period_from, "period_to": period_to, "basis_digest": digest}
     for name, amount in zip(

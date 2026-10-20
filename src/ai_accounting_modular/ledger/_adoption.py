@@ -12,9 +12,10 @@ from ._planning import PlannedAdoption, bind_plan, check_source_references
 from ._publications import Publications
 from ._resource_promises import ResourceUses
 from ._values import check_bookkeeping_period, check_plan, fail
+from ._withdrawal import retirement_plan
 
 
-def adopt(change_plans, uow, correction_period, reference):
+def adopt(change_plans, uow, correction_period, reference, explanation=None):
     completed = [False]
 
     def require_complete():
@@ -80,11 +81,16 @@ def adopt(change_plans, uow, correction_period, reference):
     old_by_key = {(r["business_id"], r["result_slot"]): r for r in previous}
     retired = []
     proposed = []
+    # External complete slots were checked above. Frozen retired slots are
+    # ledger-owned zero targets, not active slots invented by a business owner.
     for key, old in old_by_key.items():
         if key not in plans:
+            if old["target_state"] == "withdrawn":
+                continue
             if old["state"] == "frozen" or old["baseline_result_id"]:
-                fail("dependency_conflict", "冻结结果退出必须有明确的发现期撤去目标。")
-            retired.append(old)
+                plans[key] = retirement_plan(repo, old, explanation)
+            else:
+                retired.append(old)
     for key, plan in plans.items():
         old = old_by_key.get(key)
         bound = bind_plan(plan, uow, correction_period)

@@ -169,7 +169,7 @@ def run(system, owner, mutations, *, evaluate_plans=True, ledger=None):
             facts={change.business_id: change.fact for change in changes},
             evaluation_period_to="2026-12",
         )
-        descriptions = collect_changes(changes, (), context, registry)
+        descriptions = collect_changes(changes, (), context, registry, {})
         if evaluate_plans:
             evaluate(descriptions, context, ledger, None)
             return context._candidate
@@ -305,7 +305,11 @@ def test_related_fact_collection_ignores_resource_metadata_in_storage_and_submis
         context._dependencies = (true_relation, use, watched)
         for number in (40, 41, 42):
             context.declare_slots(
-                {"business_id": identity(number), "complete_result_slots": ["main"]}
+                {
+                    "business_id": identity(number),
+                    "op": "recalculate",
+                    "complete_result_slots": ["main"],
+                }
             )
             context.add_fact(fact(number))
         assert tuple(

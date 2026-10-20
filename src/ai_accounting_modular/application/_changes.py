@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import MAX_FEN, ContractError, content_digest
 
+from ._handoff import supports
+
 
 def normalize_fact(fact):
     value = deepcopy(fact)
@@ -86,8 +88,12 @@ def classify(mutation, before):
             return _changed(mutation, before, digest)
     elif op == "replace":
         if before["state"] == "active" and (before["seq"] == expected or retry):
-            if mutation["fact"]["kind"] != before["kind"]:
-                raise ContractError("unsupported_change_kind", "此节点尚未交付跨业务类型交接。")
+            if mutation["fact"]["kind"] != before["kind"] and not supports(
+                before["kind"], mutation["fact"]["kind"]
+            ):
+                raise ContractError(
+                    "unsupported_change_kind", "该跨业务类型更正不在已实现的分类交接范围。"
+                )
             return (
                 BusinessChange(mutation, before, digest, False)
                 if same

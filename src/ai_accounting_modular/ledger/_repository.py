@@ -23,11 +23,33 @@ _CHILD_TABLES = (
     "result_tax_sale",
     "result_report_contribution",
 )
+_FINANCIAL_FIELDS = ",".join(
+    "r." + name
+    for name in (
+        "result_id",
+        "business_id",
+        "result_slot",
+        "generation",
+        "business_period",
+        "posting_period",
+        "state",
+        "target_state",
+        "baseline_result_id",
+        "calculation_key",
+        "calculation_revision",
+        "basis_digest",
+        "target_digest",
+        "target_json",
+    )
+)
 
 
 class LedgerRepository:
     def latest_period(self):
         return self._session.fetchone("SELECT MAX(business_period) FROM adopted_result")[0]
+
+    def latest_adoption_period(self):
+        return self._session.fetchone("SELECT MAX(posting_period) FROM adopted_result")[0]
 
     def __init__(self, session: Any):
         self._session = session
@@ -94,6 +116,77 @@ class LedgerRepository:
                 "SELECT r.* FROM adopted_result r JOIN result_slot_current c "
                 "ON c.head_result_id=r.result_id "
                 "WHERE r.business_period>=? AND r.business_period<=?",
+                (period_from, period_to),
+            )
+        ]
+
+    def financial_heads(self, cutoff, *, view):
+        """Complete ordinary targets at a report comparison point, not all history."""
+        if view == "as_posted":
+            sql = (
+                "SELECT " + _FINANCIAL_FIELDS + " FROM adopted_result r WHERE r.posting_period<=? "
+                "AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
+                "WHERE newer.business_id=r.business_id "
+                "AND newer.result_slot=r.result_slot AND newer.posting_period<=? "
+                "AND newer.posting_period>r.posting_period)"
+            )
+            args = cutoff, cutoff
+        else:
+            sql = (
+                "SELECT " + _FINANCIAL_FIELDS + " FROM adopted_result r JOIN result_slot_current c "
+                "ON c.head_result_id=r.result_id WHERE r.business_period<=?"
+            )
+            args = (cutoff,)
+        return [dict(row) for row in self._session.fetchall(sql, args)]
+
+    def financial_results(self, result_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT " + _FINANCIAL_FIELDS + " FROM adopted_result r WHERE r.result_id IN "
+                "(SELECT value FROM json_each(?))",
+                (canonical(list(result_ids)),),
+            )
+        ]
+
+    def adoptions_between(self, period_from, period_to):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT "
+                + _FINANCIAL_FIELDS
+                + " FROM adopted_result r WHERE r.posting_period>=? AND r.posting_period<=?",
+                (period_from, period_to),
+            )
+        ]
+
+    def financial_boundaries(self, *, as_of=None):
+        selection = (
+            "JOIN result_slot_current c ON c.head_result_id=r.result_id " if as_of is None else ""
+        )
+        sql = (
+            "SELECT r.* FROM adopted_result r "
+            + selection
+            + (
+                "WHERE r.result_slot='main' AND json_extract(r.target_json,'$.kind') "
+                "IN ('opening.package','reports.continuation')"
+            )
+        )
+        args = ()
+        if as_of is not None:
+            sql += (
+                " AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
+                "WHERE newer.business_id=r.business_id AND newer.result_slot=r.result_slot "
+                "AND newer.posting_period<=? AND newer.posting_period>r.posting_period)"
+            )
+            args = as_of, as_of
+        return [dict(row) for row in self._session.fetchall(sql, args)]
+
+    def closed_periods(self, period_from, period_to):
+        return [
+            row[0]
+            for row in self._session.fetchall(
+                "SELECT period FROM period_close WHERE period>=? AND period<=? ORDER BY period",
                 (period_from, period_to),
             )
         ]
