@@ -1,0 +1,5318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-accounting.local/design/core.schema.json",
+  "title": "新体系公共类型与命令合同 v1",
+  "$ref": "#/$defs/ApplyRequest",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "Month": {
+      "type": "string",
+      "pattern": "^(?!0000)[0-9]{4}-(0[1-9]|1[0-2])$"
+    },
+    "Date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Fen": {
+      "type": "string",
+      "pattern": "^(0|-?[1-9][0-9]*)$",
+      "maxLength": 20,
+      "x-integer-minimum": "-9223372036854775808",
+      "x-integer-maximum": "9223372036854775807",
+      "description": "规范整数分字符串；读取为严格整数后验证int64范围，不能转换为float。"
+    },
+    "NonNegativeFen": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 20,
+      "x-integer-minimum": "0",
+      "x-integer-maximum": "9223372036854775807",
+      "description": "规范整数分字符串；读取为严格整数后验证int64范围，不能转换为float。"
+    },
+    "PositiveFen": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 20,
+      "x-integer-minimum": "1",
+      "x-integer-maximum": "9223372036854775807",
+      "description": "规范整数分字符串；读取为严格整数后验证int64范围，不能转换为float。"
+    },
+    "Rate": {
+      "type": "string",
+      "pattern": "^(0(\\.[0-9]{1,18})?|1(\\.0{1,18})?)$",
+      "description": "十进制比率0..1，非百分数，Decimal解释。"
+    },
+    "Percent": {
+      "type": "string",
+      "pattern": "^((0|[1-9][0-9]?)(\\.[0-9]{1,18})?|100(\\.0{1,18})?)$"
+    },
+    "Slot": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_:-]{0,99}$"
+    },
+    "BusinessRef": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "slot": {
+          "$ref": "#/$defs/Slot"
+        }
+      },
+      "required": [
+        "business_id",
+        "slot"
+      ],
+      "additionalProperties": false
+    },
+    "Source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "file"
+            },
+            "relative_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "sha256": {
+              "$ref": "#/$defs/Digest"
+            },
+            "byte_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "media_type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "archive_month": {
+              "$ref": "#/$defs/Month"
+            },
+            "original_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "source_id",
+            "kind",
+            "relative_path",
+            "sha256",
+            "byte_size",
+            "media_type",
+            "original_name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "owner_statement"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "sha256": {
+              "$ref": "#/$defs/Digest"
+            },
+            "archive_month": {
+              "$ref": "#/$defs/Month"
+            }
+          },
+          "required": [
+            "source_id",
+            "kind",
+            "text",
+            "sha256"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SourceLocator": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "source_id"
+      ],
+      "additionalProperties": false
+    },
+    "Object": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "person"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "identity_document": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "phone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "payee_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "payee_account": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "organization"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "credit_code": {
+                  "type": "string",
+                  "pattern": "^[0-9A-Z]{18}$"
+                },
+                "phone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "payee_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "payee_account": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "bank_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "bank_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "account_number": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "currency": {
+                  "const": "CNY"
+                },
+                "owner": {
+                  "const": "company"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "bank_name",
+                "account_number",
+                "currency",
+                "owner"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "cash_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "const": "CNY"
+                },
+                "custodian_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "currency"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "platform_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "platform": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "account_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "currency": {
+                  "const": "CNY"
+                },
+                "owner": {
+                  "const": "company"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "platform",
+                "account_key",
+                "currency",
+                "owner"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "project"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "operator_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "purpose": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "investment_product"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "issuer_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "product_code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "money_fund",
+                    "equity",
+                    "cooperation",
+                    "bond",
+                    "other"
+                  ]
+                }
+              },
+              "required": [
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "asset"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "asset_type": {
+                  "type": "string",
+                  "enum": [
+                    "fixed",
+                    "intangible"
+                  ]
+                },
+                "category": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "project_id": {
+                  "$ref": "#/$defs/Id"
+                }
+              },
+              "required": [
+                "asset_type",
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "expected_seq",
+            "data"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "FactIssue": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "field": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "meaning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "allowed_precision": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "minItems": 0,
+          "maxItems": 20
+        },
+        "reusable_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceLocator"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "blocking_scope": {
+          "type": "string",
+          "enum": [
+            "business",
+            "period",
+            "company",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "field",
+        "meaning",
+        "message",
+        "allowed_precision",
+        "reusable_sources",
+        "blocking_scope"
+      ],
+      "additionalProperties": false
+    },
+    "CurrentIssue": {
+      "type": "object",
+      "properties": {
+        "issue_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "known_fact": {
+          "$ref": "business-facts.schema.json#/$defs/PartialFact"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "missing_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "minItems": 0,
+          "maxItems": 100
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "assignee": {
+          "type": "string",
+          "enum": [
+            "ai",
+            "owner"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "provide_material",
+            "clarify_reality",
+            "external_payment",
+            "external_filing",
+            "professional_check"
+          ]
+        },
+        "due_on": {
+          "$ref": "#/$defs/Date"
+        }
+      },
+      "required": [
+        "issue_id",
+        "scope",
+        "evidence_ids",
+        "missing_fields",
+        "question",
+        "assignee",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "Mutation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "create"
+            },
+            "expected_seq": {
+              "const": 0
+            },
+            "fact": {
+              "$ref": "business-facts.schema.json#/$defs/Fact"
+            }
+          },
+          "required": [
+            "op",
+            "expected_seq",
+            "fact"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "replace"
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "fact": {
+              "$ref": "business-facts.schema.json#/$defs/Fact"
+            }
+          },
+          "required": [
+            "op",
+            "expected_seq",
+            "fact"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "restore"
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "fact": {
+              "$ref": "business-facts.schema.json#/$defs/Fact"
+            }
+          },
+          "required": [
+            "op",
+            "expected_seq",
+            "fact"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "withdraw"
+            },
+            "expected_seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "business_id": {
+              "$ref": "#/$defs/Id"
+            }
+          },
+          "required": [
+            "op",
+            "expected_seq",
+            "business_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ApplyRequest": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "ai-accounting-modular/1"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "command_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "mutations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Mutation"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Object"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "unresolved_scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "correction_period": {
+          "$ref": "#/$defs/Month"
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "expected_scope_head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoteChange"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        }
+      },
+      "required": [
+        "contract",
+        "company_id",
+        "command_id",
+        "mutations"
+      ],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "mutations": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "objects"
+          ],
+          "properties": {
+            "objects": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "sources"
+          ],
+          "properties": {
+            "sources": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "required": [
+            "unresolved",
+            "unresolved_scope",
+            "expected_scope_head"
+          ]
+        },
+        {
+          "required": [
+            "notes"
+          ],
+          "properties": {
+            "notes": {
+              "minItems": 1
+            }
+          }
+        }
+      ],
+      "dependentRequired": {
+        "unresolved": [
+          "unresolved_scope",
+          "expected_scope_head"
+        ]
+      }
+    },
+    "ResultRef": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "result_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "business_period": {
+          "$ref": "#/$defs/Month"
+        },
+        "posting_period": {
+          "$ref": "#/$defs/Month"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "frozen"
+          ]
+        },
+        "baseline_result_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "voucher_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "voucher_number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "result_slot": {
+          "$ref": "#/$defs/Slot"
+        }
+      },
+      "required": [
+        "business_id",
+        "result_slot",
+        "result_id",
+        "generation",
+        "business_period",
+        "posting_period",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessState": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "withdrawn"
+          ]
+        },
+        "fact_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultRef"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "business_id",
+        "seq",
+        "state",
+        "fact_digest",
+        "results"
+      ],
+      "additionalProperties": false
+    },
+    "ApplyResult": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "ai-accounting-modular/1"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "command_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "completion": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "saved_documents_pending",
+            "not_saved"
+          ]
+        },
+        "accounting": {
+          "type": "string",
+          "enum": [
+            "saved",
+            "unchanged"
+          ]
+        },
+        "documents": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending",
+            "unchanged"
+          ]
+        },
+        "reading": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "preparing",
+            "failed",
+            "unchanged"
+          ]
+        },
+        "businesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BusinessState"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "affected_periods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Month"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "document_set_id": {
+          "$ref": "#/$defs/Digest"
+        },
+        "fact_issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "error": {
+          "type": "string",
+          "enum": [
+            "invalid_contract",
+            "invalid_input",
+            "needs_information",
+            "conflict",
+            "unsupported_business",
+            "unsupported_policy",
+            "dependency_conflict",
+            "closed_period_required",
+            "busy",
+            "temporary_failure",
+            "storage_corrupt",
+            "internal_error",
+            "batch_too_large",
+            "unsupported_change_kind"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "diagnostic_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "changes": {
+          "type": "string",
+          "enum": [
+            "committed",
+            "none"
+          ]
+        },
+        "participants": {
+          "$ref": "#/$defs/ParticipantStates"
+        }
+      },
+      "required": [
+        "contract",
+        "company_id",
+        "command_id",
+        "completion",
+        "accounting",
+        "documents",
+        "reading",
+        "businesses",
+        "affected_periods",
+        "fact_issues",
+        "unresolved",
+        "changes",
+        "participants"
+      ],
+      "additionalProperties": false
+    },
+    "Page": {
+      "type": "object",
+      "properties": {
+        "total_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "filtered_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "returned_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collection_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "total_count",
+        "filtered_count",
+        "returned_count",
+        "has_more",
+        "next_cursor",
+        "collection_version"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessQuery": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "operations",
+            "people",
+            "assets",
+            "financing",
+            "investment",
+            "money",
+            "taxes",
+            "opening",
+            "reports"
+          ]
+        },
+        "period_from": {
+          "$ref": "#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "#/$defs/Month"
+        },
+        "object_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "withdrawn",
+            "all"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "company_id",
+        "family",
+        "period_from",
+        "period_to",
+        "limit"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessGet": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 500
+        },
+        "result_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "facts",
+              "results",
+              "sources"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 3
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "company_id",
+        "business_ids",
+        "include"
+      ],
+      "additionalProperties": false,
+      "dependentRequired": {
+        "result_id": [
+          "generation"
+        ],
+        "generation": [
+          "result_id"
+        ]
+      }
+    },
+    "LedgerScope": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "period_from": {
+          "$ref": "#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "#/$defs/Month"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "current",
+            "as_posted"
+          ]
+        },
+        "as_of": {
+          "$ref": "#/$defs/Month"
+        },
+        "expected_head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "company_id",
+        "period_from",
+        "period_to",
+        "view"
+      ],
+      "additionalProperties": false
+    },
+    "Line": {
+      "type": "object",
+      "properties": {
+        "line_no": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "account_code": {
+          "$ref": "reporting.schema.json#/$defs/AccountCode"
+        },
+        "debit_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "credit_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "party_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "object_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "line_no",
+        "account_code",
+        "debit_fen",
+        "credit_fen",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "Obligation": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "slot": {
+          "$ref": "#/$defs/Slot"
+        },
+        "party_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "receivable",
+            "payable"
+          ]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "trade",
+            "advance",
+            "deposit",
+            "reimbursement",
+            "net_pay",
+            "withholding",
+            "social",
+            "housing",
+            "loan_principal",
+            "interest",
+            "tax",
+            "investment",
+            "pass_through",
+            "other"
+          ]
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "account_code": {
+          "$ref": "reporting.schema.json#/$defs/AccountCode"
+        },
+        "allowed_settlements": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "money",
+              "offset",
+              "transfer",
+              "agency"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 4
+        },
+        "business_period": {
+          "$ref": "#/$defs/Month"
+        },
+        "due_on": {
+          "$ref": "#/$defs/Date"
+        },
+        "cashflow_parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ObligationCashflowPart"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "business_id",
+        "slot",
+        "direction",
+        "category",
+        "amount_fen",
+        "account_code",
+        "allowed_settlements",
+        "business_period"
+      ],
+      "additionalProperties": false
+    },
+    "Settlement": {
+      "type": "object",
+      "properties": {
+        "settlement_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "source": {
+          "$ref": "#/$defs/BusinessRef"
+        },
+        "consumer": {
+          "$ref": "#/$defs/BusinessRef"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/PositiveFen"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "money",
+            "offset",
+            "agency"
+          ]
+        },
+        "movement_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "actual_on": {
+          "$ref": "#/$defs/Date"
+        },
+        "agency_business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "agency_public_slot": {
+          "const": "agency"
+        }
+      },
+      "required": [
+        "settlement_id",
+        "source",
+        "consumer",
+        "period",
+        "amount_fen",
+        "method"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "money"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "movement_id"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "agency_business_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "agency_public_slot"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "agency"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "agency_business_id",
+              "agency_public_slot"
+            ],
+            "not": {
+              "required": [
+                "movement_id"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "offset"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "movement_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "agency_business_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "agency_public_slot"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "CostLot": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "slot": {
+          "$ref": "#/$defs/Slot"
+        },
+        "object_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "project",
+            "asset",
+            "money_fund",
+            "investment"
+          ]
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "business_period": {
+          "$ref": "#/$defs/Month"
+        }
+      },
+      "required": [
+        "business_id",
+        "slot",
+        "object_id",
+        "category",
+        "amount_fen",
+        "business_period"
+      ],
+      "additionalProperties": false
+    },
+    "CostConsumption": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/BusinessRef"
+        },
+        "consumer": {
+          "$ref": "#/$defs/BusinessRef"
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/PositiveFen"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        }
+      },
+      "required": [
+        "source",
+        "consumer",
+        "amount_fen",
+        "period"
+      ],
+      "additionalProperties": false
+    },
+    "RuleRef": {
+      "type": "object",
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2000
+        },
+        "effective_from": {
+          "$ref": "#/$defs/Date"
+        },
+        "effective_to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "rule_id",
+        "version",
+        "source_url",
+        "effective_from",
+        "effective_to"
+      ],
+      "additionalProperties": false
+    },
+    "ChangeSet": {
+      "type": "object",
+      "properties": {
+        "families": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "periods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Month"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BusinessRef"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "families",
+        "business_ids",
+        "object_ids",
+        "periods",
+        "slots"
+      ],
+      "additionalProperties": false
+    },
+    "DocumentShard": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "key",
+        "path",
+        "sha256",
+        "byte_size"
+      ],
+      "additionalProperties": false
+    },
+    "CompanyIdentity": {
+      "type": "object",
+      "properties": {
+        "credit_code": {
+          "type": "string",
+          "pattern": "^[0-9A-Z]{18}$"
+        },
+        "legal_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "accounting_standard": {
+          "const": "small_enterprise"
+        },
+        "currency": {
+          "const": "CNY"
+        },
+        "start_period": {
+          "$ref": "#/$defs/Month"
+        }
+      },
+      "required": [
+        "credit_code",
+        "legal_name",
+        "accounting_standard",
+        "currency",
+        "start_period"
+      ],
+      "additionalProperties": false
+    },
+    "DocumentManifest": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-standard/1"
+        },
+        "company_identity": {
+          "$ref": "#/$defs/CompanyIdentity"
+        },
+        "set_id": {
+          "$ref": "#/$defs/Digest"
+        },
+        "shards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DocumentShard"
+          },
+          "minItems": 1,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "format",
+        "company_identity",
+        "set_id",
+        "shards"
+      ],
+      "additionalProperties": false
+    },
+    "FactShard": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-standard/1"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^facts:(operations|people|assets|financing|investment|money|taxes|opening|reports):(?!0000)[0-9]{4}-(0[1-9]|1[0-2])$"
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "business-facts.schema.json#/$defs/Fact"
+          },
+          "minItems": 0,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "format",
+        "key",
+        "facts"
+      ],
+      "additionalProperties": false
+    },
+    "TaskReceipt": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "backup",
+            "report_export"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "succeeded",
+            "failed",
+            "expired"
+          ]
+        },
+        "scope_head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "error_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "task_id",
+        "company_id",
+        "kind",
+        "state",
+        "scope_head"
+      ],
+      "additionalProperties": false
+    },
+    "ContextScope": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "IssueScope": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "scope",
+        "head",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "NoteChange": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "pattern": "^(company|period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2]))$"
+        },
+        "expected_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "expected_basis_head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "scope",
+        "expected_seq",
+        "text",
+        "evidence_ids"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "pattern": "^period:"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expected_basis_head"
+            ]
+          }
+        }
+      ]
+    },
+    "DocumentObject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "person"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "identity_document": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "phone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "payee_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "payee_account": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "organization"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "credit_code": {
+                  "type": "string",
+                  "pattern": "^[0-9A-Z]{18}$"
+                },
+                "phone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "payee_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "payee_account": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "bank_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "bank_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "account_number": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "currency": {
+                  "const": "CNY"
+                },
+                "owner": {
+                  "const": "company"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "bank_name",
+                "account_number",
+                "currency",
+                "owner"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "cash_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "const": "CNY"
+                },
+                "custodian_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "currency"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "platform_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "platform": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "account_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "currency": {
+                  "const": "CNY"
+                },
+                "owner": {
+                  "const": "company"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "platform",
+                "account_key",
+                "currency",
+                "owner"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "project"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "operator_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "purpose": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "investment_product"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "issuer_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "product_code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "money_fund",
+                    "equity",
+                    "cooperation",
+                    "bond",
+                    "other"
+                  ]
+                }
+              },
+              "required": [
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "asset"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "asset_type": {
+                  "type": "string",
+                  "enum": [
+                    "fixed",
+                    "intangible"
+                  ]
+                },
+                "category": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "project_id": {
+                  "$ref": "#/$defs/Id"
+                }
+              },
+              "required": [
+                "asset_type",
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "DocumentNote": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "scope",
+        "text",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    },
+    "ObjectShard": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-standard/1"
+        },
+        "key": {
+          "const": "objects"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DocumentObject"
+          },
+          "minItems": 0,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "format",
+        "key",
+        "objects"
+      ],
+      "additionalProperties": false
+    },
+    "SourceShard": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-standard/1"
+        },
+        "key": {
+          "const": "sources"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "minItems": 0,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "format",
+        "key",
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    "WorkShard": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-standard/1"
+        },
+        "key": {
+          "const": "work"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentIssue"
+          },
+          "minItems": 0,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "format",
+        "key",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "NotesShard": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-standard/1"
+        },
+        "key": {
+          "const": "notes"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DocumentNote"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        }
+      },
+      "required": [
+        "format",
+        "key",
+        "notes"
+      ],
+      "additionalProperties": false
+    },
+    "StandardPart": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FactShard"
+        },
+        {
+          "$ref": "#/$defs/ObjectShard"
+        },
+        {
+          "$ref": "#/$defs/SourceShard"
+        },
+        {
+          "$ref": "#/$defs/WorkShard"
+        },
+        {
+          "$ref": "#/$defs/NotesShard"
+        }
+      ]
+    },
+    "SourceImport": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "file"
+            },
+            "relative_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "source_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "archive_month": {
+              "$ref": "#/$defs/Month"
+            },
+            "expected_sha256": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "kind",
+            "relative_path"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "owner_statement"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "source_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "archive_month": {
+              "$ref": "#/$defs/Month"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SourcesRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "import"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SourceImport"
+              },
+              "minItems": 1,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "sources"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "get"
+            },
+            "source_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 1,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "source_ids"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "find"
+            },
+            "period_from": {
+              "$ref": "#/$defs/Month"
+            },
+            "period_to": {
+              "$ref": "#/$defs/Month"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "limit"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "inspect"
+            },
+            "source_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "section": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "source_id",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "DocumentsRequest": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "status",
+            "finish",
+            "export"
+          ]
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "company_id",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "PeriodRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "check"
+            },
+            "period": {
+              "$ref": "#/$defs/Month"
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "period"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "close"
+            },
+            "period": {
+              "$ref": "#/$defs/Month"
+            },
+            "expected_head": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "period",
+            "expected_head"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PeriodCheck": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "head": {
+          "$ref": "#/$defs/Digest"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "blocking_issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "document_state": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "report_head": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "company_id",
+        "period",
+        "state",
+        "head",
+        "ready",
+        "blocking_issues",
+        "unresolved",
+        "document_state",
+        "report_head"
+      ],
+      "additionalProperties": false
+    },
+    "ContextRequest": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "note_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "issue_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ContextResult": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CompanyContext"
+        },
+        {
+          "$ref": "#/$defs/EmptyContext"
+        }
+      ]
+    },
+    "Voucher": {
+      "type": "object",
+      "properties": {
+        "voucher_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "result": {
+          "$ref": "#/$defs/ResultRef"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "original",
+            "reversal",
+            "replacement",
+            "reclassification",
+            "closing"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "reverses_voucher_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Line"
+          },
+          "minItems": 1,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "voucher_id",
+        "result",
+        "period",
+        "number",
+        "role",
+        "summary",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "ResultView": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/ResultRef"
+        },
+        "target": {
+          "$ref": "business-facts.schema.json#/$defs/ResultTarget"
+        },
+        "basis": {
+          "$ref": "business-facts.schema.json#/$defs/AdoptedBasis"
+        },
+        "vouchers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Voucher"
+          },
+          "minItems": 0,
+          "maxItems": 10
+        }
+      },
+      "required": [
+        "reference",
+        "target",
+        "vouchers"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessView": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/BusinessState"
+        },
+        "fact": {
+          "$ref": "business-facts.schema.json#/$defs/Fact"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultView"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "state",
+        "results"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessGetResult": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "businesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BusinessView"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "missing_business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "head",
+        "businesses",
+        "missing_business_ids"
+      ],
+      "additionalProperties": false
+    },
+    "ObligationBalance": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/BusinessRef"
+        },
+        "adopted_result": {
+          "$ref": "#/$defs/ResultRef"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "receivable",
+            "payable"
+          ]
+        },
+        "party_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "money_settled_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "offset_settled_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "transferred_out_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "excess_reclassified_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "remaining_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "agency_settled_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        }
+      },
+      "required": [
+        "reference",
+        "adopted_result",
+        "direction",
+        "amount_fen",
+        "money_settled_fen",
+        "offset_settled_fen",
+        "transferred_out_fen",
+        "excess_reclassified_fen",
+        "remaining_fen",
+        "agency_settled_fen"
+      ],
+      "additionalProperties": false
+    },
+    "BackupRequest": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "expected_database_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "company_id",
+        "expected_database_id"
+      ],
+      "additionalProperties": false
+    },
+    "IsolatedTargetRequest": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "restore",
+            "rebuild"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "check",
+            "run"
+          ]
+        },
+        "source_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "new_target_directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "action",
+        "mode",
+        "source_path",
+        "new_target_directory"
+      ],
+      "additionalProperties": false
+    },
+    "BackupFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "database",
+            "standard",
+            "original",
+            "contract"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "sha256",
+        "byte_size"
+      ],
+      "additionalProperties": false
+    },
+    "BackupManifest": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-company-backup/1"
+        },
+        "company_identity": {
+          "$ref": "#/$defs/CompanyIdentity"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "structure_fingerprint": {
+          "$ref": "#/$defs/Digest"
+        },
+        "document_set_id": {
+          "$ref": "#/$defs/Digest"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BackupFile"
+          },
+          "minItems": 1,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "format",
+        "company_identity",
+        "company_id",
+        "database_id",
+        "database_head",
+        "structure_fingerprint",
+        "document_set_id",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "AgencyProof": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "public_slot": {
+          "const": "agency"
+        },
+        "source": {
+          "$ref": "#/$defs/BusinessRef"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "inflow",
+            "outflow"
+          ]
+        },
+        "party_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "operator_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/PositiveFen"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "actual_on": {
+          "$ref": "#/$defs/Date"
+        }
+      },
+      "required": [
+        "business_id",
+        "public_slot",
+        "source",
+        "direction",
+        "party_id",
+        "operator_id",
+        "amount_fen",
+        "period"
+      ],
+      "additionalProperties": false
+    },
+    "ObligationCashflowPart": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "$ref": "business-facts.schema.json#/$defs/CashflowCategory"
+        },
+        "amount_fen": {
+          "$ref": "#/$defs/PositiveFen"
+        },
+        "source_business_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "category",
+        "amount_fen"
+      ],
+      "additionalProperties": false
+    },
+    "ObligationView": {
+      "type": "object",
+      "properties": {
+        "obligation": {
+          "$ref": "#/$defs/Obligation"
+        },
+        "balance": {
+          "$ref": "#/$defs/ObligationBalance"
+        }
+      },
+      "required": [
+        "obligation",
+        "balance"
+      ],
+      "additionalProperties": false
+    },
+    "CurrentObject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "person"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "identity_document": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "phone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "payee_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "payee_account": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "organization"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "credit_code": {
+                  "type": "string",
+                  "pattern": "^[0-9A-Z]{18}$"
+                },
+                "phone": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "payee_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "payee_account": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "bank_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "bank_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "account_number": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "currency": {
+                  "const": "CNY"
+                },
+                "owner": {
+                  "const": "company"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "bank_name",
+                "account_number",
+                "currency",
+                "owner"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "cash_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "const": "CNY"
+                },
+                "custodian_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "currency"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "platform_account"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "platform": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "account_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "currency": {
+                  "const": "CNY"
+                },
+                "owner": {
+                  "const": "company"
+                },
+                "opened_period": {
+                  "$ref": "#/$defs/Month"
+                },
+                "zero_at_opening": {
+                  "const": true
+                }
+              },
+              "required": [
+                "platform",
+                "account_key",
+                "currency",
+                "owner"
+              ],
+              "additionalProperties": false,
+              "dependentRequired": {
+                "opened_period": [
+                  "zero_at_opening"
+                ],
+                "zero_at_opening": [
+                  "opened_period"
+                ]
+              }
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "project"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "operator_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "purpose": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "investment_product"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "issuer_id": {
+                  "$ref": "#/$defs/Id"
+                },
+                "product_code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "money_fund",
+                    "equity",
+                    "cooperation",
+                    "bond",
+                    "other"
+                  ]
+                }
+              },
+              "required": [
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "object_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "kind": {
+              "const": "asset"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "asset_type": {
+                  "type": "string",
+                  "enum": [
+                    "fixed",
+                    "intangible"
+                  ]
+                },
+                "category": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "project_id": {
+                  "$ref": "#/$defs/Id"
+                }
+              },
+              "required": [
+                "asset_type",
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 0,
+              "maxItems": 500
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "content_digest": {
+              "$ref": "#/$defs/Digest"
+            }
+          },
+          "required": [
+            "object_id",
+            "kind",
+            "name",
+            "data",
+            "seq",
+            "content_digest"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "CurrentNote": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "current",
+            "needs_refresh"
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "basis_head": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "scope",
+        "seq",
+        "state",
+        "text",
+        "basis_head",
+        "evidence_ids"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "needs_refresh"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "type": "null"
+              },
+              "evidence_ids": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20000
+              }
+            }
+          }
+        }
+      ]
+    },
+    "NoteBasisHead": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "pattern": "^period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])$"
+        },
+        "head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "scope",
+        "head"
+      ],
+      "additionalProperties": false
+    },
+    "ObjectsRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "get"
+            },
+            "object_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 1,
+              "maxItems": 500
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "object_ids"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "find"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "person",
+                "organization",
+                "bank_account",
+                "cash_account",
+                "platform_account",
+                "project",
+                "investment_product",
+                "asset"
+              ]
+            },
+            "name_contains": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "kind",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ObjectsResult": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentObject"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "missing_object_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "page": {
+          "$ref": "#/$defs/Page"
+        }
+      },
+      "required": [
+        "company_id",
+        "head",
+        "objects",
+        "missing_object_ids"
+      ],
+      "additionalProperties": false
+    },
+    "ParticipantStates": {
+      "type": "object",
+      "properties": {
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "object_id": {
+                "$ref": "#/$defs/Id"
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9223372036854775807
+              },
+              "content_digest": {
+                "$ref": "#/$defs/Digest"
+              }
+            },
+            "required": [
+              "object_id",
+              "seq",
+              "content_digest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentNote"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "issue_scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IssueScope"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "objects",
+        "notes",
+        "issue_scopes"
+      ],
+      "additionalProperties": false
+    },
+    "JobsRequest": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "company_id",
+        "task_id"
+      ],
+      "additionalProperties": false
+    },
+    "DocumentsResult": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "set_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "scope",
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "manifest_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "company_id",
+        "state",
+        "set_id",
+        "pending_scopes",
+        "errors"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "manifest_path"
+            ]
+          }
+        }
+      ]
+    },
+    "SourceInspection": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "location": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20000
+              }
+            },
+            "required": [
+              "location",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "page": {
+          "$ref": "#/$defs/Page"
+        },
+        "unsupported_media": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source_id",
+        "sha256",
+        "section",
+        "blocks",
+        "page",
+        "unsupported_media"
+      ],
+      "additionalProperties": false
+    },
+    "SourcesResult": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "missing_source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "page": {
+          "$ref": "#/$defs/Page"
+        },
+        "inspection": {
+          "$ref": "#/$defs/SourceInspection"
+        }
+      },
+      "required": [
+        "company_id",
+        "sources",
+        "missing_source_ids"
+      ],
+      "additionalProperties": false
+    },
+    "CapturedFile": {
+      "type": "object",
+      "properties": {
+        "source_root": {
+          "type": "string",
+          "enum": [
+            "company",
+            "capture"
+          ]
+        },
+        "relative_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "archive_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "source_root",
+        "relative_path",
+        "archive_path",
+        "sha256",
+        "byte_size"
+      ],
+      "additionalProperties": false
+    },
+    "BackupPlan": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "backup"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "scope_head": {
+          "$ref": "#/$defs/Digest"
+        },
+        "capture_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "manifest": {
+          "$ref": "#/$defs/BackupManifest"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapturedFile"
+          },
+          "minItems": 1,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "kind",
+        "company_id",
+        "database_id",
+        "scope_head",
+        "capture_id",
+        "manifest",
+        "inputs"
+      ],
+      "additionalProperties": false
+    },
+    "ReportExportPlan": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "report_export"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "scope_head": {
+          "$ref": "#/$defs/Digest"
+        },
+        "snapshot": {
+          "allOf": [
+            {
+              "$ref": "reporting.schema.json#/$defs/FinancialSnapshot"
+            },
+            {
+              "properties": {
+                "status": {
+                  "const": "ready"
+                }
+              }
+            }
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "default",
+            "tax_bureau"
+          ]
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "organization": {
+          "$ref": "#/$defs/CompanyIdentity"
+        }
+      },
+      "required": [
+        "kind",
+        "company_id",
+        "database_id",
+        "scope_head",
+        "snapshot",
+        "variant",
+        "template_version",
+        "organization"
+      ],
+      "additionalProperties": false
+    },
+    "FilePlan": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/BackupPlan"
+        },
+        {
+          "$ref": "#/$defs/ReportExportPlan"
+        }
+      ]
+    },
+    "IsolatedTargetResult": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "restore",
+            "rebuild"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "checked",
+            "created",
+            "failed"
+          ]
+        },
+        "source_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "new_target_directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "code",
+              "state",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "action",
+        "state",
+        "new_target_directory",
+        "checks"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "checked",
+                  "created"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "source_digest"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "created"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "company_id",
+              "database_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "error",
+              "message"
+            ]
+          }
+        }
+      ]
+    },
+    "BusinessSummary": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "period": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Month"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "withdrawn"
+          ]
+        },
+        "main_object_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "business_id",
+        "kind",
+        "period",
+        "seq",
+        "state",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "BusinessFindResult": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BusinessSummary"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "page": {
+          "$ref": "#/$defs/Page"
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "head",
+        "items",
+        "page"
+      ],
+      "additionalProperties": false
+    },
+    "CompanyContext": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "ai-accounting-modular/1"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "company_identity": {
+          "$ref": "#/$defs/CompanyIdentity"
+        },
+        "open_periods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Month"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "closed_periods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Month"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentNote"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurrentIssue"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        },
+        "issue_scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IssueScope"
+          },
+          "minItems": 0,
+          "maxItems": 12000
+        },
+        "supported_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "document_state": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "document_set_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note_basis_heads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NoteBasisHead"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "state": {
+          "const": "selected"
+        }
+      },
+      "required": [
+        "contract",
+        "company_id",
+        "database_id",
+        "company_identity",
+        "open_periods",
+        "closed_periods",
+        "notes",
+        "issues",
+        "issue_scopes",
+        "supported_kinds",
+        "document_state",
+        "document_set_id",
+        "note_basis_heads",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "EmptyContext": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "ai-accounting-modular/1"
+        },
+        "state": {
+          "const": "no_company"
+        },
+        "available_companies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "company_id": {
+                "$ref": "#/$defs/Id"
+              },
+              "credit_code": {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{18}$"
+              },
+              "legal_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "company_id",
+              "credit_code",
+              "legal_name"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "contract",
+        "state",
+        "available_companies"
+      ],
+      "additionalProperties": false
+    },
+    "SchemaRequest": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "ai-accounting-modular/1"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "SchemaResult": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "ai-accounting-modular/1"
+        },
+        "supported_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        },
+        "schemas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150
+              },
+              "schema_document": {
+                "type": "object",
+                "description": "程序生成的自包含 Draft2020-12输入Schema（含必要defs），另按元Schema校验；不是自由业务数据。"
+              }
+            },
+            "required": [
+              "kind",
+              "schema_document"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "contract",
+        "supported_kinds",
+        "schemas"
+      ],
+      "additionalProperties": false
+    },
+    "ReportRequest": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "quarter": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "expected_head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "company_id",
+        "year",
+        "quarter"
+      ],
+      "additionalProperties": false
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "rejected"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "fact_issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactIssue"
+          },
+          "minItems": 0,
+          "maxItems": 500
+        },
+        "diagnostic_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "status",
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

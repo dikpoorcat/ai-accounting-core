@@ -1,0 +1,311 @@
+"""Single-call accounting coordination with explicit, currently delivered owners."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+from ai_accounting_modular.contracts.public import (
+    CONTRACT,
+    ApplyRequest,
+    ApplyResult,
+    BusinessGet,
+    ContractError,
+    canonical_json,
+    schema_document,
+    validate_contract,
+)
+from ai_accounting_modular.identity.public import IdentityContext
+from ai_accounting_modular.records.public import RecordsChange, RecordsContext
+from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
+
+from . import _documents
+from ._changes import classify
+from ._context import DomainRegistry, SubmissionContext
+from ._planning import collect_changes, evaluate
+from ._repository import ApplicationRepository
+
+__all__ = ["Application", "create_application", "repository_factory"]
+
+
+def repository_factory():
+    return RepositoryFactory(module_schema("application"), ApplicationRepository)
+
+
+class Application:
+    def __init__(self, storage, identity, ledger, records, domains):
+        self.storage, self.identity, self.ledger, self.records = storage, identity, ledger, records
+        self.registry = DomainRegistry(domains)
+
+    def accounting_apply(self, request: ApplyRequest) -> ApplyResult | dict:
+        try:
+            validate_contract("core.schema.json", "ApplyRequest", request)
+        except ContractError as error:
+            return error.to_response()
+        try:
+            outcome = self._apply(request)
+        except ContractError as error:
+            known = schema_document("core.schema.json")["$defs"]["ApplyResult"]["properties"][
+                "error"
+            ]["enum"]
+            if error.code not in known:
+                return error.to_response()
+            result = self._base_response(request)
+            result.update(
+                error=error.code, message=error.message, fact_issues=list(error.fact_issues)
+            )
+            if error.diagnostic_id:
+                result["diagnostic_id"] = error.diagnostic_id
+            return validate_contract("core.schema.json", "ApplyResult", result)
+        with self.storage.read_unit(request["company_id"]) as read:
+            status = self.records.document_status(read)
+        if status["state"] != "ready":
+            status = _documents.finish(self, request["company_id"])
+        outcome["documents"] = status["state"]
+        outcome["completion"] = (
+            "complete" if status["state"] == "ready" else "saved_documents_pending"
+        )
+        if status["set_id"]:
+            outcome["document_set_id"] = status["set_id"]
+        return validate_contract("core.schema.json", "ApplyResult", outcome)
+
+    @staticmethod
+    def _base_response(request):
+        return {
+            "contract": CONTRACT,
+            "company_id": request["company_id"],
+            "command_id": request["command_id"],
+            "completion": "not_saved",
+            "accounting": "unchanged",
+            "documents": "unchanged",
+            "reading": "unchanged",
+            "businesses": [],
+            "affected_periods": [],
+            "fact_issues": [],
+            "unresolved": [],
+            "changes": "none",
+            "participants": {"objects": [], "notes": [], "issue_scopes": []},
+        }
+
+    def _apply(self, request):
+        if any(
+            key in request
+            for key in ("notes", "unresolved", "unresolved_scope", "expected_scope_head")
+        ):
+            raise ContractError("unsupported_business", "当前节点尚未接通说明及未解事项办理。")
+        if len(canonical_json(request).encode("utf-8")) > 8 * 1024 * 1024:
+            raise ContractError("batch_too_large", "本单规范内容超过8MiB，请按独立业务单元提交。")
+        mutations, seen = request["mutations"], set()
+        for mutation in mutations:
+            business_id = mutation.get("business_id") or mutation["fact"]["business_id"]
+            if business_id in seen:
+                raise ContractError("invalid_input", "同单每个业务身份只能出现一次。")
+            seen.add(business_id)
+        if not (mutations or request.get("objects") or request.get("sources")):
+            raise ContractError("invalid_input", "业务单不能没有任何内容。")
+        company_id = request["company_id"]
+        with self.storage.write_unit(company_id) as unit:
+            repo = unit.repository("application")
+            heads = repo.heads(seen)
+            changes = [
+                classify(
+                    mutation,
+                    heads.get(mutation.get("business_id") or mutation["fact"]["business_id"]),
+                )
+                for mutation in mutations
+            ]
+            self.registry.export_heads(list(heads.values()), unit)
+            for change in changes:
+                if change.fact:
+                    self.registry.owner(change.fact["kind"])
+            identity_plan = self.identity.plan_change(
+                request.get("objects", ()), IdentityContext(unit, request["command_id"])
+            )
+            records_plan = self.records.plan_change(
+                RecordsChange(sources=tuple(request.get("sources", ()))),
+                RecordsContext(unit, request["command_id"]),
+            )
+            self.records.apply_current(records_plan, unit)
+            context = SubmissionContext(
+                unit,
+                self.registry,
+                self.identity,
+                self.ledger,
+                self.records,
+                objects=identity_plan.objects,
+                facts={change.business_id: change.fact for change in changes},
+            )
+            for index, change in enumerate(changes):
+                if change.fact:
+                    context.require_sources(
+                        mutations[index]["fact"]["evidence_ids"],
+                        business_id=change.business_id,
+                        field=f"/mutations/{index}/fact/evidence_ids",
+                    )
+            for index, obj in enumerate(request.get("objects", ())):
+                context.require_sources(
+                    obj.get("evidence_ids", ()), field=f"/objects/{index}/evidence_ids"
+                )
+            descriptions = collect_changes(
+                changes, identity_plan.changed_ids, context, self.registry
+            )
+            plans = evaluate(descriptions, context, self.ledger, request.get("correction_period"))
+            for change in changes:
+                if change.changed:
+                    repo.save(change.head(request["command_id"]))
+            self.identity.apply_current(identity_plan, unit)
+            for object_id, ids in identity_plan.source_uses.items():
+                self.records.replace_source_uses("object", object_id, ids, unit)
+            for owner, plan in plans:
+                owner.apply_current(plan, unit)
+            adoption = self.ledger.adopt(
+                [plan for _, plan in plans],
+                unit,
+                correction_period=request.get("correction_period"),
+            )
+            touched = [
+                business["business_id"] for _, plan in plans for business in plan["businesses"]
+            ]
+            dependencies = [edge for _, plan in plans for edge in plan["dependencies"]]
+            if touched:
+                repo.replace_dependencies(touched, dependencies)
+            for change in changes:
+                if change.changed:
+                    self.records.replace_source_uses(
+                        "business",
+                        change.business_id,
+                        change.fact["evidence_ids"] if change.fact else (),
+                        unit,
+                    )
+            keys = set()
+            for change in changes:
+                if change.changed:
+                    for head in (change.before, change.head(request["command_id"])):
+                        if head and head["period"]:
+                            keys.add(f"facts:{head['family']}:{head['period']}")
+            if identity_plan.changed_ids:
+                keys.add("objects")
+            if records_plan.changed_source_ids:
+                keys.add("sources")
+            if keys:
+                self.records.mark_document_targets(sorted(keys), unit)
+            final_heads = repo.heads(seen | set(touched))
+
+            def check_projection():
+                self.registry.export_heads(list(final_heads.values()), unit)
+
+            unit.check_before_commit(check_projection)
+            result = self._base_response(request)
+            result["businesses"] = self._states([final_heads[key] for key in sorted(seen)], unit)
+            result["affected_periods"] = sorted(
+                {
+                    head["period"]
+                    for change in changes
+                    if change.changed
+                    for head in (change.before, change.head(request["command_id"]))
+                    if head and head["period"]
+                }
+                | {ref["posting_period"] for ref in adoption.results}
+            )
+            result["participants"]["objects"] = [
+                {key: obj[key] for key in ("object_id", "seq", "content_digest")}
+                for obj in identity_plan.objects
+            ]
+            changed = bool(keys)
+            result.update(
+                changes="committed" if changed else "none",
+                accounting="saved" if adoption.changed else "unchanged",
+                reading="unchanged",
+            )
+        return result
+
+    def _states(self, heads, read, *, views=None):
+        if views is None:
+            views = self.ledger.get_results([head["business_id"] for head in heads], read)
+        grouped = defaultdict(list)
+        for view in views:
+            grouped[view["reference"]["business_id"]].append(view["reference"])
+        return [
+            {
+                "business_id": head["business_id"],
+                "seq": head["seq"],
+                "state": head["state"],
+                "fact_digest": head["current_digest"],
+                "results": grouped[head["business_id"]],
+            }
+            for head in heads
+        ]
+
+    def accounting_get(self, query: BusinessGet):
+        validate_contract("core.schema.json", "BusinessGet", query)
+        if "result_id" in query:
+            raise ContractError("unsupported_business", "精确历史结果读取尚未接入应用入口。")
+        with self.storage.read_unit(query["company_id"]) as read:
+            heads = read.repository("application").heads(query["business_ids"])
+            views = self.ledger.get_results(list(heads), read)
+            facts = {
+                fact["business_id"]: fact
+                for fact in self.registry.export_heads(list(heads.values()), read)
+            }
+            sources = {}
+            if "sources" in query["include"]:
+                source_ids = sorted(
+                    {source_id for fact in facts.values() for source_id in fact["evidence_ids"]}
+                )
+                for offset in range(0, len(source_ids), 500):
+                    sources.update(
+                        {
+                            source["source_id"]: source
+                            for source in self.records.resolve_sources(
+                                source_ids[offset : offset + 500], read
+                            )
+                        }
+                    )
+                if set(sources) != set(source_ids):
+                    raise ContractError(
+                        "storage_corrupt", "当前事实引用的来源缺失，不能返回不完整资料。"
+                    )
+            grouped = defaultdict(list)
+            for view in views:
+                grouped[view["reference"]["business_id"]].append(view)
+            businesses = []
+            for state in self._states(
+                [heads[key] for key in query["business_ids"] if key in heads], read, views=views
+            ):
+                fact = facts.get(state["business_id"])
+                item = {
+                    "state": state,
+                    "results": grouped[state["business_id"]]
+                    if "results" in query["include"]
+                    else [],
+                }
+                if fact and "facts" in query["include"]:
+                    item["fact"] = fact
+                if "sources" in query["include"]:
+                    item["sources"] = (
+                        [sources[source_id] for source_id in fact["evidence_ids"]] if fact else []
+                    )
+                businesses.append(item)
+            return validate_contract(
+                "core.schema.json",
+                "BusinessGetResult",
+                {
+                    "company_id": read.company_id,
+                    "database_id": read.database_id,
+                    "head": read.head,
+                    "businesses": businesses,
+                    "missing_business_ids": [
+                        key for key in query["business_ids"] if key not in heads
+                    ],
+                },
+            )
+
+    def accounting_documents(self, request):
+        validate_contract("core.schema.json", "DocumentsRequest", request)
+        if request["action"] == "finish":
+            return _documents.finish(self, request["company_id"])
+        with self.storage.read_unit(request["company_id"]) as read:
+            return self.records.document_status(read)
+
+
+def create_application(*, storage, identity, ledger, records, domains):
+    return Application(storage, identity, ledger, records, domains)

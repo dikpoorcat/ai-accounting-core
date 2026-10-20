@@ -1,0 +1,136 @@
+{
+  "format": "review-materials-cases/1",
+  "synthetic_only": true,
+  "examples": {
+    "current_query": {
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "business_id": "50000000-0000-4000-8000-000000000001",
+      "limit": 20
+    },
+    "frozen_query": {
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "business_id": "50000000-0000-4000-8000-000000000001",
+      "result_id": "30000000-0000-4000-8000-000000000001",
+      "generation": 1,
+      "limit": 20
+    },
+    "response": {
+      "schema_version": 1,
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "database_id": "20000000-0000-4000-8000-000000000001",
+      "business_id": "50000000-0000-4000-8000-000000000001",
+      "business_label": "合成服务费用",
+      "selection": {
+        "mode": "frozen",
+        "result_id": "30000000-0000-4000-8000-000000000001",
+        "generation": 1,
+        "posting_period": "2026-01"
+      },
+      "snapshot_version": "review-frozen-result-1",
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "label": "老板补充说明",
+          "sha256": "4dcd2f518dc9bd8548cdb12eb541c22504799f97206bb91f2f1083e9a3a77150",
+          "byte_size": 30,
+          "media_type": "text/plain; charset=utf-8",
+          "archive_month": "2026-01",
+          "locations": [
+            "本月服务费用"
+          ],
+          "available": true,
+          "unavailable_reason": null
+        },
+        {
+          "source_id": "40000000-0000-4000-8000-000000000002",
+          "kind": "file",
+          "label": "synthetic-receipt.txt",
+          "sha256": "0e702a4ee19f9e285e3e5c32690ac2c88dd0f274487bb3118807463b71ed4534",
+          "byte_size": 18,
+          "media_type": "text/plain",
+          "archive_month": "2026-01",
+          "locations": [
+            "第1行"
+          ],
+          "available": true,
+          "unavailable_reason": null
+        }
+      ],
+      "page": {
+        "total_count": 2,
+        "filtered_count": 2,
+        "returned_count": 2,
+        "has_more": false,
+        "next_cursor": null,
+        "collection_version": "review-frozen-result-1"
+      }
+    },
+    "content_query": {
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "business_id": "50000000-0000-4000-8000-000000000001",
+      "source_id": "40000000-0000-4000-8000-000000000001",
+      "result_id": "30000000-0000-4000-8000-000000000001",
+      "generation": 1,
+      "expected_version": "review-frozen-result-1"
+    },
+    "statement_content": {
+      "schema_version": 1,
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "database_id": "20000000-0000-4000-8000-000000000001",
+      "source_id": "40000000-0000-4000-8000-000000000001",
+      "kind": "owner_statement",
+      "sha256": "4dcd2f518dc9bd8548cdb12eb541c22504799f97206bb91f2f1083e9a3a77150",
+      "text": "合成说明：费用有据。"
+    },
+    "file_receipt": {
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "database_id": "20000000-0000-4000-8000-000000000001",
+      "source_id": "40000000-0000-4000-8000-000000000002",
+      "sha256": "0e702a4ee19f9e285e3e5c32690ac2c88dd0f274487bb3118807463b71ed4534",
+      "byte_size": 18,
+      "file_name": "synthetic-receipt.txt",
+      "content_type": "application/octet-stream",
+      "disposition": "attachment"
+    }
+  },
+  "negative_cases": [
+    {
+      "id": "query_unpaired_result",
+      "definition": "ReviewMaterialsQuery",
+      "value": {
+        "company_id": "10000000-0000-4000-8000-000000000001",
+        "business_id": "50000000-0000-4000-8000-000000000001",
+        "result_id": "30000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "id": "content_arbitrary_path",
+      "definition": "SourceContentQuery",
+      "value": {
+        "company_id": "10000000-0000-4000-8000-000000000001",
+        "business_id": "50000000-0000-4000-8000-000000000001",
+        "source_id": "40000000-0000-4000-8000-000000000001",
+        "expected_version": "review-frozen-result-1",
+        "path": "../../other-company/private.txt"
+      }
+    },
+    {
+      "id": "cursor_without_head",
+      "definition": "ReviewMaterialsQuery",
+      "value": {
+        "company_id": "10000000-0000-4000-8000-000000000001",
+        "business_id": "50000000-0000-4000-8000-000000000001",
+        "cursor": "opaque-cursor"
+      }
+    }
+  ],
+  "integration_checks": [
+    "原始合成文件字节为UTF-8字符串synthetic-file-v1加一个LF；statement_content.text按UTF-8计算摘要及大小，与列表、正文及回执逐字节一致。",
+    "同一source的两个实际定位合并到一个source行；完整count为唯一source数。25个来源首20、续5，所有来源出现且无重复。",
+    "冻结结果所需旧来源A在当前事实改用B后仍可由精确冻结定位读A；当前查询只读当前事实和当前正式结果所需来源。被替代开放generation返回409，不恢复旧正文。",
+    "跨公司source、未被选中业务/采用引用的source和不存在source均404；缺文件或内容摘要不符409并列真实缺口，绝不发送错误字节。",
+    "归档移动期间使用公开读取租约，从已登记位置取得同一内容；A到B到A迟到结果不写回；正文按文本渲染，文件均受控下载，HTML/SVG不内联执行。",
+    "仅打开独立深链才查询来源；五页默认请求、主要布局、Vue样式和性能预算不变；页面没有修改、批准或关账按钮。"
+  ]
+}

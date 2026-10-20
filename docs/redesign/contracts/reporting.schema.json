@@ -1,0 +1,2905 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-accounting.local/design/reporting-v1",
+  "$ref": "#/$defs/FinancialSnapshot",
+  "$defs": {
+    "AccountCode": {
+      "type": "string",
+      "enum": [
+        "1001",
+        "1002",
+        "1012",
+        "1101",
+        "1122",
+        "1123",
+        "1221",
+        "122105",
+        "122106",
+        "122107",
+        "1601",
+        "1602",
+        "1604",
+        "1701",
+        "1702",
+        "189901",
+        "2001",
+        "2202",
+        "2203",
+        "221101",
+        "221102",
+        "221103",
+        "222101",
+        "222102",
+        "222103",
+        "222104",
+        "222106",
+        "2231",
+        "2241",
+        "224101",
+        "224102",
+        "224103",
+        "224104",
+        "224105",
+        "224106",
+        "2501",
+        "3001",
+        "3002",
+        "3101",
+        "3104",
+        "4301",
+        "5001",
+        "5111",
+        "5401",
+        "540101",
+        "540102",
+        "540103",
+        "540104",
+        "5403",
+        "5601",
+        "560101",
+        "560102",
+        "560103",
+        "560104",
+        "5602",
+        "560201",
+        "560202",
+        "560203",
+        "560204",
+        "5603",
+        "560301",
+        "571101",
+        "571102",
+        "571103",
+        "571104",
+        "571105",
+        "5801",
+        "6301",
+        "630101"
+      ]
+    },
+    "KnownAmount": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "const": "known"
+        },
+        "amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        }
+      },
+      "required": [
+        "state",
+        "amount_fen"
+      ],
+      "additionalProperties": false
+    },
+    "UnestablishedAmount": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "const": "unestablished"
+        },
+        "issue_indexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 999
+          },
+          "minItems": 1,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "state",
+        "issue_indexes"
+      ],
+      "additionalProperties": false
+    },
+    "AmountCell": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/KnownAmount"
+        },
+        {
+          "$ref": "#/$defs/UnestablishedAmount"
+        }
+      ]
+    },
+    "BalanceSheet": {
+      "type": "object",
+      "properties": {
+        "1": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "货币资金"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "2": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "短期投资"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "3": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应收票据"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "4": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应收账款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "5": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "预付账款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "6": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应收股利"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "7": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应收利息"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "8": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其他应收款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "9": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "存货"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "10": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：原材料"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "11": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "在产品"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "12": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "库存商品"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "13": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "周转材料"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "14": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其他流动资产"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "15": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "流动资产合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "16": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "长期债券投资"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "17": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "长期股权投资"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "18": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "固定资产原价"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "19": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "减：累计折旧"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "20": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "固定资产账面价值"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "21": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "在建工程"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "22": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "工程物资"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "23": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "固定资产清理"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "24": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "生产性生物资产"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "25": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "无形资产"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "26": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "开发支出"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "27": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "长期待摊费用"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "28": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其他非流动资产"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "29": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "非流动资产合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "30": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "资产合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "31": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "短期借款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "32": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应付票据"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "33": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应付账款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "34": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "预收账款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "35": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应付职工薪酬"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "36": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应交税费"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "37": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应付利息"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "38": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "应付利润"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "39": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其他应付款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "40": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其他流动负债"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "41": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "流动负债合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "42": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "长期借款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "43": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "长期应付款"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "44": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "递延收益"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "45": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其他非流动负债"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "46": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "非流动负债合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "47": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "负债合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "48": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "实收资本（或股本）"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "49": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "资本公积"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "50": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "盈余公积"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "51": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "未分配利润"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "52": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "所有者权益合计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        },
+        "53": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "负债和所有者权益总计"
+            },
+            "ending": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "beginning": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "ending",
+            "beginning"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53"
+      ],
+      "additionalProperties": false
+    },
+    "ProfitStatement": {
+      "type": "object",
+      "properties": {
+        "1": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "营业收入"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "2": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "营业成本"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "3": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "税金及附加"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "4": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：消费税"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "5": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "营业税"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "6": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "城市维护建设税"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "7": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "资源税"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "8": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "土地增值税"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "9": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "城镇土地使用税、房产税、车船税、印花税"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "10": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "教育费附加、矿产资源补偿费、排污费"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "11": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "销售费用"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "12": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：商品维修费"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "13": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "广告费和业务宣传费"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "14": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "管理费用"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "15": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：开办费"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "16": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "业务招待费"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "17": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "研究费用"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "18": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "财务费用"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "19": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：利息费用（收入以负号填列）"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "20": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "投资收益（损失以负号填列）"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "21": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "营业利润"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "22": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "营业外收入"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "23": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：政府补助"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "24": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "营业外支出"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "25": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "其中：坏账损失"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "26": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "无法收回的长期债券投资损失"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "27": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "无法收回的长期股权投资损失"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "28": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "自然灾害等不可抗力因素造成的损失"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "29": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "税收滞纳金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "30": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "利润总额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "31": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "所得税费用"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "32": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "净利润"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32"
+      ],
+      "additionalProperties": false
+    },
+    "CashFlowStatement": {
+      "type": "object",
+      "properties": {
+        "1": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "销售产成品、商品、提供劳务收到的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "2": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "收到其他与经营活动有关的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "3": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "购买原材料、商品、接受劳务支付的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "4": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "支付的职工薪酬"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "5": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "支付的税费"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "6": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "支付其他与经营活动有关的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "7": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "经营活动产生的现金流量净额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "8": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "收回短期投资、长期债券投资和长期股权投资收到的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "9": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "取得投资收益收到的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "10": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "处置固定资产、无形资产和其他非流动资产收回的现金净额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "11": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "短期投资、长期债券投资和长期股权投资支付的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "12": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "购建固定资产、无形资产和其他非流动资产支付的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "13": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "投资活动产生的现金流量净额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "14": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "取得借款收到的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "15": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "吸收投资者投资收到的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "16": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "偿还借款本金支付的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "17": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "偿还借款利息支付的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "18": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "分配利润支付的现金"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "19": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "筹资活动产生的现金流量净额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "20": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "现金净增加额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "21": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "期初现金余额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        },
+        "22": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "const": "期末现金余额"
+            },
+            "current": {
+              "$ref": "#/$defs/AmountCell"
+            },
+            "year_to_date": {
+              "$ref": "#/$defs/AmountCell"
+            }
+          },
+          "required": [
+            "name",
+            "current",
+            "year_to_date"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22"
+      ],
+      "additionalProperties": false
+    },
+    "FlowBounds": {
+      "type": "object",
+      "properties": {
+        "current_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "current_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "year_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "year_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "current_cash_begin_before": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "balance_begin_before": {
+          "$ref": "core.schema.json#/$defs/Month"
+        }
+      },
+      "required": [
+        "current_from",
+        "current_to",
+        "year_from",
+        "year_to",
+        "current_cash_begin_before",
+        "balance_begin_before"
+      ],
+      "additionalProperties": false
+    },
+    "Selection": {
+      "type": "object",
+      "properties": {
+        "selection_digest": {
+          "$ref": "core.schema.json#/$defs/Digest"
+        },
+        "closed_periods": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Month"
+          },
+          "minItems": 0,
+          "maxItems": 120
+        },
+        "supplement_periods": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Month"
+          },
+          "minItems": 0,
+          "maxItems": 120
+        },
+        "opening_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "continuation_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        }
+      },
+      "required": [
+        "selection_digest",
+        "closed_periods",
+        "supplement_periods"
+      ],
+      "additionalProperties": false
+    },
+    "Check": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "balance_beginning",
+            "balance_ending",
+            "profit_current",
+            "profit_ytd",
+            "cash_current",
+            "cash_ytd",
+            "cash_to_balance_current",
+            "cash_to_balance_ytd",
+            "cash_to_postings_current",
+            "cash_to_postings_ytd"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        },
+        "difference_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "issue_indexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 999
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "code",
+        "status",
+        "issue_indexes"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unknown"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "difference_fen"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "difference_fen"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pass"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "difference_fen": {
+                "const": "0"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "fail"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "difference_fen": {
+                "allOf": [
+                  {
+                    "$ref": "core.schema.json#/$defs/Fen"
+                  },
+                  {
+                    "not": {
+                      "const": "0"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PretaxFields": {
+      "type": "object",
+      "properties": {
+        "period_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "operating_revenue": {
+          "$ref": "#/$defs/AmountCell"
+        },
+        "operating_cost": {
+          "$ref": "#/$defs/AmountCell"
+        },
+        "profit_before_tax": {
+          "$ref": "#/$defs/AmountCell"
+        },
+        "basis_digest": {
+          "$ref": "core.schema.json#/$defs/Digest"
+        }
+      },
+      "required": [
+        "period_from",
+        "period_to",
+        "operating_revenue",
+        "operating_cost",
+        "profit_before_tax",
+        "basis_digest"
+      ],
+      "additionalProperties": false
+    },
+    "FinancialSnapshot": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "ai-accounting-financial-snapshot/1"
+        },
+        "company_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "scope": {
+          "$ref": "core.schema.json#/$defs/LedgerScope"
+        },
+        "accounting_standard": {
+          "const": "small_enterprise"
+        },
+        "mapping_version": {
+          "const": "small-enterprise-financial-1"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "partial"
+          ]
+        },
+        "period_bounds": {
+          "$ref": "#/$defs/FlowBounds"
+        },
+        "selection": {
+          "$ref": "#/$defs/Selection"
+        },
+        "balance_sheet": {
+          "$ref": "#/$defs/BalanceSheet"
+        },
+        "profit_statement": {
+          "$ref": "#/$defs/ProfitStatement"
+        },
+        "cash_flow_statement": {
+          "$ref": "#/$defs/CashFlowStatement"
+        },
+        "pre_tax": {
+          "$ref": "#/$defs/PretaxFields"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "minItems": 10,
+          "maxItems": 10,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "balance_beginning"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "balance_ending"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "profit_current"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "profit_ytd"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cash_current"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cash_ytd"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cash_to_balance_current"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cash_to_balance_ytd"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cash_to_postings_current"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "const": "cash_to_postings_ytd"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/FactIssue"
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "format",
+        "company_id",
+        "database_id",
+        "head",
+        "scope",
+        "accounting_standard",
+        "mapping_version",
+        "status",
+        "period_bounds",
+        "selection",
+        "balance_sheet",
+        "profit_statement",
+        "cash_flow_statement",
+        "pre_tax",
+        "checks",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "CashflowContribution": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "movement_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "public_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "adoption_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "source_result": {
+          "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "baseline",
+            "supplement"
+          ]
+        },
+        "category": {
+          "$ref": "business-facts.schema.json#/$defs/CashflowCategory"
+        },
+        "signed_amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        }
+      },
+      "required": [
+        "business_id",
+        "movement_id",
+        "public_slot",
+        "adoption_period",
+        "source_result",
+        "kind",
+        "category",
+        "signed_amount_fen"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

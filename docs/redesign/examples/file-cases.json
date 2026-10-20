@@ -1,0 +1,1749 @@
+{
+  "format": "ai-accounting-file-cases/1",
+  "synthetic_only": true,
+  "scope": "只规定严格设计DTO及将来真实合成环境的故障验收；本文件不是实际包/任务/恢复结果。所有路径$sandbox在测试中替换为独立临时根。metadata示例摘要/字节数为有标记的Schema夹具；F01-F10实施时从真实合成SQLite、文档和原件实际捕获，不拿这些示例摘要冒充已经验证的文件。",
+  "schema_map": {
+    "backup_plan": "FilePlan",
+    "report_export_plan": "FilePlan",
+    "restore_check_request": "IsolatedTargetRequest",
+    "restore_run_request": "IsolatedTargetRequest",
+    "rebuild_run_request": "IsolatedTargetRequest",
+    "restore_checked_result": "IsolatedTargetResult",
+    "restore_created_result": "IsolatedTargetResult",
+    "rebuild_created_result": "IsolatedTargetResult",
+    "missing_source_failed_result": "IsolatedTargetResult"
+  },
+  "contract_examples": {
+    "backup_plan": {
+      "kind": "backup",
+      "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+      "database_id": "7ae52dc3-e1f4-5077-855e-72a70467947b",
+      "scope_head": "8ed64f4cc1fef53b7bb96fc89ae9e1ea7a27a1c49c9ece1de09146f7224a6d6a",
+      "capture_id": "92000000-0000-4000-8000-000000000001",
+      "manifest": {
+        "format": "ai-accounting-company-backup/1",
+        "company_identity": {
+          "credit_code": "913100000000000001",
+          "legal_name": "合成文件验收公司",
+          "accounting_standard": "small_enterprise",
+          "currency": "CNY",
+          "start_period": "2026-01"
+        },
+        "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+        "database_id": "7ae52dc3-e1f4-5077-855e-72a70467947b",
+        "database_head": 8,
+        "structure_fingerprint": "8eca88aa16a4c96416327b8ba132b9ddefeef0315d40fa318d15598a44797f7b",
+        "document_set_id": "31b4b7c5f9edb3b4af759506e46ec347ed2151c606209960539c3f22c3a2ae1b",
+        "files": [
+          {
+            "path": "runtime/company.sqlite3",
+            "kind": "database",
+            "sha256": "08c5cf64b342da37e022aef02f25525367a5ee550eff253a148453c25cca036e",
+            "byte_size": 65536
+          },
+          {
+            "path": "standard/current.json",
+            "kind": "standard",
+            "sha256": "cc6afa853c8d612791828ef1a69eaa10ae2d5a50cd9c1668afad6358ed8a0317",
+            "byte_size": 1024
+          },
+          {
+            "path": "standard/README.md",
+            "kind": "standard",
+            "sha256": "4fe7566c60e513d74140b84a59df23da82fadc88393a40bb095d49f835bec927",
+            "byte_size": 256
+          },
+          {
+            "path": "standard/parts/operations--2026-01--32843108671a10ba37aa58124f0f8ef14472846189bea4b99726e55fe3143b4a.json",
+            "kind": "standard",
+            "sha256": "32843108671a10ba37aa58124f0f8ef14472846189bea4b99726e55fe3143b4a",
+            "byte_size": 2048
+          },
+          {
+            "path": "originals/2026-01/92000000-0000-4000-8000-000000000008--合成费用说明.txt",
+            "kind": "original",
+            "sha256": "fbbc190455c064c302ed3c4fcc7314819d1bb0efb2992025358c248d28dccc1c",
+            "byte_size": 42
+          },
+          {
+            "path": "structure/company.sql",
+            "kind": "contract",
+            "sha256": "ad24d28f45bbc4ff3aae14784e9933ebeaefdfa6a75164a39922a38c52f4f6f7",
+            "byte_size": 8192
+          }
+        ]
+      },
+      "inputs": [
+        {
+          "source_root": "capture",
+          "relative_path": "runtime/company.sqlite3",
+          "archive_path": "runtime/company.sqlite3",
+          "sha256": "08c5cf64b342da37e022aef02f25525367a5ee550eff253a148453c25cca036e",
+          "byte_size": 65536
+        },
+        {
+          "source_root": "capture",
+          "relative_path": "standard/current.json",
+          "archive_path": "standard/current.json",
+          "sha256": "cc6afa853c8d612791828ef1a69eaa10ae2d5a50cd9c1668afad6358ed8a0317",
+          "byte_size": 1024
+        },
+        {
+          "source_root": "capture",
+          "relative_path": "standard/README.md",
+          "archive_path": "standard/README.md",
+          "sha256": "4fe7566c60e513d74140b84a59df23da82fadc88393a40bb095d49f835bec927",
+          "byte_size": 256
+        },
+        {
+          "source_root": "company",
+          "relative_path": "standard/parts/operations--2026-01--32843108671a10ba37aa58124f0f8ef14472846189bea4b99726e55fe3143b4a.json",
+          "archive_path": "standard/parts/operations--2026-01--32843108671a10ba37aa58124f0f8ef14472846189bea4b99726e55fe3143b4a.json",
+          "sha256": "32843108671a10ba37aa58124f0f8ef14472846189bea4b99726e55fe3143b4a",
+          "byte_size": 2048
+        },
+        {
+          "source_root": "company",
+          "relative_path": "originals/2026-01/92000000-0000-4000-8000-000000000008--合成费用说明.txt",
+          "archive_path": "originals/2026-01/92000000-0000-4000-8000-000000000008--合成费用说明.txt",
+          "sha256": "fbbc190455c064c302ed3c4fcc7314819d1bb0efb2992025358c248d28dccc1c",
+          "byte_size": 42
+        },
+        {
+          "source_root": "capture",
+          "relative_path": "structure/company.sql",
+          "archive_path": "structure/company.sql",
+          "sha256": "ad24d28f45bbc4ff3aae14784e9933ebeaefdfa6a75164a39922a38c52f4f6f7",
+          "byte_size": 8192
+        }
+      ]
+    },
+    "report_export_plan": {
+      "kind": "report_export",
+      "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+      "database_id": "7ae52dc3-e1f4-5077-855e-72a70467947b",
+      "scope_head": "247830dbf939f8a5e25cea24179c4bf481c52b2b018e66186f539e61a9404a02",
+      "snapshot": {
+        "format": "ai-accounting-financial-snapshot/1",
+        "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+        "database_id": "7ae52dc3-e1f4-5077-855e-72a70467947b",
+        "head": 8,
+        "scope": {
+          "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+          "period_from": "2026-01",
+          "period_to": "2026-01",
+          "view": "as_posted",
+          "as_of": "2026-01"
+        },
+        "accounting_standard": "small_enterprise",
+        "mapping_version": "small-enterprise-financial-1",
+        "status": "ready",
+        "period_bounds": {
+          "current_from": "2026-01",
+          "current_to": "2026-01",
+          "year_from": "2026-01",
+          "year_to": "2026-01",
+          "current_cash_begin_before": "2025-12",
+          "balance_begin_before": "2025-12"
+        },
+        "selection": {
+          "selection_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "closed_periods": [],
+          "supplement_periods": [],
+          "opening_business_id": "7b4543a1-e7f1-5073-8925-fe5fc4f539e9"
+        },
+        "balance_sheet": {
+          "1": {
+            "name": "货币资金",
+            "ending": {
+              "state": "known",
+              "amount_fen": "210000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          },
+          "2": {
+            "name": "短期投资",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "3": {
+            "name": "应收票据",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "4": {
+            "name": "应收账款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "5": {
+            "name": "预付账款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "6": {
+            "name": "应收股利",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "7": {
+            "name": "应收利息",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "8": {
+            "name": "其他应收款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "9": {
+            "name": "存货",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "10": {
+            "name": "其中：原材料",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "11": {
+            "name": "在产品",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "12": {
+            "name": "库存商品",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "13": {
+            "name": "周转材料",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "14": {
+            "name": "其他流动资产",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "15": {
+            "name": "流动资产合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "210000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          },
+          "16": {
+            "name": "长期债券投资",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "17": {
+            "name": "长期股权投资",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "18": {
+            "name": "固定资产原价",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "19": {
+            "name": "减：累计折旧",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "20": {
+            "name": "固定资产账面价值",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "21": {
+            "name": "在建工程",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "22": {
+            "name": "工程物资",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "23": {
+            "name": "固定资产清理",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "24": {
+            "name": "生产性生物资产",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "25": {
+            "name": "无形资产",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "26": {
+            "name": "开发支出",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "27": {
+            "name": "长期待摊费用",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "28": {
+            "name": "其他非流动资产",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "29": {
+            "name": "非流动资产合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "30": {
+            "name": "资产合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "210000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          },
+          "31": {
+            "name": "短期借款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "32": {
+            "name": "应付票据",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "33": {
+            "name": "应付账款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "34": {
+            "name": "预收账款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "35": {
+            "name": "应付职工薪酬",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "36": {
+            "name": "应交税费",
+            "ending": {
+              "state": "known",
+              "amount_fen": "4000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "37": {
+            "name": "应付利息",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "38": {
+            "name": "应付利润",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "39": {
+            "name": "其他应付款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "40": {
+            "name": "其他流动负债",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "41": {
+            "name": "流动负债合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "4000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "42": {
+            "name": "长期借款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "43": {
+            "name": "长期应付款",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "44": {
+            "name": "递延收益",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "45": {
+            "name": "其他非流动负债",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "46": {
+            "name": "非流动负债合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "47": {
+            "name": "负债合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "4000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "48": {
+            "name": "实收资本（或股本）",
+            "ending": {
+              "state": "known",
+              "amount_fen": "130000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          },
+          "49": {
+            "name": "资本公积",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "50": {
+            "name": "盈余公积",
+            "ending": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "51": {
+            "name": "未分配利润",
+            "ending": {
+              "state": "known",
+              "amount_fen": "76000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "52": {
+            "name": "所有者权益合计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "206000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          },
+          "53": {
+            "name": "负债和所有者权益总计",
+            "ending": {
+              "state": "known",
+              "amount_fen": "210000"
+            },
+            "beginning": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          }
+        },
+        "profit_statement": {
+          "1": {
+            "name": "营业收入",
+            "current": {
+              "state": "known",
+              "amount_fen": "100000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "100000"
+            }
+          },
+          "2": {
+            "name": "营业成本",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "3": {
+            "name": "税金及附加",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "4": {
+            "name": "其中：消费税",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "5": {
+            "name": "营业税",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "6": {
+            "name": "城市维护建设税",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "7": {
+            "name": "资源税",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "8": {
+            "name": "土地增值税",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "9": {
+            "name": "城镇土地使用税、房产税、车船税、印花税",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "10": {
+            "name": "教育费附加、矿产资源补偿费、排污费",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "11": {
+            "name": "销售费用",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "12": {
+            "name": "其中：商品维修费",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "13": {
+            "name": "广告费和业务宣传费",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "14": {
+            "name": "管理费用",
+            "current": {
+              "state": "known",
+              "amount_fen": "20000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "20000"
+            }
+          },
+          "15": {
+            "name": "其中：开办费",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "16": {
+            "name": "业务招待费",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "17": {
+            "name": "研究费用",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "18": {
+            "name": "财务费用",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "19": {
+            "name": "其中：利息费用（收入以负号填列）",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "20": {
+            "name": "投资收益（损失以负号填列）",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "21": {
+            "name": "营业利润",
+            "current": {
+              "state": "known",
+              "amount_fen": "80000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "80000"
+            }
+          },
+          "22": {
+            "name": "营业外收入",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "23": {
+            "name": "其中：政府补助",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "24": {
+            "name": "营业外支出",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "25": {
+            "name": "其中：坏账损失",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "26": {
+            "name": "无法收回的长期债券投资损失",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "27": {
+            "name": "无法收回的长期股权投资损失",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "28": {
+            "name": "自然灾害等不可抗力因素造成的损失",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "29": {
+            "name": "税收滞纳金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "30": {
+            "name": "利润总额",
+            "current": {
+              "state": "known",
+              "amount_fen": "80000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "80000"
+            }
+          },
+          "31": {
+            "name": "所得税费用",
+            "current": {
+              "state": "known",
+              "amount_fen": "4000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "4000"
+            }
+          },
+          "32": {
+            "name": "净利润",
+            "current": {
+              "state": "known",
+              "amount_fen": "76000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "76000"
+            }
+          }
+        },
+        "cash_flow_statement": {
+          "1": {
+            "name": "销售产成品、商品、提供劳务收到的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "100000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "100000"
+            }
+          },
+          "2": {
+            "name": "收到其他与经营活动有关的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "3": {
+            "name": "购买原材料、商品、接受劳务支付的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "4": {
+            "name": "支付的职工薪酬",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "5": {
+            "name": "支付的税费",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "6": {
+            "name": "支付其他与经营活动有关的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "20000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "20000"
+            }
+          },
+          "7": {
+            "name": "经营活动产生的现金流量净额",
+            "current": {
+              "state": "known",
+              "amount_fen": "80000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "80000"
+            }
+          },
+          "8": {
+            "name": "收回短期投资、长期债券投资和长期股权投资收到的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "9": {
+            "name": "取得投资收益收到的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "10": {
+            "name": "处置固定资产、无形资产和其他非流动资产收回的现金净额",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "11": {
+            "name": "短期投资、长期债券投资和长期股权投资支付的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "12": {
+            "name": "购建固定资产、无形资产和其他非流动资产支付的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "13": {
+            "name": "投资活动产生的现金流量净额",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "14": {
+            "name": "取得借款收到的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "15": {
+            "name": "吸收投资者投资收到的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "16": {
+            "name": "偿还借款本金支付的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "17": {
+            "name": "偿还借款利息支付的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "18": {
+            "name": "分配利润支付的现金",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "19": {
+            "name": "筹资活动产生的现金流量净额",
+            "current": {
+              "state": "known",
+              "amount_fen": "0"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "0"
+            }
+          },
+          "20": {
+            "name": "现金净增加额",
+            "current": {
+              "state": "known",
+              "amount_fen": "80000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "80000"
+            }
+          },
+          "21": {
+            "name": "期初现金余额",
+            "current": {
+              "state": "known",
+              "amount_fen": "130000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "130000"
+            }
+          },
+          "22": {
+            "name": "期末现金余额",
+            "current": {
+              "state": "known",
+              "amount_fen": "210000"
+            },
+            "year_to_date": {
+              "state": "known",
+              "amount_fen": "210000"
+            }
+          }
+        },
+        "pre_tax": {
+          "period_from": "2026-01",
+          "period_to": "2026-01",
+          "operating_revenue": {
+            "state": "known",
+            "amount_fen": "100000"
+          },
+          "operating_cost": {
+            "state": "known",
+            "amount_fen": "0"
+          },
+          "profit_before_tax": {
+            "state": "known",
+            "amount_fen": "80000"
+          },
+          "basis_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "checks": [
+          {
+            "code": "balance_beginning",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "balance_ending",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "profit_current",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "profit_ytd",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "cash_current",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "cash_ytd",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "cash_to_balance_current",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "cash_to_balance_ytd",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "cash_to_postings_current",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          },
+          {
+            "code": "cash_to_postings_ytd",
+            "status": "pass",
+            "difference_fen": "0",
+            "issue_indexes": []
+          }
+        ],
+        "issues": []
+      },
+      "variant": "default",
+      "template_version": 1,
+      "organization": {
+        "credit_code": "913100000000000001",
+        "legal_name": "合成文件验收公司",
+        "accounting_standard": "small_enterprise",
+        "currency": "CNY",
+        "start_period": "2026-01"
+      }
+    },
+    "restore_check_request": {
+      "action": "restore",
+      "mode": "check",
+      "source_path": "$sandbox/delivered/913100000000000001.finance-company.zip",
+      "new_target_directory": "$sandbox/restore-independent"
+    },
+    "restore_run_request": {
+      "action": "restore",
+      "mode": "run",
+      "source_path": "$sandbox/delivered/913100000000000001.finance-company.zip",
+      "new_target_directory": "$sandbox/restore-independent"
+    },
+    "rebuild_run_request": {
+      "action": "rebuild",
+      "mode": "run",
+      "source_path": "$sandbox/final-facts/standard/current.json",
+      "new_target_directory": "$sandbox/rebuild-independent"
+    },
+    "restore_checked_result": {
+      "action": "restore",
+      "state": "checked",
+      "source_digest": "46b265c821b203b11ba22c29f8fe3f79389f302d2f6e3705ca97e53339b0eb34",
+      "new_target_directory": "$sandbox/restore-independent",
+      "checks": [
+        {
+          "code": "package_integrity",
+          "state": "pass",
+          "message": "合成包字节、结构、身份与文件清单核对通过；check未创建目标。"
+        }
+      ]
+    },
+    "restore_created_result": {
+      "action": "restore",
+      "state": "created",
+      "source_digest": "46b265c821b203b11ba22c29f8fe3f79389f302d2f6e3705ca97e53339b0eb34",
+      "new_target_directory": "$sandbox/restore-independent",
+      "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+      "database_id": "7ae52dc3-e1f4-5077-855e-72a70467947b",
+      "checks": [
+        {
+          "code": "package_integrity",
+          "state": "pass",
+          "message": "先验证包原字节与完整清单。"
+        },
+        {
+          "code": "target_isolated",
+          "state": "pass",
+          "message": "独立目标完成重定位并清除旧读取与文件任务；未注册或切换当前服务。"
+        }
+      ]
+    },
+    "rebuild_created_result": {
+      "action": "rebuild",
+      "state": "created",
+      "source_digest": "f898f303a2fd685aff81775b081fb40351308ba3c50a74a126e7a4190326c14f",
+      "new_target_directory": "$sandbox/rebuild-independent",
+      "company_id": "143cd35c-4c7e-59c2-badc-85870a55b2b4",
+      "database_id": "92000000-0000-4000-8000-000000000020",
+      "checks": [
+        {
+          "code": "final_facts_complete",
+          "state": "pass",
+          "message": "仅用标准清单、最终事实和必要原件重建；未打开源业务数据库。"
+        },
+        {
+          "code": "new_database_identity",
+          "state": "pass",
+          "message": "新建运行身份和正式结果，不复制旧凭证及纠错过程。"
+        }
+      ]
+    },
+    "missing_source_failed_result": {
+      "action": "restore",
+      "state": "failed",
+      "new_target_directory": "$sandbox/restore-independent",
+      "checks": [
+        {
+          "code": "source_not_found",
+          "state": "fail",
+          "message": "指定合成包不存在，无法计算摘要；没有创建目标。"
+        }
+      ],
+      "error": "source_not_found",
+      "message": "找不到指定备份包。"
+    }
+  },
+  "cases": [
+    {
+      "id": "F01",
+      "name": "同一捕获DB及文档集合，发布新集合不混包",
+      "given": "在真实合成库产生head8、文档A并完成归档；启动备份在捕获完成后暂停。",
+      "steps": [
+        "锁内捕获SQLite快照，将current.json和README复制到本任务capture根，持有A的parts/原件路径租约",
+        "释放锁后允许真实业务推进到head9并发布文档B，触发正常清理",
+        "从已持久BackupPlan恢复复制并验证包"
+      ],
+      "expect": {
+        "package_database_head": 8,
+        "package_document_set": "A",
+        "live_database_head": 9,
+        "live_document_set": "B",
+        "mutable_manifest_read_from": "capture",
+        "deleted_while_leased_count": 0,
+        "mixed_A_B_file_count": 0,
+        "package_integrity_verified": true
+      }
+    },
+    {
+      "id": "F02",
+      "name": "重启先恢复当前捕获引用，后清理来源",
+      "given": "备份pending/running捕获A已持久，随后当前业务不再引用A中的某原件；模拟进程终止。",
+      "steps": [
+        "重启先检查file_task当前严格plan及捕获集，恢复parts/原件引用租约",
+        "允许资料清理后继续原捕获集打包"
+      ],
+      "expect": {
+        "old_required_source_deleted_before_lease_restore": false,
+        "new_snapshot_silently_substituted": false,
+        "same_scope_head": true,
+        "current_task_only": true
+      }
+    },
+    {
+      "id": "F03",
+      "name": "捕获损坏不换头冒充旧备份",
+      "given": "F02重启时某必需捕获文件缺失或摘要错误。",
+      "steps": [
+        "核对原plan并判该当前任务失败",
+        "释放其引用后清理临时捕获；保留当前/上一份有效正式包"
+      ],
+      "expect": {
+        "task_state": "failed",
+        "old_plan_reported_success": false,
+        "existing_verified_backups_replaced": false,
+        "replacement_requires_new_explicit_request": true
+      }
+    },
+    {
+      "id": "F04",
+      "name": "语义相同不因新临时路径重复任务",
+      "given": "同database_id/head、结构指纹、文档集合及必要原件/分片内容；两次capture_id/临时位置不同。",
+      "expect": {
+        "scope_heads_equal": true,
+        "pending_running_succeeded_task_reused": true,
+        "request_id_change_creates_duplicate": false,
+        "database_snapshot_byte_difference_from_derived_tasks_ignored_for_semantic_head": true,
+        "unrelated_global_snapshot_head_change_reuses_report": true
+      }
+    },
+    {
+      "id": "F05",
+      "name": "真正内容或结构变化使计划不同",
+      "variants": [
+        "结构fingerprint变化",
+        "标准document_set_id变化",
+        "必要原件内容摘要变化",
+        "报告正式snapshot/范围变化",
+        "报告variant或template_version变化",
+        "报告绑定的organization法定名称/身份变化"
+      ],
+      "expect": {
+        "scope_head_changes": true,
+        "old_report_or_backup_not_claimed_as_new": true
+      }
+    },
+    {
+      "id": "F06",
+      "name": "不完整报表不能建完整导出计划",
+      "base_example": "report_export_plan",
+      "change": "snapshot.status=partial或正式未知金额/失败check",
+      "expect": {
+        "file_task_created": false,
+        "export_delivered_as_valid": false,
+        "known_accounting_blocked": false
+      },
+      "note": "status=partial由Schema拒绝，其余ready与金额/check一致性由报表生产者语义校验拒绝。 报表公司标题来自同一计划的organization，worker不另读当前名称。"
+    },
+    {
+      "id": "F07",
+      "name": "源公司库毁损仍可离线恢复",
+      "given": "只保留已交付合成ZIP；源公司库不可读，独立新host/catalog。",
+      "request_example": "restore_run_request",
+      "expect": {
+        "source_database_open_count": 0,
+        "source_file_task_lookup_count": 0,
+        "new_target_created_only_after_verification": true,
+        "formal_results_and_frozen_adoptions_preserved": true,
+        "restored_file_task_count": 0,
+        "restored_derived_read_row_count_before_rebuild": 0,
+        "old_paths_or_jobs_resumed": false,
+        "auto_registered_or_service_switched": false
+      }
+    },
+    {
+      "id": "F08",
+      "name": "check不写，新目标不覆盖，失败不注册",
+      "variants": [
+        "check有效包",
+        "run目标已有空文件",
+        "run目标已有公司库",
+        "ZIP含父目录跳转或符号链接越界",
+        "文件摘要错误",
+        "源路径不存在"
+      ],
+      "expect": {
+        "existing_target_changed": false,
+        "source_changed": false,
+        "failed_target_registered": false,
+        "check_target_created": false,
+        "missing_source_digest_fabricated": false
+      }
+    },
+    {
+      "id": "F09",
+      "name": "标准文档独立简化重建，不借恢复复制旧账",
+      "given": "标准清单/原件完整，源公司库及源目录库均不可访问。",
+      "request_example": "rebuild_run_request",
+      "expect": {
+        "source_database_open_count": 0,
+        "source_task_lookup_count": 0,
+        "old_catalog_identity_loaded": false,
+        "new_database_identity": true,
+        "business_document_reference_ids_preserved": true,
+        "old_formal_result_ids_or_voucher_numbers_required": false,
+        "old_freeze_or_error_process_replayed": false,
+        "only_final_correct_business_facts": true
+      }
+    },
+    {
+      "id": "F10",
+      "name": "中断独立命令不建立恢复任务库",
+      "given": "离线run在明确新目标的暂存构建期间终止。",
+      "steps": [
+        "验证残留确实属于这个目标，显式清理或重试独立命令"
+      ],
+      "expect": {
+        "company_or_catalog_recovery_task_table_count": 0,
+        "source_changed": false,
+        "incomplete_target_registered": false,
+        "existing_target_overwritten": false,
+        "permanent_recovery_process_log_created": false
+      }
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "FN01",
+      "definition": "FilePlan",
+      "base_example": "report_export_plan",
+      "patch": {
+        "/snapshot/status": "partial"
+      },
+      "expect": "schema_rejected"
+    },
+    {
+      "id": "FN02",
+      "definition": "FilePlan",
+      "base_example": "backup_plan",
+      "patch": {
+        "/kind": "restore"
+      },
+      "expect": "schema_rejected"
+    },
+    {
+      "id": "FN03",
+      "definition": "FilePlan",
+      "base_example": "backup_plan",
+      "patch": {
+        "/inputs/0/source_root": "arbitrary_host"
+      },
+      "expect": "schema_rejected"
+    },
+    {
+      "id": "FN04",
+      "definition": "IsolatedTargetRequest",
+      "base_example": "restore_run_request",
+      "patch": {
+        "/task_id": "92000000-0000-4000-8000-000000000099"
+      },
+      "expect": "schema_rejected"
+    },
+    {
+      "id": "FN05",
+      "definition": "IsolatedTargetResult",
+      "base_example": "restore_created_result",
+      "remove": [
+        "/database_id"
+      ],
+      "expect": "schema_rejected"
+    },
+    {
+      "id": "FN06",
+      "definition": "IsolatedTargetResult",
+      "base_example": "restore_checked_result",
+      "remove": [
+        "/source_digest"
+      ],
+      "expect": "schema_rejected"
+    },
+    {
+      "id": "FN07",
+      "definition": "FilePlan",
+      "base_example": "backup_plan",
+      "patch": {
+        "/inputs/1/relative_path": "../outside/current.json"
+      },
+      "expect": "semantic_rejected",
+      "note": "路径安全不是json字符串校验；正常FilePlan验证必须拒绝越界。"
+    },
+    {
+      "id": "FN08",
+      "definition": "FilePlan",
+      "base_example": "backup_plan",
+      "patch": {
+        "/inputs/1/archive_path": "runtime/company.sqlite3"
+      },
+      "expect": "semantic_rejected",
+      "note": "重复包内路径即使每个对象Schema有效也必须拒绝，不能后写覆盖。"
+    }
+  ]
+}

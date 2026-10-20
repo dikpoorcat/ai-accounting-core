@@ -1,0 +1,3133 @@
+{
+  "format": "ai-accounting-acceptance/1",
+  "scope": "合成测试数据与独立预期，不是生产接口或真实会计资料。每个case/variant独立空库；given请求依次执行并等文档ready。",
+  "amount_unit": "fen",
+  "runtime_contract": "ai-accounting-modular/1",
+  "company": {
+    "company_id": "10000000-0000-4000-8000-000000000001",
+    "database_id": "20000000-0000-4000-8000-000000000001",
+    "identity": {
+      "credit_code": "913100000000000001",
+      "legal_name": "合成架构验收有限公司",
+      "accounting_standard": "small_enterprise",
+      "currency": "CNY",
+      "start_period": "2026-01"
+    }
+  },
+  "ids": {
+    "supplier": "60000000-0000-4000-8000-000000000001",
+    "employee": "60000000-0000-4000-8000-000000000002",
+    "bank_account": "60000000-0000-4000-8000-000000000003",
+    "expense_a": "50000000-0000-4000-8000-000000000001",
+    "expense_b": "50000000-0000-4000-8000-000000000002",
+    "employment": "50000000-0000-4000-8000-000000000010",
+    "wage": "50000000-0000-4000-8000-000000000012",
+    "payment": "50000000-0000-4000-8000-000000000013",
+    "overpayment": "50000000-0000-4000-8000-000000000014",
+    "issue": "80000000-0000-4000-8000-000000000001",
+    "opening_package": "50000000-0000-4000-8000-000000000020"
+  },
+  "sources": [
+    {
+      "source_id": "40000000-0000-4000-8000-000000000001",
+      "kind": "owner_statement",
+      "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+      "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+      "archive_month": "2026-01"
+    },
+    {
+      "source_id": "40000000-0000-4000-8000-000000000002",
+      "kind": "owner_statement",
+      "text": "合成验收：2026-01该员工个税最终税额为0分；无社保及公积金参加关系。",
+      "sha256": "780ebde111ecbc6a2a267bdab2450070d83e6247eeb039c1387099dc17b65cf1",
+      "archive_month": "2026-01"
+    }
+  ],
+  "objects": [
+    {
+      "object_id": "60000000-0000-4000-8000-000000000001",
+      "kind": "organization",
+      "name": "合成维修供应商",
+      "expected_seq": 0,
+      "data": {}
+    },
+    {
+      "object_id": "60000000-0000-4000-8000-000000000002",
+      "kind": "person",
+      "name": "合成员工甲",
+      "expected_seq": 0,
+      "data": {}
+    },
+    {
+      "object_id": "60000000-0000-4000-8000-000000000003",
+      "kind": "bank_account",
+      "name": "合成公司银行账户",
+      "expected_seq": 0,
+      "data": {
+        "bank_name": "合成测试银行",
+        "account_number": "SYNTHETIC-0001",
+        "currency": "CNY",
+        "owner": "company"
+      }
+    }
+  ],
+  "requests": {
+    "common": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000001",
+      "mutations": [],
+      "objects": [
+        {
+          "object_id": "60000000-0000-4000-8000-000000000001",
+          "kind": "organization",
+          "name": "合成维修供应商",
+          "expected_seq": 0,
+          "data": {}
+        },
+        {
+          "object_id": "60000000-0000-4000-8000-000000000002",
+          "kind": "person",
+          "name": "合成员工甲",
+          "expected_seq": 0,
+          "data": {}
+        },
+        {
+          "object_id": "60000000-0000-4000-8000-000000000003",
+          "kind": "bank_account",
+          "name": "合成公司银行账户",
+          "expected_seq": 0,
+          "data": {
+            "bank_name": "合成测试银行",
+            "account_number": "SYNTHETIC-0001",
+            "currency": "CNY",
+            "owner": "company"
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        },
+        {
+          "source_id": "40000000-0000-4000-8000-000000000002",
+          "kind": "owner_statement",
+          "text": "合成验收：2026-01该员工个税最终税额为0分；无社保及公积金参加关系。",
+          "sha256": "780ebde111ecbc6a2a267bdab2450070d83e6247eeb039c1387099dc17b65cf1",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_1000": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000002",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_900": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000003",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 1,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "90000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "90000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_800_from_900": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000004",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 2,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "80000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "80000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_withdraw_900": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000005",
+      "mutations": [
+        {
+          "op": "withdraw",
+          "business_id": "50000000-0000-4000-8000-000000000001",
+          "expected_seq": 2
+        }
+      ]
+    },
+    "expense_a_restore_900": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000006",
+      "mutations": [
+        {
+          "op": "restore",
+          "expected_seq": 3,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "90000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "90000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_900_correct_feb": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000007",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 1,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "90000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "90000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "correction_period": "2026-02",
+      "explanation": "合成资料查明原费用应为900元。",
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_800_correct_feb": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000008",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 2,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "80000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "80000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "correction_period": "2026-02",
+      "explanation": "同一开放发现期内查明最终费用应为800元。",
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_a_800_correct_mar": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000009",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 2,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "80000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "80000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "correction_period": "2026-03",
+      "explanation": "2月更正已冻结，3月查明最终费用应为800元。",
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "wage_1000": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-00000000000b",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000012",
+            "kind": "people.remuneration",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001",
+              "40000000-0000-4000-8000-000000000002"
+            ],
+            "data": {
+              "type": "wage",
+              "person_id": "60000000-0000-4000-8000-000000000002",
+              "gross_fen": "100000",
+              "expense_area": "administration",
+              "employment_id": "50000000-0000-4000-8000-000000000010",
+              "tax_basis": {
+                "tax_period": "2026-01",
+                "tax_fen": "0",
+                "basis_type": "final_statement",
+                "source": {
+                  "source_id": "40000000-0000-4000-8000-000000000002"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        },
+        {
+          "source_id": "40000000-0000-4000-8000-000000000002",
+          "kind": "owner_statement",
+          "text": "合成验收：2026-01该员工个税最终税额为0分；无社保及公积金参加关系。",
+          "sha256": "780ebde111ecbc6a2a267bdab2450070d83e6247eeb039c1387099dc17b65cf1",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "pay_wage_1000": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-00000000000c",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000013",
+            "kind": "money.movement",
+            "period": "2026-02",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "type": "settlement",
+              "funds_account_id": "60000000-0000-4000-8000-000000000003",
+              "direction": "outflow",
+              "amount_fen": "100000",
+              "payment_method": "individual",
+              "counterparty_id": "60000000-0000-4000-8000-000000000002",
+              "allocations": [
+                {
+                  "source": {
+                    "business_id": "50000000-0000-4000-8000-000000000012",
+                    "slot": "net_pay"
+                  },
+                  "amount_fen": "100000",
+                  "recipient_id": "60000000-0000-4000-8000-000000000002"
+                }
+              ]
+            },
+            "effective_on": "2026-02-05"
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "wage_1200": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-00000000000d",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 1,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000012",
+            "kind": "people.remuneration",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001",
+              "40000000-0000-4000-8000-000000000002"
+            ],
+            "data": {
+              "type": "wage",
+              "person_id": "60000000-0000-4000-8000-000000000002",
+              "gross_fen": "120000",
+              "expense_area": "administration",
+              "employment_id": "50000000-0000-4000-8000-000000000010",
+              "tax_basis": {
+                "tax_period": "2026-01",
+                "tax_fen": "0",
+                "basis_type": "final_statement",
+                "source": {
+                  "source_id": "40000000-0000-4000-8000-000000000002"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        },
+        {
+          "source_id": "40000000-0000-4000-8000-000000000002",
+          "kind": "owner_statement",
+          "text": "合成验收：2026-01该员工个税最终税额为0分；无社保及公积金参加关系。",
+          "sha256": "780ebde111ecbc6a2a267bdab2450070d83e6247eeb039c1387099dc17b65cf1",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "wage_800_without_reclassification": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-00000000000e",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 2,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000012",
+            "kind": "people.remuneration",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001",
+              "40000000-0000-4000-8000-000000000002"
+            ],
+            "data": {
+              "type": "wage",
+              "person_id": "60000000-0000-4000-8000-000000000002",
+              "gross_fen": "80000",
+              "expense_area": "administration",
+              "employment_id": "50000000-0000-4000-8000-000000000010",
+              "tax_basis": {
+                "tax_period": "2026-01",
+                "tax_fen": "0",
+                "basis_type": "final_statement",
+                "source": {
+                  "source_id": "40000000-0000-4000-8000-000000000002"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        },
+        {
+          "source_id": "40000000-0000-4000-8000-000000000002",
+          "kind": "owner_statement",
+          "text": "合成验收：2026-01该员工个税最终税额为0分；无社保及公积金参加关系。",
+          "sha256": "780ebde111ecbc6a2a267bdab2450070d83e6247eeb039c1387099dc17b65cf1",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "wage_800_with_recovery": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-00000000000f",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 2,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000012",
+            "kind": "people.remuneration",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001",
+              "40000000-0000-4000-8000-000000000002"
+            ],
+            "data": {
+              "type": "wage",
+              "person_id": "60000000-0000-4000-8000-000000000002",
+              "gross_fen": "80000",
+              "expense_area": "administration",
+              "employment_id": "50000000-0000-4000-8000-000000000010",
+              "tax_basis": {
+                "tax_period": "2026-01",
+                "tax_fen": "0",
+                "basis_type": "final_statement",
+                "source": {
+                  "source_id": "40000000-0000-4000-8000-000000000002"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000014",
+            "kind": "operations.overpayment",
+            "period": "2026-02",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "source": {
+                "business_id": "50000000-0000-4000-8000-000000000012",
+                "slot": "net_pay"
+              },
+              "counterparty_id": "60000000-0000-4000-8000-000000000002",
+              "amount_fen": "20000"
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        },
+        {
+          "source_id": "40000000-0000-4000-8000-000000000002",
+          "kind": "owner_statement",
+          "text": "合成验收：2026-01该员工个税最终税额为0分；无社保及公积金参加关系。",
+          "sha256": "780ebde111ecbc6a2a267bdab2450070d83e6247eeb039c1387099dc17b65cf1",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "move_expense_a_to_feb": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000010",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 1,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-02",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "issue_scope_first": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000011",
+      "mutations": [],
+      "unresolved_scope": "materials:2026-01",
+      "expected_scope_head": 0,
+      "unresolved": [
+        {
+          "issue_id": "80000000-0000-4000-8000-000000000001",
+          "scope": "materials:2026-01",
+          "period": "2026-01",
+          "evidence_ids": [
+            "40000000-0000-4000-8000-000000000001"
+          ],
+          "missing_fields": [
+            "/data/amount_fen"
+          ],
+          "question": "合成资料尚缺实际费用金额。",
+          "assignee": "owner",
+          "action": "provide_material"
+        }
+      ]
+    },
+    "issue_scope_stale_with_new_b": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000012",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000002",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "25000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "25000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "unresolved_scope": "materials:2026-01",
+      "expected_scope_head": 0,
+      "unresolved": [],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "issue_scope_clear_current": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000013",
+      "mutations": [],
+      "unresolved_scope": "materials:2026-01",
+      "expected_scope_head": 1,
+      "unresolved": []
+    },
+    "existing_a_and_new_b": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000014",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000001",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100000"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000002",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "25000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "25000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "page_25_seed": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000015",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000100",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000101",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000102",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000103",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000104",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000105",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000106",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000107",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000108",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000109",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-00000000010a",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-00000000010b",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-00000000010c",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-00000000010d",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-00000000010e",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-00000000010f",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000110",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000111",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000112",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000113",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000114",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000115",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000116",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000117",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000118",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "100",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "100"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "page_replace_first": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000016",
+      "mutations": [
+        {
+          "op": "replace",
+          "expected_seq": 1,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000100",
+            "kind": "operations.expense",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "200",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "200"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "opening_zero": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000017",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000020",
+            "kind": "opening.package",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "members": [],
+              "basis": "newly_established"
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "opening_bank_2000": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000018",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000020",
+            "kind": "opening.package",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "members": [
+                {
+                  "member_id": "90000000-0000-4000-8000-000000000001",
+                  "evidence_ids": [
+                    "40000000-0000-4000-8000-000000000001"
+                  ],
+                  "data": {
+                    "type": "bank",
+                    "funds_account_id": "60000000-0000-4000-8000-000000000003",
+                    "balance_fen": "200000"
+                  }
+                },
+                {
+                  "member_id": "90000000-0000-4000-8000-000000000002",
+                  "evidence_ids": [
+                    "40000000-0000-4000-8000-000000000001"
+                  ],
+                  "data": {
+                    "type": "equity",
+                    "equity_kind": "retained_earnings",
+                    "holder_or_basis_id": "60000000-0000-4000-8000-000000000001",
+                    "balance_fen": "200000"
+                  }
+                }
+              ],
+              "basis": "existing_ledger"
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "expense_b_feb": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000019",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000002",
+            "kind": "operations.expense",
+            "period": "2026-02",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "creditor_id": "60000000-0000-4000-8000-000000000001",
+              "creditor_kind": "supplier",
+              "amount_fen": "25000",
+              "expense_class": "administration",
+              "report_details": [
+                {
+                  "code": "management_other",
+                  "amount_fen": "25000"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    },
+    "employment": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-00000000000a",
+      "mutations": [
+        {
+          "op": "create",
+          "expected_seq": 0,
+          "fact": {
+            "business_id": "50000000-0000-4000-8000-000000000010",
+            "kind": "people.employment",
+            "period": "2026-01",
+            "evidence_ids": [
+              "40000000-0000-4000-8000-000000000001"
+            ],
+            "data": {
+              "employee_id": "60000000-0000-4000-8000-000000000002",
+              "effective_from": "2026-01",
+              "social_insurance_participating": false,
+              "housing_fund_participating": false,
+              "contribution_shortfall": "reject"
+            }
+          }
+        }
+      ],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000001",
+          "kind": "owner_statement",
+          "text": "仅用于合成验收的业务资料；各步骤给出明确的费用、用工、实际付款及有效更正事实。",
+          "sha256": "ad7682f53a1b802df679e2534741ef3d4299ba1642a023dd42d412fabb776c18",
+          "archive_month": "2026-01"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "C01",
+      "name": "开放更正保号、撤去与迟到请求",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "before",
+          "invoke": "observe_business",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "business_ids": [
+              "50000000-0000-4000-8000-000000000001"
+            ],
+            "include": [
+              "facts",
+              "results",
+              "sources"
+            ]
+          },
+          "capture": [
+            "business.seq",
+            "result_id",
+            "generation",
+            "voucher.number",
+            "voucher_version_id",
+            "source_head"
+          ]
+        },
+        {
+          "id": "replace",
+          "invoke": "accounting_apply",
+          "request": "expense_a_900",
+          "expect": {
+            "accepted": true,
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000001",
+              "seq": 2,
+              "amount_fen": "90000"
+            },
+            "same_as": {
+              "result_id": "before.result_id",
+              "voucher.number": "before.voucher.number"
+            },
+            "generation_increased_by": 1,
+            "open_result_count": 1,
+            "voucher_count": 1,
+            "expense_total_fen": "90000",
+            "absent_current_payloads": [
+              {
+                "business_id": "50000000-0000-4000-8000-000000000001",
+                "amount_fen": "100000"
+              }
+            ]
+          }
+        },
+        {
+          "id": "current_head",
+          "invoke": "dashboard_brief_ready",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "period": "2026-01"
+          },
+          "capture": [
+            "snapshot_version"
+          ],
+          "expect": {
+            "expense_total_fen": "90000"
+          }
+        },
+        {
+          "id": "old_locator",
+          "invoke": "dashboard_exact_voucher",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "period": "2026-01",
+            "voucher_version_id": {
+              "$capture": "before.voucher_version_id"
+            },
+            "expected_version": {
+              "$capture": "current_head.snapshot_version"
+            }
+          },
+          "expect": {
+            "http_status": 409,
+            "code": "dashboard_snapshot_changed",
+            "response_items_absent": true,
+            "old_generation_rejected_even_with_current_page_head": true
+          }
+        },
+        {
+          "id": "withdraw",
+          "invoke": "accounting_apply",
+          "request": "expense_a_withdraw_900",
+          "expect": {
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000001",
+              "seq": 3,
+              "state": "withdrawn",
+              "fact_absent": true
+            },
+            "active_voucher_count": 0,
+            "current_obligation_count": 0,
+            "current_document_fact_count": 0,
+            "minimal_tombstone_only": true
+          }
+        },
+        {
+          "id": "late_create",
+          "invoke": "accounting_apply",
+          "request": "expense_a_1000",
+          "expect": {
+            "accepted": false,
+            "code": "conflict",
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000001",
+              "seq": 3,
+              "state": "withdrawn"
+            },
+            "formal_changes": 0
+          }
+        },
+        {
+          "id": "restore",
+          "invoke": "accounting_apply",
+          "request": "expense_a_restore_900",
+          "expect": {
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000001",
+              "seq": 4,
+              "state": "active",
+              "amount_fen": "90000"
+            },
+            "current_document_fact_count": 1,
+            "expense_total_fen": "90000"
+          }
+        }
+      ],
+      "oracle_scope": {
+        "business_ids": [
+          "50000000-0000-4000-8000-000000000001"
+        ],
+        "voucher_roles": [
+          "original",
+          "reversal",
+          "replacement"
+        ]
+      }
+    },
+    {
+      "id": "C02",
+      "name": "冻结1000后同一开放发现期900再800只替换更正头",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "check_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-01"
+          },
+          "capture": [
+            "head"
+          ]
+        },
+        {
+          "id": "close_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "close",
+            "period": "2026-01",
+            "expected_head": {
+              "$capture": "check_jan.head"
+            }
+          },
+          "expect": {
+            "closed": true,
+            "approval_records": 0
+          }
+        },
+        {
+          "id": "frozen",
+          "invoke": "observe_business",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "business_ids": [
+              "50000000-0000-4000-8000-000000000001"
+            ],
+            "include": [
+              "facts",
+              "results",
+              "sources"
+            ]
+          },
+          "capture": [
+            "result_id",
+            "generation",
+            "voucher.number",
+            "voucher_version_id"
+          ]
+        },
+        {
+          "id": "to_900",
+          "invoke": "accounting_apply",
+          "request": "expense_a_900_correct_feb",
+          "capture": [
+            "correction_result_id",
+            "generation",
+            "reversal_voucher.number",
+            "replacement_voucher.number"
+          ],
+          "expect": {
+            "accepted": true,
+            "current_target_fen": "90000",
+            "frozen_original_fen": "100000",
+            "posting_totals_fen": {
+              "2026-01": "100000",
+              "2026-02": "-10000"
+            },
+            "voucher_roles": [
+              "original",
+              "reversal",
+              "replacement"
+            ]
+          }
+        },
+        {
+          "id": "to_800",
+          "invoke": "accounting_apply",
+          "request": "expense_a_800_correct_feb",
+          "expect": {
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000001",
+              "seq": 3
+            },
+            "current_target_fen": "80000",
+            "frozen_original_fen": "100000",
+            "baseline_result_id": {
+              "$capture": "frozen.result_id"
+            },
+            "same_as": {
+              "correction_result_id": "to_900.correction_result_id",
+              "reversal_voucher.number": "to_900.reversal_voucher.number",
+              "replacement_voucher.number": "to_900.replacement_voucher.number"
+            },
+            "generation_increased_by": 1,
+            "voucher_count": 3,
+            "open_correction_result_count": 1,
+            "posting_totals_fen": {
+              "2026-01": "100000",
+              "2026-02": "-20000"
+            },
+            "absent_current_payloads": [
+              {
+                "business_id": "50000000-0000-4000-8000-000000000001",
+                "target_fen": "90000",
+                "state": "open"
+              }
+            ]
+          }
+        },
+        {
+          "id": "frozen_still_readable",
+          "invoke": "observe_frozen_voucher",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "voucher_version_id": {
+              "$capture": "frozen.voucher_version_id"
+            }
+          },
+          "expect": {
+            "expense_total_fen": "100000",
+            "number": {
+              "$capture": "frozen.voucher.number"
+            }
+          }
+        }
+      ],
+      "oracle_scope": {
+        "business_ids": [
+          "50000000-0000-4000-8000-000000000001"
+        ],
+        "voucher_roles": [
+          "original",
+          "reversal",
+          "replacement"
+        ]
+      }
+    },
+    {
+      "id": "C03",
+      "name": "900更正已经冻结后800使用新冻结基线",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "check_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-01"
+          },
+          "capture": [
+            "head"
+          ]
+        },
+        {
+          "id": "close_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "close",
+            "period": "2026-01",
+            "expected_head": {
+              "$capture": "check_jan.head"
+            }
+          }
+        },
+        {
+          "id": "to_900",
+          "invoke": "accounting_apply",
+          "request": "expense_a_900_correct_feb",
+          "capture": [
+            "correction_result_id"
+          ]
+        },
+        {
+          "id": "check_feb",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-02"
+          },
+          "capture": [
+            "head"
+          ]
+        },
+        {
+          "id": "close_feb",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "close",
+            "period": "2026-02",
+            "expected_head": {
+              "$capture": "check_feb.head"
+            }
+          }
+        },
+        {
+          "id": "to_800",
+          "invoke": "accounting_apply",
+          "request": "expense_a_800_correct_mar",
+          "expect": {
+            "current_target_fen": "80000",
+            "baseline_result_id": {
+              "$capture": "to_900.correction_result_id"
+            },
+            "frozen_target_amounts_fen": [
+              "100000",
+              "90000"
+            ],
+            "posting_totals_fen": {
+              "2026-01": "100000",
+              "2026-02": "-10000",
+              "2026-03": "-10000"
+            },
+            "voucher_count": 5,
+            "open_correction_result_count": 1
+          }
+        }
+      ],
+      "oracle_scope": {
+        "business_ids": [
+          "50000000-0000-4000-8000-000000000001"
+        ],
+        "voucher_roles": [
+          "original",
+          "reversal",
+          "replacement"
+        ]
+      }
+    },
+    {
+      "id": "C04",
+      "name": "实付1000工资改1200剩200",
+      "given": [
+        "common",
+        "opening_bank_2000",
+        "employment",
+        "wage_1000",
+        "pay_wage_1000"
+      ],
+      "steps": [
+        {
+          "id": "before",
+          "invoke": "observe_business",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "business_ids": [
+              "50000000-0000-4000-8000-000000000012"
+            ],
+            "include": [
+              "facts",
+              "results",
+              "sources"
+            ]
+          },
+          "capture": [
+            "voucher.number",
+            "result_id",
+            "generation",
+            "money_occurrence_id",
+            "money_fact_digest"
+          ]
+        },
+        {
+          "id": "increase",
+          "invoke": "accounting_apply",
+          "request": "wage_1200",
+          "expect": {
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000012",
+              "seq": 2,
+              "gross_fen": "120000"
+            },
+            "obligation": {
+              "business_id": "50000000-0000-4000-8000-000000000012",
+              "slot": "net_pay",
+              "amount_fen": "120000",
+              "actual_money_settled_fen": "100000",
+              "remaining_fen": "20000"
+            },
+            "same_as": {
+              "voucher.number": "before.voucher.number",
+              "result_id": "before.result_id",
+              "money_occurrence_id": "before.money_occurrence_id",
+              "money_fact_digest": "before.money_fact_digest"
+            },
+            "actual_outflow_fen": "100000",
+            "money_occurrence_count": 1,
+            "payroll_cost_fen": "120000",
+            "tax_payable_fen": "0",
+            "contribution_payable_fen": "0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C05",
+      "name": "降为800须明确200追收且失败原子",
+      "given": [
+        "common",
+        "opening_bank_2000",
+        "employment",
+        "wage_1000",
+        "pay_wage_1000",
+        "wage_1200"
+      ],
+      "steps": [
+        {
+          "id": "before",
+          "invoke": "observe_atomic_scope",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "business_ids": [
+              "50000000-0000-4000-8000-000000000012",
+              "50000000-0000-4000-8000-000000000013"
+            ],
+            "periods": [
+              "2026-01",
+              "2026-02"
+            ]
+          },
+          "capture": [
+            "scope",
+            "money_occurrence_id",
+            "payment_allocations"
+          ]
+        },
+        {
+          "id": "reject_implicit_overpayment",
+          "invoke": "accounting_apply",
+          "request": "wage_800_without_reclassification",
+          "expect": {
+            "accepted": false,
+            "code": "dependency_conflict",
+            "unchanged": [
+              "business_facts_and_seq",
+              "adopted_targets",
+              "vouchers_and_numbers",
+              "obligations_and_settlements",
+              "money_occurrences",
+              "document_targets_and_set",
+              "reading_targets"
+            ],
+            "same_as": {
+              "scope": "before.scope"
+            },
+            "obligation": {
+              "business_id": "50000000-0000-4000-8000-000000000012",
+              "slot": "net_pay",
+              "amount_fen": "120000",
+              "actual_money_settled_fen": "100000",
+              "remaining_fen": "20000"
+            }
+          }
+        },
+        {
+          "id": "explicit_recovery",
+          "invoke": "accounting_apply",
+          "request": "wage_800_with_recovery",
+          "expect": {
+            "accepted": true,
+            "business": {
+              "business_id": "50000000-0000-4000-8000-000000000012",
+              "seq": 3,
+              "gross_fen": "80000"
+            },
+            "obligation": {
+              "business_id": "50000000-0000-4000-8000-000000000012",
+              "slot": "net_pay",
+              "amount_fen": "80000",
+              "actual_money_settled_fen": "100000",
+              "remaining_fen": "0",
+              "excess_reclassified_fen": "20000"
+            },
+            "recovery": {
+              "business_id": "50000000-0000-4000-8000-000000000014",
+              "slot": "recovery",
+              "direction": "receivable",
+              "amount_fen": "20000",
+              "settled_fen": "0",
+              "remaining_fen": "20000"
+            },
+            "obligation_reclassification": {
+              "mode": "reclassify_excess",
+              "source": {
+                "business_id": "50000000-0000-4000-8000-000000000012",
+                "slot": "net_pay"
+              },
+              "target": {
+                "business_id": "50000000-0000-4000-8000-000000000014",
+                "slot": "recovery"
+              },
+              "amount_fen": "20000"
+            },
+            "reclassification_lines": [
+              {
+                "account_code": "1221",
+                "debit_fen": "20000",
+                "credit_fen": "0"
+              },
+              {
+                "account_code": "221101",
+                "debit_fen": "0",
+                "credit_fen": "20000"
+              }
+            ],
+            "same_as": {
+              "money_occurrence_id": "before.money_occurrence_id",
+              "payment_allocations": "before.payment_allocations"
+            },
+            "actual_outflow_fen": "100000",
+            "money_occurrence_count": 1,
+            "payroll_cost_fen": "80000",
+            "outflow_allocation_to_recovery_count": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "C06",
+      "name": "跨月归档清单原子切换及两侧中断",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "variants": [
+        {
+          "id": "before_manifest",
+          "steps": [
+            {
+              "id": "old_set",
+              "invoke": "accounting_documents",
+              "input": {
+                "company_id": "10000000-0000-4000-8000-000000000001",
+                "action": "status"
+              },
+              "capture": [
+                "set_id"
+              ]
+            },
+            {
+              "id": "move",
+              "invoke": "accounting_apply",
+              "request": "move_expense_a_to_feb",
+              "fail_at": "after_changed_shards_fsynced_before_current_manifest_replace",
+              "expect": {
+                "process_stopped": true,
+                "committed_business_period": "2026-02"
+              }
+            },
+            {
+              "id": "restart",
+              "invoke": "restart_synthetic_host"
+            },
+            {
+              "id": "read_old_complete_set",
+              "invoke": "read_published_documents",
+              "expect": {
+                "set_id": {
+                  "$capture": "old_set.set_id"
+                },
+                "business_locations": {
+                  "50000000-0000-4000-8000-000000000001": [
+                    "operations--2026-01"
+                  ]
+                },
+                "occurrences_per_business": {
+                  "50000000-0000-4000-8000-000000000001": 1
+                },
+                "partial_new_set_visible": false
+              }
+            },
+            {
+              "id": "finish",
+              "invoke": "accounting_documents",
+              "input": {
+                "company_id": "10000000-0000-4000-8000-000000000001",
+                "action": "finish"
+              },
+              "expect": {
+                "state": "ready",
+                "business_locations": {
+                  "50000000-0000-4000-8000-000000000001": [
+                    "operations--2026-02"
+                  ]
+                },
+                "occurrences_per_business": {
+                  "50000000-0000-4000-8000-000000000001": 1
+                },
+                "old_unreferenced_shards_after_lease_release": 0,
+                "temporary_files_after_cleanup": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "after_manifest",
+          "steps": [
+            {
+              "id": "move",
+              "invoke": "accounting_apply",
+              "request": "move_expense_a_to_feb",
+              "fail_at": "after_current_manifest_persisted_before_database_publication_ack",
+              "expect": {
+                "process_stopped": true
+              }
+            },
+            {
+              "id": "restart",
+              "invoke": "restart_synthetic_host"
+            },
+            {
+              "id": "finish",
+              "invoke": "accounting_documents",
+              "input": {
+                "company_id": "10000000-0000-4000-8000-000000000001",
+                "action": "finish"
+              },
+              "expect": {
+                "state": "ready",
+                "business_locations": {
+                  "50000000-0000-4000-8000-000000000001": [
+                    "operations--2026-02"
+                  ]
+                },
+                "occurrences_per_business": {
+                  "50000000-0000-4000-8000-000000000001": 1
+                },
+                "duplicate_fact_count": 0,
+                "reposted_voucher_count": 0,
+                "publication_ack_matches_manifest": true
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "C07",
+      "name": "当前资料待办scope比较与整单失败",
+      "given": [
+        "common",
+        "opening_zero",
+        "issue_scope_first"
+      ],
+      "steps": [
+        {
+          "id": "head",
+          "invoke": "observe_issue_scope",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "scope": "materials:2026-01"
+          },
+          "expect": {
+            "head": 1,
+            "issue_ids": [
+              "80000000-0000-4000-8000-000000000001"
+            ]
+          }
+        },
+        {
+          "id": "stale",
+          "invoke": "accounting_apply",
+          "request": "issue_scope_stale_with_new_b",
+          "expect": {
+            "accepted": false,
+            "code": "conflict",
+            "issue_scope_head": 1,
+            "issue_ids": [
+              "80000000-0000-4000-8000-000000000001"
+            ],
+            "business_absent": [
+              "50000000-0000-4000-8000-000000000002"
+            ],
+            "formal_changes": 0
+          }
+        },
+        {
+          "id": "clear",
+          "invoke": "accounting_apply",
+          "request": "issue_scope_clear_current",
+          "expect": {
+            "accepted": true,
+            "issue_scope_head": 2,
+            "issue_count": 0,
+            "voucher_count": 0,
+            "past_issue_or_answer_archives": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "C08",
+      "name": "已有createA加新B与丢回复重试",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "before",
+          "invoke": "observe_business",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "business_ids": [
+              "50000000-0000-4000-8000-000000000001"
+            ],
+            "include": [
+              "facts",
+              "results",
+              "sources"
+            ]
+          },
+          "capture": [
+            "result_id",
+            "voucher.number",
+            "generation"
+          ]
+        },
+        {
+          "id": "mixed",
+          "invoke": "accounting_apply",
+          "request": "existing_a_and_new_b",
+          "fail_at": "after_database_commit_and_documents_ready_before_wire_response",
+          "expect": {
+            "response_lost": true
+          }
+        },
+        {
+          "id": "retry",
+          "invoke": "accounting_apply",
+          "request": "existing_a_and_new_b",
+          "expect": {
+            "accepted": true,
+            "active_business_ids": [
+              "50000000-0000-4000-8000-000000000001",
+              "50000000-0000-4000-8000-000000000002",
+              "50000000-0000-4000-8000-000000000020"
+            ],
+            "business_seq": {
+              "50000000-0000-4000-8000-000000000001": 1,
+              "50000000-0000-4000-8000-000000000002": 1
+            },
+            "voucher_count": 2,
+            "expense_total_fen": "125000",
+            "same_as": {
+              "a.result_id": "before.result_id",
+              "a.voucher.number": "before.voucher.number",
+              "a.generation": "before.generation"
+            },
+            "duplicate_voucher_count": 0,
+            "document_occurrences": {
+              "50000000-0000-4000-8000-000000000001": 1,
+              "50000000-0000-4000-8000-000000000002": 1
+            },
+            "permanent_request_history_count": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "C09",
+      "name": "纯源码构建变化不让全库模型失效",
+      "given": [
+        "common",
+        "opening_zero",
+        "employment",
+        "wage_1000",
+        "expense_a_1000",
+        "expense_b_feb"
+      ],
+      "steps": [
+        {
+          "id": "ready",
+          "invoke": "prepare_all_selected_models",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "periods": [
+              "2026-01",
+              "2026-02"
+            ],
+            "pages": [
+              "brief",
+              "funds",
+              "employees",
+              "assets",
+              "quarterly_report"
+            ]
+          },
+          "capture": [
+            "scope_heads",
+            "component_heads",
+            "formal_results",
+            "document_set_id"
+          ]
+        },
+        {
+          "id": "new_build",
+          "invoke": "restart_synthetic_host",
+          "input": {
+            "implementation_build_label": "synthetic-build-b",
+            "calculation_revisions_unchanged": true,
+            "public_contracts_unchanged": true
+          },
+          "expect": {
+            "same_as": {
+              "scope_heads": "ready.scope_heads",
+              "component_heads": "ready.component_heads",
+              "formal_results": "ready.formal_results",
+              "document_set_id": "ready.document_set_id"
+            },
+            "regenerated_component_count": 0,
+            "reposted_result_count": 0,
+            "preparing_scope_count": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "C10",
+      "name": "完整总额、旧游标409和新页无重复",
+      "given": [
+        "common",
+        "opening_zero",
+        "page_25_seed"
+      ],
+      "steps": [
+        {
+          "id": "head",
+          "invoke": "dashboard_brief_ready",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "period": "2026-01"
+          },
+          "capture": [
+            "snapshot_version"
+          ],
+          "expect": {
+            "expense_total_fen": "2500",
+            "voucher_count": 25
+          }
+        },
+        {
+          "id": "first20",
+          "invoke": "dashboard_brief_vouchers",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "period": "2026-01",
+            "section": "vouchers",
+            "limit": 20,
+            "expected_version": {
+              "$capture": "head.snapshot_version"
+            }
+          },
+          "capture": [
+            "next_cursor"
+          ],
+          "expect": {
+            "total_count": 25,
+            "filtered_count": 25,
+            "returned_count": 20,
+            "has_more": true,
+            "complete_expense_total_fen": "2500"
+          }
+        },
+        {
+          "id": "change",
+          "invoke": "accounting_apply",
+          "request": "page_replace_first"
+        },
+        {
+          "id": "stale_page",
+          "invoke": "dashboard_brief_vouchers",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "period": "2026-01",
+            "section": "vouchers",
+            "limit": 500,
+            "cursor": {
+              "$capture": "first20.next_cursor"
+            },
+            "expected_version": {
+              "$capture": "head.snapshot_version"
+            }
+          },
+          "expect": {
+            "http_status": 409,
+            "code": "dashboard_snapshot_changed",
+            "response_items_absent": true
+          }
+        },
+        {
+          "id": "new_all",
+          "invoke": "dashboard_all_vouchers_same_new_head",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "period": "2026-01",
+            "first_limit": 20,
+            "continuation_limit": 500
+          },
+          "expect": {
+            "voucher_count": 25,
+            "unique_voucher_count": 25,
+            "expense_total_fen": "2600",
+            "returned_pages": [
+              20,
+              5
+            ],
+            "has_more_after_last": false,
+            "next_cursor_after_last": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "C11",
+      "name": "文件pending后进程退出可接续且不重记账",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "before",
+          "invoke": "observe_atomic_scope",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "business_ids": [
+              "50000000-0000-4000-8000-000000000001"
+            ]
+          },
+          "capture": [
+            "formal_results",
+            "document_set_id"
+          ]
+        },
+        {
+          "id": "create",
+          "invoke": "accounting_backup",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "expected_database_id": "20000000-0000-4000-8000-000000000001"
+          },
+          "fail_at": "after_file_task_committed_before_producer_start",
+          "capture": [
+            "task_id"
+          ],
+          "expect": {
+            "process_stopped": true,
+            "task_state": "pending"
+          }
+        },
+        {
+          "id": "restart",
+          "invoke": "restart_synthetic_host"
+        },
+        {
+          "id": "finish",
+          "invoke": "wait_current_file_task",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "task_id": {
+              "$capture": "create.task_id"
+            }
+          },
+          "expect": {
+            "task_state": "succeeded",
+            "verified_zip_count": 1,
+            "receipt_sha256_matches_file": true,
+            "receipt_bytes_match_file": true,
+            "same_as": {
+              "formal_results": "before.formal_results",
+              "document_set_id": "before.document_set_id"
+            },
+            "reposted_voucher_count": 0,
+            "backup_intermediate_file_delivered": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "C12",
+      "name": "备份DB与文档绑定同一快照且租约保住复制资料",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "capture",
+          "invoke": "start_backup_and_pause_after_snapshot_lease",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "expected_database_id": "20000000-0000-4000-8000-000000000001"
+          },
+          "capture": [
+            "task_id",
+            "database_head",
+            "set_id",
+            "source_manifest"
+          ]
+        },
+        {
+          "id": "concurrent_b",
+          "invoke": "accounting_apply",
+          "request": "existing_a_and_new_b"
+        },
+        {
+          "id": "finish_backup",
+          "invoke": "resume_backup",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "task_id": {
+              "$capture": "capture.task_id"
+            }
+          },
+          "expect": {
+            "task_state": "succeeded",
+            "package_database_head": {
+              "$capture": "capture.database_head"
+            },
+            "package_set_id": {
+              "$capture": "capture.set_id"
+            },
+            "package_sources": {
+              "$capture": "capture.source_manifest"
+            },
+            "package_active_business_ids": [
+              "50000000-0000-4000-8000-000000000001",
+              "50000000-0000-4000-8000-000000000020"
+            ],
+            "package_document_business_ids": [
+              "50000000-0000-4000-8000-000000000001",
+              "50000000-0000-4000-8000-000000000020"
+            ],
+            "package_expense_total_fen": "100000",
+            "live_active_business_ids": [
+              "50000000-0000-4000-8000-000000000001",
+              "50000000-0000-4000-8000-000000000002",
+              "50000000-0000-4000-8000-000000000020"
+            ],
+            "live_expense_total_fen": "125000",
+            "deleted_while_leased_file_count": 0,
+            "unmanifested_package_file_count": 0,
+            "package_verified": true
+          },
+          "capture": [
+            "verified_package_path",
+            "package_sha256"
+          ]
+        },
+        {
+          "id": "restore",
+          "invoke": "accounting_restore",
+          "input": {
+            "action": "restore",
+            "mode": "run",
+            "source_path": {
+              "$capture": "finish_backup.verified_package_path"
+            },
+            "new_target_directory": "$sandbox/restored-snapshot"
+          },
+          "expect": {
+            "restored_active_business_ids": [
+              "50000000-0000-4000-8000-000000000001",
+              "50000000-0000-4000-8000-000000000020"
+            ],
+            "restored_expense_total_fen": "100000",
+            "source_live_database_unchanged": true,
+            "existing_target_overwritten": false,
+            "source_digest": {
+              "$capture": "finish_backup.package_sha256"
+            },
+            "old_database_read_count": 0
+          },
+          "execution_context": "independent_target_host_and_catalog"
+        }
+      ]
+    },
+    {
+      "id": "C13",
+      "name": "最终事实简化重建与备份恢复明确不同",
+      "given": [
+        "common",
+        "opening_zero",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "check_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-01"
+          },
+          "capture": [
+            "head"
+          ]
+        },
+        {
+          "id": "close_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "close",
+            "period": "2026-01",
+            "expected_head": {
+              "$capture": "check_jan.head"
+            }
+          }
+        },
+        {
+          "id": "final_800",
+          "invoke": "accounting_apply",
+          "request": "expense_a_900_correct_feb"
+        },
+        {
+          "id": "final_800_replace",
+          "invoke": "accounting_apply",
+          "request": "expense_a_800_correct_feb"
+        },
+        {
+          "id": "documents",
+          "invoke": "accounting_documents",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "finish"
+          },
+          "capture": [
+            "set_id",
+            "manifest_path",
+            "manifest_sha256"
+          ],
+          "expect": {
+            "standard_facts": [
+              {
+                "business_id": "50000000-0000-4000-8000-000000000001",
+                "period": "2026-01",
+                "amount_fen": "80000"
+              }
+            ],
+            "standard_correction_action_count": 0,
+            "standard_old_voucher_number_count": 0,
+            "standard_facts_scope": "operations.expense"
+          }
+        },
+        {
+          "id": "backup",
+          "invoke": "accounting_backup_wait_verified",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "expected_database_id": "20000000-0000-4000-8000-000000000001"
+          },
+          "capture": [
+            "task_id",
+            "database_id",
+            "result_ids",
+            "voucher_numbers",
+            "verified_package_path",
+            "package_sha256"
+          ]
+        },
+        {
+          "id": "stop_source",
+          "invoke": "stop_synthetic_source_host",
+          "expect": {
+            "source_host_stopped": true
+          }
+        },
+        {
+          "id": "rebuild",
+          "invoke": "accounting_rebuild",
+          "input": {
+            "action": "rebuild",
+            "mode": "run",
+            "source_path": {
+              "$capture": "documents.manifest_path"
+            },
+            "new_target_directory": "$sandbox/rebuilt-final-facts"
+          },
+          "expect": {
+            "expense_total_fen": "80000",
+            "posting_totals_fen": {
+              "2026-01": "80000",
+              "2026-02": "0"
+            },
+            "voucher_roles": [
+              "original"
+            ],
+            "voucher_count": 1,
+            "period_close_count": 0,
+            "receivable_fen": "0",
+            "payable_fen": "80000",
+            "actual_outflow_fen": "0",
+            "old_database_read_count": 0,
+            "new_database_identity": true,
+            "new_formal_result_identities": true,
+            "business_ids_preserved_for_document_references": [
+              "50000000-0000-4000-8000-000000000001"
+            ],
+            "logical_expense_fact_count": 1,
+            "net_assets_fen": "-80000",
+            "source_digest": {
+              "$capture": "documents.manifest_sha256"
+            },
+            "standard_set_id": {
+              "$capture": "documents.set_id"
+            }
+          },
+          "execution_context": "independent_target_host_and_catalog"
+        },
+        {
+          "id": "restore",
+          "invoke": "accounting_restore",
+          "input": {
+            "action": "restore",
+            "mode": "run",
+            "source_path": {
+              "$capture": "backup.verified_package_path"
+            },
+            "new_target_directory": "$sandbox/restored-formal-history"
+          },
+          "expect": {
+            "database_id": {
+              "$capture": "backup.database_id"
+            },
+            "result_ids": {
+              "$capture": "backup.result_ids"
+            },
+            "voucher_numbers": {
+              "$capture": "backup.voucher_numbers"
+            },
+            "current_target_fen": "80000",
+            "posting_totals_fen": {
+              "2026-01": "100000",
+              "2026-02": "-20000"
+            },
+            "voucher_roles": [
+              "original",
+              "reversal",
+              "replacement"
+            ],
+            "voucher_count": 3,
+            "period_close_count": 1,
+            "payable_fen": "80000",
+            "actual_outflow_fen": "0",
+            "net_assets_fen": "-80000",
+            "source_digest": {
+              "$capture": "backup.package_sha256"
+            },
+            "old_database_read_count": 0
+          },
+          "execution_context": "independent_target_host_and_catalog"
+        }
+      ],
+      "oracle_scope": {
+        "business_ids": [
+          "50000000-0000-4000-8000-000000000001"
+        ],
+        "voucher_roles": [
+          "original",
+          "reversal",
+          "replacement"
+        ]
+      }
+    },
+    {
+      "id": "C14",
+      "name": "真实账务内部替换后旧UI和预算保持",
+      "given": [
+        "common",
+        "opening_bank_2000",
+        "employment",
+        "wage_1000",
+        "pay_wage_1000",
+        "expense_a_1000"
+      ],
+      "steps": [
+        {
+          "id": "baseline",
+          "invoke": "capture_full_public_business_and_ui",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "periods": [
+              "2026-01",
+              "2026-02"
+            ]
+          },
+          "capture": [
+            "public_business_projection",
+            "five_page_projection",
+            "page_query_counts",
+            "scope_heads",
+            "main_template_and_style_digests"
+          ]
+        },
+        {
+          "id": "replace_ledger",
+          "invoke": "install_contract_preserving_ledger_internal_implementation",
+          "input": {
+            "real_storage_and_calculations": true,
+            "calculation_revisions_unchanged": true,
+            "public_contracts_unchanged": true,
+            "fixed_result_mock_forbidden": true
+          }
+        },
+        {
+          "id": "verify",
+          "invoke": "rerun_core_and_five_page_acceptance",
+          "expect": {
+            "same_as": {
+              "public_business_projection": "baseline.public_business_projection",
+              "five_page_projection": "baseline.five_page_projection",
+              "scope_heads": "baseline.scope_heads",
+              "main_template_and_style_digests": "baseline.main_template_and_style_digests"
+            },
+            "consumer_private_imports": 0,
+            "consumer_private_table_reads": 0,
+            "global_model_invalidation_count": 0,
+            "existing_page_default_request_growth": 0,
+            "performance_spec": "../06-dashboard-adapter.md#10-性能目标和验收",
+            "ready_refresh_max_ms_exclusive": 500,
+            "specified_interaction_max_ms_exclusive": 600,
+            "post_commit_model_ready_p95_ms_max": 2000,
+            "post_commit_model_ready_max_ms": 5000,
+            "month_archive_and_model_p95_ms_max": 10000,
+            "month_archive_and_model_max_ms": 30000,
+            "scale_months": [
+              12,
+              48,
+              120
+            ],
+            "businesses_per_month": 1000,
+            "employees": 50,
+            "warmup_samples": 3,
+            "formal_samples": 30,
+            "main_ui_unapproved_changes": 0
+          },
+          "input": {
+            "case_ids": [
+              "C01",
+              "C02",
+              "C03",
+              "C04",
+              "C05",
+              "C06",
+              "C07",
+              "C08",
+              "C09",
+              "C10",
+              "C11",
+              "C12",
+              "C13"
+            ],
+            "use_replaced_real_ledger_factory": true,
+            "include_current_case_again": false
+          }
+        }
+      ]
+    }
+  ],
+  "clock": {
+    "now": "2026-03-15T10:00:00+08:00",
+    "timezone": "Asia/Shanghai",
+    "test_injection_only": true
+  }
+}

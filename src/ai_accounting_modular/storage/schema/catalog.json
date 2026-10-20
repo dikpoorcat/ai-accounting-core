@@ -1,0 +1,28 @@
+{
+  "fingerprint": "1c423a830b3566e33970c179fa2a438d278909a524926c66e40f56daa822c26b",
+  "kind": "catalog",
+  "objects": [
+    {
+      "name": "catalog_meta",
+      "owner": "storage",
+      "sql": "CREATE TABLE catalog_meta (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular-catalog/1'),\n catalog_id TEXT NOT NULL UNIQUE CHECK(length(catalog_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=1),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64)\n) STRICT",
+      "table": "catalog_meta",
+      "type": "table"
+    },
+    {
+      "name": "company_location",
+      "owner": "storage",
+      "sql": "CREATE TABLE company_location (\n company_id TEXT PRIMARY KEY CHECK(length(company_id)=36),\n credit_code TEXT NOT NULL UNIQUE CHECK(length(credit_code)=18),\n legal_name TEXT NOT NULL,\n company_root TEXT NOT NULL UNIQUE,\n database_path TEXT NOT NULL UNIQUE,\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n backup_directory TEXT NOT NULL,\n state TEXT NOT NULL CHECK(state IN ('active','detached'))\n) STRICT",
+      "table": "company_location",
+      "type": "table"
+    },
+    {
+      "name": "owner_profile",
+      "owner": "storage",
+      "sql": "CREATE TABLE owner_profile (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n owner_id TEXT NOT NULL UNIQUE CHECK(length(owner_id)=36),\n display_name TEXT NOT NULL,\n password_hash TEXT NOT NULL\n) STRICT",
+      "table": "owner_profile",
+      "type": "table"
+    }
+  ],
+  "version": 1
+}

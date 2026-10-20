@@ -42,6 +42,7 @@ required-version = "==0.12.3"
 
 [tool.hatch.build.targets.wheel]
 only-include = [
+  "src/ai_accounting_modular",
   "src/ai_accounting/__init__.py",
   "src/ai_accounting/kernel",
   "src/ai_accounting/payroll",
@@ -59,13 +60,15 @@ only-include = [
 ]
 sources = ["src"]
 artifacts = [
+  "src/ai_accounting_modular/contracts/_schemas/*.json",
+  "src/ai_accounting_modular/storage/schema/*.json",
   "src/ai_accounting/static/dashboard/**",
   "src/ai_accounting/kernel/schema_contracts/**/*.json",
 ]
 exclude = ["src/ai_accounting/kernel/security/legacy.py"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/kernel", "tests/pure"]
+testpaths = ["tests/kernel", "tests/pure", "tests/modular"]
 addopts = "-ra --strict-markers"
 
 [tool.ruff]
