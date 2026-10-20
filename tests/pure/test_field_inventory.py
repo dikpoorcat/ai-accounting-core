@@ -176,6 +176,32 @@ def test_remuneration_inventory_declares_each_current_and_archived_body_exactly(
     ]
 
 
+def test_income_tax_inventory_distinguishes_current_computation_and_historical_confirmation():
+    from ai_accounting.kernel.domains.income_tax import IncomeTaxAssessment
+    from ai_accounting.kernel.domains.taxes import HistoricalIncomeTaxAssessment
+
+    result = inventory.build_inventory()
+    fields = {field["key"]: field for field in result["fields"]}
+    keys = set()
+    for model in (IncomeTaxAssessment, HistoricalIncomeTaxAssessment):
+        prefix = inventory.model_key(model)
+        keys.update(
+            prefix + "." + name for name in ("assessment_basis", "cumulative_assessed_fen", "year")
+        )
+    assert keys <= fields.keys()
+    assert not keys.intersection(result["missing_semantics"])
+    current = inventory.model_key(IncomeTaxAssessment)
+    historical = inventory.model_key(HistoricalIncomeTaxAssessment)
+    assert "computed_provision" in fields[current + ".assessment_basis"]["meaning"]
+    assert "内核" in fields[current + ".assessment_basis"]["meaning"]
+    assert fields[current + ".cumulative_assessed_fen"]["meaning"] == (
+        "confirmed_cumulative_assessed_enterprise_income_tax"
+    )
+    assert "仅历史正文" in fields[historical + ".assessment_basis"]["meaning"]
+    assert "仅历史正文" in fields[historical + ".cumulative_assessed_fen"]["meaning"]
+    assert result["errors"] == []
+
+
 @pytest.mark.parametrize("argv", [[], ["--check"]])
 def test_default_and_check_never_write(monkeypatch, capsys, argv):
     result = small_inventory()

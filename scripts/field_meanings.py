@@ -235,6 +235,12 @@ _add(
 )
 
 _add(
+    "ai_accounting.kernel.domains.income_tax.IncomeTaxAssessment",
+    assessment_basis="企业所得税累计确认方式：confirmed_provision为有据暂计，computed_provision由内核采用明确政策、企业适用依据和共享税前利润计算，filed_return为申报数，annual_settlement为年度汇算数",
+    year="企业所得税累计核算所属年度；通常与核算月份年份一致，年度汇算允许在以后年度登记",
+)
+
+_add(
     "ai_accounting.kernel.domains.investments.MoneyFundRedemption",
     classification="明确确认该货币基金可随时赎回且持有意图不超过一年，不从产品名称推定",
     cost_basis="明确采用可复核的原始账面成本依据，不按收益率或账户余额反推",
@@ -708,10 +714,10 @@ _add(
 )
 
 _add(
-    "ai_accounting.kernel.domains.taxes.IncomeTaxAssessment",
-    assessment_basis="企业所得税核定金额的明确来源或核定方式，不引入利润乘税率的推断",
-    cumulative_assessed_fen="当年截至本期明确已核定的累计企业所得税额，整数分；不是以利润推算税额",
-    year="本项企业所得税累计核定所属年度，与核算月份年份核对",
+    "ai_accounting.kernel.domains.taxes.HistoricalIncomeTaxAssessment",
+    assessment_basis="仅历史正文：企业所得税累计确认金额的明确来源，区分有据暂计、申报和年度汇算，不支持内核计算暂计",
+    cumulative_assessed_fen="仅历史正文：当年截至本期有依据确认的非负累计企业所得税额，整数分；不是以利润推算税额",
+    year="仅历史正文：企业所得税累计确认所属年度；通常与核算月份年份一致，年度汇算允许在以后年度登记",
 )
 
 _add(
