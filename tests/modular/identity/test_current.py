@@ -238,6 +238,22 @@ def test_explicit_references_allow_forward_same_submission_and_report_missing(id
     assert read(identity_case, [operator["object_id"]])[0] == 1
 
 
+def test_complete_initial_objects_resolve_references_across_wire_batches(identity_case):
+    operator = person()
+    project = {
+        "object_id": str(uuid4()),
+        "kind": "project",
+        "name": "最后一项人员负责的项目",
+        "expected_seq": 0,
+        "data": {"operator_id": operator["object_id"]},
+    }
+    objects = [project, *(person(str(index)) for index in range(500)), operator]
+    saved = save(identity_case, objects).objects
+    assert len(saved) == 502 and all(value["seq"] == 1 for value in saved)
+    _, selected = read(identity_case, [project["object_id"], operator["object_id"]])
+    assert selected[0]["data"]["operator_id"] == selected[1]["object_id"]
+
+
 def test_all_declared_object_types_can_be_created_without_business_facts(identity_case):
     values = [
         ("organization", {}),

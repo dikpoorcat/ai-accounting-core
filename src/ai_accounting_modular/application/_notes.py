@@ -26,8 +26,8 @@ def basis_heads(application, scopes, read):
     return result
 
 
-def finish(application, request, adoption, read):
-    scopes = {note["scope"] for note in request.get("notes", ())}
+def finish(application, submission, adoption, read):
+    scopes = {note["scope"] for note in submission.notes}
     supplied = scopes.copy()
     if adoption.changed:
         first = max(
@@ -46,17 +46,17 @@ def finish(application, request, adoption, read):
     heads = basis_heads(application, scopes, read)
     plan = application.records.plan_change(
         RecordsChange(
-            notes=tuple(request.get("notes", ())),
-            unresolved=tuple(request["unresolved"]) if "unresolved" in request else None,
-            unresolved_scope=request.get("unresolved_scope"),
-            expected_scope_head=request.get("expected_scope_head"),
+            notes=tuple(submission.notes),
+            unresolved=submission.unresolved,
+            unresolved_scope=submission.unresolved_scope,
+            expected_scope_head=submission.expected_scope_head,
         ),
-        RecordsContext(read, request["command_id"], note_basis_heads=heads),
+        RecordsContext(read, submission.command_id, note_basis_heads=heads),
     )
     application.records.apply_current(plan, read)
     invalidated = application.records.invalidate_notes(
         {scope: head for scope, head in heads.items() if scope not in supplied},
-        request["command_id"],
+        submission.command_id,
         read,
     )
     return plan, invalidated

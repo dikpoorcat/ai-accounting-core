@@ -177,6 +177,7 @@ def check_period(period, context):
     first = _first(frontier, context.start_period)
     basis, heads = _basis(repo, first, period, context)
     ids = [head["result_id"] for head in heads]
+    repo.check_output_digests(ids, include_baselines=True)
     repo.check_sealed(ids)
     if any(has_unmapped_line(voucher["lines"]) for voucher in repo.vouchers(ids)):
         fail("storage_corrupt", "正式凭证存在未映射非零科目，不能冻结为正确账务。")

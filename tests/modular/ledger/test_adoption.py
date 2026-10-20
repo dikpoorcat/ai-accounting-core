@@ -40,11 +40,12 @@ class ApplicationSeed:
 
     def business(self, business_id=BUSINESS, *, family="operations", kind="operations.expense"):
         self.session.execute(
-            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 business_id,
                 family,
                 kind,
+                "[]",
                 None,
                 1,
                 "active",

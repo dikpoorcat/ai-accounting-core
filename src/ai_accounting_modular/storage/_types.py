@@ -79,6 +79,8 @@ class CompanyMetadata:
     company_root: Path
     database_path: Path
     backup_directory: Path
+    accounting_standard: str
+    currency: str
     profile_seq: int = 1
 
 

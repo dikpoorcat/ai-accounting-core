@@ -14,6 +14,9 @@ class FilesRepository:
     def __init__(self, session):
         self._session = session
 
+    def reset(self):
+        self._session.execute("DELETE FROM file_task")
+
     def get(self, task_id, *, plan=False):
         columns = "*" if plan else _SUMMARY
         row = self._session.fetchone(f"SELECT {columns} FROM file_task WHERE task_id=?", (task_id,))

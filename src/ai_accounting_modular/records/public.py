@@ -21,7 +21,7 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _backup, _changes, _documents, _periods, _sources
+from . import _backup, _changes, _documents, _periods, _prepared_sources, _snapshot, _sources
 from ._repository import RecordsRepository
 from ._standard import copy_standard_bundle, open_standard_bundle
 from ._types import (
@@ -30,9 +30,11 @@ from ._types import (
     PeriodIssuesPage,
     PeriodNotesPage,
     PreparedDocuments,
+    PreparedSources,
     RecordsChange,
     RecordsContext,
     RecordsPlan,
+    RecordsSnapshot,
     ShardTarget,
     SourceStatus,
     StandardBundle,
@@ -45,10 +47,12 @@ __all__ = [
     "PeriodIssuesPage",
     "PeriodNotesPage",
     "PreparedDocuments",
+    "PreparedSources",
     "Records",
     "RecordsChange",
     "RecordsContext",
     "RecordsPlan",
+    "RecordsSnapshot",
     "ShardTarget",
     "SourceStatus",
     "StandardBundle",
@@ -108,6 +112,25 @@ class Records:
 
     def plan_change(self, change: RecordsChange, context: RecordsContext) -> RecordsPlan:
         return _changes.plan_change(change, context, self._root(context.read_context))
+
+    @contextmanager
+    def prepare_sources(self, sources, read_context: ReadContext):
+        if isinstance(read_context, UnitOfWork):
+            raise ContractError("invalid_operation", "来源字节须在业务写事务以前预核验。")
+        root = self._root(read_context)
+        sources = _prepared_sources.values(sources)
+        paths = tuple(source["relative_path"] for source in sources if source["kind"] == "file")
+        publication = _publication(root)
+        with publication.lock:
+            publication.leases.update(paths)
+        prepared = None
+        try:
+            prepared = _prepared_sources.prepare(sources, read_context, root)
+            yield prepared
+        finally:
+            if prepared is not None:
+                object.__setattr__(prepared, "_active", False)
+            self._release_paths(root, publication, paths)
 
     def apply_current(self, plan: RecordsPlan, uow: UnitOfWork) -> None:
         _changes.apply_current(plan, uow, self._root(uow))
@@ -233,11 +256,23 @@ class Records:
     def mark_document_targets(self, keys, uow: UnitOfWork) -> None:
         _documents.mark_targets(keys, uow)
 
+    def ensure_document_targets(self, uow: UnitOfWork) -> None:
+        """Prepare a fresh or unavailable collection without changing formal business."""
+        root = self._root(uow)
+        with _publication(root).lock:
+            _documents.ensure_targets(uow, root)
+
+    def request_document_repair(self, uow: UnitOfWork) -> None:
+        """Republish the saved final facts after a detected document failure."""
+        root = self._root(uow)
+        with _publication(root).lock:
+            _documents.request_repair(uow)
+
     def pending_document_scopes(self, read_context: ReadContext) -> tuple[str, ...]:
         return tuple(
             row["shard_key"]
             for row in read_context.repository("records").targets()
-            if row["wanted_head"] > row["published_head"]
+            if _documents.is_pending(row)
         )
 
     def document_target_heads(self, read_context: ReadContext) -> dict[str, int]:
@@ -333,6 +368,16 @@ class Records:
         root = self._root(read_context)
         with _publication(root).lock:
             return _documents.document_status(read_context, root)
+
+    def verify_snapshot(
+        self, company_identity, facts, objects, read_context: ReadContext, *, required_source_ids=()
+    ) -> RecordsSnapshot:
+        """Offline full verification; never regenerate or repair the saved documents."""
+        root = self._root(read_context)
+        with _publication(root).lock:
+            return _snapshot.verify(
+                self, company_identity, facts, objects, read_context, root, required_source_ids
+            )
 
     @contextmanager
     def lease_document_set(self, read_context: ReadContext):

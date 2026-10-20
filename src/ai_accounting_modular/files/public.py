@@ -27,6 +27,11 @@ def create_files(storage, producers) -> Files:
     return Files(storage, producers)
 
 
+def reset_for_restore(uow) -> None:
+    """A relocated database has no live tasks or downloadable local outputs."""
+    uow.repository("files").reset()
+
+
 __all__ = [
     "CaptureContext",
     "ExpireTask",
@@ -42,4 +47,5 @@ __all__ = [
     "VerifiedDownload",
     "create_files",
     "repository_factory",
+    "reset_for_restore",
 ]

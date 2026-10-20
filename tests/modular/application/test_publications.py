@@ -314,7 +314,11 @@ def seed(system, facts, *, dependencies=(), publications=(), relations=None):
         repo = unit.repository("application")
         for current in facts:
             change = classify({"op": "create", "expected_seq": 0, "fact": current}, None)
-            repo.save(change.head(str(uuid4()), natural_key=None), search_revision=unit.next_head)
+            repo.save(
+                change.head(str(uuid4()), natural_key=None),
+                complete_result_slots=["main"],
+                search_revision=unit.next_head,
+            )
         ids = [current["business_id"] for current in facts]
         if relations is None:
             relations = [

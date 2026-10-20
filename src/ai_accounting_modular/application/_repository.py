@@ -58,12 +58,20 @@ class ApplicationRepository:
         total = self._session.fetchone(
             "SELECT COUNT(*) FROM business_head h WHERE " + base, base_args
         )[0]
+
         row = self._session.fetchone(
             "SELECT COUNT(*),COALESCE(MAX(h.search_revision),0) FROM business_head h WHERE "
             + filtered,
             args,
         )
         return total, row[0], row[1]
+
+    def snapshot_heads(self):
+        """Complete identity projection for explicit offline integrity checks only."""
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall("SELECT * FROM business_head ORDER BY business_id")
+        )
 
     def search_page(self, query, *, after=None):
         conditions, parameters = self._search_filter(query)
@@ -326,8 +334,12 @@ class ApplicationRepository:
             (canonical_json(list(business_ids)),),
         )
 
-    def save(self, row, *, search_revision):
-        row = {**row, "search_revision": search_revision}
+    def save(self, row, *, complete_result_slots, search_revision):
+        row = {
+            **row,
+            "result_slots_json": canonical_json(sorted(complete_result_slots)),
+            "search_revision": search_revision,
+        }
         columns = tuple(row)
         self._session.execute(
             "INSERT INTO business_head("
@@ -338,6 +350,22 @@ class ApplicationRepository:
             + ",".join(f"{key}=excluded.{key}" for key in columns if key != "business_id"),
             tuple(row.values()),
         )
+
+    def replace_result_slots(self, responsibilities):
+        """Keep the successful owner's current complete commitment, including an empty one."""
+        current = self.heads(responsibilities)
+        if set(current) != set(responsibilities):
+            raise ContractError("storage_corrupt", "完整结果责任缺少对应当前业务身份。")
+        updates = []
+        for business_id, item in responsibilities.items():
+            encoded = canonical_json(sorted(item["complete_result_slots"]))
+            if current[business_id]["result_slots_json"] != encoded:
+                updates.append((encoded, business_id))
+        if updates:
+            self._session.executemany(
+                "UPDATE business_head SET result_slots_json=? WHERE business_id=?", updates
+            )
+        return bool(updates)
 
     def consumers(self, producer_kind, producer_id, *, read_mode):
         return tuple(

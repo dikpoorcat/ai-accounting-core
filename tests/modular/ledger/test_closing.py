@@ -353,7 +353,7 @@ def test_resource_capacity_corruption_still_blocks_close_after_read_is_narrowed(
     with store.read_unit(COMPANY) as read:
         with pytest.raises(ContractError) as error:
             ledger.check_period("2026-01", read)
-        assert error.value.code == "dependency_conflict"
+        assert error.value.code == "storage_corrupt"
         assert read.repository("ledger").closed_through() is None
 
 

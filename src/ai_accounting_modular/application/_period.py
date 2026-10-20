@@ -4,13 +4,13 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import (
-    CONTRACT,
     ContractError,
     content_digest,
     validate_contract,
 )
 
-from . import _documents, _queries, _reading
+from . import _documents, _execution, _queries, _reading
+from ._submission import Submission
 
 
 @dataclass(frozen=True)
@@ -97,14 +97,10 @@ def _snapshot(application, period, read):
 
 
 def _prepare_horizon(application, period, unit):
-    return application._apply(
-        {
-            "contract": CONTRACT,
-            "company_id": unit.company_id,
-            "command_id": str(uuid4()),
-            "mutations": [],
-        },
-        unit=unit,
+    return _execution.execute(
+        application,
+        Submission(company_id=unit.company_id, command_id=str(uuid4())),
+        unit,
         evaluation_period_to=period,
     )
 
@@ -147,7 +143,7 @@ def run(application, request):
                 period,
                 before,
                 evaluated,
-                preview=bool(prepared and prepared["accounting"] == "saved"),
+                preview=bool(prepared and prepared.accounting_changed),
             )
     with application.storage.write_unit(company) as unit:
         before = _snapshot(application, period, unit)

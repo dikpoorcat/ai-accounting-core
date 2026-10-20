@@ -7,6 +7,10 @@ class ReadingRepository:
     def __init__(self, session):
         self._session = session
 
+    def reset(self):
+        for table in ("read_item", "read_component", "read_scope_head"):
+            self._session.execute("DELETE FROM " + table)
+
     def state(self, scope_key, component):
         row = self._session.fetchone(
             "SELECT * FROM read_scope_head WHERE scope_key=? AND component_key=?",

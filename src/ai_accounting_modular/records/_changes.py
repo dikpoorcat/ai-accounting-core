@@ -2,28 +2,17 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-
 from ai_accounting_modular.contracts.public import (
     MAX_FEN,
     ContractError,
     canonical_json,
     content_digest,
     loads_json,
-    schema_document,
     validate_contract,
 )
 
 from ._sources import check_source, issue_source_ids
 from ._types import PlannedRecord, RecordsChange, RecordsContext, RecordsPlan
-
-
-@lru_cache(maxsize=1)
-def _change_limits():
-    fields = schema_document("core.schema.json", "ApplyRequest")["$defs"]["ApplyRequest"][
-        "properties"
-    ]
-    return {field: fields[field]["maxItems"] for field in ("sources", "notes", "unresolved")}
 
 
 def source_ids(ids, *, limit=500):
@@ -90,16 +79,15 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
     read = context.read_context
     validate_contract("core.schema.json", "Id", context.command_id)
     repository = read.repository("records")
-    for field, label in (("sources", "来源"), ("notes", "说明")):
-        if len(getattr(change, field)) > _change_limits()[field]:
-            raise ContractError(
-                "invalid_input", f"本单{label}超过合同允许的{_change_limits()[field]}项。"
-            )
+    prepared = context.prepared_sources
+    if prepared is not None:
+        prepared.check(change.sources, read, root)
     sources = []
     seen = set()
     for value in change.sources:
         source = loads_json(canonical_json(value))
-        check_source(root, source)
+        if prepared is None:
+            check_source(root, source)
         if source["source_id"] in seen:
             raise ContractError("invalid_input", "同一来源身份不能在一单中重复出现。")
         seen.add(source["source_id"])
@@ -185,8 +173,6 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             or not 0 <= expected <= MAX_FEN
         ):
             raise ContractError("invalid_input", "替换待办须提供明确范围及当前范围序号。")
-        if len(change.unresolved) > _change_limits()["unresolved"]:
-            raise ContractError("invalid_input", "当前待办数量超过业务合同允许范围。")
         issues, issue_ids = [], set()
         for value in change.unresolved:
             validate_contract("core.schema.json", "CurrentIssue", value)
@@ -237,6 +223,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
         tuple(source_plans),
         tuple(notes),
         issue_plan,
+        prepared,
     )
 
 
@@ -248,10 +235,15 @@ def apply_current(plan, uow, root):
     ):
         raise ContractError("conflict", "资料计划不属于当前公司的事务快照。")
     repository = uow.repository("records")
+    if plan._prepared_sources is not None:
+        prepared = plan._prepared_sources
+        prepared.check(plan.sources, uow, root)
+        uow.check_before_commit(lambda: prepared.check(plan.sources, uow, root))
     stored = repository.sources(tuple(item.key for item in plan._sources))
     for item in plan._sources:
         source = loads_json(item.target_json)
-        check_source(root, source)
+        if plan._prepared_sources is None:
+            check_source(root, source)
         old = stored.get(item.key)
         if item.before_digest != (content_digest(old) if old else None):
             raise ContractError("conflict", "来源计划已过时，不能覆盖更新的位置。")

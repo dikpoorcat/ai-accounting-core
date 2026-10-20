@@ -2204,8 +2204,7 @@
           "items": {
             "$ref": "#/$defs/CurrentIssue"
           },
-          "minItems": 0,
-          "maxItems": 500
+          "minItems": 0
         }
       },
       "required": [
@@ -4927,8 +4926,7 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 0,
-          "maxItems": 10000
+          "minItems": 0
         },
         "error": {
           "type": "string",

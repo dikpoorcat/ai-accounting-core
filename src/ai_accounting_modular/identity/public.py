@@ -83,12 +83,8 @@ class Identity:
     def plan_change(self, objects: Sequence[Object], context: IdentityContext) -> IdentityPlan:
         read = context.read_context
         validate_contract("core.schema.json", "Id", context.command_id)
-        if (
-            isinstance(objects, str | bytes)
-            or not isinstance(objects, Sequence)
-            or len(objects) > 500
-        ):
-            raise ContractError("invalid_input", "一次最多提交500个完整对象档案。")
+        if isinstance(objects, str | bytes) or not isinstance(objects, Sequence):
+            raise ContractError("invalid_input", "对象变化必须使用完整档案列表。")
         inputs, seen = [], set()
         for obj in objects:
             validate_contract("core.schema.json", "Object", obj)

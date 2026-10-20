@@ -90,6 +90,23 @@ class RecordsRepository:
             )
         )
 
+    def all_uses(self):
+        return tuple(
+            tuple(row)
+            for row in self._session.fetchall(
+                "SELECT owner_kind,owner_key,source_id FROM source_use "
+                "ORDER BY owner_kind,owner_key,source_id"
+            )
+        )
+
+    def issue_scopes(self):
+        return tuple(
+            row["scope_key"]
+            for row in self._session.fetchall(
+                "SELECT scope_key FROM current_issue_scope ORDER BY scope_key"
+            )
+        )
+
     def uses_many(self, kind, keys):
         if not keys:
             return {}
@@ -297,6 +314,14 @@ class RecordsRepository:
             ((key, head) for key in keys),
         )
 
+    def request_documents(self, keys, head):
+        self._session.executemany(
+            "INSERT INTO document_shard_head(shard_key,wanted_head) VALUES(?,?) "
+            "ON CONFLICT(shard_key) DO UPDATE SET wanted_head=excluded.wanted_head,"
+            "published_head=NULL,last_error_code=NULL,last_error_message=NULL",
+            ((key, head) for key in keys),
+        )
+
     def document_set(self):
         row = self._session.fetchone("SELECT * FROM document_set WHERE singleton=1")
         return dict(row) if row else None
@@ -326,6 +351,7 @@ class RecordsRepository:
     def document_error(self, keys, code, message, expected_heads):
         self._session.executemany(
             "UPDATE document_shard_head SET last_error_code=?,last_error_message=? "
-            "WHERE shard_key=? AND wanted_head=? AND wanted_head>published_head",
+            "WHERE shard_key=? AND wanted_head=? "
+            "AND (published_head IS NULL OR wanted_head>published_head)",
             ((code, message, key, expected_heads[key]) for key in keys),
         )

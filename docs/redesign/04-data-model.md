@@ -21,7 +21,7 @@ DDL 中每张表上方的 owner 是唯一写入者；数据库连接共用不改
 | 数据组 | 表 | 用途与生命周期 |
 | --- | --- | --- |
 | 存储标识 | system_meta、company_profile、module_schema | 新体系、公司、结构识别和全局提交序号；不是业务操作历史。 |
-| 身份与当前头 | identity_object、business_head | identity 独立维护对象；application 维护稳定业务身份和头，两者各有当前序号及防迟到重试状态。 |
+| 身份与当前头 | identity_object、business_head | identity 独立维护对象；application 维护业务身份、当前序号、防重前提及已经完成的完整结果槽承诺。 |
 | 领域事实 | op_fact、people_fact、asset_fact、financing_fact、investment_fact、money_fact、tax_fact、opening_fact、report_basis_fact | 各 owner 的严格当前事实；撤去后删除该正文行。 |
 | 来源与当前工作 | source、source_use、current_issue、current_issue_scope、company_note | 固定来源内容、当前引用、未解事项和当前有效经营说明。 |
 | 当前依赖与工作范围 | current_dependency、current_publication、application_state | 当前引用、结果发布范围及已进入的工作末月；只保当前状态，不保存操作历史。 |
@@ -71,7 +71,9 @@ company_note 只保当前说明及其依据 head。月份说明提交时比较 e
 
 一个平衡计划对应一个 result_slot，包含若干稳定公开资源 slot。result_slot_current 指向当前完整目标；公开义务/成本身份是 business_id+public_slot，不能把 result_id 当成其稳定身份。
 
-adopted_result 的 target_json 保存该领域完整已采用目标，basis_json 保存实际采用的最少核算字段、数量、政策和引用摘要。采用引用包含 result_id、generation、内容摘要；对于仍可能替换的开放源，冻结时嵌入本公式实际需要的数量，不能依赖那个 result_id 的当前正文永远不变，也不递归复制全部上游结果。
+adopted_result 的 target_json 保存完整已采用目标，basis_json 保存实际采用的最少字段、数量、政策和引用摘要；两者各自核对正文摘要。`formal_output_digest` 另覆盖本次实际保存的全部凭证、分录、资源及分类行，明确区分正确的无输出结果与输出丢失，不复制金额。采用、提交和离线核验共用此摘要规则；冻结依据与旧输出的摘要不能被今天重新计算后覆盖。冻结状态、编号序列及继承的旧凭证不计入本次摘要，旧凭证由其原结果自行证明。
+
+采用引用包含 result_id、generation 和内容摘要。对仍可能替换的开放源，冻结时嵌入本公式实际需要的数量，不能依赖该 result_id 的当前正文永远不变，也不递归复制全部上游结果。
 
 result_basis_ref按Basis.source_results逐项索引生产业务、槽、结果身份、代次及摘要，与该正式结果一起替换或冻结。它不保存另一份金额，也不保留开放旧正文；生产结果身份不作外键，避免必要冻结引用迫使已替换开放正文永久存在。上游变化时沿生产业务/槽索引核对当前开放消费者，即使消费者被遗漏也不能留下失效引用；精确继承本消费者冻结基线的引用按原规则保留。
 
@@ -83,7 +85,9 @@ current_dependency保存当前事实/结果依赖、collection集合观察和资
 
 current_publication 按业务、结果槽和 tax_sales/pre_tax 集合保存当前发布月份范围，并按集合和范围建立索引。aggregate 结果依赖据此发现相关槽及消费者。发布范围只是可重建索引，不含金额和旧正文；与当前事实、依赖及正式采用同事务替换。退出或移月按旧、新范围通知，金额的唯一真源仍是账务正式结果。
 
-每次责任声明该业务**完整结果槽集合**，由新计划与精确保留引用共同覆盖；保留槽不清理、不重写。未列入完整责任的旧槽、义务或成本必须处理退出；存在实际清偿、消耗或冻结必要引用时，不能静默删除。无凭证但有正式核算意义的结果同样采用，纯管理资料不伪造零额凭证。
+每次责任声明业务的完整结果槽，由新计划与精确保留引用共同覆盖；保留槽不重写。application 同事务把成功交付的完整承诺保存在 `business_head.result_slots_json`，只存当前槽名，不复制结果或金额，不能用默认空集合掩盖漏写。连带重算增退槽时也更新承诺，不必修改事实序号。离线核验将承诺与 ledger 当前有效目标槽精确比较，可以发现整份正式账或某个槽丢失，不需要重新运行今天的业务公式。
+
+未列入责任的旧槽、义务或成本必须退出；存在真实清偿、消耗或冻结引用时不能静默删除。ledger 为冻结旧槽保存的 `system.withdrawal` 是必要退休结果，不属于当前有效责任，其事实版本可以早于后来的业务更正。无凭证但有正式意义的结果仍须采用；纯管理资料不伪造零额凭证。
 
 关账到某月，表示把建账月至该月尚未关闭的账务一起关闭，不要求为空月逐月操作。先完成这段范围内可确定的核算和必要检查，再在同一事务冻结正式结果、凭证及必要依据，最后保存一条 period_close 和截止月三表。basis_json采用reporting.CloseBasis，只含公司、数据库、截止月和本次新冻结范围内全部正式结果源的摘要；前一截止月由上一条关账记录确定，结果及来源正文使用原有冻结表，不复制关账流水。report_json保存严格FinancialSnapshot并核对report_digest。无审批记录、预览采用表或密码批准表。
 
@@ -121,7 +125,7 @@ money_occurrence 只登记稳定实际发生身份与公开资源键，不另存
 
 ## 文档与读取目标
 
-document_shard_head、read_scope_head 只有当前 wanted/ready 或 published 头，编号来自公司提交序号。只在确有相关变化时推进。后台生成在一致读快照完成，发布前比较目标；旧任务不覆盖新目标、不清除新待办。
+document_shard_head、read_scope_head 只有当前 wanted/ready 或 published 头，编号来自公司提交序号。只在确有相关变化时推进。标准文档的 published_head 为 NULL 表示尚未发布，零表示空账套版本已经发布；初始化和损坏后的重新生成使用当前已保存版本，不伪造一次业务提交。后台生成在一致读快照完成，发布前比较目标；旧任务不覆盖新目标、不清除新待办。
 
 document_set 对应一套 current.json 清单。数据库与清单确认之间中断，启动时核对当前清单的集合及片摘要，匹配则补确认，不匹配则从当前事实接续。清单原子切换前的旧片只是安全发布所需临时保留，切换后清理，不作为第二套备份。
 

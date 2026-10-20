@@ -52,6 +52,7 @@ CREATE TABLE business_head (
 business_id TEXT PRIMARY KEY CHECK(length(business_id)=36),
  family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),
  kind TEXT NOT NULL,
+ result_slots_json TEXT NOT NULL CHECK(json_valid(result_slots_json) AND json_type(result_slots_json)='array'),
  natural_key TEXT,
  seq INTEGER NOT NULL CHECK(seq>=1),
  state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),
@@ -306,7 +307,8 @@ result_id TEXT PRIMARY KEY CHECK(length(result_id)=36),
  target_schema TEXT NOT NULL,
  target_json TEXT NOT NULL CHECK(json_valid(target_json)),
  basis_digest TEXT NOT NULL CHECK(length(basis_digest)=64),
- target_digest TEXT NOT NULL CHECK(length(target_digest)=64)
+ target_digest TEXT NOT NULL CHECK(length(target_digest)=64),
+ formal_output_digest TEXT NOT NULL CHECK(length(formal_output_digest)=64)
 ) STRICT;
 
 CREATE INDEX adopted_result_period ON adopted_result(posting_period,state,business_id,result_slot);
@@ -615,7 +617,7 @@ period TEXT PRIMARY KEY,
 CREATE TABLE document_shard_head (
 shard_key TEXT PRIMARY KEY,
  wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),
- published_head INTEGER NOT NULL DEFAULT 0 CHECK(published_head>=0 AND published_head<=wanted_head),
+ published_head INTEGER CHECK(published_head IS NULL OR (published_head>=0 AND published_head<=wanted_head)),
  current_path TEXT,
  current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),
  last_error_code TEXT,

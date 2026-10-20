@@ -126,6 +126,30 @@ def atomic_write(root: Path, relative: str, data: bytes | BinaryIO) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _check_file(root, source, output=None):
+    digest, size = hashlib.sha256(), 0
+    try:
+        path = controlled_path(root, source["relative_path"])
+        with path.open("rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ContractError("invalid_path", "原件必须是普通文件。")
+            while chunk := stream.read(CHUNK_SIZE):
+                size += len(chunk)
+                if size > source["byte_size"]:
+                    raise ContractError("source_corrupt", "原件字节数与登记内容不一致。")
+                digest.update(chunk)
+                if output is not None:
+                    output.write(chunk)
+        controlled_path(root, source["relative_path"])
+    except FileNotFoundError as exc:
+        raise ContractError("source_missing", "已登记原件不存在，需要补回正确资料。") from exc
+    except OSError as exc:
+        raise ContractError("source_unavailable", "暂时无法读取已登记原件。") from exc
+    if size != source["byte_size"] or digest.hexdigest() != source["sha256"]:
+        raise ContractError("source_corrupt", "原件内容与登记摘要不一致。")
+
+
 def checked_stream(root: Path, source):
     """Expose a verified fixed copy; later external edits cannot alter the lease."""
     if source["kind"] == "owner_statement":
@@ -134,27 +158,8 @@ def checked_stream(root: Path, source):
             raise ContractError("source_corrupt", "老板说明与登记摘要不一致。")
         return io.BytesIO(raw)
     result = tempfile.SpooledTemporaryFile(max_size=8 * CHUNK_SIZE, mode="w+b")
-    digest, size = hashlib.sha256(), 0
     try:
-        try:
-            path = controlled_path(root, source["relative_path"])
-            with path.open("rb") as stream:
-                info = os.fstat(stream.fileno())
-                if not stat.S_ISREG(info.st_mode):
-                    raise ContractError("invalid_path", "原件必须是普通文件。")
-                while chunk := stream.read(CHUNK_SIZE):
-                    size += len(chunk)
-                    if size > source["byte_size"]:
-                        raise ContractError("source_corrupt", "原件字节数与登记内容不一致。")
-                    digest.update(chunk)
-                    result.write(chunk)
-            controlled_path(root, source["relative_path"])
-        except FileNotFoundError as exc:
-            raise ContractError("source_missing", "已登记原件不存在，需要补回正确资料。") from exc
-        except OSError as exc:
-            raise ContractError("source_unavailable", "暂时无法读取已登记原件。") from exc
-        if size != source["byte_size"] or digest.hexdigest() != source["sha256"]:
-            raise ContractError("source_corrupt", "原件内容与登记摘要不一致。")
+        _check_file(root, source, result)
         result.seek(0)
         return result
     except BaseException:
@@ -201,8 +206,10 @@ def check_source(root, source):
         expected = prefix + source["source_id"] + "--" + source["original_name"]
         if source["relative_path"] != expected:
             raise ContractError("invalid_path", "原件必须采用公司归档月份下的稳定来源文件名。")
-    with checked_stream(root, source):
-        pass
+        _check_file(root, source)
+    else:
+        with checked_stream(root, source):
+            pass
 
 
 def prepare_source(source_import, root, existing=None, find_existing=None):

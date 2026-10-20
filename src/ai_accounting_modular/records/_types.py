@@ -27,6 +27,23 @@ class SourceStatus:
     observed_size: int | None
 
 
+@dataclass(frozen=True, eq=False)
+class PreparedSources:
+    """One live, company-bound verification; paths stay pinned until it closes."""
+
+    company_id: str
+    database_id: str
+    root: Path
+    _sources_json: str
+    _file_identities: tuple[tuple[str, tuple[int, ...]], ...]
+    _active: bool = field(default=False, init=False)
+
+    def check(self, sources, read, root):
+        from ._prepared_sources import check
+
+        check(self, sources, read, root)
+
+
 @dataclass(frozen=True)
 class RecordsChange:
     sources: tuple[Source, ...] = ()
@@ -41,6 +58,7 @@ class RecordsContext:
     read_context: ReadContext
     command_id: str
     note_basis_heads: Mapping[str, str] = field(default_factory=dict)
+    prepared_sources: PreparedSources | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +78,7 @@ class RecordsPlan:
     _sources: tuple[PlannedRecord, ...]
     _notes: tuple[PlannedRecord, ...]
     _issue_scope: PlannedRecord | None
+    _prepared_sources: PreparedSources | None = field(default=None, repr=False)
 
     @property
     def sources(self) -> tuple[Source, ...]:
@@ -100,7 +119,7 @@ class RecordsPlan:
 class ShardTarget:
     key: str
     wanted_head: int
-    published_head: int
+    published_head: int | None
     current_path: str | None
     current_digest: str | None
 
@@ -160,6 +179,12 @@ class StandardFile:
     sha256: str
     byte_size: int
     kind: Literal["standard", "original"]
+
+
+@dataclass(frozen=True)
+class RecordsSnapshot:
+    document_set_id: str
+    files: tuple[StandardFile, ...]
 
 
 @dataclass(frozen=True)

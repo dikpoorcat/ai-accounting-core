@@ -16,11 +16,17 @@ __all__ = [
     "Reading",
     "create_reading",
     "repository_factory",
+    "reset_for_restore",
 ]
 
 
 def repository_factory():
     return RepositoryFactory(module_schema("reading"), ReadingRepository, ReadingRepository)
+
+
+def reset_for_restore(uow) -> None:
+    """Discard projections tied to the previous location; source accounting is unchanged."""
+    uow.repository("reading").reset()
 
 
 class Reading:

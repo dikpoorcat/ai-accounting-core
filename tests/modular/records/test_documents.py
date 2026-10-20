@@ -9,7 +9,12 @@ from uuid import uuid4
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, loads_json
-from ai_accounting_modular.records.public import RecordsChange, RecordsContext, create_records
+from ai_accounting_modular.records.public import (
+    RecordsChange,
+    RecordsContext,
+    create_records,
+    open_standard_bundle,
+)
 
 
 def company_identity(company):
@@ -65,6 +70,45 @@ def _publish(records_case, prepared):
     storage, (company, _), records = records_case
     with storage.maintenance_unit(company.company_id) as unit:
         return records.publish_documents(prepared, unit)
+
+
+def test_empty_documents_then_first_business_remain_complete_without_a_fake_business_version(
+    records_case,
+):
+    storage, (company, _), records = records_case
+    with storage.maintenance_unit(company.company_id) as unit:
+        records.ensure_document_targets(unit)
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 0
+        assert records.document_status(read)["state"] == "pending"
+    assert _publish(records_case, _prepare(records_case, [], []))["state"] == "ready"
+    bundle = open_standard_bundle(company.company_root / "standard/current.json")
+    assert bundle.facts == bundle.objects == bundle.sources == ()
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 0
+    fact, obj = _first_facts(records_case)
+    assert _publish(records_case, _prepare(records_case, [fact], [obj]))["state"] == "ready"
+    bundle = open_standard_bundle(company.company_root / "standard/current.json")
+    assert bundle.facts == (fact,)
+    assert bundle.objects == (obj,)
+    assert tuple(source["source_id"] for source in bundle.sources) == tuple(fact["evidence_ids"])
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 1
+        records.verify_snapshot(company_identity(company), [fact], [obj], read)
+
+
+def test_missing_manifest_is_regenerated_at_the_saved_business_version(records_case):
+    storage, (company, _), records = records_case
+    fact, obj = _first_facts(records_case)
+    _publish(records_case, _prepare(records_case, [fact], [obj]))
+    manifest = company.company_root / "standard/current.json"
+    manifest.unlink()
+    with storage.maintenance_unit(company.company_id) as unit:
+        records.ensure_document_targets(unit)
+    assert _publish(records_case, _prepare(records_case, [fact], [obj]))["state"] == "ready"
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == 1
+        records.verify_snapshot(company_identity(company), [fact], [obj], read)
 
 
 def test_final_fact_manifest_is_offline_complete_and_document_publication_does_not_advance_head(

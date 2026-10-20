@@ -6,7 +6,6 @@ import re
 import sqlite3
 from collections.abc import Iterable
 from contextlib import contextmanager
-from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -15,27 +14,23 @@ from pypinyin import Style, lazy_pinyin
 
 from ai_accounting_modular.contracts.public import ContractError
 
+from ._company import company_metadata, create_database, spec_metadata
 from ._database import (
     _candidate,
-    _company_identity,
     _connect,
     _database_error,
     _discard_publication,
     _identifier,
     _initialize,
-    _month,
-    _stored_company,
     _text,
     verify_database,
 )
 from ._schema import (
     CATALOG_FORMAT,
-    COMPANY_FORMAT,
-    module_schema,
     packaged_schema,
     verify_structure,
 )
-from ._session import StorageContext, StorageUnitOfWork
+from ._session import StorageContext
 from ._types import (
     CompanyLocation,
     CompanyMetadata,
@@ -44,10 +39,7 @@ from ._types import (
     OwnerProfile,
     RepositoryFactory,
 )
-
-_active_writes: ContextVar[frozenset[tuple[Path, str]]] = ContextVar(
-    "modular_storage_writes", default=frozenset()
-)
+from ._units import database_unit, open_database_unit, repository_factories
 
 
 def create_catalog(path: Path | str, owner: OwnerProfile) -> Path:
@@ -128,12 +120,7 @@ def _company_order(location: CompanyLocation) -> tuple[str, str, str]:
 class Storage:
     def __init__(self, catalog_path: Path | str, *, repositories: Iterable[RepositoryFactory] = ()):
         self.catalog_path = Path(catalog_path).resolve()
-        self._factories: dict[str, RepositoryFactory] = {}
-        for factory in repositories:
-            owner = factory.schema.owner
-            if owner in self._factories or factory.schema != module_schema(owner):
-                raise ContractError("invalid_input", "模块仓储重复或结构合同不匹配")
-            self._factories[owner] = factory
+        self._factories = repository_factories(repositories)
         with self._catalog(writable=False):
             pass
 
@@ -178,32 +165,12 @@ class Storage:
         return row
 
     def create_company(self, spec: CompanySpec) -> CompanyMetadata:
-        _identifier(spec.company_id, "company_id")
-        _identifier(spec.database_id, "database_id")
-        _company_identity(spec.credit_code, spec.legal_name, spec.start_period)
-        root = Path(spec.company_root).resolve()
-        path = root / "runtime/company.sqlite3"
-        backup = (
-            Path(spec.backup_directory).resolve()
-            if spec.backup_directory is not None
-            else root / "backups"
+        metadata = spec_metadata(spec)
+        root, path, backup = (
+            metadata.company_root,
+            metadata.database_path,
+            metadata.backup_directory,
         )
-
-        def seed(connection):
-            connection.execute(
-                "INSERT INTO system_meta VALUES(1,?,?,1,?,0)",
-                (COMPANY_FORMAT, spec.database_id, packaged_schema("company")["fingerprint"]),
-            )
-            connection.execute(
-                "INSERT INTO company_profile VALUES(1,?,?,?,'small_enterprise','CNY',?,1)",
-                (spec.company_id, spec.credit_code, spec.legal_name, str(spec.start_period)),
-            )
-            for owner in sorted({item["owner"] for item in packaged_schema("company")["objects"]}):
-                contract = module_schema(owner)
-                connection.execute(
-                    "INSERT INTO module_schema VALUES(?,?,?,?,?)",
-                    (owner, 1, contract.contract_digest, None, contract.sql_fingerprint),
-                )
 
         publication = None
         try:
@@ -218,8 +185,7 @@ class Storage:
                 if exists:
                     raise ContractError("conflict", "公司身份或位置已登记")
                 try:
-                    with _candidate(path) as candidate:
-                        _initialize(candidate.path, "company", seed)
+                    publication = create_database(metadata)
                 except ContractError as exc:
                     if exc.code == "target_exists":
                         raise ContractError(
@@ -227,7 +193,6 @@ class Storage:
                             "目标已存在，不能覆盖；若为上次中断留下的公司库，核验后通过显式登记接续",
                         ) from exc
                     raise
-                publication = candidate.publication
                 catalog.execute(
                     "INSERT INTO company_location VALUES(?,?,?,?,?,?,?,'active')",
                     (
@@ -263,16 +228,7 @@ class Storage:
                         "目录登记失败，目标文件发生变化，已保留供核验后显式接续",
                     ) from exc
             raise
-        return CompanyMetadata(
-            spec.company_id,
-            spec.database_id,
-            spec.credit_code,
-            spec.legal_name,
-            str(spec.start_period),
-            root,
-            path,
-            backup,
-        )
+        return metadata
 
     def register_company(
         self, company_root: Path | str, *, backup_directory: Path | str | None = None
@@ -281,47 +237,30 @@ class Storage:
         root = Path(company_root).resolve()
         path = root / "runtime/company.sqlite3"
         snapshot = verify_database(path)
-        connection = _connect(path, writable=False)
-        try:
-            connection.execute("BEGIN")
-            system, row = _stored_company(connection)
+        with open_database_unit(path, company_root=root, backup_directory=backup_directory) as read:
+            metadata = company_metadata(read)
             if (
-                system["database_id"] != snapshot.database_id
-                or row["company_id"] != snapshot.company_id
+                metadata.database_id != snapshot.database_id
+                or metadata.company_id != snapshot.company_id
             ):
                 raise ContractError("conflict", "登记前公司库身份已变化，请重新核验")
-        finally:
-            connection.close()
-        backup = (
-            Path(backup_directory).resolve() if backup_directory is not None else root / "backups"
-        )
         with self._catalog(writable=True) as catalog:
             try:
                 catalog.execute(
                     "INSERT INTO company_location VALUES(?,?,?,?,?,?,?,'active')",
                     (
                         snapshot.company_id,
-                        row["credit_code"],
-                        row["legal_name"],
+                        metadata.credit_code,
+                        metadata.legal_name,
                         str(root),
                         str(path),
                         snapshot.database_id,
-                        str(backup),
+                        str(metadata.backup_directory),
                     ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ContractError("conflict", "公司身份或位置已登记，不能替换现有公司") from exc
-        return CompanyMetadata(
-            snapshot.company_id,
-            snapshot.database_id,
-            row["credit_code"],
-            row["legal_name"],
-            row["start_period"],
-            root,
-            path,
-            backup,
-            row["profile_seq"],
-        )
+        return metadata
 
     @contextmanager
     def _unit(
@@ -334,83 +273,18 @@ class Storage:
         view: Literal["current", "as_posted"] = "current",
         as_of: str | None = None,
     ):
-        if (
-            view not in {"current", "as_posted"}
-            or (view == "current" and as_of is not None)
-            or (view == "as_posted" and as_of is None)
-        ):
-            raise ContractError("invalid_input", "读取口径和截止月份不匹配")
-        if as_of is not None:
-            _month(as_of)
-        write_key = (self.catalog_path, company_id)
-        if writable and write_key in _active_writes.get():
-            raise ContractError("invalid_operation", "不能为同一家公司嵌套开启写事务")
         location = self._location(company_id)
-        connection = _connect(Path(location["database_path"]), writable=writable)
-        context = None
-        token = None
-        try:
-            connection.execute("BEGIN IMMEDIATE" if writable else "BEGIN")
-            if writable:
-                token = _active_writes.set(_active_writes.get() | {write_key})
-            verify_structure(connection, "company")
-            system, profile = _stored_company(connection)
-            if (
-                profile["company_id"] != company_id
-                or system["database_id"] != location["database_id"]
-                or profile["credit_code"] != location["credit_code"]
-            ):
-                raise ContractError("storage_corrupt", "公司库身份与目录位置不一致")
-            context_type = StorageUnitOfWork if writable else StorageContext
-            context = context_type(
-                connection,
-                company_id,
-                system["database_id"],
-                system["global_seq"],
-                self._factories,
-                start_period=profile["start_period"],
-                writable=writable,
-                maintenance=maintenance,
-                view=view,
-                as_of=as_of,
-            )
-            context._location = location
+        with database_unit(
+            location,
+            self._factories,
+            writable=writable,
+            maintenance=maintenance,
+            preview=preview,
+            view=view,
+            as_of=as_of,
+            expected_identity=(company_id, location["database_id"], location["credit_code"]),
+        ) as context:
             yield context
-            if writable:
-                if context._failed:
-                    raise ContractError(
-                        "invalid_operation", "本工作单元已有失败操作，不能提交部分结果"
-                    )
-                for check in context._checks:
-                    check()
-                if context._failed:
-                    raise ContractError("invalid_operation", "提交检查中的失败操作不能被忽略")
-                if preview:
-                    connection.rollback()
-                else:
-                    if context._business_changed:
-                        connection.execute(
-                            "UPDATE system_meta SET global_seq=? WHERE singleton=1",
-                            (context.next_head,),
-                        )
-                    connection.commit()
-            else:
-                connection.rollback()
-        except sqlite3.IntegrityError:
-            connection.rollback()
-            raise
-        except sqlite3.DatabaseError as exc:
-            connection.rollback()
-            raise _database_error(exc) from exc
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            if context is not None:
-                context._active = False
-            if token is not None:
-                _active_writes.reset(token)
-            connection.close()
 
     def read_unit(
         self,
@@ -432,23 +306,7 @@ class Storage:
         return self._unit(company_id, writable=True, maintenance=True)
 
     def company_metadata(self, context: StorageContext) -> CompanyMetadata:
-        context._require_active()
-        row = context._connection.execute(
-            "SELECT company_id,credit_code,legal_name,start_period,profile_seq "
-            "FROM company_profile WHERE singleton=1"
-        ).fetchone()
-        location = context._location
-        return CompanyMetadata(
-            row["company_id"],
-            context.database_id,
-            row["credit_code"],
-            row["legal_name"],
-            row["start_period"],
-            Path(location["company_root"]),
-            Path(location["database_path"]),
-            Path(location["backup_directory"]),
-            row["profile_seq"],
-        )
+        return company_metadata(context)
 
     def capture_database(self, context: StorageContext, target: Path | str) -> DatabaseSnapshot:
         context._require_active()

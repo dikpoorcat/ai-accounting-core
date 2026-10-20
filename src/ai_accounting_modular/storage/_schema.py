@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from copy import deepcopy
 from functools import cache
 from importlib.resources import files
 
@@ -36,6 +37,11 @@ def packaged_schema(kind: str) -> dict:
     ):
         raise RuntimeError("Packaged storage contract is damaged")
     return value
+
+
+def company_structure_contract() -> dict:
+    """A detached copy of the sole supported, exact company structure."""
+    return {"format_family": COMPANY_FORMAT, **deepcopy(packaged_schema("company"))}
 
 
 @cache

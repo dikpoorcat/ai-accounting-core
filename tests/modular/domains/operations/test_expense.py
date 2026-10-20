@@ -39,11 +39,12 @@ class SeedRepository:
 
     def business(self, business_id=BUSINESS, kind="operations.expense", period="2026-01"):
         self.session.execute(
-            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO business_head VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 business_id,
                 "operations",
                 kind,
+                "[]",
                 None,
                 1,
                 "active",

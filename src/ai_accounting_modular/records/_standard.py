@@ -92,7 +92,22 @@ def _validate_parts(manifest, parts):
         required.update(_sources.issue_source_ids(issue))
     available = {source["source_id"] for source in collections["sources"]}
     if required - available:
-        _bad("标准文档缺少显式引用的来源：" + "、".join(sorted(required - available)))
+        raise ContractError(
+            "documents_corrupt",
+            "标准文档缺少显式引用的来源。",
+            fact_issues=[
+                {
+                    "code": "source_not_found",
+                    "field": "/sources",
+                    "meaning": "最终事实、对象、待办或说明引用的原始来源",
+                    "message": "缺少来源：" + source_id,
+                    "allowed_precision": ["identity"],
+                    "reusable_sources": [],
+                    "blocking_scope": "business",
+                }
+                for source_id in sorted(required - available)
+            ],
+        )
     identity = manifest["company_identity"]
     latest = max(
         (fact["period"] for fact in collections["facts"]), default=identity["start_period"]

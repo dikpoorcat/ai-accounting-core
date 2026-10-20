@@ -39,6 +39,9 @@ from ._resource_view import (
     validate_resource_refs,
 )
 from ._resource_view import fund_movements as _fund_movements
+from ._snapshot import AdoptedBusinessVersion as AdoptedBusinessVersion
+from ._snapshot import LedgerSnapshot
+from ._snapshot import verify_snapshot as _verify_snapshot
 from ._values import fail, unique
 
 
@@ -133,6 +136,9 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def verify_snapshot(self, read_context: ReadContext) -> LedgerSnapshot:
+        return _verify_snapshot(read_context)
+
     def financial_snapshot(self, scope, read_context: ReadContext):
         normalized = _financial.normalize(scope, read_context)
         if normalized["view"] == "as_posted" and read_context.repository("ledger").is_closed(

@@ -49,6 +49,28 @@ def mark_targets(keys, uow):
         repository.mark_targets(sorted(keys), uow.next_head)
 
 
+def is_pending(target):
+    return target["published_head"] is None or target["wanted_head"] > target["published_head"]
+
+
+def ensure_targets(uow, root):
+    """Initialize or repair derived documents at the saved business head."""
+    status = document_status(uow, root)
+    if status["state"] == "ready" or status["pending_scopes"]:
+        return
+    request_repair(uow)
+
+
+def request_repair(uow):
+    """Only derived publication state is reset; saved accounting stays unchanged."""
+    repository = uow.repository("records")
+    targets = repository.targets()
+    if any(row["wanted_head"] > uow.head for row in targets):
+        raise ContractError("storage_corrupt", "标准文档目标不能超过已保存的业务版本。")
+    keys = FIXED_KEYS | {"company"} | {row["shard_key"] for row in targets}
+    repository.request_documents(sorted(keys), uow.head)
+
+
 def _standard_object(obj):
     obj = loads_json(canonical_json(obj))
     if "seq" in obj or "content_digest" in obj:
@@ -80,7 +102,11 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
     )
     indexed = {target.key: target for target in targets}
     selected = (
-        set(target.key for target in targets if target.wanted_head > target.published_head)
+        set(
+            target.key
+            for target in targets
+            if target.published_head is None or target.wanted_head > target.published_head
+        )
         if scopes is None
         else set(scopes)
     )
@@ -331,7 +357,7 @@ def document_status(read, root):
     repository = read.repository("records")
     current = repository.document_set()
     targets = repository.targets()
-    pending = [row["shard_key"] for row in targets if row["wanted_head"] > row["published_head"]]
+    pending = [row["shard_key"] for row in targets if is_pending(row)]
     errors = [
         {
             "scope": row["shard_key"],

@@ -322,8 +322,25 @@ def test_nested_fact_source_locator_is_not_lost_when_not_repeated_as_evidence(re
         }
 
     rewrite(path, edit)
-    with pytest.raises(ContractError, match=absent):
+    with pytest.raises(ContractError) as error:
         open_standard_bundle(path)
+    assert [issue["message"] for issue in error.value.fact_issues] == ["缺少来源：" + absent]
+
+
+def test_many_missing_sources_keep_every_identity_in_structured_issues(records_case):
+    path, _, _, _, _ = publish(records_case)
+    absent = sorted(str(uuid4()) for _ in range(100))
+
+    def edit(_, parts):
+        parts["facts:operations:2026-01"]["facts"][0]["evidence_ids"] = absent
+
+    rewrite(path, edit)
+    with pytest.raises(ContractError) as error:
+        open_standard_bundle(path)
+    assert len(error.value.message) < 2000
+    assert [issue["message"] for issue in error.value.fact_issues] == [
+        "缺少来源：" + source_id for source_id in absent
+    ]
 
 
 def test_original_streams_are_bounded_and_opened_one_at_a_time(records_case, tmp_path, monkeypatch):
@@ -451,8 +468,11 @@ def test_known_partial_fact_sources_are_preserved_without_rewriting_explicit_evi
     assert bundle.issues == (issue,) and bundle.sources == (source,)
     if not explicit:
         rewrite(path, lambda _, parts: parts["sources"].update(sources=[]))
-        with pytest.raises(ContractError, match=source["source_id"]):
+        with pytest.raises(ContractError) as error:
             open_standard_bundle(path)
+        assert [issue["message"] for issue in error.value.fact_issues] == [
+            "缺少来源：" + source["source_id"]
+        ]
 
 
 def test_missing_known_partial_source_fails_atomically_at_current_issue_save(records_case):

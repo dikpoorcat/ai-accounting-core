@@ -19,9 +19,9 @@ from ai_accounting_modular.ledger.reporting import public as reporting
 from ai_accounting_modular.money import public as money
 from ai_accounting_modular.reading import public as reading
 from ai_accounting_modular.records import public as records
-from ai_accounting_modular.storage.public import Storage
+from ai_accounting_modular.storage.public import Storage, company_metadata
 
-__all__ = ["Kernel", "create_kernel"]
+__all__ = ["Kernel", "create_kernel", "create_offline_application"]
 
 
 @dataclass(frozen=True)
@@ -40,9 +40,31 @@ class Kernel:
         self.files.close()
 
 
-def create_kernel(
-    catalog_path: Path | str, *, file_producers: Mapping[str, files.FileProducer] | None = None
-) -> Kernel:
+@dataclass(frozen=True)
+class _Modules:
+    identity: identity.Identity
+    ledger: ledger.Ledger
+    records: records.Records
+    money: money.Money
+    domains: tuple
+    repositories: tuple
+    verifier: application.BackupVerifier
+
+    def application(self, storage, **options):
+        return application.create_application(
+            storage=storage,
+            identity=self.identity,
+            ledger=self.ledger,
+            records=self.records,
+            domains=self.domains,
+            money=self.money,
+            backup_verifier=self.verifier,
+            repositories=self.repositories,
+            **options,
+        )
+
+
+def _modules():
     owners = (
         application,
         identity,
@@ -59,9 +81,9 @@ def create_kernel(
         files,
         reading,
     )
-    storage = Storage(catalog_path, repositories=[owner.repository_factory() for owner in owners])
+    repositories = tuple(owner.repository_factory() for owner in owners)
     identities, bookkeeping = identity.create_identity(), ledger.create_ledger()
-    materials = records.create_records(lambda read: storage.company_metadata(read).company_root)
+    materials = records.create_records(lambda read: company_metadata(read).company_root)
     funds = money.create_money(ledger=bookkeeping, identity=identities)
     asset_accounting = assets.create_assets()
     domains = (
@@ -75,30 +97,53 @@ def create_kernel(
         opening.create_opening(asset_accounting=asset_accounting),
         reporting.create_reporting(),
     )
-
-    def mark_reading_targets(impact, unit):
-        return read_models.mark_targets(impact, unit)
-
-    app = application.create_application(
-        storage=storage,
+    verifier = application.create_backup_verifier(
         identity=identities,
         ledger=bookkeeping,
         records=materials,
         domains=domains,
-        money=funds,
+        repositories=repositories,
+    )
+    return _Modules(identities, bookkeeping, materials, funds, domains, repositories, verifier)
+
+
+def create_offline_application() -> application.Application:
+    """Only explicit isolated-target operations; no source catalog or owner is invented."""
+    return _modules().application(None)
+
+
+def create_kernel(
+    catalog_path: Path | str, *, file_producers: Mapping[str, files.FileProducer] | None = None
+) -> Kernel:
+    modules = _modules()
+    storage = Storage(catalog_path, repositories=modules.repositories)
+    producers = {
+        "backup": application.create_backup_producer(
+            storage=storage, records=modules.records, verify_package=modules.verifier
+        ),
+        **(file_producers or {}),
+    }
+    file_tasks = files.create_files(storage, producers)
+
+    def mark_reading_targets(impact, unit):
+        return read_models.mark_targets(impact, unit)
+
+    app = modules.application(
+        storage,
+        files=file_tasks,
         mark_reading_targets=mark_reading_targets,
     )
     read_models = reading.create_reading(
-        storage=storage, ledger=bookkeeping, records=materials, businesses=app
+        storage=storage, ledger=modules.ledger, records=modules.records, businesses=app
     )
     return Kernel(
         storage,
         app,
-        identities,
-        bookkeeping,
-        materials,
-        funds,
-        files.create_files(storage, {} if file_producers is None else file_producers),
+        modules.identity,
+        modules.ledger,
+        modules.records,
+        modules.money,
+        file_tasks,
         read_models,
         dashboard.create_dashboard(read_models),
     )

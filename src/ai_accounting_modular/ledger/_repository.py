@@ -9,6 +9,12 @@ from ai_accounting_modular.contracts.public import canonical_json as canonical
 from ai_accounting_modular.contracts.public import content_digest as digest
 from ai_accounting_modular.contracts.public import format_fen, parse_fen
 
+from ._output_digest import (
+    EMPTY_OUTPUT_DIGEST,
+    RESOURCE_TABLES,
+    output_digests,
+    verify_output_digests,
+)
 from ._resource_rows import resource_rows
 from ._values import fail
 
@@ -31,14 +37,7 @@ def _selected(alias, as_of):
 _CHILD_TABLES = (
     "result_source",
     "result_basis_ref",
-    "obligation",
-    "settlement",
-    "obligation_reclassification",
-    "cost_lot",
-    "cost_consumption",
-    "result_fund_movement",
-    "result_tax_sale",
-    "result_report_contribution",
+    *RESOURCE_TABLES,
 )
 _FINANCIAL_FIELDS = ",".join(
     "r." + name
@@ -81,6 +80,21 @@ _HEAD_FIELDS = ",".join(
 
 
 class LedgerRepository:
+    def snapshot_records(self):
+        """Complete ledger-owned persisted records for an offline integrity audit."""
+        return {
+            table: [dict(row) for row in self._session.fetchall(f"SELECT * FROM {table}")]
+            for table in (
+                "adopted_result",
+                "result_slot_current",
+                "voucher",
+                "voucher_line",
+                "voucher_sequence",
+                "period_close",
+                *_CHILD_TABLES,
+            )
+        }
+
     def latest_period(self):
         return self._session.fetchone("SELECT MAX(business_period) FROM adopted_result")[0]
 
@@ -423,6 +437,50 @@ class LedgerRepository:
             )
         ]
 
+    def output_records(self, result_ids):
+        ids = canonical(list(result_ids))
+        records = {table: self.children(table, result_ids) for table in RESOURCE_TABLES}
+        records["voucher"] = [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM voucher WHERE result_id IN (SELECT value FROM json_each(?))",
+                (ids,),
+            )
+        ]
+        records["voucher_line"] = [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT l.* FROM voucher_line l JOIN voucher v ON v.voucher_id=l.voucher_id "
+                "WHERE v.result_id IN (SELECT value FROM json_each(?))",
+                (ids,),
+            )
+        ]
+        return records
+
+    def seal_outputs(self, result_ids):
+        if result_ids:
+            digests = output_digests(self.output_records(result_ids), result_ids)
+            self._session.executemany(
+                "UPDATE adopted_result SET formal_output_digest=? WHERE result_id=?",
+                [(value, key) for key, value in digests.items()],
+            )
+
+    def check_output_digests(self, result_ids, *, include_baselines=False):
+        if not result_ids:
+            return
+        heads = {row["result_id"]: row for row in self.results(result_ids)}
+        if include_baselines:
+            pending = {row["baseline_result_id"] for row in heads.values()} - {None} - heads.keys()
+            while pending:
+                found = {row["result_id"]: row for row in self.results(pending)}
+                if found.keys() != pending:
+                    fail("storage_corrupt", "正式输出缺少可核验的冻结基线。")
+                heads.update(found)
+                pending = (
+                    {row["baseline_result_id"] for row in found.values()} - {None} - heads.keys()
+                )
+        verify_output_digests(self.output_records(tuple(heads)), heads)
+
     def save_head(self, plan, fact_seq, *, result_id, generation, posting_period, baseline_id):
         self._resources_changed()
         values = (
@@ -444,16 +502,18 @@ class LedgerRepository:
             canonical(plan["target"]),
             digest(plan["basis"]),
             digest(plan["target"]),
+            EMPTY_OUTPUT_DIGEST,
         )
         self._session.execute(
-            "INSERT INTO adopted_result VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "INSERT INTO adopted_result VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(result_id) DO UPDATE SET generation=excluded.generation,"
             "business_period=excluded.business_period,posting_period=excluded.posting_period,"
             "target_state=excluded.target_state,adopted_fact_seq=excluded.adopted_fact_seq,"
             "calculation_key=excluded.calculation_key,calculation_revision=excluded.calculation_revision,"
             "basis_schema=excluded.basis_schema,basis_json=excluded.basis_json,"
             "target_schema=excluded.target_schema,target_json=excluded.target_json,"
-            "basis_digest=excluded.basis_digest,target_digest=excluded.target_digest",
+            "basis_digest=excluded.basis_digest,target_digest=excluded.target_digest,"
+            "formal_output_digest=excluded.formal_output_digest",
             values,
         )
         self._session.execute(

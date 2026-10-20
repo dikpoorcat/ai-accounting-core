@@ -56,7 +56,17 @@ def adopt(change_plans, uow, correction_period, explanation=None):
                 fail("invalid_input", "同一结果槽不能产生两份采用计划。")
             plans[key] = plan
     repo = uow.repository("ledger")
+    previous = repo.current_metadata(list(responsibilities)) if responsibilities else []
     retained = RetainedResults(responsibilities.values(), retained_refs, repo)
+    repo.check_output_digests(
+        [
+            row["result_id"]
+            for row in previous
+            if result_key(row) not in retained.keys
+            and (result_key(row) in plans or row["target_state"] != "withdrawn")
+        ],
+        include_baselines=True,
+    )
     if set(plans) & retained.keys:
         fail("invalid_input", "同一结果槽不能同时重新计算和保留。")
     for business_id, responsibility in responsibilities.items():
@@ -77,7 +87,6 @@ def adopt(change_plans, uow, correction_period, explanation=None):
     if correction_period is not None:
         validate_contract("core.schema.json", "Month", correction_period)
     touched = repo.linked_sources(list(responsibilities))
-    previous = repo.current_metadata(list(responsibilities))
     replaced_ids = [row["result_id"] for row in previous if result_key(row) not in retained.keys]
     movement_ids = {
         row["movement_id"] for row in repo.children("result_fund_movement", replaced_ids)
@@ -154,12 +163,14 @@ def adopt(change_plans, uow, correction_period, explanation=None):
     check_source_references(proposed, repo, retired)
     # A caught failure must not allow the caller to commit half of an adoption.
     result_ids = [p.result_id for p in proposed]
+    written_ids = [item.result_id for item in proposed if not item.bound.unchanged]
     changed_sources = {result_key(item.plan) for item in proposed if not item.bound.unchanged}
     changed_sources.update(result_key(row) for row in retired)
 
     def before_commit():
         retained.check_current(repo, allow_frozen=True)
         repo.check_sealed(result_ids)
+        repo.check_output_digests(written_ids)
         validate_capacities(repo, touched)
         unique_movements(repo, movement_ids)
         live = []
@@ -217,6 +228,7 @@ def adopt(change_plans, uow, correction_period, explanation=None):
         )
         repo.write_vouchers(result_id, posting_period, specs)
         repo.write_resources(result_id, plan)
+    repo.seal_outputs(written_ids)
     touched.update(repo.linked_sources(list(responsibilities)))
     validate_capacities(repo, touched, retired_keys)
     unique_movements(repo, movement_ids)

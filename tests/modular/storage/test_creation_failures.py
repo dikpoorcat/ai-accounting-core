@@ -15,6 +15,7 @@ from ai_accounting_modular.storage.public import (
     CompanySpec,
     OwnerProfile,
     create_catalog,
+    create_company_database,
     restore_database_copy,
     verify_database,
 )
@@ -169,7 +170,9 @@ storage.create_company(CompanySpec(**{data!r}))
         assert context.head == 0
 
 
-@pytest.mark.parametrize("operation", ["catalog", "company", "snapshot", "restore"])
+@pytest.mark.parametrize(
+    "operation", ["catalog", "company", "independent_company", "snapshot", "restore"]
+)
 def test_failure_after_new_target_publish_removes_only_this_target(
     storage_case, tmp_path, monkeypatch, operation
 ):
@@ -189,6 +192,10 @@ def test_failure_after_new_target_publish_removes_only_this_target(
             spec = new_company(tmp_path)
             target = spec.company_root / "runtime/company.sqlite3"
             storage.create_company(spec)
+        elif operation == "independent_company":
+            spec = new_company(tmp_path)
+            target = spec.company_root / "runtime/company.sqlite3"
+            create_company_database(spec)
         elif operation == "snapshot":
             with storage.read_unit(company.company_id) as context:
                 storage.capture_database(context, target)

@@ -1,5 +1,5 @@
 {
-  "fingerprint": "d695e52dfde75581447945e7a1674efc610d7cfb80be3190cbdf8ce259afe9b6",
+  "fingerprint": "b9962be16f19b8455e884ee9f85bd07a6a7624aecc7b828c088b30c6cf30c7c9",
   "kind": "company",
   "objects": [
     {
@@ -47,7 +47,7 @@
     {
       "name": "business_head",
       "owner": "application",
-      "sql": "CREATE TABLE business_head (\nbusiness_id TEXT PRIMARY KEY CHECK(length(business_id)=36),\n family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),\n kind TEXT NOT NULL,\n natural_key TEXT,\n seq INTEGER NOT NULL CHECK(seq>=1),\n state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),\n period TEXT,\n archive_month TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n latest_op TEXT NOT NULL CHECK(latest_op IN ('create','replace','withdraw','restore')),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),\n search_revision INTEGER NOT NULL CHECK(search_revision>=1),\n CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))\n) STRICT",
+      "sql": "CREATE TABLE business_head (\nbusiness_id TEXT PRIMARY KEY CHECK(length(business_id)=36),\n family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),\n kind TEXT NOT NULL,\n result_slots_json TEXT NOT NULL CHECK(json_valid(result_slots_json) AND json_type(result_slots_json)='array'),\n natural_key TEXT,\n seq INTEGER NOT NULL CHECK(seq>=1),\n state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),\n period TEXT,\n archive_month TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n latest_op TEXT NOT NULL CHECK(latest_op IN ('create','replace','withdraw','restore')),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),\n search_revision INTEGER NOT NULL CHECK(search_revision>=1),\n CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))\n) STRICT",
       "table": "business_head",
       "type": "table"
     },
@@ -264,7 +264,7 @@
     {
       "name": "adopted_result",
       "owner": "ledger",
-      "sql": "CREATE TABLE adopted_result (\nresult_id TEXT PRIMARY KEY CHECK(length(result_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n generation INTEGER NOT NULL CHECK(generation>=1),\n business_period TEXT NOT NULL,\n posting_period TEXT NOT NULL,\n state TEXT NOT NULL CHECK(state IN ('open','frozen')),\n target_state TEXT NOT NULL CHECK(target_state IN ('active','withdrawn')),\n baseline_result_id TEXT REFERENCES adopted_result(result_id),\n adopted_fact_seq INTEGER NOT NULL CHECK(adopted_fact_seq>=1),\n calculation_key TEXT NOT NULL,\n calculation_revision INTEGER NOT NULL CHECK(calculation_revision>=1),\n basis_schema TEXT NOT NULL,\n basis_json TEXT NOT NULL CHECK(json_valid(basis_json)),\n target_schema TEXT NOT NULL,\n target_json TEXT NOT NULL CHECK(json_valid(target_json)),\n basis_digest TEXT NOT NULL CHECK(length(basis_digest)=64),\n target_digest TEXT NOT NULL CHECK(length(target_digest)=64)\n) STRICT",
+      "sql": "CREATE TABLE adopted_result (\nresult_id TEXT PRIMARY KEY CHECK(length(result_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n generation INTEGER NOT NULL CHECK(generation>=1),\n business_period TEXT NOT NULL,\n posting_period TEXT NOT NULL,\n state TEXT NOT NULL CHECK(state IN ('open','frozen')),\n target_state TEXT NOT NULL CHECK(target_state IN ('active','withdrawn')),\n baseline_result_id TEXT REFERENCES adopted_result(result_id),\n adopted_fact_seq INTEGER NOT NULL CHECK(adopted_fact_seq>=1),\n calculation_key TEXT NOT NULL,\n calculation_revision INTEGER NOT NULL CHECK(calculation_revision>=1),\n basis_schema TEXT NOT NULL,\n basis_json TEXT NOT NULL CHECK(json_valid(basis_json)),\n target_schema TEXT NOT NULL,\n target_json TEXT NOT NULL CHECK(json_valid(target_json)),\n basis_digest TEXT NOT NULL CHECK(length(basis_digest)=64),\n target_digest TEXT NOT NULL CHECK(length(target_digest)=64),\n formal_output_digest TEXT NOT NULL CHECK(length(formal_output_digest)=64)\n) STRICT",
       "table": "adopted_result",
       "type": "table"
     },
@@ -915,7 +915,7 @@
     {
       "name": "document_shard_head",
       "owner": "records",
-      "sql": "CREATE TABLE document_shard_head (\nshard_key TEXT PRIMARY KEY,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n published_head INTEGER NOT NULL DEFAULT 0 CHECK(published_head>=0 AND published_head<=wanted_head),\n current_path TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n last_error_code TEXT,\n last_error_message TEXT\n) STRICT",
+      "sql": "CREATE TABLE document_shard_head (\nshard_key TEXT PRIMARY KEY,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n published_head INTEGER CHECK(published_head IS NULL OR (published_head>=0 AND published_head<=wanted_head)),\n current_path TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n last_error_code TEXT,\n last_error_message TEXT\n) STRICT",
       "table": "document_shard_head",
       "type": "table"
     },
