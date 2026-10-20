@@ -26,6 +26,7 @@ from ._fact_sources import (
     partial_fact_source_ids,
     partial_fact_source_paths,
 )
+from ._read_queries import PageQuery, QuerySelection, ReadPage, query_selection
 from ._resource_dependencies import (
     ALL_RESOURCE_COMPONENTS,
     check_resource_dependency,
@@ -70,6 +71,9 @@ __all__ = [
     "OpeningAssetAccounting",
     "OpeningAssetSlots",
     "PretaxView",
+    "PageQuery",
+    "QuerySelection",
+    "ReadPage",
     "ReadContext",
     "ResourceCutoff",
     "ResourceDefinition",
@@ -79,6 +83,7 @@ __all__ = [
     "ResourceWindow",
     "TaxSaleView",
     "UnitOfWork",
+    "query_selection",
     "ContractError",
     "restore_fact_collection",
     "split_fact_collection",

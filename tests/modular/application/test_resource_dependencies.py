@@ -353,10 +353,7 @@ def test_nonempty_exclusions_and_day_roundtrip_without_advancing_head_on_identic
         before = unit.head
     with store.write_unit(company) as unit:
         assert (
-            unit.repository("application").replace_dependencies(
-                [identity(30)], [original], relations=(), search_revision=unit.next_head
-            )
-            is False
+            unit.repository("application").replace_dependencies([identity(30)], [original]) is False
         )
     with store.read_unit(company) as unit:
         assert unit.head == before

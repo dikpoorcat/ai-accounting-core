@@ -131,3 +131,13 @@ def direct_relations(fact, context):
             }
         )
     return result
+
+
+def fact_relations(fact, context):
+    """Keep explicit tax-point references even when another calculation path supplies the edge."""
+    fields = ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+    relations = {tuple(edge[key] for key in fields) for edge in direct_relations(fact, context)}
+    point = fact["data"].get("tax_point")
+    if point is not None and point["type"] == "derived":
+        relations.add((fact["business_id"], "business", point["tax_point_id"], "calculation"))
+    return tuple(dict(zip(fields, value, strict=True)) for value in sorted(relations))

@@ -300,7 +300,6 @@ class SubmissionContext:
             if edge["producer_kind"] == producer_kind
             and edge["producer_id"] in producer_ids
             and edge["relation_kind"] == relation_kind
-            and edge["read_mode"] in ("fact", "result")
         )
         return tuple(
             fact

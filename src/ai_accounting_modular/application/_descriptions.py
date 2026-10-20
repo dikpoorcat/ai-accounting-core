@@ -4,7 +4,6 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 
 from ._dirty import numerical
 from ._publications import normalize as normalize_publications
-from ._relations import validate_description as validate_relations
 from ._resources import normalize as normalize_resource_dependency
 
 
@@ -45,7 +44,7 @@ def _dependencies(edges, responsibilities):
     return [indexed[key] for key in sorted(indexed)]
 
 
-def describe(grouped, context, relations):
+def describe(grouped, context):
     descriptions = []
     context.reset_descriptions()
     for owner, mutations in tuple((owner, tuple(rows)) for owner, rows in grouped.items()):
@@ -72,6 +71,5 @@ def describe(grouped, context, relations):
                 "本单业务尚有会影响核算的资料缺项。",
                 fact_issues=description["issues"],
             )
-        validate_relations(description, relations)
         descriptions.append((owner, description))
     return descriptions

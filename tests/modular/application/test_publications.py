@@ -80,6 +80,13 @@ def direct(consumer, producer, *, slot="main", producer_slot="main"):
     }
 
 
+def relation(edge):
+    return {
+        key: edge[key]
+        for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+    }
+
+
 def posting(current, slot):
     amount, business_id = current["data"]["amount_fen"], current["business_id"]
     plan = {
@@ -162,7 +169,7 @@ class Owner:
 
     def declare_relations(self, changes, context):
         return tuple(
-            deepcopy(edge)
+            relation(edge)
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
             for edge in self.configurations.get(change["business_id"], {}).get("dependencies", ())
@@ -327,9 +334,10 @@ def seed(system, facts, *, dependencies=(), publications=(), relations=None):
                 if edge["producer_kind"] in {"business", "object"}
                 and edge["read_mode"] in {"fact", "result"}
             ]
-        repo.replace_dependencies(
-            ids, dependencies, relations=relations, search_revision=unit.next_head
+        repo.replace_relations(
+            ids, [relation(edge) for edge in relations], search_revision=unit.next_head
         )
+        repo.replace_dependencies(ids, dependencies)
         repo.replace_publications(ids, publications)
 
 

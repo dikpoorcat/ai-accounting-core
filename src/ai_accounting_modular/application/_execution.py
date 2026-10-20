@@ -167,17 +167,19 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
     dependencies = [edge for _, plan in plans for edge in plan["dependencies"]]
     projection_changed = False
     if touched:
-        dependency_changed = repo.replace_dependencies(
+        relation_changed = repo.replace_relations(
             touched,
-            dependencies,
-            relations=context.declared_relations,
+            context.declared_relations,
             search_revision=unit.next_head,
         )
+        dependency_changed = repo.replace_dependencies(touched, dependencies)
         publication_changed = repo.replace_publications(
             touched, [item for _, plan in plans for item in plan["publications"]]
         )
         responsibility_changed = repo.replace_result_slots(responsibilities)
-        projection_changed = dependency_changed or publication_changed or responsibility_changed
+        projection_changed = (
+            relation_changed or dependency_changed or publication_changed or responsibility_changed
+        )
     for change in changes:
         if change.changed:
             application.records.replace_source_uses(

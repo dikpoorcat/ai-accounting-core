@@ -251,6 +251,17 @@ CREATE TABLE application_state (
 ) STRICT;
 
 -- owner: application
+CREATE TABLE current_relation (
+consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
+ producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object')),
+ producer_id TEXT NOT NULL CHECK(length(producer_id)=36),
+ relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),
+ PRIMARY KEY(consumer_business_id,producer_kind,producer_id,relation_kind)
+) STRICT;
+
+CREATE INDEX current_relation_reverse ON current_relation(producer_kind,producer_id,relation_kind,consumer_business_id);
+
+-- owner: application
 CREATE TABLE current_dependency (
 consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
  consumer_result_slot TEXT NOT NULL,
@@ -270,7 +281,6 @@ consumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),
  excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),
  resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),
  notify_effect TEXT CHECK(notify_effect IS NULL OR (read_mode='collection' AND notify_effect IN ('result','description'))),
- is_direct INTEGER NOT NULL CHECK(is_direct IN (0,1) AND (is_direct=0 OR (producer_kind IN ('business','object') AND read_mode IN ('fact','result')))),
  PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)
 ) STRICT;
 
@@ -312,6 +322,8 @@ result_id TEXT PRIMARY KEY CHECK(length(result_id)=36),
 ) STRICT;
 
 CREATE INDEX adopted_result_period ON adopted_result(posting_period,state,business_id,result_slot);
+
+CREATE INDEX adopted_result_business_slot_period ON adopted_result(business_id,result_slot,posting_period);
 
 CREATE INDEX adopted_result_calculation ON adopted_result(calculation_key,calculation_revision,state,result_id);
 
@@ -429,6 +441,10 @@ result_id TEXT NOT NULL REFERENCES adopted_result(result_id),
 
 CREATE INDEX settlement_source ON settlement(source_business_id,source_public_slot,period,result_id);
 
+CREATE INDEX settlement_movement ON settlement(movement_id,result_id);
+
+CREATE INDEX settlement_period ON settlement(period,actual_on,settlement_id,result_id);
+
 -- owner: ledger
 CREATE TABLE obligation_reclassification (
 result_id TEXT NOT NULL REFERENCES adopted_result(result_id),
@@ -456,6 +472,8 @@ result_id TEXT NOT NULL REFERENCES adopted_result(result_id),
  business_period TEXT NOT NULL,
  PRIMARY KEY(result_id,public_slot)
 ) STRICT;
+
+CREATE INDEX cost_lot_category_object_period ON cost_lot(category,object_id,business_period,result_id,public_slot);
 
 -- owner: ledger
 CREATE TABLE cost_consumption (
@@ -497,6 +515,8 @@ result_id TEXT NOT NULL REFERENCES adopted_result(result_id),
 ) STRICT;
 
 CREATE INDEX result_fund_movement_account_date ON result_fund_movement(account_id,period,actual_on,movement_id,result_id);
+
+CREATE INDEX result_fund_movement_period ON result_fund_movement(period,actual_on,movement_id,result_id);
 
 -- owner: ledger
 CREATE TABLE result_tax_sale (

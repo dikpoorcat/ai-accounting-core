@@ -4440,6 +4440,12 @@ class BusinessChangeResponsibility(TypedDict):
     complete_result_slots: list[Slot]
     natural_key: str | None
 
+class DirectRelation(TypedDict):
+    consumer_business_id: Id
+    producer_kind: Literal['business', 'object']
+    producer_id: Id
+    relation_kind: DependencyRelationKind
+
 class Dependency(TypedDict):
     consumer_business_id: Id
     consumer_result_slot: Slot
@@ -11651,6 +11657,7 @@ __all__ = [
     'CalculationRuleRef',
     'PostingPlan',
     'BusinessChangeResponsibility',
+    'DirectRelation',
     'Dependency',
     'ChangePlan',
     'ChangeDescription',

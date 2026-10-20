@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from ._relations import direct_relations
+from ._relations import fact_relations
 
 
 class DescriptionContext:
@@ -18,7 +18,7 @@ class DescriptionContext:
                     self._facts[business_id] = fact
         self._members = defaultdict(dict)
         for fact in self._facts.values():
-            for edge in direct_relations(fact, self):
+            for edge in fact_relations(fact, self):
                 key = edge["producer_kind"], edge["producer_id"], edge["relation_kind"]
                 self._members[key][fact["business_id"]] = fact
 

@@ -122,7 +122,7 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | records.public | `prepare_sources(sources, read_context)`、`plan_change/apply_current`、`resolve_sources/source_status`、`lease_source`、当前说明/待办及期间分页、`capture_documents/prepare_documents/publish_documents`、`capture_backup_materials/lease_backup_inputs/discard_backup_capture`、`open_standard_bundle/copy_standard_bundle`、`verify_snapshot` | 唯一维护来源、说明、待办和最终文档。来源内容预核验在写事务外完成，活跃证明绑定公司、位置及完整输入，并在采用和提交前复核；下载租约另提供固定字节。期间查询不把局部页当完整替换集合。备份捕获绑定同一数据库快照并保护原件和分片；离线核验把完整当前事实、对象、待办、说明及来源索引与已发布文档精确对应，同时检查未使用及冻结依据的已登记原件。完整资料可以脱离源库核验和复制。 |
 | storage.public | `read_unit/write_unit/preview_unit/maintenance_unit`、`list_companies/company_metadata`、`create_company_database`、`open_database_unit`、`publish_company_directory`、`company_structure_contract`、结构核验及一致数据库副本 | 在线和离线共用工作单元、模块仓储及实际结构核验，不开放跨公司任意 SQL。离线明确数据库和资料根，不创建虚假目录或负责人。试算复用完整核算及事务末检查，正常结束也回滚；新目标发布须原子且不覆盖已存在位置。数据库复制不承接完整包和文档编排。 |
 | files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)`、`discard_unaccepted_capture(company_id, capture_id)` | 仅备份/报表当前任务及验证，严格 FilePlan 为 BackupPlan 或 ReportExportPlan。具体内容和版本检查由注入的生产者端口负责；文件核验在事务外，最终维护事务内轻量复核有效性后按头和代次写回。未接纳捕获通过独立CaptureContext回收；当前任务任意状态或实际租约仍引用时保留，清理失败明确报错。files 不反向导入 application/reading。 |
-| reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`export_report(scope, head, request_id)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页；文件计划防重及验证。context 使用仅含可选 company_id 的 ContextScope，其余使用 LedgerScope。 |
+| reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`export_report(scope, head, request_id, *, epochs)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页；文件计划防重及验证。context 使用仅含可选 company_id 的 ContextScope，其余使用 LedgerScope。 |
 
 reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过storage建立一次只读上下文；HTTP只解析参数，不自行另开连接。页面context可以按目录默认选择一家公司，尚无公司时只返回目录；不打开其他公司业务库。AI的accounting_context未指定公司时只列可选公司，不代替AI选定工作范围。来源审查detail使用ContextScope，不编造业务月份。
 
@@ -131,6 +131,28 @@ reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过s
 `LedgerScope.expected_head` 是同公司、同范围、同读取口径的 `FinancialSnapshot.selection_digest`，比较时不把 expected_head 自身计入摘要。它核对实际报表选择，不使用 global_seq；无关文件任务和范围外业务不能让相同报表失效。应用比较采用变化时使用`ledger.get_result_refs(business_ids, read_context)`批量取得窄引用，不为读取ID、代次及期间加载全部采用正文和凭证分录。
 
 报表的scope显式选择current/as_posted，可在同一ReadContext中分别读取；其他未单独指定口径的查询沿上下文默认值。选择口径不另开事务，不复制存储上下文或连接。
+
+普通公开查询使用 QuerySelection 明确 current 或 as_posted/as_of，省略时沿同一 ReadContext 默认值；已经接收 LedgerScope 的入口不再叠第二份选择。正式采用截止与 ResourceCutoff 的经济月份、必要实际日分别表达，不能用一个日期代替。PageQuery 只携带每页数量、游标及预期版本；ReadPage 返回完整数量、筛选后完整数量、本页项目和后续游标。筛选、计数与汇总在分页前完成，版本绑定真实查询范围，不用无关全局提交号代替。
+
+### 正式账务的窄查询
+
+以下端口由 ledger 提供，字段类型放在 ledger.public。它们交付正式账务含义，页面字段转换留给 reading/dashboard；不开放任意 JSON 字段查询，也不先加载全历史正文再分页。
+
+| 端口 | 输入与返回 |
+| --- | --- |
+| `financial_summary(scope, read)` | FinancialSummary 含版本、范围、全部损益收入/费用/净利润、资产/负债/权益/资本/留存利润、银行/现金/平台，以及固定和无形资产各自原价/累计/净值及长期资产合计；每项为 AmountCell，附具体问题及采用来源。共用三表选择与余额，不以主营收入或税前利润替代完整结果。 |
+| `account_balances(keys, period, read, selection=...)` | 最多500个 AccountBalanceKey(account_code, object_id?)；对象省略表示该科目全部对象。返回每项有据月初/月末余额、首个正式记账月、问题及来源。current 使用最终有效事实；as_posted 的 as_of 必须等于所查月份，月初沿用上月正式余额。1101 与基金身份按同一口径读取成本，不从购买事实累计反推。 |
+| `query_obligation_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别/方向及 include_settled。纳入以前月份截至该月的完整义务及清偿，返回 PositionPage。 |
+| `query_cost_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别及 include_consumed。已耗尽来源仍有正式身份，不因剩余为零从完整目录消失；页面可以明确筛掉。 |
+| `query_settlement_events(query, page, read, selection=...)` | 明确发生月份范围，可按原义务、原义务业务种类、消费业务、真实资金身份及处理分量筛选。source_business_kinds 按所选正式义务的原 kind 过滤，不取当前事实标签。返回 ResourceUse 和仅在实际付款时对应的 FundMovement。实际分配取 use 金额，不能用整笔混合付款冒充本项金额。 |
+| `query_voucher_directory(scope, kinds, page, read, business_ids=..., roles=...)` | 按正式采用月份及凭证号提供窄目录，包含精确结果引用、凭证身份、摘要、角色及冲正关联。current 同样保留正式入账历史，不按当前目标丢掉必要原凭证。`get_vouchers(locators, read)` 只批量读取指定页的完整分录，定位含 voucher_id/result_id/generation。 |
+| `query_adopted_values(scope, kinds, page, read)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
+| `query_adopted_directory(scope, kinds, page, read, business_ids=..., result_slots=...)` | 返回月末所选正式结果的窄目录，包含无凭证结果和退休结果。`get_adopted_contents(locators, read)` 按最多500个精确 ResultRef 返回 source/target/basis，不附凭证或全部资源。 |
+| `fund_movements(account_id, from, to, read, selection=...)` | 账户为 None 时明确取全公司。按真实发生月份、实际日及稳定 movement_id 返回真实资金定义；正式冲正、替代凭证不制造第二次资金。 |
+
+PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 totals；义务按方向及类别分组，成本按类别分组，不能把不同对象的应收应付净抵。每项 ResourcePosition 含正式定义、采用来源及 PositionAmounts：确认额、money/agency/offset 清偿、transfer 转出、excess_reclassified、cost 消耗和剩余，均为整数分。汇总也使用相同分量和完整来源数量，在分页前形成。这里的 cutoff_period 只表示经济月末；核算需要精确实际日时继续使用既有 ResourceCutoff/ResourceWindow。
+
+目录先在所属模块中限定月份、种类、对象及筛选，计数后沿稳定键取页，再批量读取本页正文。游标和版本绑定公司、数据库、选择口径、范围、集合及筛选；相关变化返回 snapshot_changed。当前对象名称可更新显示，不能改变冻结采用中的类型、金额和实际日期。
 
 期初资产协作只增加一个进程内计算端口：`opening_asset_cards(fact,context)` 核验并生成公开卡片；`describe_opening_assets` 返回附加结果槽、依赖、发布及问题；`evaluate_opening_asset_slot` 计算指定摊折槽；`validate_opening_asset_candidate` 只读核验完整候选。期初合并完整责任，保留自己的 main 槽并委托资产槽。各方仍只保存自身事实和表，资产公式只有一份；未装配端口时明确说明资产接续不可用，不静默遗漏。
 
@@ -144,7 +166,9 @@ reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过s
 
 历史合同、政策等事实可以早于建账月。账务层统一拒绝在建账月以前产生凭证、资金、义务、成本消耗或正式财报贡献；建账前余额及未清组成通过期初接续，不由各业务模块一律拒绝较早事实。
 
-求值使用统一EvaluationContext：当前事实和对象以本单正确内容覆盖；get_result返回source/target/basis，不把候选伪装成已有凭证。ledger绑定完整计划后生成来源引用，正式保存使用同一身份和摘要；领域不自行生成结果身份。result依赖指结果槽；use/balance依赖指义务或成本的公开资源槽，资源定义另由result边声明，不能混用main与primary等名称。related_facts只按各owner事先声明的完整直接关系目录发现成员，叠加新增、替换和撤去，不扫描全部正文猜关系。
+求值使用统一 EvaluationContext：当前事实和对象以本单正确内容覆盖；get_result 返回 source/target/basis，不把候选伪装成已有凭证。ledger 绑定完整计划后生成来源引用；领域不自行生成结果身份。DirectRelation 严格只有 consumer_business_id、producer_kind（business/object）、producer_id、relation_kind 四项，声明完整事实的直接引用，独立于是否产生结果；撤去和交出责任不留直接关系。related_facts 只按此完整目录叠加本单新增、替换和撤去来发现成员，不从计算依赖或全部正文猜关系。
+
+Dependency 仍指向真实承担的结果槽。result 依赖指生产结果槽；use/balance 指义务或成本的公开资源槽，定义另由 result 边声明，不能混用 main 与 primary 等名称。必要的推导求值边不要求进入 DirectRelation，零结果的管理事实也不伪造 main 计划。事实中的对象角色及业务含义由所属 owner 检查，正式采用引用由 ledger 核对。
 
 代理代收代付采用严格 AgencyProof：只有合作 collection/payment 的正式 Target/Basis 产生，包含业务身份、agency 槽、原交易 source、方向、交易方、经营者、公司金额及期间，可选真实日。应用层按同一读快照或同单计划解析并传入 ledger；不保存第二份可编辑证明表。settlement.method=agency 须 agency_business_id/agency_public_slot，禁止 movement_id；金额合计必须等于有效证明，交易方、方向和原义务容量均须匹配。不产生公司资金发生或现金流。method=money 须真实 movement_id；offset 不伪造资金；转移及超付归类由独立 ObligationReclassification 承接。
 

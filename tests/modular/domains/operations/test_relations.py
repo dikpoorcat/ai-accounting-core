@@ -41,7 +41,7 @@ def test_declaration_uses_only_facts_and_also_declares_inherited_cooperation_con
         DirectContext(),
     )
     for edge in edges:
-        validate_contract("business-facts.schema.json", "Dependency", edge)
+        validate_contract("business-facts.schema.json", "DirectRelation", edge)
     assert {
         edge["consumer_business_id"]
         for edge in edges
@@ -82,3 +82,29 @@ def test_replaced_withdrawn_and_new_claims_form_one_final_reverse_membership():
     )
     actual = context.related_facts(source["business_id"], "settlement")
     assert {item["business_id"] for item in actual} == {old["business_id"], new["business_id"]}
+
+
+def test_explicit_fulfillment_tax_point_is_a_member_in_global_and_owner_overlays():
+    advance_id, point_id = str(uuid4()), str(uuid4())
+    current = {
+        "business_id": str(uuid4()),
+        "kind": "operations.advance_fulfillment",
+        "period": "2026-02",
+        "evidence_ids": [],
+        "data": {
+            "advance_id": advance_id,
+            "gross_fen": "100",
+            "tax_point": {"type": "derived", "tax_point_id": point_id},
+        },
+    }
+    validate_contract("business-facts.schema.json", "Fact", current)
+
+    class Context(DirectContext):
+        def related_facts(self, producer_id, relation_kind, **scope):
+            return ()
+
+    changes = [{"op": "create", "expected_seq": 0, "fact": current}]
+    declared = create_operations().declare_relations(changes, Context())
+    assert {row["producer_id"] for row in declared} == {advance_id, point_id}
+    own_overlay = DescriptionContext(Context(), changes)
+    assert own_overlay.related_facts(point_id, "calculation") == (current,)

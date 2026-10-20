@@ -8,6 +8,7 @@ from ai_accounting_modular.contracts.public import (
     ChangeDescription,
     ChangePlan,
     ContractError,
+    DirectRelation,
     EvaluationContext,
     Fact,
     OpeningAssetSlots,
@@ -40,9 +41,12 @@ def repository_factory() -> RepositoryFactory:
 class Assets:
     supported_kinds = tuple(CALCULATORS)
 
-    def declare_relations(self, changes, context: EvaluationContext):
+    def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         return tuple(
-            edge
+            {
+                key: edge[key]
+                for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+            }
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
             for edge in direct_dependencies(

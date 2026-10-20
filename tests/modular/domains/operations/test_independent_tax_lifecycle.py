@@ -15,6 +15,8 @@ from test_tax_lifecycle import (
 )
 from test_tax_lifecycle import system as system
 
+from ai_accounting_modular.application.public import create_backup_verifier
+
 
 def _balances(app, company, *businesses):
     balances = {}
@@ -211,6 +213,23 @@ def test_mixed_fulfillment_accepts_the_real_old_and_new_tax_months_without_relab
     )
     assert saved["completion"] == "complete", saved
     assert result(app, company, fulfilled)["target"]["values"]["revenue_fen"] == "10000"
+    with app.storage.read_unit(company) as read:
+        declared = read.repository("application").relations([fulfilled["business_id"]])
+        assert {row["producer_id"] for row in declared} == {
+            original["business_id"],
+            rule["business_id"],
+            fulfillment_point["business_id"],
+        }
+        verifier = create_backup_verifier(
+            identity=app.identity,
+            ledger=app.ledger,
+            records=app.records,
+            domains=tuple(
+                dict.fromkeys(app.registry.owner(kind) for kind in app.registry.supported_kinds)
+            ),
+            repositories=(),
+        )
+        verifier.verify_snapshot(read)
 
 
 def test_fully_refunded_future_advance_does_not_require_an_irrelevant_tax_rate(system):

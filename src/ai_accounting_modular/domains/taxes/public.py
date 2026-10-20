@@ -6,6 +6,7 @@ from ai_accounting_modular.contracts.public import (
     BusinessQuery,
     ChangeDescription,
     ChangePlan,
+    DirectRelation,
     EvaluationContext,
     Fact,
     PostingPlan,
@@ -136,6 +137,30 @@ def _direct_dependencies(fact):
     return edges
 
 
+def _fact_relations(fact):
+    relations = [
+        {
+            key: edge[key]
+            for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+        }
+        for edge in _direct_dependencies(fact)
+    ]
+    if fact["kind"] == "taxes.assessment":
+        for field in ("vat_policy_id", "surtax_policy_id", "policy_id", "prepayment_basis_id"):
+            if field in fact["data"]:
+                relations.append(
+                    {
+                        "consumer_business_id": fact["business_id"],
+                        "producer_kind": "business",
+                        "producer_id": fact["data"][field],
+                        "relation_kind": "calculation"
+                        if field == "prepayment_basis_id"
+                        else "policy",
+                    }
+                )
+    return relations
+
+
 def _dependencies(fact, context, actuals=()):
     data, kind = fact["data"], fact["kind"]
     edges = _direct_dependencies(fact)
@@ -219,12 +244,12 @@ def _validate(fact):
 class Taxes:
     supported_kinds = tuple(_CALCULATORS)
 
-    def declare_relations(self, changes, context: EvaluationContext):
+    def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         return tuple(
-            edge
+            relation
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
-            for edge in _direct_dependencies(
+            for relation in _fact_relations(
                 change.get("fact") or context.get_fact(change["business_id"])
             )
         )

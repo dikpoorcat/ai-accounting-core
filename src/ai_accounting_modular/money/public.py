@@ -2,6 +2,7 @@
 
 from ai_accounting_modular.contracts.public import (
     BusinessRef,
+    DirectRelation,
     EvaluationContext,
     ReadContext,
     ResourceCutoff,
@@ -128,9 +129,12 @@ class Money:
             fail("期间核对未装配正式账务及账户读取端口。", "unsupported_business")
         return check_period(period_from, period_to, read_context, self._ledger, self._identity)
 
-    def declare_relations(self, changes, context: EvaluationContext):
+    def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         return tuple(
-            edge
+            {
+                key: edge[key]
+                for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+            }
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
             for edge in _direct_dependencies(

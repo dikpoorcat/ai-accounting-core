@@ -195,6 +195,32 @@ def test_complete_backup_is_verified_without_source_catalog_or_material_director
     assert not path.exists()
 
 
+@pytest.mark.parametrize("fault", ["missing", "retargeted", "extra"])
+def test_saved_direct_directory_must_match_facts_before_it_is_restorable(captured, tmp_path, fault):
+    kernel, _, entries, _, fact = captured
+
+    def edit(connection):
+        if fault == "missing":
+            connection.execute(
+                "DELETE FROM current_relation WHERE consumer_business_id=?",
+                (fact["business_id"],),
+            )
+        elif fault == "retargeted":
+            connection.execute(
+                "UPDATE current_relation SET producer_id=? WHERE consumer_business_id=?",
+                (str(uuid4()), fact["business_id"]),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO current_relation VALUES(?,?,?,?)",
+                (fact["business_id"], "business", str(uuid4()), "reference"),
+            )
+
+    change_database(entries, tmp_path / "damaged-relations.sqlite3", edit)
+    with pytest.raises(ContractError, match="直接关系目录"):
+        kernel.application.backup_verifier(pack(entries))
+
+
 @pytest.mark.parametrize(
     "fault",
     [

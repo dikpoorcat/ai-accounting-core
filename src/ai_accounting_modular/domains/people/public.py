@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     ChangeDescription,
     ChangePlan,
     ContractError,
+    DirectRelation,
     EvaluationContext,
     Fact,
     PostingPlan,
@@ -133,14 +134,20 @@ def _validate(fact):
 class People:
     supported_kinds = tuple(_CALCULATORS)
 
-    def declare_relations(self, changes, context: EvaluationContext):
+    def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         edges = []
         for change in changes:
             if change["op"] in {"withdraw", "handoff_out"}:
                 continue
             fact = change.get("fact") or context.get_fact(change["business_id"])
             edges.extend(_direct_dependencies(fact))
-        return tuple(edges)
+        return tuple(
+            {
+                key: edge[key]
+                for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+            }
+            for edge in edges
+        )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         responsibilities, dependencies, issues, publications = [], [], [], []

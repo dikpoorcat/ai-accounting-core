@@ -281,7 +281,17 @@ def test_derived_result_edges_cannot_feed_back_into_reverse_fact_membership(syst
     class DirectOwner(BaseOwner):
         def declare_relations(self, changes, context):
             return tuple(
-                membership for change in changes if change["business_id"] == member["business_id"]
+                {
+                    key: membership[key]
+                    for key in (
+                        "consumer_business_id",
+                        "producer_kind",
+                        "producer_id",
+                        "relation_kind",
+                    )
+                }
+                for change in changes
+                if change["business_id"] == member["business_id"]
             )
 
     owner = DirectOwner(

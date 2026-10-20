@@ -6,6 +6,7 @@ from ai_accounting_modular.contracts.public import (
     BusinessQuery,
     ChangeDescription,
     ChangePlan,
+    DirectRelation,
     EvaluationContext,
     Fact,
     OpeningAssetAccounting,
@@ -36,9 +37,12 @@ class Opening:
     def __init__(self, *, asset_accounting: OpeningAssetAccounting | None = None):
         self._asset_accounting = AssetAccounting(asset_accounting)
 
-    def declare_relations(self, changes, context: EvaluationContext):
+    def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         return tuple(
-            edge
+            {
+                key: edge[key]
+                for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+            }
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
             for edge in dependencies(change.get("fact") or context.get_fact(change["business_id"]))

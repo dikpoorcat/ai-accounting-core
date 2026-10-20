@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     BusinessQuery,
     ChangeDescription,
     ChangePlan,
+    DirectRelation,
     EvaluationContext,
     Fact,
     PostingPlan,
@@ -66,7 +67,7 @@ class Financing:
         self.family = family
         self.supported_kinds = FINANCING_KINDS if family == "financing" else INVESTMENT_KINDS
 
-    def declare_relations(self, changes, context):
+    def declare_relations(self, changes, context) -> tuple[DirectRelation, ...]:
         result = []
         for change in changes:
             if change["op"] in {"withdraw", "handoff_out"}:
@@ -76,7 +77,13 @@ class Financing:
             if fact is None:
                 fail("融资投资关系声明缺少完整当前事实。", "invalid_input")
             result.extend(direct_dependencies(fact))
-        return tuple(result)
+        return tuple(
+            {
+                key: edge[key]
+                for key in ("consumer_business_id", "producer_kind", "producer_id", "relation_kind")
+            }
+            for edge in result
+        )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         businesses, edges, published = [], [], []

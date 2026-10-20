@@ -22,6 +22,7 @@ from ._wire_types import (
     CurrentObject,
     Dependency,
     DependencyRelationKind,
+    DirectRelation,
     Fact,
     FactIssue,
     FundMovement,
@@ -417,15 +418,17 @@ class DomainOwner(Protocol):
 
     declare_relations uses only its complete facts and direct get_fact references;
     it never queries reverse membership, computes slots, or reads result amounts.
-    Every declared membership must occur in the final description's fact/result
-    dependencies. Withdrawn and handed-out identities declare no relations.
+    Direct membership describes references in the fact, independently of whether
+    it produces accounting results. Computed result dependencies are separate;
+    they do not become fact membership. Withdrawn and handed-out identities
+    declare no relations.
     """
 
     supported_kinds: Sequence[str]
 
     def declare_relations(
         self, changes: Sequence[Mapping[str, Any]], context: EvaluationContext
-    ) -> tuple[Dependency, ...]: ...
+    ) -> tuple[DirectRelation, ...]: ...
 
     def describe_change(
         self, changes: Sequence[Mapping[str, Any]], context: EvaluationContext

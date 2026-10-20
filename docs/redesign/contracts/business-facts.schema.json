@@ -20213,6 +20213,30 @@
         }
       ]
     },
+    "DirectRelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consumer_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "producer_kind": {
+          "enum": ["business", "object"]
+        },
+        "producer_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "relation_kind": {
+          "$ref": "#/$defs/Dependency/properties/relation_kind"
+        }
+      },
+      "required": [
+        "consumer_business_id",
+        "producer_kind",
+        "producer_id",
+        "relation_kind"
+      ]
+    },
     "Dependency": {
       "type": "object",
       "additionalProperties": false,

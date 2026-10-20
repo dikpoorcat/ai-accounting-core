@@ -45,7 +45,7 @@ class ApplicationRepository:
             parameters.append(query["kind"])
         if filtered and query.get("object_id"):
             conditions.append(
-                "h.state='active' AND EXISTS(SELECT 1 FROM current_dependency d "
+                "h.state='active' AND EXISTS(SELECT 1 FROM current_relation d "
                 "WHERE d.consumer_business_id=h.business_id AND d.producer_kind='object' "
                 "AND d.producer_id=?)"
             )
@@ -161,7 +161,7 @@ class ApplicationRepository:
             )
         )
 
-    def dependencies(self, business_ids, *, direct_only=False):
+    def dependencies(self, business_ids):
         if not business_ids:
             return ()
         return tuple(
@@ -169,9 +169,34 @@ class ApplicationRepository:
             for row in self._session.fetchall(
                 "SELECT * FROM current_dependency WHERE consumer_business_id IN "
                 "(SELECT value FROM json_each(?)) "
-                + ("AND is_direct=1 " if direct_only else "")
-                + "ORDER BY consumer_business_id,consumer_result_slot",
+                "ORDER BY consumer_business_id,consumer_result_slot",
                 (canonical_json(list(business_ids)),),
+            )
+        )
+
+    def relations(self, business_ids):
+        if not business_ids:
+            return ()
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM current_relation WHERE consumer_business_id IN "
+                "(SELECT value FROM json_each(?)) "
+                "ORDER BY consumer_business_id,producer_kind,producer_id,relation_kind",
+                (canonical_json(list(business_ids)),),
+            )
+        )
+
+    def referencing(self, producer_kind, producer_ids):
+        if not producer_ids:
+            return ()
+        return tuple(
+            row[0]
+            for row in self._session.fetchall(
+                "SELECT DISTINCT consumer_business_id FROM current_relation "
+                "WHERE producer_kind=? AND producer_id IN (SELECT value FROM json_each(?)) "
+                "ORDER BY consumer_business_id",
+                (producer_kind, canonical_json(sorted(producer_ids))),
             )
         )
 
@@ -255,10 +280,10 @@ class ApplicationRepository:
         self, producer_kind, producer_ids, relation_kind, *, period_from=None, period_to=None
     ):
         sql = (
-            "SELECT DISTINCT d.consumer_business_id FROM current_dependency d "
+            "SELECT DISTINCT d.consumer_business_id FROM current_relation d "
             "JOIN business_head h ON h.business_id=d.consumer_business_id "
             "WHERE d.producer_kind=? AND d.producer_id IN (SELECT value FROM json_each(?)) "
-            "AND d.relation_kind=? AND d.is_direct=1 AND h.state='active'"
+            "AND d.relation_kind=? AND h.state='active'"
         )
         parameters = [producer_kind, canonical_json(sorted(producer_ids)), relation_kind]
         for period, comparison in ((period_from, ">="), (period_to, "<=")):
@@ -392,7 +417,42 @@ class ApplicationRepository:
             )
         )
 
-    def replace_dependencies(self, business_ids, dependencies, *, relations, search_revision):
+    def replace_relations(self, business_ids, relations, *, search_revision):
+        previous = self.relations(business_ids)
+        before = {relation_identity(edge) for edge in previous}
+        after = {relation_identity(edge) for edge in relations}
+        if before == after:
+            return False
+
+        def objects(edges):
+            grouped = {business_id: set() for business_id in business_ids}
+            for edge in edges:
+                if edge["producer_kind"] == "object":
+                    grouped[edge["consumer_business_id"]].add(edge["producer_id"])
+            return grouped
+
+        old_objects, new_objects = objects(previous), objects(relations)
+        changed_objects = [key for key in business_ids if old_objects[key] != new_objects[key]]
+        if changed_objects:
+            self._session.execute(
+                "UPDATE business_head SET search_revision=? WHERE business_id IN "
+                "(SELECT value FROM json_each(?))",
+                (search_revision, canonical_json(changed_objects)),
+            )
+        self._session.execute(
+            "DELETE FROM current_relation WHERE consumer_business_id IN "
+            "(SELECT value FROM json_each(?))",
+            (canonical_json(list(business_ids)),),
+        )
+        if after:
+            self._session.executemany(
+                "INSERT INTO current_relation(consumer_business_id,producer_kind,producer_id,"
+                "relation_kind) VALUES(?,?,?,?)",
+                sorted(after),
+            )
+        return True
+
+    def replace_dependencies(self, business_ids, dependencies):
         def key(edge):
             return tuple(
                 edge.get(name)
@@ -415,36 +475,8 @@ class ApplicationRepository:
             )
 
         previous = self.dependencies(business_ids)
-        old_direct_keys = {key(edge) for edge in self.dependencies(business_ids, direct_only=True)}
-        new_direct = {relation_identity(edge) for edge in relations}
-
-        def direct(edge):
-            return (
-                edge["producer_kind"] in {"business", "object"}
-                and edge["read_mode"] in {"fact", "result"}
-                and relation_identity(edge) in new_direct
-            )
-
-        if {(key(edge), key(edge) in old_direct_keys) for edge in previous} == {
-            (key(edge), direct(edge)) for edge in dependencies
-        }:
+        if {key(edge) for edge in previous} == {key(edge) for edge in dependencies}:
             return False
-
-        def objects(edges):
-            grouped = {business_id: set() for business_id in business_ids}
-            for edge in edges:
-                if edge["producer_kind"] == "object":
-                    grouped[edge["consumer_business_id"]].add(edge["producer_id"])
-            return grouped
-
-        old_objects, new_objects = objects(previous), objects(dependencies)
-        changed_objects = [key for key in business_ids if old_objects[key] != new_objects[key]]
-        if changed_objects:
-            self._session.execute(
-                "UPDATE business_head SET search_revision=? WHERE business_id IN "
-                "(SELECT value FROM json_each(?))",
-                (search_revision, canonical_json(changed_objects)),
-            )
         self._session.execute(
             "DELETE FROM current_dependency WHERE consumer_business_id IN "
             "(SELECT value FROM json_each(?))",
@@ -455,8 +487,8 @@ class ApplicationRepository:
                 "INSERT INTO current_dependency(consumer_business_id,consumer_result_slot,"
                 "producer_kind,producer_id,producer_public_slot,read_mode,relation_kind,"
                 "period_from,period_to,effective_on,excluded_result_slots_json,"
-                "resource_components_json,notify_effect,is_direct) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "resource_components_json,notify_effect) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 tuple(
                     edge.get(key)
                     for key in (
@@ -478,7 +510,6 @@ class ApplicationRepository:
                     if "resource_components" in edge
                     else None,
                     edge.get("notify_effect"),
-                    int(direct(edge)),
                 ),
             )
         return True
@@ -486,7 +517,6 @@ class ApplicationRepository:
 
 def _dependency(row):
     value = dict(row)
-    value.pop("is_direct")
     excluded = value.pop("excluded_result_slots_json")
     components = value.pop("resource_components_json")
     if components is not None:

@@ -1,5 +1,6 @@
 """Offline owner proofs over one database view, without executing business formulas."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import ContractError, loads_json, validate_contract
@@ -7,6 +8,17 @@ from ai_accounting_modular.contracts.public import ContractError, loads_json, va
 from . import _documents
 from ._changes import fact_digest
 from ._context import DomainRegistry
+from ._relations import identity as relation_identity
+
+
+class _DirectFacts:
+    """Declaration can inspect explicit facts, but cannot query or compute results."""
+
+    def __init__(self, facts):
+        self._facts = {fact["business_id"]: fact for fact in facts}
+
+    def get_fact(self, business_id):
+        return deepcopy(self._facts.get(business_id))
 
 
 @dataclass(frozen=True)
@@ -19,6 +31,7 @@ class SnapshotVerifier:
     def verify(self, read):
         heads = read.repository("application").snapshot_heads()
         facts = self._facts(heads, read)
+        self._relations(facts, heads, read)
         objects = _documents.export_objects(self, read)
         formal = self.ledger.verify_snapshot(read)
         indexed = {head["business_id"]: head for head in heads}
@@ -56,6 +69,38 @@ class SnapshotVerifier:
             read,
             required_source_ids=formal.source_ids,
         )
+
+    def _relations(self, facts, heads, read):
+        """Prove the rebuildable current directory without rerunning accounting."""
+        indexed = {head["business_id"]: head for head in heads}
+        grouped = {}
+        for fact in facts:
+            owner = self.registry.owner(fact["kind"])
+            grouped.setdefault(owner, []).append(
+                {
+                    "op": "recalculate",
+                    "business_id": fact["business_id"],
+                    "expected_seq": indexed[fact["business_id"]]["seq"],
+                    "fact": deepcopy(fact),
+                }
+            )
+        expected, actual = set(), set()
+        context = _DirectFacts(facts)
+        for owner, changes in grouped.items():
+            ids = {change["business_id"] for change in changes}
+            for relation in owner.declare_relations(changes, context):
+                validate_contract("business-facts.schema.json", "DirectRelation", relation)
+                if relation["consumer_business_id"] not in ids:
+                    raise ContractError("storage_corrupt", "直接关系声明不属于当前事实的负责模块。")
+                expected.add(relation_identity(relation))
+        repository = read.repository("application")
+        ids = tuple(indexed)
+        for offset in range(0, len(ids), 500):
+            actual.update(
+                relation_identity(row) for row in repository.relations(ids[offset : offset + 500])
+            )
+        if actual != expected:
+            raise ContractError("storage_corrupt", "保存的直接关系目录与完整当前事实不一致。")
 
     def _facts(self, heads, read):
         """FKs cover absent identities; every owner also proves no misplaced body remains."""

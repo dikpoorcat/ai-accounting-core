@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.application.public import create_application
+from ai_accounting_modular.application.public import create_application, create_backup_verifier
 from ai_accounting_modular.application.public import repository_factory as application_repository
 from ai_accounting_modular.domains.operations.public import create_operations
 from ai_accounting_modular.domains.operations.public import (
@@ -433,7 +433,7 @@ def test_real_income_tax_reads_shared_profit_after_vat_without_counting_itself(a
 
 
 def test_real_later_income_actual_adopts_90000_not_30000_tax_due(assembled):
-    app, company_id, _, _ = assembled
+    app, company_id, storage, _ = assembled
     income, _, _ = income_inputs()
     declared = fact(
         "income-declaration",
@@ -456,6 +456,27 @@ def test_real_later_income_actual_adopts_90000_not_30000_tax_due(assembled):
     values = main(app, company_id, income)["target"]["values"]
     assert values["cumulative_tax_fen"] == values["change_fen"] == "90000"
     assert main(app, company_id, declared)["vouchers"] == []
+    explicit = {income["data"]["policy_id"], income["data"]["prepayment_basis_id"]}
+    with storage.read_unit(company_id) as read:
+        repository = read.repository("application")
+        assert {
+            row["producer_id"] for row in repository.relations([income["business_id"]])
+        } == explicit
+        assert not explicit.intersection(
+            row["producer_id"] for row in repository.dependencies([income["business_id"]])
+        )
+        # The fact keeps these references; the actual filing needs neither missing producer.
+        assert repository.heads(explicit) == {}
+        verifier = create_backup_verifier(
+            identity=app.identity,
+            ledger=app.ledger,
+            records=app.records,
+            domains=tuple(
+                dict.fromkeys(app.registry.owner(kind) for kind in app.registry.supported_kinds)
+            ),
+            repositories=(),
+        )
+        verifier.verify_snapshot(read)
 
 
 def test_real_earlier_income_cumulative_correction_recomputes_later_difference(assembled):

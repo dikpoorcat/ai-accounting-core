@@ -72,21 +72,14 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
 
     def notify_relations(businesses, edges, old_edges):
         observers = []
+        before, after = defaultdict(set), defaultdict(set)
+        for values, members in ((old_edges, before), (edges, after)):
+            for edge in values:
+                members[edge["consumer_business_id"]].add(_membership(edge))
         for business in businesses:
             business_id = business["business_id"]
-            members = []
-            for values in (old_edges, edges):
-                members.append(
-                    {
-                        _membership(edge)
-                        for edge in values
-                        if edge["consumer_business_id"] == business_id
-                        and edge["read_mode"] in ("fact", "result")
-                        and edge["producer_kind"] in ("business", "object")
-                    }
-                )
             change = changed.get(business_id)
-            if change is None and members[0] == members[1]:
+            if change is None and before[business_id] == after[business_id]:
                 continue
             if business_id not in previous_facts:
                 previous_facts[business_id] = (
@@ -100,15 +93,17 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
                 if fact is not None
             ]
             periods = {fact["period"] for fact in facts}
-            for kind, producer, relation in members[0] | members[1]:
+            for kind, producer, relation in before[business_id] | after[business_id]:
                 observers.extend(repo.observers(kind, producer, relation, periods))
             for fact in facts:
                 observers.extend(repo.scope_observers(fact["kind"], {fact["period"]}))
         notify(observers)
 
+    include(repo.referencing("object", changed_objects))
     for object_id in changed_objects:
         for mode in ("fact", "result"):
             notify(repo.consumers("object", object_id, read_mode=mode))
+    include(repo.referencing("business", changed))
     for business_id in changed:
         notify(repo.consumers("business", business_id, read_mode="fact"))
 
@@ -124,11 +119,11 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
         notify_relations(
             notifying,
             relations,
-            repo.dependencies([row["business_id"] for row in notifying], direct_only=True),
+            repo.relations([row["business_id"] for row in notifying]),
         )
         if len(included) != participant_count:
             continue
-        descriptions = describe(grouped, context, relations)
+        descriptions = describe(grouped, context)
         missing = sorted(included - loaded)
         for offset in range(0, len(missing), 500):
             references.update(

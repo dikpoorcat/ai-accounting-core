@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     ChangeDescription,
     ChangePlan,
     ContractError,
+    DirectRelation,
     EvaluationContext,
     Fact,
     PostingPlan,
@@ -24,7 +25,7 @@ from ._expenses import check_expense, expense
 from ._income import other_income
 from ._overpayment_pool import balance_dependency
 from ._publications import publications
-from ._relations import direct_relations, reference_edge, references, resource_uses
+from ._relations import direct_relations, fact_relations, reference_edge, references, resource_uses
 from ._relationships import deposit, overpayment, pass_through, pass_through_return, reimbursement
 from ._repository import OperationsRepository
 from ._returns import expense_recovery, sale_return
@@ -84,15 +85,15 @@ def _validate_fact(fact):
 class Operations:
     supported_kinds = tuple(_CALCULATORS)
 
-    def declare_relations(self, changes, context):
+    def declare_relations(self, changes, context) -> tuple[DirectRelation, ...]:
         context = DescriptionContext(context, changes)
         return tuple(
-            edge
+            relation
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
             for fact in (change.get("fact") or context.get_fact(change["business_id"]),)
             if fact is not None
-            for edge in direct_relations(fact, context)
+            for relation in fact_relations(fact, context)
         )
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:

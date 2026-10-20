@@ -13,7 +13,7 @@ from ai_accounting_modular.application._context import DomainRegistry, Submissio
 from ai_accounting_modular.application._planning import collect_changes, ordered_slots
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 
-from .test_publications import Ledger, create, direct, fact, identity, seed
+from .test_publications import Ledger, create, direct, fact, identity, relation, seed
 from .test_publications import Owner as BaseOwner
 from .test_publications import system as system
 
@@ -56,7 +56,7 @@ class Owner(BaseOwner):
 
     def declare_relations(self, changes, context):
         return tuple(
-            edge
+            relation(edge)
             for change in changes
             if change["op"] not in {"withdraw", "handoff_out"}
             for edge in link(change["fact"])
@@ -172,7 +172,7 @@ def test_old_and_new_membership_notifies_both_readers_without_stale_union(system
     }
 
 
-def test_declared_direct_membership_must_be_present_in_final_description(system, monkeypatch):
+def test_direct_membership_need_not_create_an_unrelated_result_dependency(system, monkeypatch):
     root, child = fact(1), member(2, 1)
     roots, children = Owner("operations.expense", []), Owner("operations.deposit", [])
     describe = children.describe_change
@@ -185,19 +185,47 @@ def test_declared_direct_membership_must_be_present_in_final_description(system,
         return result
 
     monkeypatch.setattr(children, "describe_change", incomplete)
-    with pytest.raises(ContractError, match="遗漏已声明的直接关系") as failure:
-        run(system, [roots, children], [create(root), create(child)])
-    assert failure.value.code == "invalid_input"
-    assert (
-        child["business_id"] in failure.value.message
-        and root["business_id"] in failure.value.message
+    descriptions = run(system, [roots, children], [create(root), create(child)])
+    assert roots.seen[root["business_id"]] == (child["business_id"],)
+    child_description = next(value for owner, value in descriptions if owner is children)
+    assert not any(edge["read_mode"] == "fact" for edge in child_description["dependencies"])
+
+
+def test_fact_only_reference_is_redescribed_when_its_current_source_changes(system):
+    root, child = fact(1), member(2, 1)
+    seed(system, [root, child], relations=link(child))
+
+    class FactOnlyOwner(Owner):
+        def describe_change(self, changes, context):
+            result = super().describe_change(changes, context)
+            result["dependencies"] = []
+            for row in result["businesses"]:
+                row["complete_result_slots"] = []
+            return result
+
+    roots, children = (
+        FactOnlyOwner("operations.expense", [root]),
+        FactOnlyOwner("operations.deposit", [child]),
     )
+    corrected = {**root, "data": {**root["data"], "amount_fen": "200"}}
+    descriptions = run(
+        system, [children, roots], [{"op": "replace", "expected_seq": 1, "fact": corrected}]
+    )
+    assert children.described == [child["business_id"]]
+    assert {
+        row["business_id"] for _, description in descriptions for row in description["businesses"]
+    } == {root["business_id"], child["business_id"]}
+    assert all(description["dependencies"] == [] for _, description in descriptions)
 
 
 def test_direct_declaration_cannot_borrow_another_owner_responsibility(system, monkeypatch):
     root, child = fact(1), member(2, 1)
     roots, children = Owner("operations.expense", []), Owner("operations.deposit", [])
-    monkeypatch.setattr(roots, "declare_relations", lambda changes, context: tuple(link(child)))
+    monkeypatch.setattr(
+        roots,
+        "declare_relations",
+        lambda changes, context: tuple(relation(edge) for edge in link(child)),
+    )
     with pytest.raises(ContractError, match="本领域有效业务"):
         run(system, [roots, children], [create(root), create(child)])
 

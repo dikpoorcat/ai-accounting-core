@@ -1,5 +1,5 @@
 {
-  "fingerprint": "b9962be16f19b8455e884ee9f85bd07a6a7624aecc7b828c088b30c6cf30c7c9",
+  "fingerprint": "8fa620b19b80a516e82e0940f96a932f50cb8cc390b6a5de775c9ecc32f98392",
   "kind": "company",
   "objects": [
     {
@@ -38,6 +38,13 @@
       "type": "index"
     },
     {
+      "name": "current_relation_reverse",
+      "owner": "application",
+      "sql": "CREATE INDEX current_relation_reverse ON current_relation(producer_kind,producer_id,relation_kind,consumer_business_id)",
+      "table": "current_relation",
+      "type": "index"
+    },
+    {
       "name": "application_state",
       "owner": "application",
       "sql": "CREATE TABLE application_state (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n working_period_to TEXT NOT NULL CHECK(length(working_period_to)=7)\n) STRICT",
@@ -54,7 +61,7 @@
     {
       "name": "current_dependency",
       "owner": "application",
-      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),\n notify_effect TEXT CHECK(notify_effect IS NULL OR (read_mode='collection' AND notify_effect IN ('result','description'))),\n is_direct INTEGER NOT NULL CHECK(is_direct IN (0,1) AND (is_direct=0 OR (producer_kind IN ('business','object') AND read_mode IN ('fact','result')))),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
+      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),\n notify_effect TEXT CHECK(notify_effect IS NULL OR (read_mode='collection' AND notify_effect IN ('result','description'))),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
       "table": "current_dependency",
       "type": "table"
     },
@@ -63,6 +70,13 @@
       "owner": "application",
       "sql": "CREATE TABLE current_publication (\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n collection TEXT NOT NULL CHECK(collection IN ('tax_sales','pre_tax')),\n period_from TEXT NOT NULL CHECK(length(period_from)=7),\n period_to TEXT NOT NULL CHECK(length(period_to)=7 AND period_to>=period_from),\n PRIMARY KEY(business_id,result_slot,collection)\n) STRICT",
       "table": "current_publication",
+      "type": "table"
+    },
+    {
+      "name": "current_relation",
+      "owner": "application",
+      "sql": "CREATE TABLE current_relation (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object')),\n producer_id TEXT NOT NULL CHECK(length(producer_id)=36),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n PRIMARY KEY(consumer_business_id,producer_kind,producer_id,relation_kind)\n) STRICT",
+      "table": "current_relation",
       "type": "table"
     },
     {
@@ -178,6 +192,13 @@
       "type": "table"
     },
     {
+      "name": "adopted_result_business_slot_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_business_slot_period ON adopted_result(business_id,result_slot,posting_period)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
       "name": "adopted_result_calculation",
       "owner": "ledger",
       "sql": "CREATE INDEX adopted_result_calculation ON adopted_result(calculation_key,calculation_revision,state,result_id)",
@@ -196,6 +217,13 @@
       "owner": "ledger",
       "sql": "CREATE INDEX cost_consumption_source ON cost_consumption(source_business_id,source_public_slot,period,result_id)",
       "table": "cost_consumption",
+      "type": "index"
+    },
+    {
+      "name": "cost_lot_category_object_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX cost_lot_category_object_period ON cost_lot(category,object_id,business_period,result_id,public_slot)",
+      "table": "cost_lot",
       "type": "index"
     },
     {
@@ -234,6 +262,13 @@
       "type": "index"
     },
     {
+      "name": "result_fund_movement_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_fund_movement_period ON result_fund_movement(period,actual_on,movement_id,result_id)",
+      "table": "result_fund_movement",
+      "type": "index"
+    },
+    {
       "name": "result_source_reverse",
       "owner": "ledger",
       "sql": "CREATE INDEX result_source_reverse ON result_source(source_id,result_id)",
@@ -245,6 +280,20 @@
       "owner": "ledger",
       "sql": "CREATE INDEX result_tax_sale_period ON result_tax_sale(tax_period,source_business_id,result_id,item_no)",
       "table": "result_tax_sale",
+      "type": "index"
+    },
+    {
+      "name": "settlement_movement",
+      "owner": "ledger",
+      "sql": "CREATE INDEX settlement_movement ON settlement(movement_id,result_id)",
+      "table": "settlement",
+      "type": "index"
+    },
+    {
+      "name": "settlement_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX settlement_period ON settlement(period,actual_on,settlement_id,result_id)",
+      "table": "settlement",
       "type": "index"
     },
     {

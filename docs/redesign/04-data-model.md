@@ -24,7 +24,7 @@ DDL 中每张表上方的 owner 是唯一写入者；数据库连接共用不改
 | 身份与当前头 | identity_object、business_head | identity 独立维护对象；application 维护业务身份、当前序号、防重前提及已经完成的完整结果槽承诺。 |
 | 领域事实 | op_fact、people_fact、asset_fact、financing_fact、investment_fact、money_fact、tax_fact、opening_fact、report_basis_fact | 各 owner 的严格当前事实；撤去后删除该正文行。 |
 | 来源与当前工作 | source、source_use、current_issue、current_issue_scope、company_note | 固定来源内容、当前引用、未解事项和当前有效经营说明。 |
-| 当前依赖与工作范围 | current_dependency、current_publication、application_state | 当前引用、结果发布范围及已进入的工作末月；只保当前状态，不保存操作历史。 |
+| 当前关系与工作范围 | current_relation、current_dependency、current_publication、application_state | 事实直接引用、结果计算依赖、发布范围及已进入的工作末月；只保当前状态。 |
 | 正式采用 | adopted_result、result_slot_current、result_source、result_basis_ref | 当前完整结果槽头，以及闭期必要采用、原件来源和业务结果来源索引。 |
 | 凭证 | voucher、voucher_line、voucher_sequence | 正式平衡分录、原编号、正式冲正关联和下一编号。 |
 | 义务与成本 | obligation、settlement、obligation_reclassification、cost_lot、cost_consumption | 明确的应收应付、清偿、非资金转移及成本消耗，按正式结果所有。 |
@@ -81,7 +81,9 @@ result_basis_ref按Basis.source_results逐项索引生产业务、槽、结果�
 
 正式状态与凭证影响分别判断。完整内容及依据定位未变时复用原结果。开放来源代次或位置改变时，同步精确引用，结果版本可以更新，凭证身份、编号和分录不因定位更新而改变；闭期仅补来源位置或上游代次不新建更正采用。必要政策、接续数字或分类改变时更新正式头，即使没有借贷变化也保留正确状态。确有分录变化才产生关联冲正及替代；无凭证更正头沿基线解析有效目标凭证，撤去后不再继承退出凭证。必要实际日期进入 Basis；纯管理日期只在当前 Fact。
 
-current_dependency保存当前事实/结果依赖、collection集合观察和资源use/balance声明。is_direct由应用按declare_relations投影，区分事实的直接成员与推导核算边；反向成员查询和成员增删通知只看前者，结果调度仍使用全部相应依赖，不能让历史金额引用反过来制造新的事实成员。notify_effect只对collection区分数值变化与责任目录通知，NULL等同result。资源声明按精确来源、月份、必要实际日、排除槽及resource_components_json中的组成范围安排计算；NULL表示完整，不保存金额或另一份余额。旧、新使用范围均通知相交的余额观察者；事实关系只读fact/result。重复依赖合并覆盖范围和组件，实际日或排除名单不同的余额读取不合并；不扫描业务JSON猜关系。
+current_relation 保存完整事实直接引用的业务或对象，只含消费者业务、生产者类别及身份、关系性质。它由 owner 的 declare_relations 同事务完整替换，不含结果槽或金额；反向成员发现、成员增删通知和对象业务检索使用这份目录。纯管理事实可以没有任何记账结果，仍正常保有直接关系。此目录可以从当前事实重新生成，不成为第二份事实真源。
+
+current_dependency 保存实际结果槽的求值依赖、collection 集合观察和资源 use/balance 声明。推导出来的计算引用不反向变成事实成员，直接事实关系也不必制造一条计算边。notify_effect 只对 collection 区分数值变化与责任目录通知，NULL 等同 result。资源按精确来源、月份、必要实际日、排除槽和 resource_components_json 组成范围安排计算；NULL 表示完整，不保存金额或另一份余额。旧、新使用范围均通知相交的余额观察者。重复依赖合并覆盖范围和组成；实际日或排除名单不同的余额读取不合并。
 
 current_publication 按业务、结果槽和 tax_sales/pre_tax 集合保存当前发布月份范围，并按集合和范围建立索引。aggregate 结果依赖据此发现相关槽及消费者。发布范围只是可重建索引，不含金额和旧正文；与当前事实、依赖及正式采用同事务替换。退出或移月按旧、新范围通知，金额的唯一真源仍是账务正式结果。
 
