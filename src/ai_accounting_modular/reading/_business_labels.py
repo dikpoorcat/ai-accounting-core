@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ai_accounting_modular.contracts.public import ResourceDefinition
-from ai_accounting_modular.ledger.public import AdoptedContent
+from ai_accounting_modular.ledger.public import (
+    AdoptedContent,
+    AdoptedOriginProjection,
+    ObligationDirectoryItem,
+)
 
 
 @dataclass(frozen=True)
@@ -14,10 +18,52 @@ class BusinessLabel:
     title: str
 
 
-def business_matter(content: AdoptedContent, resource: ResourceDefinition | None = None) -> dict:
+@dataclass(frozen=True)
+class ObligationFields:
+    """Only the actual resource fields used to describe an obligation."""
+
+    reference: dict
+    direction: str
+    category: str
+    business_period: str
+    party_id: str | None
+
+
+def obligation_fields(resource):
+    if isinstance(resource, ObligationFields):
+        return resource
+    if isinstance(resource, ObligationDirectoryItem):
+        return ObligationFields(
+            resource.reference,
+            resource.direction,
+            resource.category,
+            resource.business_period,
+            resource.party_id,
+        )
+    return ObligationFields(
+        resource.reference,
+        resource.value["direction"],
+        resource.value["category"],
+        resource.value["business_period"],
+        resource.value.get("party_id"),
+    )
+
+
+def origin_fields(content):
+    """Finite meaning readers accept projections; amount/date readers still require full bodies."""
+    if isinstance(content, AdoptedOriginProjection):
+        return content.target_fields, content.basis_fields
+    return content.target, content.basis
+
+
+def business_matter(
+    content: AdoptedContent | AdoptedOriginProjection,
+    resource: ResourceDefinition | ObligationDirectoryItem | ObligationFields | None = None,
+) -> dict:
     """A typed product, project or contract identity; never a display-name grouping rule."""
-    kind, data = content.target["kind"], content.basis.get("input", {})
-    values = content.target.get("values", {})
+    target, basis = origin_fields(content)
+    kind, data = target["kind"], basis.get("input", {})
+    values = target.get("values", {})
     if kind in {"investment.money_fund_purchase", "investment.money_fund_redemption"}:
         return {"fund_id": values["fund_id"]}
     if kind.startswith("investment.cooperation_") and "contract_id" in values:
@@ -114,18 +160,21 @@ _REMUNERATION = {
 
 
 def business_label(
-    content: AdoptedContent, resource: ResourceDefinition | None = None
+    content: AdoptedContent | AdoptedOriginProjection,
+    resource: ResourceDefinition | ObligationDirectoryItem | ObligationFields | None = None,
 ) -> BusinessLabel:
     """A resource may refine a multi-purpose source, such as wages containing social dues."""
-    kind, data = content.target["kind"], content.basis.get("input", {})
-    category = resource.value["category"] if resource is not None else None
+    target, basis = origin_fields(content)
+    kind, data = target["kind"], basis.get("input", {})
+    light = isinstance(resource, ObligationFields | ObligationDirectoryItem)
+    category = (resource.category if light else resource.value["category"]) if resource else None
     if category in _RESOURCE:
         return BusinessLabel(*_RESOURCE[category])
     if kind == "operations.overpayment":
         if resource is not None:
             return (
                 BusinessLabel("overpayment_recovery", "多付款追收")
-                if resource.value["direction"] == "receivable"
+                if (resource.direction if light else resource.value["direction"]) == "receivable"
                 else BusinessLabel("overreceipt_refund", "多收款退回")
             )
         return BusinessLabel(
@@ -133,7 +182,7 @@ def business_label(
                 "overpayment_recovery": ("overpayment_recovery", "多付款追收"),
                 "overreceipt_refund": ("overreceipt_refund", "多收款退回"),
             }.get(
-                content.target.get("values", {}).get("treatment"),
+                target.get("values", {}).get("treatment"),
                 ("excess_settlement", "超额收付款处理"),
             )
         )

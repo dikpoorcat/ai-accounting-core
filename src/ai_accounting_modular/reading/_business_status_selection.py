@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.ledger.public import AdoptedContent
 
-from . import _brief_vouchers, _monthly
+from . import _brief_open_members, _brief_vouchers, _monthly
 from ._brief_activity_parts import parts
 from ._brief_activity_sources import Contents, pages
 from ._collections import CollectionFilter, collection_page
@@ -43,11 +43,16 @@ def _item(scope, component, collection, item_id, read):
     return result.items[0]
 
 
-def _member(reader, scope, query, read):
+def _member(reader, scope, query, read, cache):
     key, voucher = query["detail_scope_key"], query["voucher_version_id"]
     subject = query["subject_id"]
     if key.startswith("open:"):
         item = _item(scope, "brief_open_items", "open_members", key[5:], read)
+        hydrated, contents = _brief_open_members.hydrate(
+            reader, [item], read.company_id, read, known_contents=cache.saved.values()
+        )
+        cache.reuse(contents)
+        item = hydrated[0]
         selected = item["_detail_scope"]
         header = _brief_vouchers.effective_headers(reader, [selected["reference"]], read)[0]
         expected = "" if header is None else _brief_vouchers.token(_brief_vouchers.locator(header))
@@ -117,7 +122,7 @@ def select(reader, scope, query, read):
     current = cache.get(current_ref) if current_ref is not None else None
     detail = None
     if "detail_scope_key" in query:
-        selected, detail = _member(reader, scope, query, read)
+        selected, detail = _member(reader, scope, query, read, cache)
         cache.load([selected["reference"]])
         content = cache.get(selected["reference"])
         if query["detail_scope_key"].startswith("voucher:"):

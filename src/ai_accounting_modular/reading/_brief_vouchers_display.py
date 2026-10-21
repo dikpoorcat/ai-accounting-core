@@ -4,6 +4,7 @@ from ai_accounting_modular.contracts.public import content_digest
 
 from ._brief_activity_parts import business_parties
 from ._brief_activity_sources import identities
+from ._business_labels import origin_fields
 
 
 def party_ids(content, prepared, cache):
@@ -14,7 +15,7 @@ def party_ids(content, prepared, cache):
                 allocation[key] for key in ("person_id", "recipient_id") if allocation.get(key)
             )
     result.update(business_parties(content, cache))
-    for quantity in content.basis.get("adopted_quantities", ()):
+    for quantity in origin_fields(content)[1].get("adopted_quantities", ()):
         if quantity["type"] in {"obligation", "opening_balance"} and "party_id" in quantity:
             result.add(quantity["party_id"])
     return tuple(sorted(result))

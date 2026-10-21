@@ -209,14 +209,14 @@ def test_closed_january_progress_updates_from_a_february_payment_without_full_ca
     publish(case)
     actual_payment = payment(case, first["business_id"], bank["object_id"], "60000", "2026-02")
     apply(case, actual_payment)
+    capture = case.kernel.ledger.capture_obligation_directory
+
+    def known_directory(query, read):
+        assert query.business_ids is not None, "future follow-up uses known January producers"
+        return capture(query, read)
+
     with monkeypatch.context() as patch:
-        patch.setattr(
-            case.kernel.ledger,
-            "capture_obligation_positions",
-            lambda *_args, **_kw: pytest.fail(
-                "future follow-up must use the known January producer"
-            ),
-        )
+        patch.setattr(case.kernel.ledger, "capture_obligation_directory", known_directory)
         assert case.kernel.reading.run_pending(case.company)
     selected = snapshot(case).components[_monthly.BRIEF_OPEN_ITEMS]["open_items"]
     assert selected["payable_fen"] == "100000"
@@ -494,14 +494,14 @@ def test_closed_correction_uses_each_partys_actual_formal_identity_without_full_
         ],
         correction_period="2026-02",
     )
+    capture = case.kernel.ledger.capture_obligation_directory
+
+    def known_directory(query, read):
+        assert query.business_ids is not None, "correction uses exact historical/current businesses"
+        return capture(query, read)
+
     with monkeypatch.context() as patch:
-        patch.setattr(
-            case.kernel.ledger,
-            "capture_obligation_positions",
-            lambda *_args, **_kwargs: pytest.fail(
-                "correction must read the exact historical/current business"
-            ),
-        )
+        patch.setattr(case.kernel.ledger, "capture_obligation_directory", known_directory)
         assert case.kernel.reading.run_pending(case.company)
     with case.kernel.storage.read_unit(case.company) as read:
         selected = collection_page(

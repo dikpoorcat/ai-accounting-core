@@ -48,7 +48,9 @@ def test_wage_contribution_pairs_are_per_person_month_and_share_exact_complete_v
     assert parts["employee_social"]["current_outstanding_fen"] == "20000"
     assert parts["employer_social"]["current_outstanding_fen"] == "60000"
     with case.kernel.storage.read_unit(case.company) as read:
-        scope = _brief_open.member_scope(snapshot, read, parts["employee_social"]["id"])
+        scope = _brief_open.member_scope(
+            case.kernel.reading, snapshot, read, parts["employee_social"]["id"]
+        )
     assert scope["obligations"][0]["person_id"] == PERSON
     assert scope["obligations"][0]["component"] == "employee_social"
     assert scope["allocations"] == []
@@ -124,6 +126,6 @@ def test_opening_social_person_is_not_the_receiving_institution_and_net_keeps_or
         for item in result["collections"]["members"]["items"]:
             assert item["payroll_period"] == "2025-12" and item["voucher_version_id"] is None
             with case.kernel.storage.read_unit(case.company) as read:
-                scope = _brief_open.member_scope(snapshot, read, item["id"])
+                scope = _brief_open.member_scope(case.kernel.reading, snapshot, read, item["id"])
             assert scope["obligations"][0]["person_id"] == PERSON
             assert scope["obligations"][0]["recipient_id"] == recipient

@@ -39,25 +39,35 @@ def observe_contents(monkeypatch, ledger):
     return calls
 
 
-def test_prepare_reuses_each_exact_body_once_and_keeps_the_entire_model_equal(case, monkeypatch):
+def test_simple_prepare_uses_only_origins_and_keeps_the_entire_full_origin_model_equal(
+    case, monkeypatch
+):
     expense = case.seed()
     ledger, reader = case.kernel.ledger, case.kernel.reading
     calls = observe_contents(monkeypatch, ledger)
-    descriptors = _brief_vouchers.descriptors_for_references
+    capture = ledger.capture_obligation_directory
 
-    def without_reuse(reader, references, read, *, known_contents):
-        return descriptors(reader, references, read)
+    def complete_origins(query, read):
+        selected = capture(query, read)
+        return replace(
+            selected,
+            origins={
+                body.reference["result_id"]: body
+                for body in ledger.get_adopted_contents(
+                    [source.reference for source in selected.sources], read
+                )
+            },
+        )
 
     with case.kernel.storage.read_unit(case.company) as read:
         with monkeypatch.context() as patch:
-            patch.setattr(_brief_vouchers, "descriptors_for_references", without_reuse)
+            patch.setattr(ledger, "capture_obligation_directory", complete_origins)
             original = _brief_open.prepare(reader, scope(case), read)
-        assert sorted(calls.values()) == [2]
-        identity = next(iter(calls))
+        assert sorted(calls.values()) == [1]
         calls.clear()
         reused = _brief_open.prepare(reader, scope(case), read)
         assert reused == original  # Includes all rows, DTO fields, display head and content hashes.
-        assert calls == {identity: 1}
+        assert not calls
 
     changed = deepcopy(expense)
     changed["data"]["amount_fen"] = "90000"
@@ -69,8 +79,7 @@ def test_prepare_reuses_each_exact_body_once_and_keeps_the_entire_model_equal(ca
     with case.kernel.storage.read_unit(case.company) as read:
         newer = _brief_open.prepare(reader, scope(case), read)
     assert newer.content_digest != original.content_digest
-    assert len(calls) == 1 and list(calls.values()) == [1]
-    assert next(iter(calls)) != identity
+    assert not calls
 
 
 def test_inherited_voucher_loads_its_missing_frozen_body_and_never_uses_the_new_body(
@@ -121,7 +130,9 @@ def test_reuse_rejects_conflicting_exact_references_sources_and_bodies(case, mon
     case.seed()
     with case.kernel.storage.read_unit(case.company) as read:
         captured = _brief_open_sources.capture(case.kernel.reading, scope(case), read)
-        body = next(iter(captured.contents.values()))
+        body = case.kernel.ledger.get_adopted_contents(
+            [next(iter(captured.contents.values())).reference], read
+        )[0]
         bad_target = deepcopy(body.target)
         bad_target["kind"] = "system.withdrawal"
         conflicts = (

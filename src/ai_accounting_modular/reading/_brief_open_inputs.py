@@ -15,7 +15,7 @@ def static(inputs: ReadInputs):
     return replace(inputs, **{name: () for name in _IDENTITIES})
 
 
-def records(captured, members, descriptors):
+def records(captured, members, bindings):
     result = {}
 
     def record(business):
@@ -35,25 +35,21 @@ def records(captured, members, descriptors):
     for body in captured.contents.values():
         record(body.reference["business_id"])
     for value in (*captured.selected, *captured.current.values()):
-        party = value.definition.value.get("party_id")
+        party = value.party_id
         if party:
-            record(value.definition.reference["business_id"])["objects"].add(party)
-    for member, descriptor in zip(members, descriptors, strict=True):
+            record(value.reference["business_id"])["objects"].add(party)
+    for member, binding in zip(members, bindings, strict=True):
         value = record(member["subject_id"])
         value["members"].append(member["id"])
-        for obligation in member["_detail_scope"]["obligations"]:
-            value["objects"].update(
-                obligation[key] for key in ("person_id", "recipient_id") if obligation.get(key)
-            )
-        position = member["_detail_scope"].get("position", {})
+        if member.get("_person_id"):
+            value["objects"].add(member["_person_id"])
+        position = member.get("_detail_scope", {}).get("position", {})
         value["objects"].update(
             position[key] for key in ("operator_id", "project_id") if position.get(key)
         )
-        if descriptor is not None:
-            display = descriptor["display"]
-            ident = index.content_digest(
-                [descriptor["template"]["voucher_version_id"], index.content_digest(display)]
-            )
+        if binding is not None:
+            display = binding["display"]
+            ident = index.content_digest([binding["token"], index.content_digest(display)])
             if ident in displays and displays[ident] != display:
                 index.corrupt("同一有效凭证的显示身份相互冲突。")
             displays[ident] = display
@@ -64,7 +60,7 @@ def records(captured, members, descriptors):
         value["objects"] = sorted(value["objects"])
         value["members"].sort()
         value["vouchers"] = dict(value["vouchers"])
-    return result, displays
+    return result
 
 
 def full(inputs, records, fixed_objects):

@@ -11,7 +11,9 @@ from tests.modular.application._working_case import case as case
 from .test_brief_open import apply, members, page, publish
 
 
-def test_501_member_group_and_21_other_parties_keep_complete_totals_and_do_not_net_directions(case):
+def test_501_member_group_and_21_other_parties_keep_complete_totals_and_do_not_net_directions(
+    case, monkeypatch
+):
     case.seed(expense=False)
     large = 9007199254740993
     expenses = [case.expense(str(large if index == 0 else 1)) for index in range(501)]
@@ -64,14 +66,33 @@ def test_501_member_group_and_21_other_parties_keep_complete_totals_and_do_not_n
     )
     assert len([row for row in groups if row["party"] == "同名供应商"]) == 2
     big = next(row for row in groups if row["member_count"] == 501)
+    get = case.kernel.ledger.get_adopted_contents
+    seen = []
+
+    def bounded(references, read):
+        seen.append(tuple(ref["result_id"] for ref in references))
+        return get(references, read)
+
+    monkeypatch.setattr(case.kernel.ledger, "get_adopted_contents", bounded)
     first = members(case, snapshot, big["group_key"])["collections"]
     assert first["members"]["page"]["total_count"] == 524
     assert first["members"]["page"]["filtered_count"] == 501
     assert len(first["members"]["items"]) == len(first["vouchers"]["items"]) == 20
+    assert list(map(len, seen)) == [20]
+    seen.clear()
     rest = members(
         case, snapshot, big["group_key"], limit=500, cursor=first["members"]["page"]["next_cursor"]
     )["collections"]
     assert len(rest["members"]["items"]) == len(rest["vouchers"]["items"]) == 481
+    assert list(map(len, seen)) == [481]
+    seen.clear()
+    maximum = members(case, snapshot, big["group_key"], limit=500)["collections"]
+    assert len(maximum["members"]["items"]) == len(maximum["vouchers"]["items"]) == 500
+    assert maximum["members"]["items"] == first["members"]["items"] + rest["members"]["items"][:480]
+    assert (
+        maximum["vouchers"]["items"] == first["vouchers"]["items"] + rest["vouchers"]["items"][:480]
+    )
+    assert list(map(len, seen)) == [500]
     assert not rest["members"]["page"]["has_more"]
     all_members = first["members"]["items"] + rest["members"]["items"]
     assert len({row["id"] for row in all_members}) == 501

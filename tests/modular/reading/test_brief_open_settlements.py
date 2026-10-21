@@ -194,7 +194,7 @@ def test_cooperation_agency_and_formal_company_supplement_share_open_items(case)
     ]
     assert position["subject_id"] == agreement["business_id"]
     with case.kernel.storage.read_unit(case.company) as read:
-        scope = _brief_open.member_scope(snapshot, read, position["id"])
+        scope = _brief_open.member_scope(case.kernel.reading, snapshot, read, position["id"])
     assert scope["position"]["contract_id"] == agreement["business_id"]
     assert scope["position"]["field"] == "company_due_fen"
     assert scope["obligations"] == scope["allocations"] == []
@@ -345,6 +345,6 @@ def test_same_operator_contracts_and_their_same_supplier_costs_keep_separate_gro
     for group in supplements:
         item = members(case, snapshot, group["group_key"])["collections"]["members"]["items"][0]
         with case.kernel.storage.read_unit(case.company) as read:
-            scope = _brief_open.member_scope(snapshot, read, item["id"])
+            scope = _brief_open.member_scope(case.kernel.reading, snapshot, read, item["id"])
         contracts.add(scope["position"]["contract_id"])
     assert contracts == {first["business_id"], second["business_id"]}

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    content_digest,
     format_fen,
     sum_fen,
 )
@@ -17,10 +16,16 @@ from ai_accounting_modular.ledger.opening.public import (
     opening_payroll_references,
 )
 
-from ._brief_activity_amounts import recognition
 from ._brief_open_groups import group_key, status
 from ._brief_open_sources import batches, ref_key
-from ._business_labels import BusinessLabel, business_label, business_matter
+from ._business_labels import (
+    BusinessLabel,
+    ObligationFields,
+    business_label,
+    business_matter,
+    obligation_fields,
+    origin_fields,
+)
 
 _CONTRIBUTIONS = {
     "employee_social": "个人社保",
@@ -63,7 +68,7 @@ class Meaning:
 
 
 def _category(content, definition, metadata):
-    category, direction = (definition.value[key] for key in ("category", "direction"))
+    category, direction = definition.category, definition.direction
     other = "other_" + ("receivables" if direction == "receivable" else "payables")
     if isinstance(metadata, OpeningOrdinaryReference):
         return {
@@ -74,7 +79,8 @@ def _category(content, definition, metadata):
             "employee_reimbursement": "employee_payables",
             "deposit_receivable": "refundable_deposit_receivables",
         }.get(metadata.nature, other)
-    kind, data = content.target["kind"], content.basis.get("input", {})
+    target, basis = origin_fields(content)
+    kind, data = target["kind"], basis.get("input", {})
     if category == "trade":
         if direction == "receivable" and (
             kind == "operations.service_sale"
@@ -109,14 +115,16 @@ def _category(content, definition, metadata):
 
 
 def _meaning(content, definition, opening):
+    definition = obligation_fields(definition)
     label = business_label(content, definition)
-    party = definition.value.get("party_id")
-    kind = content.target["kind"]
+    party = definition.party_id
+    target, _ = origin_fields(content)
+    kind = target["kind"]
     component, person, payroll_period, labor = None, None, None, False
     metadata = opening.get(content.reference["result_id"], {}).get(ref_key(definition.reference))
     category = _category(content, definition, metadata)
     if kind == "people.remuneration":
-        values = content.target["values"]
+        values = target["values"]
         person, component, payroll_period = (
             values["person_id"],
             definition.reference["slot"],
@@ -135,7 +143,7 @@ def _meaning(content, definition, opening):
         description = "应付工资净额"
         if kind == "people.remuneration":
             description = {"wage": "应付工资净额", "bonus": "应付奖金净额", "labor": "劳务报酬"}[
-                content.target["values"]["remuneration_type"]
+                target["values"]["remuneration_type"]
             ]
         description = {**_CONTRIBUTIONS, "tax": "代扣个人所得税"}.get(component, description)
         return Meaning(
@@ -203,7 +211,7 @@ def _matter(content, definition, meaning):
 
 
 def _progress(snapshot, item, meaning, meanings):
-    definition = item.definition
+    definition = item
     content = snapshot.contents[definition.source["result_id"]]
     if content.reference["posting_period"] > snapshot.current_cutoff:
         return None, None
@@ -214,10 +222,16 @@ def _progress(snapshot, item, meaning, meanings):
             content.reference["result_slot"],
         ) in snapshot.withdrawn
         return ("withdrawn" if withdrawn else "reversed"), 0
-    actual = meanings[current.definition.source["result_id"], ref_key(definition.reference)]
-    current_content = snapshot.contents[current.definition.source["result_id"]]
+    if current is item:
+        # Ledger may return the same immutable position for both selections after
+        # proving they coincide. Its economic identity then already equals itself.
+        return status(
+            item.amounts.remaining_fen, item.amounts.money_settled_fen, _other(item.amounts)
+        ), item.amounts.remaining_fen
+    actual = meanings[current.source["result_id"], ref_key(definition.reference)]
+    current_content = snapshot.contents[current.source["result_id"]]
     original_meaning = _economic_identity(content, definition, meaning)
-    current_meaning = _economic_identity(current_content, current.definition, actual)
+    current_meaning = _economic_identity(current_content, current, actual)
     if original_meaning != current_meaning:
         return "reversed", 0
     values = current.amounts
@@ -228,40 +242,89 @@ def _progress(snapshot, item, meaning, meanings):
 
 def _economic_identity(content, definition, meaning):
     """A displayed group may combine claims that remain different economic obligations."""
+    definition = obligation_fields(definition)
+    target, _ = origin_fields(content)
     return (
         ref_key(definition.reference),
-        content.target["kind"],
-        definition.value["direction"],
-        definition.value["category"],
-        definition.value["business_period"],
+        target["kind"],
+        definition.direction,
+        definition.category,
+        definition.business_period,
         meaning.party_id,
         meaning.person_id,
         meaning.recipient_id,
         meaning.payroll_period,
         meaning.component,
-        content.target.get("values", {}).get("remuneration_type"),
+        target.get("values", {}).get("remuneration_type"),
         meaning.opening_identity,
         business_matter(content, definition),
     )
 
 
-def project(snapshot, company_id, identity, read):
-    opening = {}
-    for content in snapshot.contents.values():
-        if content.target["kind"] == "opening.package":
-            opening[content.reference["result_id"]] = {
-                ref_key(item.source): item
-                for item in (
-                    *opening_obligation_references(content),
-                    *opening_payroll_references(content),
-                )
-            }
-    meanings = {
-        (item.definition.source["result_id"], ref_key(item.definition.reference)): _meaning(
-            snapshot.contents[item.definition.source["result_id"]], item.definition, opening
-        )
-        for item in (*snapshot.selected, *snapshot.current.values())
+def _opening(contents):
+    return {
+        content.reference["result_id"]: {
+            ref_key(item.source): item
+            for item in (
+                *opening_obligation_references(content),
+                *opening_payroll_references(content),
+            )
+        }
+        for content in contents
+        if origin_fields(content)[0]["kind"] == "opening.package"
     }
+
+
+def reference(member):
+    return (member["_locator"] if "_locator" in member else member["_detail_scope"])["reference"]
+
+
+def _locator(content, item):
+    ref = content.reference
+    value = {
+        "reference": ref,
+        "content_digest": item.source["content_digest"],
+        "slot": item.reference["slot"],
+        "direction": item.direction,
+        "category": item.category,
+        "business_period": item.business_period,
+        "party_id": item.party_id,
+    }
+    expected = source(value)
+    if expected != content.source or expected != item.source:
+        raise ContractError("storage_corrupt", "往来成员的定位与正式来源不一致。")
+    return value
+
+
+def source(locator):
+    """An explicit field mapping, without selecting another business or calculating amounts."""
+    ref = locator["reference"]
+    return {
+        "business_id": ref["business_id"],
+        "result_slot": ref["result_slot"],
+        "result_id": ref["result_id"],
+        "result_generation": ref["generation"],
+        "content_digest": locator["content_digest"],
+    }
+
+
+def _resource(locator):
+    return ObligationFields(
+        {"business_id": locator["reference"]["business_id"], "slot": locator["slot"]},
+        locator["direction"],
+        locator["category"],
+        locator["business_period"],
+        locator["party_id"],
+    )
+
+
+def project(snapshot, company_id, identity, read):
+    opening = _opening(snapshot.contents.values())
+    meanings = {}
+    for item in (*snapshot.selected, *snapshot.current.values()):
+        identity_key = item.source["result_id"], ref_key(item.reference)
+        if identity_key not in meanings:
+            meanings[identity_key] = _meaning(snapshot.contents[identity_key[0]], item, opening)
     ids = sorted(
         {meaning.party_id for meaning in meanings.values() if meaning.party_id is not None}
     )
@@ -272,15 +335,15 @@ def project(snapshot, company_id, identity, read):
         raise ContractError("storage_corrupt", "正式往来引用的对象身份缺失。")
     rows = []
     for item in snapshot.selected:
-        definition, values = item.definition, item.amounts
+        definition, values = item, item.amounts
         source_id, reference = definition.source["result_id"], definition.reference
         content = snapshot.contents[source_id]
         meaning = meanings[source_id, ref_key(reference)]
         current_status, current_remaining = _progress(snapshot, item, meaning, meanings)
-        recognition_value = recognition(content)
+        other = _other(values)
         key = group_key(
             company_id,
-            definition.value["direction"],
+            definition.direction,
             meaning.category,
             _matter(content, definition, meaning),
             meaning.party_id,
@@ -291,63 +354,31 @@ def project(snapshot, company_id, identity, read):
             {
                 "id": reference["business_id"] + ":" + reference["slot"],
                 "group_key": key,
-                "date": recognition_value["date"],
-                "recognition": recognition_value,
-                "source_period": content.reference["business_period"],
-                "voucher_version_id": None,
-                "voucher_number": None,
                 "category_key": meaning.category,
                 "party": objects[meaning.party_id]["name"]
                 if meaning.party_id is not None
                 else "税务机关"
-                if definition.value["category"] in {"tax", "withholding"}
+                if definition.category in {"tax", "withholding"}
                 else "未提供对象",
-                "description": meaning.description,
-                "purpose": meaning.purpose,
-                "status": status(values.remaining_fen, values.money_settled_fen, _other(values)),
+                "status": status(values.remaining_fen, values.money_settled_fen, other),
                 "source_amount_fen": format_fen(values.amount_fen),
                 "paid_fen": format_fen(values.money_settled_fen),
-                "other_settled_fen": format_fen(_other(values)),
+                "other_settled_fen": format_fen(other),
                 "outstanding_fen": format_fen(values.remaining_fen),
                 "current_status": current_status,
                 "current_outstanding_fen": None
                 if current_remaining is None
                 else format_fen(current_remaining),
                 "subject_id": reference["business_id"],
-                "contribution_group_key": content_digest(
-                    [company_id, meaning.person_id, meaning.payroll_period]
-                )
-                if contribution
-                else None,
-                "contribution_component": contribution,
-                "payroll_period": meaning.payroll_period,
                 "_matter_title": meaning.label.title,
-                "_detail_scope": {
-                    "reference": content.reference,
-                    "source": content.source,
-                    "business_period": content.reference["business_period"],
-                    "posting_period": content.reference["posting_period"],
-                    "kind": content.target["kind"],
-                    "direction": definition.value["direction"],
-                    "obligations": [
-                        {
-                            "source": reference,
-                            "producer": definition.source,
-                            "person_id": meaning.person_id,
-                            "recipient_id": meaning.recipient_id,
-                            "payroll_period": meaning.payroll_period,
-                            "component": meaning.component,
-                        }
-                    ],
-                    "allocations": [],
-                },
+                "_locator": _locator(content, item),
+                "_sort": [
+                    meaning.payroll_period or content.reference["business_period"],
+                    contribution or meaning.description,
+                    reference["business_id"] + ":" + reference["slot"],
+                ],
+                **({"_person_id": meaning.person_id} if meaning.person_id is not None else {}),
             }
         )
-    rows.sort(
-        key=lambda row: (
-            row["payroll_period"] or row["source_period"],
-            row["contribution_component"] or row["description"],
-            row["id"],
-        )
-    )
+    rows.sort(key=lambda row: row["_sort"])
     return rows

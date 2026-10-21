@@ -2,13 +2,15 @@
 
 from dataclasses import dataclass
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery, QuerySelection
+from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.ledger.public import (
     AdoptedContent,
-    ObligationPositionQuery,
-    ResourcePosition,
+    AdoptedOriginProjection,
+    ObligationDirectoryItem,
+    ObligationDirectoryQuery,
 )
 
+from ._brief_activity_sources import same_reference
 from ._context import last_period
 
 
@@ -42,23 +44,16 @@ def _complete(ledger, scope, read):
 
 @dataclass(frozen=True)
 class OpenSnapshot:
-    selected: tuple[ResourcePosition, ...]
-    current: dict[tuple[str, str], ResourcePosition]
-    contents: dict[str, AdoptedContent]
+    selected: tuple[ObligationDirectoryItem, ...]
+    current: dict[tuple[str, str], ObligationDirectoryItem]
+    contents: dict[str, AdoptedOriginProjection | AdoptedContent]
     current_cutoff: str
     complete: bool
     withdrawn: set[tuple[str, str]]
 
 
-def _withdrawn(reader, scope, selected, current, contents, cutoff, read):
-    missing = {
-        (
-            item.definition.reference["business_id"],
-            contents[item.definition.source["result_id"]].reference["result_slot"],
-        )
-        for item in selected
-        if ref_key(item.definition.reference) not in current
-    }
+def _withdrawn(reader, scope, references, cutoff, read):
+    missing = {(reference["business_id"], reference["result_slot"]) for reference in references}
     result = set()
     for batch in batches(sorted({business for business, _ in missing})):
         request = {
@@ -87,51 +82,45 @@ def _withdrawn(reader, scope, selected, current, contents, cutoff, read):
 def capture(reader, scope, read, *, business_ids=None, complete=None):
     month = scope["period_to"]
     if business_ids is None:
-        selected = reader.ledger.capture_obligation_positions(
-            ObligationPositionQuery(month, include_settled=False),
-            read,
-            selection=QuerySelection("as_posted", month),
-        ).items
         complete = _complete(reader.ledger, scope, read)
-    else:
-        if type(complete) is not bool:
-            raise TypeError("a partial capture retains its verified base completeness")
-        selected = tuple(
-            item
-            for batch in batches(sorted(set(business_ids)))
-            for item in reader.ledger.get_obligation_positions(
-                month, read, business_ids=batch, selection=QuerySelection("as_posted", month)
-            )
-            if item.amounts.remaining_fen != 0
-        )
+    elif type(complete) is not bool:
+        raise TypeError("a partial capture retains its verified base completeness")
     current_cutoff = last_period(reader, read) or month
-    current = {}
-    for batch in batches(sorted({item.definition.reference["business_id"] for item in selected})):
-        current.update(
-            (ref_key(item.definition.reference), item)
-            for item in reader.ledger.get_obligation_positions(
-                current_cutoff,
-                read,
-                business_ids=batch,
-                selection=QuerySelection("current"),
-            )
-        )
-    sources = {}
-    for item in (*selected, *current.values()):
-        source = item.definition.source
-        existing = sources.setdefault(source["result_id"], source)
-        if existing != source:
-            raise ContractError("storage_corrupt", "同一读快照的往来来源身份不一致。")
-    contents = {}
-    for batch in batches(sources.values()):
-        refs = reader.ledger.get_adopted_sources(batch, read)
-        for content in reader.ledger.get_adopted_contents([item.reference for item in refs], read):
-            contents[content.reference["result_id"]] = content
+    directory = reader.ledger.capture_obligation_directory(
+        ObligationDirectoryQuery(
+            month,
+            current_cutoff,
+            include_origins=True,
+            business_ids=None if business_ids is None else tuple(sorted(set(business_ids))),
+            selected_view="as_posted",
+        ),
+        read,
+    )
+    selected = directory.selected
+    current = {ref_key(item.reference): item for item in directory.current}
+    contents = directory.origins
+    if contents is None or any(
+        (origin := contents.get(source.reference["result_id"])) is None
+        or source.source != origin.source
+        or not same_reference(source.reference, origin.reference)
+        for source in directory.sources
+    ):
+        raise ContractError("storage_corrupt", "往来目录缺少对应的精确正式来源。")
     return OpenSnapshot(
         selected,
         current,
         contents,
         current_cutoff,
         complete,
-        _withdrawn(reader, scope, selected, current, contents, current_cutoff, read),
+        _withdrawn(
+            reader,
+            scope,
+            [
+                contents[item.source["result_id"]].reference
+                for item in selected
+                if ref_key(item.reference) not in current
+            ],
+            current_cutoff,
+            read,
+        ),
     )

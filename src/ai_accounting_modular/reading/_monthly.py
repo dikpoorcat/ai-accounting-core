@@ -17,7 +17,7 @@ from ._collections import collection_page, prepare_model
 from ._context import last_period, period
 from ._types import ModelDelivery, MonthScope
 
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 FINANCIAL = "financial"
 FUNDS = "funds"
 ASSETS = "assets"

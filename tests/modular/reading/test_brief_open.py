@@ -135,7 +135,7 @@ def test_cold_summary_groups_without_lines_then_hydrates_only_visible_precise_vo
     )
     assert next_page["collections"]["members"]["items"][0]["id"] != item["id"]
     with case.kernel.storage.read_unit(case.company) as read:
-        exact = _brief_open.member_scope(snapshot, read, item["id"])
+        exact = _brief_open.member_scope(case.kernel.reading, snapshot, read, item["id"])
     assert exact["reference"]["business_id"] in {first["business_id"], second["business_id"]}
     assert exact["obligations"][0]["producer"] == exact["source"]
 

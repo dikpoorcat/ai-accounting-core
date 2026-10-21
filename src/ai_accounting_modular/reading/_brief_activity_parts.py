@@ -11,7 +11,13 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from ._brief_activity_amounts import amount, recognition, signed
-from ._business_labels import BusinessLabel, business_label, business_matter, settlement_label
+from ._business_labels import (
+    BusinessLabel,
+    business_label,
+    business_matter,
+    origin_fields,
+    settlement_label,
+)
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,8 @@ _COMPONENTS = {
 
 def business_parties(content, cache):
     """Actual typed participants in this business, without assuming one party per result."""
-    data, kind = content.basis.get("input", {}), content.target["kind"]
+    target, basis = origin_fields(content)
+    data, kind = basis.get("input", {}), target["kind"]
     match kind:
         case "people.remuneration":
             return (data["person_id"],)

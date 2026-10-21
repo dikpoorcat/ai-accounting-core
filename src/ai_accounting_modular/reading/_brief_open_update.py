@@ -18,6 +18,7 @@ from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_open_totals as totals
 from . import _dependencies, _monthly
+from ._business_labels import origin_fields
 from ._collections import CollectionFilter
 
 
@@ -173,20 +174,20 @@ def prepare(reader, scope, read, state):
         for value in (old_members[identity],)
     ):
         index.corrupt()
-    if any("position" in value["_detail_scope"] for value in old_members.values()):
+    if any("_locator" not in value for value in old_members.values()):
         return brief.prepare(reader, scope, read)
     captured = sources.capture(
         reader, scope, read, business_ids=dirty, complete=payload["open_items"]["complete"]
     )
     if captured.current_cutoff != payload["open_items"]["current_cutoff_period"] or any(
-        content.target["kind"] == "opening.package"
-        or content.target["kind"].startswith("investment.cooperation_")
+        origin_fields(content)[0]["kind"] == "opening.package"
+        or origin_fields(content)[0]["kind"].startswith("investment.cooperation_")
         for content in captured.contents.values()
     ):
         return brief.prepare(reader, scope, read)
     members = rows.project(captured, scope["company_id"], reader.identity, read)
-    descriptors = brief.describe(reader, members, captured, read)
-    records, _ = inputs.records(captured, members, descriptors)
+    bindings = brief.bind_displays(reader, members, captured, read)
+    records = inputs.records(captured, members, bindings)
     entries = [brief.member_item(value) for value in members]
     entries.extend(
         index.item(index.BUSINESSES, identity, value) for identity, value in records.items()

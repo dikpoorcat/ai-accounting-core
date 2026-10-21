@@ -227,7 +227,15 @@ def capture(reader, scope, selected, read):
     before, after, allowed = [], [], {}
     contents = {body.source["result_id"]: body for body in selected.cache.saved.values()}
     withdrawn = _brief_open_sources._withdrawn(
-        reader, scope, historical, current_by_ref, contents, cutoff, read
+        reader,
+        scope,
+        [
+            contents[item.definition.source["result_id"]].reference
+            for item in historical
+            if key(item.definition.reference) not in current_by_ref
+        ],
+        cutoff,
+        read,
     )
     for item in historical:
         definition = item.definition
