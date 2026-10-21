@@ -147,7 +147,7 @@ def _loan_balances(selection, cutoff, resources, loan_total):
     )
 
 
-def positions(selection, cutoff, column):
+def positions(selection, cutoff, column, *, balance_provider=None):
     if cutoff < selection.start:
         if selection.continuation and cutoff == f"{int(selection.start[:4]) - 1:04d}-12":
             selection.source(selection.continuation)
@@ -177,7 +177,7 @@ def positions(selection, cutoff, column):
                 )
                 for line in range(1, 54)
             }
-    cube = balance_cube(selection, cutoff)
+    cube = balance_cube(selection, cutoff) if balance_provider is None else balance_provider(cutoff)
     if cube is None:
         return {
             line: selection.issues.unknown(
@@ -255,11 +255,13 @@ def positions(selection, cutoff, column):
     return result
 
 
-def cash_before(selection, first, last, column):
+def cash_before(selection, first, last, column, *, cash_total_provider=None):
     cutoff = previous(first)
     if cutoff >= selection.start or first == selection.start:
         rows = selection.opening_rows()
         if rows is not None:
+            if cash_total_provider is not None:
+                return known(sum_amounts((cash_total_provider(cutoff, rows),)))
             heads = list(selection.stock(cutoff).values()) if cutoff >= selection.start else []
             journals = selection.lines(heads)
             return known(

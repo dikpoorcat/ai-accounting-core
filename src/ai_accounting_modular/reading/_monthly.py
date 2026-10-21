@@ -1,6 +1,6 @@
 """Month pages share complete components and one read snapshot for their collections."""
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
@@ -11,9 +11,9 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from . import _dependencies
+from . import _dependencies, _financial_projection
 from ._collections import collection_items as _collection_items
-from ._collections import collection_page, prepare_model
+from ._collections import collection_page
 from ._context import last_period, period
 from ._types import ModelDelivery, MonthScope
 
@@ -26,6 +26,10 @@ BRIEF_ACTIVITY = "brief_activity"
 BRIEF_OPEN_ITEMS = "brief_open_items"
 BRIEF_CONTEXT = "brief_context"
 COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES, BRIEF_ACTIVITY, BRIEF_OPEN_ITEMS, BRIEF_CONTEXT)
+
+
+def version(component):
+    return 8 if component == FINANCIAL else FORMAT_VERSION
 
 
 def normalize(scope):
@@ -86,7 +90,7 @@ def collection_items(snapshot, component, name, item_ids, read):
 
 
 def _load(repository, scope_key, component, state):
-    if state["format_version"] != FORMAT_VERSION:
+    if state["format_version"] != version(component):
         raise _CorruptComponent(component)
     payload = repository.payload(scope_key, component)
     try:
@@ -219,7 +223,14 @@ def deliver(reader, scope, components, build):
                 else "production_failed",
             )
         elif missing or any(state["state"] != "ready" for state in states.values()):
-            result = ModelDelivery("preparing", normalized)
+            reason = (
+                _financial_projection.waiting(reader, normalized, "summary_values", read)
+                if FINANCIAL in states
+                and states[FINANCIAL] is not None
+                and states[FINANCIAL]["state"] == "preparing"
+                else None
+            )
+            result = ModelDelivery("failed" if reason else "preparing", normalized, reason=reason)
         else:
             try:
                 snapshot = _ready_snapshot(reader, normalized, states, read)
@@ -237,7 +248,12 @@ def deliver(reader, scope, components, build):
         with reader.storage.maintenance_unit(company_id) as unit:
             repository = unit.repository("reading")
             for component in missing:
-                repository.register(scope_key, component, unit.head, FORMAT_VERSION)
+                if component == FINANCIAL:
+                    _financial_projection.register(
+                        reader, normalized, "summary_values", scope_key, version(component), unit
+                    )
+                else:
+                    repository.register(scope_key, component, unit.head, version(component))
             if corrupt is not None:
                 state = states[corrupt]
                 repository.fail(
@@ -255,18 +271,7 @@ def deliver(reader, scope, components, build):
 def capture(reader, component, scope, read):
     normalized = normalize(scope)
     if component == FINANCIAL:
-        formal = reader.ledger.financial_summary(normalized, read)
-        # The owner's version binds all its formal inputs. The page needs its
-        # amounts and issues, not a copy of every historical source reference.
-        summary = {
-            field.name: getattr(formal, field.name)
-            for field in fields(formal)
-            if field.name != "sources"
-        }
-        summary["issues"] = list(formal.issues)
-        return _dependencies.bind(
-            prepare_model({"financial": summary}), ReadInputs(all_results=True)
-        )
+        return _financial_projection.capture(reader, normalized, "summary_values", read)
     if component == FUNDS:
         from ._funds import prepare
 
@@ -315,14 +320,19 @@ def retry(reader, scope, components):
     with reader.storage.maintenance_unit(scope["company_id"]) as unit:
         repository = unit.repository("reading")
         for component in components:
+            if component == FINANCIAL:
+                _financial_projection.retry(
+                    reader, normalized, "summary_values", key(normalized), version(component), unit
+                )
+                continue
             state = repository.state(key(normalized), component)
             full = (
                 component == BRIEF_OPEN_ITEMS
                 and state is not None
-                and (state["state"] == "failed" or state["format_version"] != FORMAT_VERSION)
+                and (state["state"] == "failed" or state["format_version"] != version(component))
             )
             if full:
                 repository.open_mark(key(normalized), unit.head, full=True)
-            repository.retry(key(normalized), component, format_version=FORMAT_VERSION)
+            repository.retry(key(normalized), component, format_version=version(component))
             if full:
                 repository.mark(key(normalized), component, unit.head)

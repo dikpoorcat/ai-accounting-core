@@ -4,18 +4,18 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    ReadInputs,
     canonical_json,
     content_digest,
     loads_json,
     validate_contract,
 )
 
-from . import _dependencies, _monthly
-from ._collections import prepare_model
+from . import _dependencies, _financial_projection, _monthly
+from ._financial_projection import PreparedFinancial
+from ._financial_store import COMPONENT, FINANCIAL_PROJECTION_FORMAT, cache_corruption, corrupt
 from ._types import ModelDelivery, ReadingImpact
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 FINANCIAL = "financial"
 
 
@@ -102,11 +102,17 @@ def page(reader, scope):
                 result = _delivery(
                     normalized, state, read, repository.payload(scope_key, FINANCIAL), metadata
                 )
+                if result.state == "preparing":
+                    reason = _financial_projection.waiting(reader, normalized, "snapshot", read)
+                    if reason:
+                        result = ModelDelivery("failed", normalized, reason=reason)
             except (ContractError, KeyError, TypeError):
                 corrupt = True
     if state is None:
         with reader.storage.maintenance_unit(scope["company_id"]) as unit:
-            unit.repository("reading").register(scope_key, FINANCIAL, unit.head, FORMAT_VERSION)
+            _financial_projection.register(
+                reader, normalized, "snapshot", scope_key, FORMAT_VERSION, unit
+            )
         return ModelDelivery("preparing", normalized)
     if corrupt:
         with reader.storage.maintenance_unit(scope["company_id"]) as unit:
@@ -126,86 +132,162 @@ def page(reader, scope):
     return result
 
 
-def mark_targets(impact, unit):
+def _selection(state, read):
+    """Validate only Reading's own saved target, never accounting contents."""
+    value = loads_json(state["scope_key"])
+    if not isinstance(value, dict):
+        corrupt()
+    if "model" in value:
+        if (
+            state["scope_key"] != _financial_projection.key(read)
+            or state["component_key"] != COMPONENT
+        ):
+            corrupt()
+        return None, FINANCIAL_PROJECTION_FORMAT
+    if set(value) != {"page", "scope"}:
+        corrupt()
+    if value["page"] == "monthly" and state["component_key"] in _monthly.COMPONENTS:
+        normalized = _monthly.normalize(value["scope"])
+        expected_key, version = _monthly.key(normalized), _monthly.version(state["component_key"])
+    elif value["page"] == "quarterly_report" and state["component_key"] == FINANCIAL:
+        normalized = normalize(value["scope"])
+        expected_key, version = key(normalized), FORMAT_VERSION
+    else:
+        corrupt()
+    if state["scope_key"] != expected_key or normalized["company_id"] != read.company_id:
+        corrupt()
+    return value, version
+
+
+def _fail_corrupt(repository, state):
+    repository.fail(
+        state["scope_key"],
+        state["component_key"],
+        state["wanted_head"],
+        "storage_corrupt",
+        expected_state=state["state"],
+        expected_format=state["format_version"],
+    )
+
+
+def _mark_target(reader, repository, state, selection, impact, unit):
+    scope, component = selection["scope"], state["component_key"]
+    if component == FINANCIAL:
+        selected = _financial_projection.mark(
+            reader,
+            scope,
+            "summary_values" if selection["page"] == "monthly" else "snapshot",
+            state["scope_key"],
+            impact,
+            unit,
+        )
+        return selected is not None, selected
+    if component == _monthly.BRIEF_OPEN_ITEMS:
+        from . import _brief_open_update
+
+        return _brief_open_update.mark(repository, state, scope, impact, unit.next_head), None
+    if state["state"] != "ready":
+        # First captures have no sparse inputs yet; keep their wanted point current.
+        if state["state"] == "preparing":
+            repository.mark(state["scope_key"], component, unit.next_head)
+        return False, None
+    raw = repository.input_dependencies(state["scope_key"], component)
+    selected = _dependencies.inputs({"_inputs": loads_json(raw)})
+    affected = _monthly.affected(scope, component, impact, selected)
+    if affected:
+        repository.mark(state["scope_key"], component, unit.next_head)
+    return affected, None
+
+
+def mark_targets(reader, impact, unit):
     if not isinstance(impact, ReadingImpact):
         raise ContractError("invalid_input", "读取通知须提供明确的影响范围。")
     repository = unit.repository("reading")
-    touched = []
+    touched, financial = [], []
     for state in repository.scopes():
-        selection = loads_json(state["scope_key"])
-        if selection["page"] not in {"quarterly_report", "monthly"}:
-            continue
-        scope = selection["scope"]
-        if scope["company_id"] != unit.company_id:
-            raise ContractError("storage_corrupt", "读取目标包含其他公司范围。")
-        version = _monthly.FORMAT_VERSION if selection["page"] == "monthly" else FORMAT_VERSION
-        if state["format_version"] != version:
-            repository.fail(
-                state["scope_key"],
-                state["component_key"],
-                state["wanted_head"],
-                "storage_corrupt",
-                expected_state=state["state"],
-            )
-            continue
-        if selection["page"] == "monthly" and state["component_key"] == _monthly.BRIEF_OPEN_ITEMS:
-            from . import _brief_open_update
-
-            if _brief_open_update.mark(repository, state, scope, impact, unit.next_head):
-                touched.append(state["scope_key"])
-            continue
-        if state["state"] != "ready":
-            # A first capture has no declared rows yet. Keep its wanted point
-            # current so an older in-flight capture cannot publish stale inputs.
-            if state["state"] == "preparing":
-                repository.mark(state["scope_key"], state["component_key"], unit.next_head)
-            continue
-        if selection["page"] == "monthly":
-            try:
-                raw = repository.input_dependencies(state["scope_key"], state["component_key"])
-                selected = _dependencies.inputs({"_inputs": loads_json(raw)})
-            except (ContractError, TypeError, ValueError):
-                repository.fail(
-                    state["scope_key"],
-                    state["component_key"],
-                    state["wanted_head"],
-                    "storage_corrupt",
-                    expected_state=state["state"],
-                )
+        try:
+            selection, version = _selection(state, unit)
+            if state["format_version"] != version:
+                corrupt()
+            if selection is None:
                 continue
-            if _monthly.affected(scope, state["component_key"], impact, selected):
-                repository.mark(state["scope_key"], state["component_key"], unit.next_head)
+            affected, selected = _mark_target(reader, repository, state, selection, impact, unit)
+            if affected:
                 touched.append(state["scope_key"])
-            continue
-        if state["component_key"] != FINANCIAL:
-            raise ContractError("storage_corrupt", "季度读取目标包含未装配组件。")
-        # Earlier postings can affect ending stock and accumulated profit. A
-        # future posting cannot affect this as-posted report.
-        if _dependencies.affected(ReadInputs(all_results=True), scope["period_to"], impact) or any(
-            r.period_from <= scope["period_to"] for r in impact.closure_ranges
-        ):
-            repository.mark(state["scope_key"], FINANCIAL, unit.next_head)
-            touched.append(state["scope_key"])
+            if selected is not None:
+                financial.append(selected)
+        except (ContractError, KeyError, TypeError, ValueError) as error:
+            if not cache_corruption(error):
+                raise
+            _fail_corrupt(repository, state)
+    if financial:
+        _financial_projection.queue_requests(
+            reader,
+            financial,
+            unit,
+            changes=impact.formal_changes,
+            closures=tuple((value.period_from, value.period_to) for value in impact.closure_ranges),
+            repair=True,
+        )
     return tuple(touched)
 
 
 def run_pending(reader, company_id, limit):
     if type(limit) is not int or not 1 <= limit <= 500:
         raise ContractError("invalid_input", "读取准备数量须在1至500之间。")
-    with reader.storage.read_unit(company_id) as read:
-        pending = read.repository("reading").pending(limit)
     completed = []
+    with reader.storage.read_unit(company_id) as read:
+        producer_key = _financial_projection.key(read)
+        producer = _financial_projection.store(read).state()
+    if producer is not None and producer["state"] == "preparing":
+        if _financial_projection.produce(reader, company_id):
+            completed.append(producer_key)
+        limit -= 1
+    if limit == 0:
+        return tuple(completed)
+    with reader.storage.read_unit(company_id) as read:
+        pending, damaged = [], []
+        for target in sorted(
+            read.repository("reading").scopes(),
+            key=lambda value: (value["scope_key"], value["component_key"]),
+        ):
+            if target["state"] != "preparing" or target["scope_key"] == producer_key:
+                continue
+            try:
+                selection, _ = _selection(target, read)
+                if selection is None:
+                    corrupt()
+                if target["component_key"] == FINANCIAL and _financial_projection.blocked(
+                    reader,
+                    selection["scope"],
+                    "summary_values" if selection["page"] == "monthly" else "snapshot",
+                    read,
+                ):
+                    continue
+            except (ContractError, KeyError, TypeError, ValueError) as error:
+                if not cache_corruption(error):
+                    raise
+                damaged.append(target)
+                continue
+            pending.append(target)
+            if len(pending) == limit:
+                break
+    if damaged:
+        with reader.storage.maintenance_unit(company_id) as unit:
+            for state in damaged:
+                _fail_corrupt(unit.repository("reading"), state)
     for target in pending:
         scope_key, component, wanted = (
             target["scope_key"],
             target["component_key"],
             target["wanted_head"],
         )
+        model, failure_guard, state = None, None, target
         try:
             selection = loads_json(scope_key)
             scope = selection["scope"]
             format_version = (
-                _monthly.FORMAT_VERSION if selection["page"] == "monthly" else FORMAT_VERSION
+                _monthly.version(component) if selection["page"] == "monthly" else FORMAT_VERSION
             )
             with reader.storage.read_unit(company_id) as read:
                 state = read.repository("reading").state(scope_key, component)
@@ -213,6 +295,16 @@ def run_pending(reader, company_id, limit):
                     continue
                 if state["format_version"] != format_version:
                     raise ContractError("storage_corrupt", "读取目标的内容格式尚未装配。")
+                if component == FINANCIAL:
+                    selected = _financial_projection.request(
+                        reader,
+                        scope,
+                        "summary_values" if selection["page"] == "monthly" else "snapshot",
+                        read,
+                    )
+                    failure_guard = _financial_projection.store(read).consumer_token(
+                        selected.descriptor_key
+                    )
                 if selection["page"] == "monthly":
                     if component == _monthly.BRIEF_OPEN_ITEMS:
                         from . import _brief_open_update
@@ -221,11 +313,29 @@ def run_pending(reader, company_id, limit):
                     else:
                         model = _monthly.capture(reader, component, scope, read)
                 elif selection["page"] == "quarterly_report" and component == FINANCIAL:
-                    snapshot = reader.ledger.financial_snapshot(scope, read)
-                    validate_contract("reporting.schema.json", "FinancialSnapshot", snapshot)
-                    model = prepare_model({"snapshot": semantic(snapshot)})
+                    model = _financial_projection.capture(reader, scope, "snapshot", read)
                 else:
                     raise ContractError("storage_corrupt", "读取目标的范围或组件尚未装配。")
+            if model is None:
+                with reader.storage.maintenance_unit(company_id) as unit:
+                    selected = _financial_projection.request(
+                        reader,
+                        scope,
+                        "summary_values" if selection["page"] == "monthly" else "snapshot",
+                        unit,
+                    )
+                    target_store = _financial_projection.store(unit)
+                    try:
+                        already_pending = selected.key in target_store.work()["pending"]
+                    except (ContractError, KeyError, TypeError, ValueError) as error:
+                        if not cache_corruption(error):
+                            raise
+                        already_pending = False
+                    if not already_pending:
+                        _financial_projection.queue(
+                            reader, selected, unit, rebuild=True, repair=True
+                        )
+                continue
             with reader.storage.maintenance_unit(company_id) as unit:
                 published = unit.repository("reading").publish(
                     scope_key, component, wanted, format_version, model
@@ -234,10 +344,20 @@ def run_pending(reader, company_id, limit):
                 completed.append(scope_key)
         except Exception as error:
             with reader.storage.maintenance_unit(company_id) as unit:
+                if component == FINANCIAL:
+                    target_store = _financial_projection.store(unit)
+                    if isinstance(model, PreparedFinancial):
+                        failure_guard = model.guard
+                    if failure_guard is None:
+                        if state is None or state["format_version"] == format_version:
+                            continue
+                    elif not target_store.matches_consumer(failure_guard, validate=False):
+                        continue
                 unit.repository("reading").fail(
                     scope_key,
                     component,
                     wanted,
                     error.code if isinstance(error, ContractError) else "production_failed",
+                    expected_format=state["format_version"],
                 )
     return tuple(completed)

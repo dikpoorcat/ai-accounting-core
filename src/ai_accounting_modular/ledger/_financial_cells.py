@@ -4,6 +4,12 @@ from ai_accounting_modular.contracts.public import format_fen, parse_fen
 
 from ._balances import sum_amounts
 
+_MIXED_ISSUE = {
+    "code": "report_basis_missing",
+    "meaning": "报表字段采用依据",
+    "message": "本字段存在未明确的正式分类或采用依据，请查看相关业务明细。",
+}
+
 
 def known(amount=0):
     return {"state": "known", "amount_fen": format_fen(sum_amounts((amount,)))}
@@ -45,11 +51,7 @@ class Issues:
             )
         index = self._keys[field]
         if self.values[index]["code"] != code:
-            self.values[index].update(
-                code="report_basis_missing",
-                meaning="报表字段采用依据",
-                message="本字段存在未明确的正式分类或采用依据，请查看相关业务明细。",
-            )
+            self.values[index].update(_MIXED_ISSUE)
         return {"state": "unestablished", "issue_indexes": [index]}
 
 

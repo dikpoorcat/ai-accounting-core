@@ -362,6 +362,64 @@ class LedgerRepository(ReadRepository):
             ]
         return records
 
+    def financial_projection_chains(self, business_slots=None):
+        """Exact surviving adoption metadata, including frozen anchors and current pointers."""
+        if business_slots is not None and not business_slots:
+            return []
+        sql = (
+            "SELECT " + _FINANCIAL_HEADERS + ",EXISTS(SELECT 1 FROM result_slot_current c "
+            "WHERE c.head_result_id=r.result_id) AS is_current FROM adopted_result r"
+        )
+        args = ()
+        if business_slots is not None:
+            sql += (
+                " WHERE (r.business_id,r.result_slot) IN "
+                "(SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?))"
+            )
+            args = (canonical([list(key) for key in business_slots]),)
+        return [dict(row) for row in self._session.fetchall(sql, args)]
+
+    def financial_projection_resources(self, result_ids):
+        """Controlled rows of exact bodies and the definitions each consumer adopted.
+
+        The consumer selection later matches these uses to its selected definition.
+        Reading one changed payment must not require reloading every loan producer.
+        """
+        tables = ("obligation", "settlement", "obligation_reclassification")
+        if not result_ids:
+            return {table: [] for table in tables}
+        controlled = (
+            "(d.account_code='2501' OR "
+            "(d.account_code IN ('224102','224103') AND d.party_id IS NULL))"
+        )
+        ids = canonical(list(result_ids))
+        result = {
+            "obligation": [
+                dict(row)
+                for row in self._session.fetchall(
+                    "SELECT d.* FROM obligation d WHERE d.result_id IN "
+                    "(SELECT value FROM json_each(?)) AND " + controlled,
+                    (ids,),
+                )
+            ]
+        }
+        for table in tables[1:]:
+            result[table] = [
+                dict(row)
+                for row in self._session.fetchall(
+                    f"SELECT u.* FROM {table} u WHERE u.result_id IN "
+                    "(SELECT value FROM json_each(?)) AND EXISTS "
+                    "(SELECT 1 FROM result_basis_ref b JOIN obligation d "
+                    "ON d.result_id=b.producer_result_id JOIN adopted_result r "
+                    "ON r.result_id=b.producer_result_id AND r.generation=b.producer_generation "
+                    "WHERE b.result_id=u.result_id "
+                    "AND b.producer_business_id=u.source_business_id "
+                    "AND d.public_slot=u.source_public_slot AND " + controlled + ")",
+                    (ids,),
+                )
+            ]
+        return result
+
     def financial_boundaries(self, *, as_of=None):
         selection = (
             "JOIN result_slot_current c ON c.head_result_id=r.result_id " if as_of is None else ""

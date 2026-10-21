@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
-from ai_accounting_modular.reading import _monthly
+from ai_accounting_modular.reading import _financial_projection, _monthly
 from ai_accounting_modular.reading.public import MonthScope
 from tests.modular.application._working_case import case as case
 
@@ -62,10 +62,15 @@ def test_real_financial_month_uses_complete_amounts_and_hot_reads_do_not_recalcu
     assert financial["net_profit"] == {"state": "known", "amount_fen": "-100000"}
     assert "sources" not in financial
 
-    def unexpected(*args):
+    def unexpected(*args, **kwargs):
         raise AssertionError("hot page recalculated formal data")
 
-    monkeypatch.setattr(case.kernel.ledger, "financial_summary", unexpected)
+    for method in (
+        "financial_summary",
+        "prepare_financial_projection",
+        "read_financial_projection",
+    ):
+        monkeypatch.setattr(case.kernel.ledger, method, unexpected)
     assert page(case, scope(case, expected_head=actual.version)) == actual
 
 
@@ -107,11 +112,16 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
         )
     )
     assert changed["completion"] == "complete", changed
-    monkeypatch.setattr(
-        case.kernel.ledger,
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("unrelated change rebuilt the financial month")
+
+    for method in (
         "financial_summary",
-        lambda *args: pytest.fail("unrelated change rebuilt the financial month"),
-    )
+        "prepare_financial_projection",
+        "read_financial_projection",
+    ):
+        monkeypatch.setattr(case.kernel.ledger, method, unexpected)
     assert case.kernel.reading.run_pending(case.company) == ()
     assert page(case).version == before.version
 
@@ -155,16 +165,16 @@ def test_corrupt_current_payload_fails_stably_and_explicit_retry_rebuilds_only_t
 def test_failure_is_not_unknown_money_and_worker_retry_does_not_reapply_business(case, monkeypatch):
     case.seed()
     assert page(case).state == "preparing"
-    original = case.kernel.ledger.financial_summary
+    original = case.kernel.ledger.prepare_financial_projection
 
-    def unavailable(*args):
+    def unavailable(*args, **kwargs):
         raise RuntimeError("synthetic private failure")
 
-    monkeypatch.setattr(case.kernel.ledger, "financial_summary", unavailable)
+    monkeypatch.setattr(case.kernel.ledger, "prepare_financial_projection", unavailable)
     assert case.kernel.reading.run_pending(case.company) == ()
     failed = page(case)
     assert (failed.state, failed.reason, failed.payload) == ("failed", "production_failed", None)
-    monkeypatch.setattr(case.kernel.ledger, "financial_summary", original)
+    monkeypatch.setattr(case.kernel.ledger, "prepare_financial_projection", original)
     _monthly.retry(case.kernel.reading, scope(case), (_monthly.FINANCIAL,))
     assert ready(case).payload["financial"]["expense"]["amount_fen"] == "100000"
 
@@ -172,17 +182,18 @@ def test_failure_is_not_unknown_money_and_worker_retry_does_not_reapply_business
 def test_late_month_capture_cannot_replace_a_newer_wanted_target(case, monkeypatch):
     original_fact = case.seed()
     assert page(case).state == "preparing"
-    original = case.kernel.ledger.financial_summary
+    assert _financial_projection.produce(case.kernel.reading, case.company)
+    original = case.kernel.ledger.read_financial_projection
 
-    def moved(selection, read):
-        captured = original(selection, read)
+    def moved(selection, read, base):
+        captured = original(selection, read, base)
         replace(case, original_fact, "120000")
         return captured
 
-    monkeypatch.setattr(case.kernel.ledger, "financial_summary", moved)
+    monkeypatch.setattr(case.kernel.ledger, "read_financial_projection", moved)
     assert case.kernel.reading.run_pending(case.company) == ()
     assert page(case).state == "preparing"
-    monkeypatch.setattr(case.kernel.ledger, "financial_summary", original)
+    monkeypatch.setattr(case.kernel.ledger, "read_financial_projection", original)
     assert ready(case).payload["financial"]["expense"]["amount_fen"] == "120000"
 
 
@@ -230,5 +241,7 @@ def test_unavailable_component_format_fails_instead_of_preparing_forever(case):
             "UPDATE read_scope_head SET format_version=999 WHERE scope_key=?",
             (_monthly.key(_monthly.normalize(scope(case))),),
         )
-    assert case.kernel.reading.run_pending(case.company) == ()
+    with case.kernel.storage.read_unit(case.company) as read:
+        producer_key = _financial_projection.key(read)
+    assert case.kernel.reading.run_pending(case.company) == (producer_key,)
     assert (page(case).state, page(case).reason) == ("failed", "corrupt")

@@ -36,6 +36,7 @@ from . import (
     _accounts,
     _aggregation,
     _financial,
+    _financial_projection,
     _financial_reads,
     _read_contents,
     _read_events,
@@ -57,6 +58,25 @@ from ._closing import (
     period_closure,
 )
 from ._financial_cells import Issues
+from ._financial_projection_requests import request as _financial_projection_request
+from ._financial_projection_types import (
+    FINANCIAL_PROJECTION_FORMAT as FINANCIAL_PROJECTION_FORMAT,
+)
+from ._financial_projection_types import (
+    FinancialProjectionArtifact as FinancialProjectionArtifact,
+)
+from ._financial_projection_types import (
+    FinancialProjectionPlan as FinancialProjectionPlan,
+)
+from ._financial_projection_types import (
+    FinancialProjectionReader as FinancialProjectionReader,
+)
+from ._financial_projection_types import (
+    FinancialProjectionRequest as FinancialProjectionRequest,
+)
+from ._financial_projection_types import (
+    FinancialSummaryValues as FinancialSummaryValues,
+)
 from ._financial_selection import Selection
 from ._planning import PreparedResult, bind_plan, stored_source_reference
 from ._planning import prepare_result as _prepare_result
@@ -358,6 +378,34 @@ class Ledger:
 
     def financial_summary(self, scope: LedgerScope, read_context: ReadContext) -> FinancialSummary:
         return _financial_reads.financial_summary(scope, read_context)
+
+    def financial_projection_request(
+        self, kind: str, scope: LedgerScope, read_context: ReadContext
+    ) -> FinancialProjectionRequest:
+        """Normalize one real financial scope and allocate its stable model identity."""
+        return _financial_projection_request(kind, scope, read_context)
+
+    def prepare_financial_projection(
+        self,
+        requests,
+        changes,
+        closure_ranges,
+        read_context: ReadContext,
+        *,
+        base=None,
+        rebuild=False,
+    ) -> FinancialProjectionPlan:
+        return _financial_projection.prepare(
+            requests, changes, closure_ranges, read_context, base=base, rebuild=rebuild
+        )
+
+    def read_financial_projection(
+        self,
+        request: FinancialProjectionRequest,
+        read_context: ReadContext,
+        base: FinancialProjectionReader,
+    ) -> FinancialProjectionArtifact | None:
+        return _financial_projection.read_projection(request, read_context, base)
 
     def financial_summary_inputs(self, names):
         """Public dependencies of the selected explicit balance fields."""

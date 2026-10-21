@@ -134,9 +134,38 @@ class Book:
         )
 
     def mark(self, month):
+        from ai_accounting_modular.contracts.public import PageQuery
         from ai_accounting_modular.ledger.public import FormalChange
 
         with self.storage.write_unit(self.company) as unit:
+            # Explicit rescheduling uses actual formal identities, not the party's ID.
+            changes, cursor = [], None
+            selected = {
+                "company_id": self.company,
+                "period_from": month,
+                "period_to": month,
+                "view": "as_posted",
+                "as_of": month,
+            }
+            while True:
+                page = self.ledger.query_adopted_directory(
+                    selected, (), PageQuery(500, cursor), unit
+                )
+                for entry in page.items:
+                    ref = entry.reference
+                    if ref["posting_period"] == month:
+                        changes.append(
+                            FormalChange(
+                                ref["business_id"],
+                                ref["result_slot"],
+                                (ref["business_period"],),
+                                (ref["posting_period"],),
+                                (entry.business_kind,),
+                            )
+                        )
+                if page.next_cursor is None:
+                    break
+                cursor = page.next_cursor
             # A genuine business write makes next_head the committed sequence.
             obj = self.identity.get_batch([PARTY], unit)[0]
             data = {key: obj[key] for key in ("object_id", "kind", "name", "data")}
@@ -144,11 +173,7 @@ class Book:
             plan = self.identity.plan_change([data], identity.IdentityContext(unit, str(uuid4())))
             self.identity.apply_current(plan, unit)
             return self.reading.mark_targets(
-                reading.ReadingImpact(
-                    formal_changes=(
-                        FormalChange(PARTY, "main", (month,), (month,), ("operations.expense",)),
-                    )
-                ),
+                reading.ReadingImpact(formal_changes=tuple(changes)),
                 unit,
             )
 
@@ -183,12 +208,17 @@ def assemble(root, *, established=True):
     identities, bookkeeping = identity.create_identity(), ledger.create_ledger()
     materials = records.create_records(lambda read: storage.company_metadata(read).company_root)
     funds = money.create_money(identity=identities, ledger=bookkeeping)
+
+    def mark_reading_targets(impact, unit):
+        return reads.mark_targets(impact, unit)
+
     app = application.create_application(
         storage=storage,
         identity=identities,
         ledger=bookkeeping,
         records=materials,
         money=funds,
+        mark_reading_targets=mark_reading_targets,
         domains=[
             opening.create_opening(),
             reporting.create_reporting(),

@@ -10,6 +10,7 @@ import test_financial_snapshot_review as review
 from ai_accounting_modular.ledger import _financial
 from ai_accounting_modular.ledger._financial_cells import Issues
 from ai_accounting_modular.ledger._financial_positions import _resource_positions
+from ai_accounting_modular.ledger._financial_projection_selection import ProjectionSelection
 from ai_accounting_modular.ledger._financial_selection import Selection
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 
@@ -126,11 +127,20 @@ def test_controlled_loan_uses_both_selected_producer_and_selected_consumer(
         scope = {"company_id": book.company, "period_from": month, "period_to": month, "view": view}
         with book.app.storage.read_unit(book.company) as read:
             expected = original_outputs(book, scope, read)
-            repo, observed = read.repository("ledger"), []
-            narrow = repo.financial_resource_rows
+            observed = []
+            narrow = ProjectionSelection.position_resources
 
-            def actual_rows(ids, accounts, *, _narrow=narrow, _observed=observed):
-                records = _narrow(ids, accounts)
+            def actual_rows(selected, heads, accounts, *, _narrow=narrow, _observed=observed):
+                grouped = _narrow(selected, heads, accounts)
+                ids = {head["result_id"] for head in heads}
+                records = {
+                    table: [
+                        row | {"result_id": identity}
+                        for identity, rows in values.items()
+                        for row in rows
+                    ]
+                    for table, values in grouped.items()
+                }
                 assert all(row["account_code"] == "2501" for row in records["obligation"])
                 assert all(
                     row["source_business_id"] == drawdown["business_id"]
@@ -138,10 +148,10 @@ def test_controlled_loan_uses_both_selected_producer_and_selected_consumer(
                 )
                 assert all(row["result_id"] in ids for rows in records.values() for row in rows)
                 _observed.append(records)
-                return records
+                return grouped
 
             with monkeypatch.context() as local:
-                local.setattr(repo, "financial_resource_rows", actual_rows)
+                local.setattr(ProjectionSelection, "position_resources", actual_rows)
                 snapshot = book.app.ledger.financial_snapshot(scope, read)
                 summary = asdict(book.app.ledger.financial_summary(scope, read))
             assert snapshot == expected[0] and summary == expected[1]

@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
     content_digest,
     loads_json,
 )
+from ai_accounting_modular.identity.public import IdentityContext
 from ai_accounting_modular.reading._collections import (
     CollectionFilter,
     IndexItem,
@@ -229,7 +230,17 @@ def test_cursor_binds_company_filter_and_collection_not_global_commit_or_page_si
     prepared_items = [item(number) for number in range(25)]
     publish(book, prepared_items)
     first = page(book)
-    book.submit(expense())
+    # This low-level collection has no product page selector. Advance an actual
+    # identity commit, without routing a product page notification to the fixture.
+    with book.storage.write_unit(book.company) as unit:
+        before = unit.head
+        obj = book.identity.get_batch([PARTY], unit)[0]
+        value = {key: obj[key] for key in ("object_id", "kind", "data")}
+        value.update(name="与集合正文无关的新名称", expected_seq=obj["seq"])
+        context = IdentityContext(unit, str(uuid4()))
+        book.identity.apply_current(book.identity.plan_change([value], context), unit)
+    with book.storage.read_unit(book.company) as read:
+        assert read.head > before
     assert len(page(book, request=PageQuery(500, first.next_cursor, first.version)).items) == 5
     with pytest.raises(ContractError) as error:
         page(

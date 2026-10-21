@@ -2,13 +2,10 @@
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    content_digest,
     validate_contract,
 )
 
-from ._financial_calculation import MAPPING_V1, calculate_snapshot
-from ._financial_cells import Issues
-from ._financial_selection import Selection
+from ._financial_calculation import MAPPING_V1
 from ._values import fail
 
 CURRENT_MAPPING_VERSION = MAPPING_V1
@@ -60,40 +57,6 @@ def snapshot(scope, context, *, mapping_version=None):
 
 
 def _snapshot_v1(scope, context):
-    normalized = normalize(scope, context)
-    repo = context.repository("ledger")
-    last = normalized["period_to"]
-    year = last[:4] + "-01"
-    selection = Selection(repo, normalized["view"], last, context.start_period, Issues())
-    result = calculate_snapshot(normalized, context, selection)
-    selected_sources = sorted(
-        (selection.source(selection.heads[key]) for key in selection.used),
-        key=lambda source: (source["business_id"], source["result_slot"], source["result_id"]),
-    )
-    digest = content_digest(
-        {
-            "snapshot": {key: value for key, value in result.items() if key != "head"},
-            "sources": selected_sources,
-        }
-    )
-    selected = {
-        "selection_digest": digest,
-        "closed_periods": repo.closed_periods(year, last, start_period=context.start_period),
-        "supplement_periods": sorted(
-            {
-                selection.heads[key]["posting_period"]
-                for key in selection.used
-                if selection.heads[key].get("baseline_result_id")
-                and year <= selection.heads[key]["posting_period"] <= last
-            }
-        ),
-    }
-    for name in ("opening", "continuation"):
-        head = getattr(selection, name)
-        if head:
-            selected[name + "_business_id"] = head["business_id"]
-    result["selection"] = selected
-    if scope.get("expected_head", digest) != digest:
-        fail("snapshot_changed", "同一报表范围采用的正式结果已变化，请重新读取。")
-    validate_contract("reporting.schema.json", "FinancialSnapshot", result)
-    return result
+    from ._financial_projection import public_snapshot
+
+    return public_snapshot(scope, context)

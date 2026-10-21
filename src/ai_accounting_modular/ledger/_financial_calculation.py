@@ -31,8 +31,8 @@ ACCOUNT_FIELDS = (
 )
 
 
-def amount(selection, cutoff, codes, *, object_id=None, sign=1, field):
-    cube = balance_cube(selection, cutoff)
+def amount(selection, cutoff, codes, *, object_id=None, sign=1, field, balance_provider=None):
+    cube = balance_cube(selection, cutoff) if balance_provider is None else balance_provider(cutoff)
     if cube is None:
         return selection.issues.unknown(
             field, "正式期初及指定月末余额", "缺少该比较时点的正式期初，不能把余额推定为零。"

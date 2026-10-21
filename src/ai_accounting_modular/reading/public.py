@@ -3,7 +3,15 @@
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _context, _materials, _models, _month_queries, _monthly, _report_exports
+from . import (
+    _context,
+    _financial_projection,
+    _materials,
+    _models,
+    _month_queries,
+    _monthly,
+    _report_exports,
+)
 from ._report_producer import create_report_producer
 from ._repository import ReadingRepository
 from ._types import (
@@ -160,7 +168,7 @@ class Reading:
         return _report_exports.download(self, company_id, job_id)
 
     def mark_targets(self, impact: ReadingImpact, uow):
-        return _models.mark_targets(impact, uow)
+        return _models.mark_targets(self, impact, uow)
 
     def run_pending(self, company_id, *, limit=20):
         return _models.run_pending(self, company_id, limit)
@@ -172,7 +180,7 @@ class Reading:
             if query:
                 raise ContractError("invalid_input", "季度重试不接受额外筛选。")
             normalized = _models.normalize(scope)
-            scope_key, components = _models.key(normalized), (_models.FINANCIAL,)
+            scope_key = _models.key(normalized)
             company_id = scope["company_id"]
         else:
             if not isinstance(scope, MonthScope) or scope.period is None:
@@ -203,9 +211,9 @@ class Reading:
             )
             return _monthly.retry(self, normalized, components)
         with self.storage.maintenance_unit(company_id) as unit:
-            repository = unit.repository("reading")
-            for component in components:
-                repository.retry(scope_key, component, format_version=_models.FORMAT_VERSION)
+            _financial_projection.retry(
+                self, normalized, "snapshot", scope_key, _models.FORMAT_VERSION, unit
+            )
 
 
 def create_reading(

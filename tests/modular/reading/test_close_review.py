@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
     loads_json,
     validate_contract,
 )
+from ai_accounting_modular.ledger.public import FINANCIAL_PROJECTION_FORMAT
 from ai_accounting_modular.reading import _brief, _close_review, _monthly
 from ai_accounting_modular.reading.public import MonthScope
 from tests.modular.application._working_case import case as case
@@ -369,6 +370,8 @@ def test_old_month_projection_is_not_read_or_repaired_until_explicit_retry(case,
     assert review(case)["state"] == "prepared"
     with case.kernel.storage.read_unit(case.company) as read:
         assert read.head == before[0]
-        assert {state["format_version"] for state in read.repository("reading").scopes()} == {
-            _monthly.FORMAT_VERSION
-        }
+        states = read.repository("reading").scopes()
+        assert len(states) == len(_brief.COMPONENTS) + 1
+        assert {(state["component_key"], state["format_version"]) for state in states} == {
+            (component, _monthly.version(component)) for component in _brief.COMPONENTS
+        } | {("projection", FINANCIAL_PROJECTION_FORMAT)}

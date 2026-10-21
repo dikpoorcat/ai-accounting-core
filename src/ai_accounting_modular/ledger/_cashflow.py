@@ -83,6 +83,15 @@ def money_targets(rows):
     return result
 
 
+def missing_classification(issues, line, column):
+    return issues.unknown(
+        f"/cash_flow_statement/{line}/{column}",
+        "正式资金分类",
+        "真实资金已保存，但该范围存在尚未确定的正式现金分类或不完整内部划转。",
+        code="cashflow_classification_missing",
+    )
+
+
 def cash(selection, first, last, column):
     coefficients = selection.flow(first, last)
     heads = [selection.heads[key] for key in coefficients]
@@ -95,12 +104,7 @@ def cash(selection, first, last, column):
         for target in money_targets(values[head["result_id"]]).values():
             if target is None:
                 for line in range(1, 21):
-                    result[line] = selection.issues.unknown(
-                        f"/cash_flow_statement/{line}/{column}",
-                        "正式资金分类",
-                        "真实资金已保存，但该范围存在尚未确定的正式现金分类或不完整内部划转。",
-                        code="cashflow_classification_missing",
-                    )
+                    result[line] = missing_classification(selection.issues, line, column)
             else:
                 for category, amount in target.items():
                     line = _ROWS[category][0]

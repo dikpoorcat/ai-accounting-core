@@ -13,14 +13,11 @@ from ai_accounting_modular.contracts.public import (
 from . import _financial
 from ._balance_cube import balance_cube, previous
 from ._balance_selection import BalanceSelection
-from ._closing import closed_report
 from ._financial_calculation import ACCOUNT_FIELDS as _ACCOUNT_FIELDS
 from ._financial_calculation import amount as _amount
-from ._financial_calculation import summary_values
 from ._financial_cells import Issues
-from ._financial_selection import Selection
 from ._read_support import json_value
-from ._types import AccountBalance, AccountBalanceKey, FinancialBalances, FinancialSummary
+from ._types import AccountBalance, AccountBalanceKey, FinancialBalances
 from ._values import fail
 
 
@@ -53,33 +50,9 @@ def _sources(selection):
 
 
 def financial_summary(scope, read):
-    normalized = _financial.normalize(scope, read)
-    repo = read.repository("ledger")
-    last = normalized["period_to"]
-    issues = Issues()
-    selection = Selection(repo, normalized["view"], last, read.start_period, issues)
-    saved = (
-        closed_report(normalized, read)
-        if normalized["view"] == "as_posted"
-        and repo.is_closed(last, start_period=read.start_period)
-        else None
-    )
-    values = summary_values(normalized, selection, saved=saved)
-    sources = _sources(selection)
-    identity = {
-        "company_id": read.company_id,
-        "database_id": read.database_id,
-        "scope": normalized,
-        "values": values,
-        "issues": issues.values,
-        "sources": sources,
-    }
-    version = content_digest(json_value(identity))
-    if scope.get("expected_head", version) != version:
-        fail("snapshot_changed", "所选财务摘要已经变化，请重新读取。")
-    return FinancialSummary(
-        version, normalized, **values, issues=tuple(issues.values), sources=sources
-    )
+    from ._financial_projection import public_summary
+
+    return public_summary(scope, read)
 
 
 def financial_balances(scope, names, read):

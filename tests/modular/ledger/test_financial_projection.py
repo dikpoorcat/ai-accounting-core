@@ -86,7 +86,7 @@ def test_public_financial_projection_batches_only_used_targets_and_uses_integer_
         read_targets, read_lines, read_heads = (
             repo.financial_targets,
             repo.financial_lines,
-            repo.financial_heads,
+            repo.financial_projection_chains,
         )
 
         def target_bodies(ids):
@@ -107,11 +107,10 @@ def test_public_financial_projection_batches_only_used_targets_and_uses_integer_
             actual_rows.extend(values)
             return values
 
-        def headers(cutoff, *, view, metadata_only=False):
-            assert metadata_only
-            values = read_heads(cutoff, view=view, metadata_only=True)
+        def headers(business_slots=None):
+            values = read_heads(business_slots)
             assert all("target_json" not in value and "basis_json" not in value for value in values)
-            stock_requests.append(cutoff)
+            stock_requests.append(business_slots)
             return values
 
         def forbidden(*args, **kwargs):
@@ -119,14 +118,14 @@ def test_public_financial_projection_batches_only_used_targets_and_uses_integer_
 
         monkeypatch.setattr(repo, "financial_targets", target_bodies)
         monkeypatch.setattr(repo, "financial_lines", integer_lines)
-        monkeypatch.setattr(repo, "financial_heads", headers)
+        monkeypatch.setattr(repo, "financial_projection_chains", headers)
         monkeypatch.setattr(repo, "vouchers", forbidden)
         monkeypatch.setattr(repo, "results", forbidden)
         actual = ledger.financial_snapshot(scope, read)
         actual_summary = ledger.financial_summary(scope, read)
         needed = {
             row["result_id"]
-            for row in repo.financial_heads("2026-03", view=view, metadata_only=True)
+            for row in read_heads()
             if row["business_id"] in (interest["business_id"], tax["business_id"])
             and row["target_kind"] in ("operations.other_income", "taxes.assessment")
         }

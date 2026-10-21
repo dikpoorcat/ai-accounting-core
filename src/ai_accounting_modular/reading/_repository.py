@@ -4,6 +4,8 @@ from ai_accounting_modular.contracts.public import canonical_json, loads_json
 
 from . import _brief_open_index as open_index
 from ._collections import PreparedModel
+from ._financial_projection import PreparedFinancial
+from ._financial_store import FinancialStore
 
 
 class ReadingRepository:
@@ -21,6 +23,9 @@ class ReadingRepository:
         )
         return dict(row) if row else None
 
+    def financial_store(self, scope_key):
+        return FinancialStore(self, scope_key)
+
     def register(self, scope_key, component, head, version):
         self._session.execute(
             "INSERT INTO read_scope_head(scope_key,component_key,wanted_head,format_version,state) "
@@ -36,16 +41,6 @@ class ReadingRepository:
             "UPDATE read_scope_head SET wanted_head=?,state='preparing',error_code=NULL "
             "WHERE scope_key=? AND component_key=? AND wanted_head<?",
             (head, scope_key, component, head),
-        )
-
-    def pending(self, limit):
-        return tuple(
-            dict(row)
-            for row in self._session.fetchall(
-                "SELECT * FROM read_scope_head WHERE state='preparing' "
-                "ORDER BY scope_key,component_key LIMIT ?",
-                (limit,),
-            )
         )
 
     def payload(self, scope_key, component):
@@ -65,6 +60,17 @@ class ReadingRepository:
         return row[0] if row else None
 
     def publish(self, scope_key, component, wanted_head, format_version, model):
+        financial = model if isinstance(model, PreparedFinancial) else None
+        if financial is not None:
+            if (
+                component != "financial"
+                or scope_key != financial.consumer_scope
+                or not self.financial_store(financial.producer_scope).matches_consumer(
+                    financial.guard
+                )
+            ):
+                return False
+            model = financial.model
         patch = model if isinstance(model, open_index.PreparedOpenPatch) else None
         if patch is not None:
             model = patch.model
@@ -240,11 +246,29 @@ class ReadingRepository:
             )
         )
 
-    def fail(self, scope_key, component, wanted_head, code, *, expected_state="preparing"):
+    def fail(
+        self,
+        scope_key,
+        component,
+        wanted_head,
+        code,
+        *,
+        expected_state="preparing",
+        expected_format=None,
+    ):
         self._session.execute(
             "UPDATE read_scope_head SET state='failed',error_code=? "
-            "WHERE scope_key=? AND component_key=? AND wanted_head=? AND state=?",
-            (code, scope_key, component, wanted_head, expected_state),
+            "WHERE scope_key=? AND component_key=? AND wanted_head=? AND state=? "
+            "AND (? IS NULL OR format_version=?)",
+            (
+                code,
+                scope_key,
+                component,
+                wanted_head,
+                expected_state,
+                expected_format,
+                expected_format,
+            ),
         )
 
     def retry(self, scope_key, component, *, format_version=None):

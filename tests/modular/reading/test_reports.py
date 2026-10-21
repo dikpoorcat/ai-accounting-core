@@ -1,6 +1,7 @@
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from ai_accounting_modular.reading import _financial_projection
 
 from ._support import PARTY, assemble, expense, payment, scope
 
@@ -79,7 +80,16 @@ def test_hot_read_uses_no_formal_recalculation_and_global_changes_keep_scope_ver
     book.submit(expense())
     initial = ready(book)
     book.submit(expense("future", "9000", "2026-04"))
-    monkeypatch.setattr(book.ledger, "financial_snapshot", lambda *_: pytest.fail("热读重算了三表"))
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("热读重算了三表")
+
+    for method in (
+        "financial_snapshot",
+        "prepare_financial_projection",
+        "read_financial_projection",
+    ):
+        monkeypatch.setattr(book.ledger, method, unexpected)
     assert book.mark("2026-04") == ()
     _, current = book.preview()
     assert current["state"] == "ready"
@@ -168,17 +178,18 @@ def test_old_model_cannot_publish_over_a_newer_target(tmp_path, monkeypatch):
     book = assemble(tmp_path)
     book.submit(expense())
     book.preview()
-    original = book.ledger.financial_snapshot
+    assert _financial_projection.produce(book.reading, book.company)
+    original = book.ledger.read_financial_projection
 
-    def moving(scope_value, read):
-        snapshot = original(scope_value, read)
+    def moving(scope_value, read, base):
+        snapshot = original(scope_value, read, base)
         book.mark("2026-01")
         return snapshot
 
-    monkeypatch.setattr(book.ledger, "financial_snapshot", moving)
+    monkeypatch.setattr(book.ledger, "read_financial_projection", moving)
     assert book.reading.run_pending(book.company) == ()
     assert book.preview()[1]["state"] == "preparing"
-    monkeypatch.setattr(book.ledger, "financial_snapshot", original)
+    monkeypatch.setattr(book.ledger, "read_financial_projection", original)
     assert book.reading.run_pending(book.company)
     assert book.preview()[1]["state"] == "ready"
 
@@ -186,14 +197,15 @@ def test_old_model_cannot_publish_over_a_newer_target(tmp_path, monkeypatch):
 def test_late_failed_worker_cannot_erase_another_workers_success(tmp_path, monkeypatch):
     book = assemble(tmp_path)
     book.preview()
-    original = book.ledger.financial_snapshot
+    assert _financial_projection.produce(book.reading, book.company)
+    original = book.ledger.read_financial_projection
 
     def late_failure(*args):
-        monkeypatch.setattr(book.ledger, "financial_snapshot", original)
+        monkeypatch.setattr(book.ledger, "read_financial_projection", original)
         assert book.reading.run_pending(book.company)
         raise RuntimeError("synthetic old worker failed")
 
-    monkeypatch.setattr(book.ledger, "financial_snapshot", late_failure)
+    monkeypatch.setattr(book.ledger, "read_financial_projection", late_failure)
     assert book.reading.run_pending(book.company) == ()
     assert book.preview()[1]["state"] == "ready"
 
@@ -201,19 +213,19 @@ def test_late_failed_worker_cannot_erase_another_workers_success(tmp_path, monke
 def test_production_failure_is_stable_and_explicit_retry_rebuilds(tmp_path, monkeypatch):
     book = assemble(tmp_path)
     book.preview()
-    original = book.ledger.financial_snapshot
+    original = book.ledger.prepare_financial_projection
 
-    def failure(*args):
+    def failure(*args, **kwargs):
         raise RuntimeError("synthetic failure with private details")
 
-    monkeypatch.setattr(book.ledger, "financial_snapshot", failure)
+    monkeypatch.setattr(book.ledger, "prepare_financial_projection", failure)
     book.reading.run_pending(book.company)
     status, failed = book.preview()
     assert status == 200 and failed["state"] == "failed"
     assert failed["reason"] == "production_failed"
     assert "response" not in failed
     assert book.reading.run_pending(book.company) == ()
-    monkeypatch.setattr(book.ledger, "financial_snapshot", original)
+    monkeypatch.setattr(book.ledger, "prepare_financial_projection", original)
     book.reading.retry("quarterly_report", scope(book.company))
     assert book.preview()[1]["state"] == "preparing"
     assert book.reading.run_pending(book.company)

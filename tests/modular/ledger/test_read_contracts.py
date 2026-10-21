@@ -23,7 +23,7 @@ from ai_accounting_modular.contracts.public import (
     QuerySelection,
     canonical_json,
 )
-from ai_accounting_modular.ledger import _financial_reads
+from ai_accounting_modular.ledger._financial_projection_selection import ProjectionCalculation
 from ai_accounting_modular.ledger.public import (
     AccountBalanceKey,
     LedgerQuery,
@@ -59,9 +59,10 @@ def test_closed_summary_uses_saved_profit_even_if_current_calculator_changes(sto
     close(store, ledger, "2026-01")
 
     def forbidden(*args, **kwargs):
-        pytest.fail("闭期摘要调用了今天的损益计算")
+        pytest.fail("闭期摘要重新计算了已保存的损益或资产负债")
 
-    monkeypatch.setattr(_financial_reads, "profit", forbidden)
+    monkeypatch.setattr(ProjectionCalculation, "profit", forbidden)
+    monkeypatch.setattr(ProjectionCalculation, "positions", forbidden)
     with store.read_unit(COMPANY) as read:
         actual = ledger.financial_summary(scope(), read)
     assert actual.expense == {"state": "known", "amount_fen": "100000"}
