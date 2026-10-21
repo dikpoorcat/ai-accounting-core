@@ -122,9 +122,12 @@ def prepare_items(items, *, collections=()):
         if identity in identities:
             raise ContractError("invalid_input", "同一读取集合不能重复保存项目身份。")
         identities.add(identity)
-        digest = content_digest({"index": index, "value": item.value})
+        # Reuse strictly checked canonical child bytes in both fixed wrappers.
+        value_json = canonical_json(item.value)
+        binding = f'{{"index":{canonical_json(index)},"value":{value_json}}}'
+        digest = sha256(binding.encode("utf-8")).hexdigest()
         grouped.setdefault(item.collection, []).append((item.sort_key, item.item_id, digest))
-        rows.append((*index.values(), canonical_json({"digest": digest, "value": item.value})))
+        rows.append((*index.values(), f'{{"digest":"{digest}","value":{value_json}}}'))
     manifest = tuple(
         (key, len(values), content_digest([list(value) for value in sorted(values)]))
         for key, values in sorted(grouped.items())

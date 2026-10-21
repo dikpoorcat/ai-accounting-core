@@ -6,7 +6,13 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery, loads_json
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    PageQuery,
+    canonical_json,
+    content_digest,
+    loads_json,
+)
 from ai_accounting_modular.reading._collections import (
     CollectionFilter,
     IndexItem,
@@ -60,6 +66,33 @@ def test_complete_1001_counts_and_filtered_keyset_pages_keep_exact_money(tmp_pat
     assert len(last.items) == 481 and last.next_cursor is None
     assert [value["number"] for value in (*first.items, *last.items)] == list(range(0, 1001, 2))
     assert all(value["amount_fen"] == "9007199254740993" for value in last.items)
+
+
+def test_index_and_payload_keep_the_exact_canonical_binding_for_nested_unicode_values():
+    value = {
+        "中文": [None, True, False, {"b": '引号"\\换行\n\u2028', "a": -(2**100)}],
+        "amount_fen": "9007199254740993",
+    }
+    selected = IndexItem("entries", "项目", "顺序", value, object_id=PARTY, category="分类")
+    expected_index = {
+        "collection": "entries",
+        "item_id": "项目",
+        "sort_key": "顺序",
+        "business_id": None,
+        "object_id": PARTY,
+        "group_key": None,
+        "category": "分类",
+    }
+    digest = content_digest({"index": expected_index, "value": value})
+    prepared = prepare_items([selected])
+    assert prepared.rows[0][-1] == canonical_json({"digest": digest, "value": value})
+    assert prepared.manifest == (("entries", 1, content_digest([["顺序", "项目", digest]])),)
+
+
+@pytest.mark.parametrize("bad", [1.0, float("nan"), (1,), "\ud800", object()])
+def test_preparing_an_index_does_not_bypass_strict_json_value_validation(bad):
+    with pytest.raises((ValueError, ContractError)):
+        prepare_items([IndexItem("entries", "item", "order", {"nested": [bad]})])
 
 
 def test_only_the_requested_page_decodes_payload_and_corruption_is_explicit(tmp_path):
