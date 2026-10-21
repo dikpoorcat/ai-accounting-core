@@ -12,6 +12,12 @@ from ai_accounting_modular.contracts.public import (
     ApplyResult,
     BusinessGet,
     ContractError,
+    FinancialSnapshot,
+    JobsRequest,
+    ReportRequest,
+    SourcesRequest,
+    SourcesResult,
+    TaskReceipt,
     UnitOfWork,
     canonical_json,
     schema_document,
@@ -20,7 +26,16 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.reading.public import ReadingImpact
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _backup_capture, _documents, _execution, _period, _queries, _rebuild, _schema
+from . import (
+    _backup_capture,
+    _documents,
+    _execution,
+    _period,
+    _queries,
+    _rebuild,
+    _schema,
+    _sources,
+)
 from ._backup_producer import create_backup_producer
 from ._backup_scope import backup_scope_head
 from ._backup_verify import BackupVerifier, VerifiedBackup, create_backup_verifier
@@ -102,6 +117,33 @@ class Application:
 
     def accounting_backup(self, request):
         return _backup_capture.start(self, request)
+
+    def accounting_sources(self, request: SourcesRequest) -> SourcesResult:
+        return _sources.run(self, request)
+
+    def accounting_jobs(self, request: JobsRequest) -> TaskReceipt:
+        validate_contract("core.schema.json", "JobsRequest", request)
+        if self.files is None:
+            raise ContractError("unsupported", "当前实例未装配文件任务。")
+        return self.files.get(request["company_id"], request["task_id"])
+
+    def accounting_report(self, request: ReportRequest) -> FinancialSnapshot:
+        validate_contract("core.schema.json", "ReportRequest", request)
+        year, quarter = request["year"], request["quarter"]
+        last = f"{year:04d}-{quarter * 3:02d}"
+        scope = {
+            "company_id": request["company_id"],
+            "period_from": f"{year:04d}-{quarter * 3 - 2:02d}",
+            "period_to": last,
+            "view": "as_posted",
+            "as_of": last,
+        }
+        with self.storage.read_unit(request["company_id"]) as read:
+            snapshot = self.ledger.financial_snapshot(scope, read)
+        expected = request.get("expected_head")
+        if expected is not None and expected != snapshot["selection"]["selection_digest"]:
+            raise ContractError("snapshot_changed", "季度报表采用结果已变化，请重新读取。")
+        return snapshot
 
     def rebuild_standard(self, bundle, unit, *, prepared_sources=None) -> ExecutionOutcome:
         return _rebuild.rebuild(self, bundle, unit, prepared_sources=prepared_sources)
