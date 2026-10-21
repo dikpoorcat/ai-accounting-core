@@ -15,6 +15,8 @@ from ai_accounting_modular.contracts.public import ContractError, loads_json
 
 from ._state import MAX_REQUEST_BYTES, PROTOCOL
 
+_DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
 
 def create_server(runtime, *, port=0, static_directory=None):
     static = Path(static_directory).resolve() if static_directory else None
@@ -62,7 +64,10 @@ def create_server(runtime, *, port=0, static_directory=None):
                 status = 404
             elif error.code in {"internal_error", "storage_corrupt"}:
                 status = 500
-            self._json(status, error.to_response())
+            try:
+                self._json(status, error.to_response())
+            except _DISCONNECTS:
+                self.close_connection = True
 
         def _guard(self, *, private=False, post=False):
             origin = f"http://127.0.0.1:{self.server.server_port}"
@@ -204,7 +209,7 @@ def create_server(runtime, *, port=0, static_directory=None):
             except ContractError as error:
                 self.close_connection = True
                 self._error(error)
-            except (BrokenPipeError, ConnectionResetError):
+            except _DISCONNECTS:
                 self.close_connection = True
             except Exception as error:
                 self.close_connection = True
@@ -246,8 +251,8 @@ def create_server(runtime, *, port=0, static_directory=None):
                 )
             except ContractError as error:
                 self._error(error)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            except _DISCONNECTS:
+                self.close_connection = True
             except Exception as error:
                 self._error(runtime.failure(error))
 
