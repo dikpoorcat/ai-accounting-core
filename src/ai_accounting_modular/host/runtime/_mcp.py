@@ -5,8 +5,9 @@ import json
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import StrictInt
 
-from ai_accounting_modular.agent.public import INSTRUCTIONS, offline_contracts
+from ai_accounting_modular.agent.public import INSTRUCTIONS, generate_ids, offline_contracts
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.host.public import create_offline_application
 
@@ -33,6 +34,15 @@ def create_mcp(client):
     async def accounting_schema(kinds: list[str] | None = None) -> dict[str, Any]:
         """先读实际支持种类；选择 kinds 返回对应类型化事实合同。"""
         return await call(client.dispatch, "accounting_schema", {"kinds": kinds or []})
+
+    @mcp.tool()
+    async def accounting_new_ids(count: StrictInt = 1) -> dict[str, Any]:
+        """生成1至1001个标准UUID，不创建或预留业务，也不保存未提交工作。
+
+        新建时分配，调用方在原完整请求上下文中保存；更正和重试沿用原编号。
+        生成回复不明可重新生成，提交回复不明须查原业务，不能换编号再记。
+        """
+        return {"ids": generate_ids(count)}
 
     @mcp.tool()
     async def accounting_command(command: str, payload: dict) -> dict[str, Any]:

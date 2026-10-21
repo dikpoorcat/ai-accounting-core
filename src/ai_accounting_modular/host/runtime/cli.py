@@ -32,6 +32,8 @@ def main():
     )
     parser.add_argument("--catalog", type=Path)
     commands = parser.add_subparsers(dest="mode", required=True)
+    identifiers = commands.add_parser("ids", help="生成标准UUID，不连接目录或创建业务")
+    identifiers.add_argument("--count", type=int, default=1, help="生成数量，1至1001，默认1")
     commands.add_parser("init", help="用本机密码窗口新建目录和负责人，不覆盖已有文件")
     call = commands.add_parser("call", help="一次调用完整 accounting_* 命令")
     call.add_argument("command")
@@ -58,7 +60,11 @@ def main():
     args = parser.parse_args()
     runtime = None
     try:
-        if args.mode in {"restore", "rebuild"}:
+        if args.mode == "ids":
+            from ai_accounting_modular.agent.public import generate_ids
+
+            result = {"ids": generate_ids(args.count)}
+        elif args.mode in {"restore", "rebuild"}:
             from ai_accounting_modular.host.public import create_offline_application
 
             request = _input(args.input)

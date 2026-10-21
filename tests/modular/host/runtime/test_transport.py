@@ -145,8 +145,15 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
             assert {tool.name for tool in tools.tools} == {
                 "accounting_schema",
                 "accounting_command",
+                "accounting_new_ids",
                 "accounting_security",
             }
+            identifiers = await session.call_tool("accounting_new_ids", {"count": 3})
+            assert not identifiers.isError
+            ids = identifiers.structuredContent["ids"]
+            assert len(ids) == len(set(ids)) == 3
+            for identity in ids:
+                validate_contract("core.schema.json", "Id", identity)
             result = await session.call_tool(
                 "accounting_command",
                 {

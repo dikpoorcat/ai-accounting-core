@@ -81,7 +81,7 @@ F 合同完成后，各家庭可用公开账务/身份读取替身先实现纯�
 
 - 输入为ledger、领域、money、records、identity公开结果、storage公司元数据及统一ReadContext；输出为reading.public、冻结的五页响应、报表三接口及独立只读来源查阅。请求、字段、版本、分页、取消、差异与预算全部依 [看板规范](06-dashboard-adapter.md)。
 - 私有表仅 `read_scope_head/read_component/read_item`。文件任务仓储归F包的独立files模块；reading拥有报表plan与口径，通过共同FileTaskPort接续，不直接写 `file_task` 或反向导入application。
-- 允许改本包和所属测试；前端接续遵守根目录 FRONTEND.md。主要显示内容、UI 样式和既有交互保持，密码核对的一句最小文案按看板规范说明。合作投资只接通既有财务汇总、真实资金和完整凭证，不新增专页、板块、接口或项目管理展示；通用进展无适用明细时明确说明，不阻断记账。顾问从AI提供的/review/materials深链进入第11节独立来源页，依严格ReviewMaterialsQuery/Response和SourceContentQuery打开已登记原件/老板补充。不修改主导航、旧业务generic逻辑或原五页默认请求。
+- 允许改本包和所属测试；前端接续遵守根目录 FRONTEND.md。主要显示内容、UI 样式和既有交互保持，只读核对文案、精确业务范围、版本接续、失败刷新和任务轮询按看板合同实现。合作投资只接通既有财务汇总、真实资金和完整凭证，不新增专页、板块、接口或项目管理展示；通用进展无适用明细时明确说明，不阻断记账。顾问从AI提供的/review/materials深链进入第11节独立来源页，依严格ReviewMaterialsQuery/Response和SourceContentQuery打开已登记原件/老板补充。不修改主导航，不为合作另设分支或增加原五页默认请求。
 - 复用现有 Vue 组件、API 消费方式、取消/缓存与递增追加行为；旧 `dashboard_sort.py`、分区和组明细测试只作为行为索引。新后台不得调用旧总服务、旧事实表或跨模块私表。
 - F 及公开读取合同就绪后可用确定的语义结果替身独立开发；真实集成必须接同一公司事务中的真实领域/账务结果，并验证跨月余额、冻结读取、旧分页409、当前模型及导出所见一致。报表partial的有据金额正常显示、未知null且禁完整导出；不得无限preparing。来源页验收引用范围/分页、冻结旧依据、开放旧代409、跨公司404、原件校验失败不交付及移动读取租约，依[来源样例](examples/review-materials-cases.json)。
 - C09–C14 和看板规范全部功能、工作量与性能矩阵通过，才算交付。旧500ms成绩、纯 HTTP 耗时或只读第一页不计作新验收。
@@ -136,7 +136,7 @@ JSON中的invoke由H包测试适配层按下表执行，不增加生产API，也
 | `observe_business/observe_frozen_voucher/observe_atomic_scope` | 经accounting_get及ledger/money公开查询取完整当前或精确冻结结果；捕获result_id、generation、凭证编号、实际资金身份。source_head及旧定位令牌从同范围dashboard响应取得。atomic_scope规范比较当前事实/seq、采用、凭证、义务、真实资金、文档集合及相关目标，排除查询时间与诊断ID。 |
 | `observe_issue_scope/read_published_documents` | 前者调用records.current_issues；后者从records当前清单读取全部引用片并校验摘要，列出每个business_id所属片及出现次数，不从DB伪造文件已经发布。 |
 | `dashboard_brief_ready/brief_vouchers/exact_voucher/all_vouchers_same_new_head` | 分别调用06的brief首读交付、section=vouchers、精确voucher_version_id定位及同一新snapshot_version下的完整分页；ready首读按返回间隔等待，失败不得当ready。全部分页用首次20、后续500，核对尾页和去重数量。 |
-| `prepare_all_selected_models/capture_full_public_business_and_ui` | 通过真实读取入口使指定范围就绪，再捕获完整公开投影、组件/范围头及请求工作量。页面为实际Vue合成环境；模板/样式摘要基于本次既有页面文件，排除明确约定的一句密码文字修正。不能用静态截图或固定响应替代实际查询和DOM。 |
+| `prepare_all_selected_models/capture_full_public_business_and_ui` | 通过真实读取入口使指定范围就绪，再捕获完整公开投影、组件/范围头及请求工作量。页面为实际Vue合成环境；以保留主要内容、布局和样式并完成本合同接入的页面作为基线，记录构建来源。不能用静态截图或固定响应替代实际查询和DOM。 |
 | `accounting_backup_wait_verified/wait_current_file_task` | 创建后只查询该task_id，经files真实worker执行到succeeded/failed；成功后核验ZIP、回执摘要及字节数，capture已验证包的独立路径verified_package_path及package_sha256。pending/running不能提前交付。 |
 | `start_backup_and_pause_after_snapshot_lease/resume_backup` | 调用真实备份协调，在一致DB快照及文档/来源租约已取得处暂停，然后继续真实复制和校验。比较包内DB、文档及来源；并发提交发生在协调锁已释放之后。 |
 | `restart_synthetic_host` | 结束合成子进程后用同一case的目录、公司库与资料根重启。仅修改build_label时，核算语义与结构合同不变；不能删除数据、任务或缓存来“恢复”。 |
@@ -166,7 +166,7 @@ JSON中的invoke由H包测试适配层按下表执行，不增加生产API，也
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/reading
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/architecture tests/modular/integration tests/modular/acceptance
 npm --prefix frontend test
-npm --prefix frontend run build
+npm --prefix frontend run build:modular
 ```
 
 测试运行器由 H 包维护，包含 `tests/modular/acceptance/test_core_examples.py`，读取本目录 JSON并报告每个 case/step 的输入、预期和实际差异。测试输出只含合成内容。各 owner 同时交付事实/结果 Schema 校验、所属模块测试、一次完整自读后的设计复核及删除无用层次后的再验证；不能以“写完且测试绿”直接结束。

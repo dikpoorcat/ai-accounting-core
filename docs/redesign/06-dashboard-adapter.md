@@ -6,7 +6,7 @@
 
 职责依照 [整体架构](02-architecture.md)：`reading` 通过公开入口批量取得并整理业务结果，`dashboard` 适配 HTTP 格式、范围和错误；领域与账务模块不依赖页面字段、前端类型或看板缓存。共同类型以 [接口合同](03-contracts.md) 为准，本文规定现有页面的外部兼容要求。
 
-当前已接通公司期间、资金、员工、资产、季度报表及来源查阅的进程内和HTTP适配。简报和展开详情按下述合同实现；本机服务运行入口与后台自动调度尚未接通。资金账户是否停用、是否发生归属调整没有正式依据时保留未知；银行原文缺失就留空，不能拿业务用途替代原文。资产编号采用可选当前档案，缺省为空，不要求补齐。员工页按正式人员来源和实际关系展示，缺少期初时累计欠薪为null，已有本月工资及真实付款照常显示。
+五页、展开详情及来源查阅均通过同一本机服务提供，文档、读取和文件任务由后台接续。资金账户是否停用、是否发生归属调整没有正式依据时保留未知；银行原文缺失就留空，不能拿业务用途替代原文。资产编号采用可选当前档案，缺省为空，不要求补齐。员工页按正式人员来源和实际关系展示，缺少期初时累计欠薪为null，已有本月工资及真实付款照常显示。
 
 ## 1. 唯一响应合同
 
@@ -32,7 +32,7 @@
 
 ## 2. 请求与范围
 
-请求参数不得重复。未列出的参数返回 `invalid_command`。GET 参数先按下列类型解析，再调用公开读取入口；不能把空字符串当成缺省值。`company_id` 以最终 URL 为准，客户端可从当前地址补入，服务端不按名称猜公司。
+请求参数不得重复。未列出的参数返回 `invalid_command`。GET 参数先按下列类型解析，再调用公开读取入口；除下表明确允许的无凭证定位，不能把空字符串当成缺省值。`company_id` 以最终 URL 为准，客户端可从当前地址补入，服务端不按名称猜公司。
 
 共同参数如下；各端点只接受下表明确适用的项目：
 
@@ -53,27 +53,28 @@
 | 端点 | 共同参数之外的输入及约束 |
 | --- | --- |
 | `context` | 只接受可选 `company_id`。返回可选公司、月份、季度及默认值。月份和季度按新到旧排列，默认最新有效项；已选择公司不可用时明确报错。 |
-| `brief` | `section=activity/open_items/vouchers`；可用 `voucher_version_id:string` 或 `voucher_number:正整数` 精确定位，两者互斥且不得与 `section` 合用。首次主请求直接定位，不翻遍分页。接受 limit/cursor/expected_version/preparation。 |
+| `brief` | `section=activity/open_items/vouchers`；可用 `activity_key:string`、`voucher_version_id:string` 或 `voucher_number:正整数` 精确定位，三者互斥且不得与 `section` 合用。首次主请求直接定位，不翻遍分页。`activity_group=business/cash/people/assets/tax/investment/correction` 仅筛选本月发生集合。接受 limit/cursor/expected_version/preparation。 |
 | `brief-group` | 必须提供 `section=activity/open_items`、`group_key:string`、`expected_version`；接受 limit/cursor，不接受 preparation、精确凭证定位或其他筛选。 |
 | `funds` | `section=accounts/movements/statements/investment_products/investment_events`；`movement_account_type=bank/cash/payment_platform` 与 `movement_account_id:string` 成对；`statement_account_id:string` 独立筛选银行流水；`movement_account_selection=all/first` 默认 all，first 只用于未指定账户、section、cursor的首屏。 |
 | `employees` | `section=employees/labor_workers/labor_sources`；`employee_filter=all/in_period/unknown/ended/employment_active/employment_unpaid_leave/employment_departed/employment_unknown`，默认 employment_active；可选 `employee_id:string`，查询 labor_sources 时必须提供对应人员身份。 |
 | `assets` | `section=assets/projects`；`asset_filter=all/active/fixed/intangible/pending/exited`，API 默认 all；可选 `asset_id:string`、`project_id:string`，分别定位对应集合。页面普通默认 active，精确资产定位使用 all，不能混淆 API 与页面默认。 |
 | `quarterly-report` | 只接受 `company_id`、`year:1..9999整数`、`quarter:1..4整数`、可选 preparation；季度为 `YYYY-Qn`，不能套用月页的 period、section或cursor。 |
-| `business-status` | 必须提供 `subject_id:string`；`settlement_view=historical/current` 默认 current；可选 `section=settlement_events`、limit/cursor/expected_version；`detail_scope_key:string` 与 `voucher_version_id:string` 成对，选择精确凭证中的业务分项。 |
-| `close-review` | `company_id`、`period`、`preview_digest:64位小写十六进制字符串`。此字段是第 7 节的只读核对标识，没有批准效力。 |
+| `business-status` | 必须提供 `subject_id:string`；`settlement_view=historical/current` 默认 current；可选 `section=settlement_events`、limit/cursor/expected_version；`detail_scope_key:string` 与 `voucher_version_id:string` 成对，选择精确业务分项。真实无凭证成员的后者为空字符串，仍须由精确范围核验，不退回整项业务。 |
+| `close-review` | 必须提供 `company_id`、`period`；首读可省略 `preview_digest:64位小写十六进制字符串`，提供时核验相同内容。此字段是第 7 节的只读核对标识，没有批准效力。 |
 
 资金页面第一次未指定账户时请求 first，并消费 `selected_movement_account`；随后用明确账户身份分页。账户筛选先作用于完整月份，再分页。员工精确定位越过未指定的默认关系筛选，显式筛选仍取交集；资产身份与显式类型筛选同样取交集。同名人员和账户不合并。employee_filter筛选员工和劳务人员名单，不按当前关系抹去已定位人员的历史labor_sources。
 
 ### 2.2 公开读取入口映射
 
-HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.public`；入口参数及 `ContextScope/LedgerScope` 使用共同合同，不另建一份隐含范围。
+HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.public`；入口参数及 `ContextScope/MonthScope/LedgerScope` 使用共同合同，不另建一份隐含范围。
 
 | HTTP 范围 | 公开入口及范围 |
 | --- | --- |
 | `context` | `page("context", ContextScope, {})`；通过storage.list_companies及company_metadata读取公开元数据，无公司时只读目录中的可选范围，不打开全部公司业务库。 |
 | `brief/funds/employees/assets` | `page(同名 page_key, MonthScope, query)`；MonthScope含company_id、可选period及expected_head。reading在同一读快照中选定实际默认月，再形成period_from=period_to、view=as_posted的内部LedgerScope；没有可查看月份就返回空页面，不补造月份。 |
 | `quarterly-report` | `page("quarterly_report", LedgerScope, {})`；期间范围为所选季度的三个自然月，view=as_posted。 |
-| `brief-group/business-status/close-review` | `detail("brief_group"/"business_status"/"close_review", LedgerScope, query)`；query仅含本节列明的定位、筛选或核对头。 |
+| `brief-group/close-review` | `detail("brief_group"/"close_review", MonthScope, query)`；必须提供明确月份，query仅含本节列明的定位、筛选或核对头。 |
+| `business-status` | `detail("business_status", LedgerScope, query)`；period_from=period_to为指定月份，view=as_posted，query含明确事项及本节列明的分项范围。 |
 | 报表生成、状态、下载 | `export_report(scope, head, request_id)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)`；head由已取得的预览标识和epochs共同校验。 |
 
 `expected_version` 转成同范围的 expected_head；业务进展首读不套用父页面版本，续页沿进展自身返回版本；`preview_digest` 转成对应只读检查或报表计划头。业务进展中的 historical/current 只选择清偿的查询截止，不改变主月采用口径；同次响应需要当前后续信息时，在同一个 `ReadContext` 中明确读取两个视图。跨模块读取共用该上下文及只读事务，不能由每个提供者另开连接。没有指定月时先从context确定范围，再查询，不把缺省期当作当前自然月。
@@ -160,7 +161,7 @@ partial时export.available=false、preview_digest=null、epochs=null；不能创
 
 - 本月发生和应收应付先读组摘要，展开组才读成员。成员首次20、自动500；组收起取消未完成请求。逐成员业务进展必须另行打开，不因展开组、缓存重开或刷新自动读取。
 - 组内凭证预览和“按凭证”展开显示完整原凭证及分录；已加载凭证直接本地打开，不请求全月简报、不预读下一页、不改变独立凭证游标。独立清单手动首次切入才初始化，分页20，“全部”沿500条有界游标完整读取。
-- 业务进展保留所选月末义务原额、实际支付、抵销／代付、剩余及状态，也保留后续真实清偿的当前截止期。`settlement_view=historical`选择所选截止期事件，current选择当前截止期事件；二者均不表示开放期操作日志。
+- 业务进展保留所选月末义务原额、实际支付、抵销／代付、剩余及状态，也保留后续真实清偿的当前截止期。被替代的精确旧分项从其原采用月核对原义务，不能拿当前新分项代替；后续清偿仍按实际截止期查询。`settlement_view=historical`选择所选截止期事件，current选择当前截止期事件；二者均不表示开放期操作日志。
 - 精确分项先限制业务、对象、用途、金额、义务及收付范围，再计数分页。同一笔混合支付的其他人员或其他事项不得进入所选分项。没有分项参数时才返回整笔业务。
 - 员工薪酬补充、资产卡片／处置／付款补充和完整三表已在本页结果中；点击只改变显示。劳务人卡展开才读该人的labor_sources，再打开具体收付款事项才读business-status。
 - 银行批次悬停或展开复用流水行已返回的成员、个人金额和批次合计；没有额外请求或第二份批次缓存。未能逐行分摊时保留范围说明，不能假配。
@@ -209,7 +210,7 @@ reading复用同版简报的完整金额、实际资金核对状态和当前未�
 
 ## 8. 报表生成、状态和下载
 
-预览返回的`export`包含available、file_name、preview_digest、epochs。available只有在该季度所需业务结果完整且可生成文件时为true；无关申报或老板批准不是导出前提。preview_digest是准确报表计划标识；epochs保留accounting/material/management三个非负整数技术槽位，分别对应本计划实际依赖的账务、来源、显示资料当前序号，不增加旧审计lane或全库扫描。
+预览返回的`export`包含available、file_name、preview_digest、epochs。available只有在该季度所需业务结果完整且可生成文件时为true；无关申报或老板批准不是导出前提。preview_digest是准确报表计划标识；epochs的accounting取该季度financial组件的ready_head，material固定0，management取公司profile_seq，不增加旧审计lane或全库扫描。导出只提供固定tax_bureau三表模板；页面默认样式与税务模板是同一金额的本地展示切换，不分别生成工作簿。显式提交default文件方案返回report_template_unsupported。
 
 ### 8.1 创建任务
 
@@ -251,7 +252,7 @@ reading复用同版简报的完整金额、实际资金核对状态和当前未�
 
 | 位置 | 接入处理及影响 |
 | --- | --- |
-| 月度核对中的密码批准文案 | 按第7节改为只读检查及差异反馈，仅修正明确要求密码的一句，并在实施交付时告知用户。普通凭证、金额和核对内容继续提供。 |
+| 月度核对中的密码批准文案 | 按第7节改为只读检查及差异反馈。普通凭证、金额、核对内容、布局和样式继续提供。 |
 | “之前的经营说明已过期”展开 | 不保留开放期过期旧正文。当前有效说明仍正常显示；当前说明失效且无新有效正文时，current/latest为null、status=stale，旧正文展开不出现。向用户列明“无法比较过期说明原文”的具体差异，用户以后可决定是否增加该保留能力。 |
 | 已关后的有效补充说明 | 保留实际采用的冻结说明及仍有效的补充内容，supplements据此提供；不能把它们误当开放期纠错日志删除。 |
 | 开放期被撤去业务及旧凭证的历史提示 | 旧错误正文不恢复；重读列表后不再列旧行，持有旧结果标识先返回409，刷新后的无效精确业务返回404。已有原凭证编号用于当前有效修改时保留；闭期原凭证、冲正及后续真实收付继续可查。向用户说明不再从已撤去开放期误记查旧正文。 |
@@ -294,7 +295,7 @@ reading复用同版简报的完整金额、实际资金核对状态和当前未�
 
 ### 10.2 模块交付内容
 
-交付 `src/ai_accounting_modular/dashboard/public.py`、reading公开结果到本快照的适配、严格请求及响应校验、独立HTTP测试和共同合成样例；不得导入旧总服务或领域私有代码。旧五页Vue模板／样式不重写；第7节已说明的密码文案、必要API/生成类型接续及第11节顾问来源入口按各自明确范围调整，既有业务进展逻辑保持，不为合作另设dispatch。
+交付 `src/ai_accounting_modular/dashboard/public.py`、reading公开结果到本快照的适配、严格请求及响应校验、独立HTTP测试和共同合成样例；不得导入旧总服务或领域私有代码。五页保持既有主要内容、布局和样式；只读核对文案、精确业务范围、版本接续、失败刷新和任务轮询按本合同接通，必要API/生成类型及第11节顾问来源入口同步调整，不为合作另设dispatch。
 
 验证包含冻结合同校验、前端类型检查与正式构建、对应前后端行为测试、真实模块集成和上述性能矩阵。当前设计编制未运行这些产品验证；完成实现后逐项报告实际结果、未通过项及有来源的展开缺口，不能把本文件或旧测试曾通过当作交付完成。
 
