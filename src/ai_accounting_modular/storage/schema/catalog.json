@@ -1,5 +1,5 @@
 {
-  "fingerprint": "1c423a830b3566e33970c179fa2a438d278909a524926c66e40f56daa822c26b",
+  "fingerprint": "dba3cdac85ff54da201d09816f133bb88c050654c452e522fa344d12d2cc2a90",
   "kind": "catalog",
   "objects": [
     {
@@ -19,7 +19,7 @@
     {
       "name": "owner_profile",
       "owner": "storage",
-      "sql": "CREATE TABLE owner_profile (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n owner_id TEXT NOT NULL UNIQUE CHECK(length(owner_id)=36),\n display_name TEXT NOT NULL,\n password_hash TEXT NOT NULL\n) STRICT",
+      "sql": "CREATE TABLE owner_profile (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n owner_id TEXT NOT NULL UNIQUE CHECK(length(owner_id)=36),\n display_name TEXT NOT NULL,\n password_hash TEXT NOT NULL,\n recovery_hash TEXT\n) STRICT",
       "table": "owner_profile",
       "type": "table"
     }

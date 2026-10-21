@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,7 +44,8 @@ class RepositoryFactory:
 class OwnerProfile:
     owner_id: str
     display_name: str
-    password_hash: str
+    password_hash: str = field(repr=False)
+    recovery_hash: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)

@@ -44,9 +44,7 @@ from ._units import database_unit, open_database_unit, repository_factories
 
 def create_catalog(path: Path | str, owner: OwnerProfile) -> Path:
     path = Path(path).resolve()
-    _identifier(owner.owner_id, "owner_id")
-    _text(owner.display_name, "老板姓名")
-    _text(owner.password_hash, "密码摘要", max_length=4096)
+    _validate_owner(owner)
 
     def seed(connection):
         connection.execute(
@@ -54,8 +52,8 @@ def create_catalog(path: Path | str, owner: OwnerProfile) -> Path:
             (CATALOG_FORMAT, str(uuid4()), packaged_schema("catalog")["fingerprint"]),
         )
         connection.execute(
-            "INSERT INTO owner_profile VALUES(1,?,?,?)",
-            (owner.owner_id, owner.display_name, owner.password_hash),
+            "INSERT INTO owner_profile VALUES(1,?,?,?,?)",
+            (owner.owner_id, owner.display_name, owner.password_hash, owner.recovery_hash),
         )
 
     with _candidate(path) as candidate:
@@ -95,16 +93,34 @@ def _location_view(row: sqlite3.Row) -> CompanyLocation:
     )
 
 
+def _validate_owner(owner: OwnerProfile) -> None:
+    if not isinstance(owner, OwnerProfile):
+        raise ContractError("invalid_input", "须提供明确的老板身份与凭据摘要。")
+    _identifier(owner.owner_id, "owner_id")
+    _text(owner.display_name, "老板姓名")
+    _text(owner.password_hash, "密码摘要", max_length=4096)
+    if owner.recovery_hash is not None:
+        _text(owner.recovery_hash, "恢复码摘要", max_length=4096)
+
+
+def _owner_profile(connection: sqlite3.Connection) -> OwnerProfile:
+    row = connection.execute("SELECT * FROM owner_profile WHERE singleton=1").fetchone()
+    if row is None:
+        raise ContractError("storage_corrupt", "目录缺少老板身份")
+    profile = OwnerProfile(
+        row["owner_id"], row["display_name"], row["password_hash"], row["recovery_hash"]
+    )
+    _validate_owner(profile)
+    return profile
+
+
 def _catalog_identity(connection: sqlite3.Connection) -> None:
     catalog = connection.execute("SELECT catalog_id FROM catalog_meta WHERE singleton=1").fetchone()
-    owner = connection.execute("SELECT * FROM owner_profile WHERE singleton=1").fetchone()
-    if catalog is None or owner is None:
+    if catalog is None:
         raise ContractError("storage_corrupt", "目录缺少目录或老板身份")
     try:
         _identifier(catalog["catalog_id"], "catalog_id")
-        _identifier(owner["owner_id"], "owner_id")
-        _text(owner["display_name"], "老板姓名")
-        _text(owner["password_hash"], "密码摘要", max_length=4096)
+        _owner_profile(connection)
     except ContractError as exc:
         raise ContractError("storage_corrupt", "目录保存的目录或老板身份不合法") from exc
 
@@ -144,6 +160,33 @@ class Storage:
             raise
         finally:
             connection.close()
+
+    def catalog_identity(self) -> str:
+        with self._catalog(writable=False) as catalog:
+            return catalog.execute(
+                "SELECT catalog_id FROM catalog_meta WHERE singleton=1"
+            ).fetchone()[0]
+
+    def owner_profile(self) -> OwnerProfile:
+        with self._catalog(writable=False) as catalog:
+            return _owner_profile(catalog)
+
+    def replace_owner_credentials(
+        self, expected: OwnerProfile, *, password_hash: str, recovery_hash: str | None
+    ) -> OwnerProfile:
+        _validate_owner(expected)
+        replacement = OwnerProfile(
+            expected.owner_id, expected.display_name, password_hash, recovery_hash
+        )
+        _validate_owner(replacement)
+        with self._catalog(writable=True) as catalog:
+            if _owner_profile(catalog) != expected:
+                raise ContractError("conflict", "老板凭据已变化，请重新登录后再修改。")
+            catalog.execute(
+                "UPDATE owner_profile SET password_hash=?,recovery_hash=? WHERE singleton=1",
+                (password_hash, recovery_hash),
+            )
+        return replacement
 
     def list_companies(self) -> tuple[CompanyLocation, ...]:
         with self._catalog(writable=False) as catalog:

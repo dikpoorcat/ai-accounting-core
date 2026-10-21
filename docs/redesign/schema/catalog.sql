@@ -11,7 +11,8 @@ CREATE TABLE owner_profile (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  owner_id TEXT NOT NULL UNIQUE CHECK(length(owner_id)=36),
  display_name TEXT NOT NULL,
- password_hash TEXT NOT NULL
+ password_hash TEXT NOT NULL,
+ recovery_hash TEXT
 ) STRICT;
 CREATE TABLE company_location (
  company_id TEXT PRIMARY KEY CHECK(length(company_id)=36),
