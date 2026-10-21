@@ -222,6 +222,22 @@ class Selection:
                 self.source(head)
         return {head["result_id"]: self._details[head["result_id"]] for head in heads}
 
+    def position_resources(self, heads, accounts):
+        ids = tuple(dict.fromkeys(head["result_id"] for head in heads))
+        order = {identity: index for index, identity in enumerate(ids)}
+        records = self.repo.financial_resource_rows(ids, accounts)
+        grouped = {}
+        for table, rows in records.items():
+            values = defaultdict(list)
+            for row in rows:
+                values[row["result_id"]].append(row)
+            field = CHILD_KEYS[table]
+            grouped[table] = {
+                identity: sorted(values[identity], key=lambda row: row[field])
+                for identity in sorted(values, key=order.__getitem__)
+            }
+        return grouped
+
     def opening_rows(self):
         if self.opening is None:
             return None

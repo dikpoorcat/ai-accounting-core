@@ -62,21 +62,26 @@ _DIRECT = {
     "3104": (51, -1),
 }
 
+# A normal party balance is classified by GL alone. Resources additionally
+# establish adopted loan terms and anonymous social/housing attribution.
+_RESOURCE_ACCOUNTS = (("2501", False), ("224102", True), ("224103", True))
+
 
 def _resource_positions(selection, heads):
-    obligations = selection.children("obligation", heads)
+    records = selection.position_resources(heads, _RESOURCE_ACCOUNTS)
+    obligations = records["obligation"]
     owners, values, totals = {}, {}, defaultdict(lambda: defaultdict(int))
     for head in heads:
-        for value in obligations[head["result_id"]]:
+        for value in obligations.get(head["result_id"], ()):
             key = head["business_id"], value["public_slot"]
             owners[key], values[key] = head, value
-    for head_rows in selection.children("settlement", heads).values():
+    for head_rows in records["settlement"].values():
         for row in head_rows:
             key = row["source_business_id"], row["source_public_slot"]
             totals[key][row["method"]] = sum_amounts(
                 (totals[key][row["method"]], row["amount_fen"])
             )
-    for head_rows in selection.children("obligation_reclassification", heads).values():
+    for head_rows in records["obligation_reclassification"].values():
         for row in head_rows:
             key = row["source_business_id"], row["source_public_slot"]
             totals[key][row["mode"]] = sum_amounts((totals[key][row["mode"]], row["amount_fen"]))

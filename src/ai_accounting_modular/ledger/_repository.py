@@ -315,6 +315,53 @@ class LedgerRepository(ReadRepository):
             )
         ]
 
+    def financial_resource_rows(self, result_ids, accounts):
+        """Only controlled definitions and uses from the same exact financial selection."""
+        records = {
+            table: [] for table in ("obligation", "settlement", "obligation_reclassification")
+        }
+        if not result_ids or not accounts:
+            return records
+        selected = canonical(list(result_ids))
+        predicates = " OR ".join(
+            "(d.account_code=? AND d.party_id IS NULL)" if anonymous else "d.account_code=?"
+            for _, anonymous in accounts
+        )
+        definitions = [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT d.*,r.business_id AS owner_business_id FROM obligation d "
+                "JOIN adopted_result r ON r.result_id=d.result_id "
+                "WHERE d.result_id IN (SELECT value FROM json_each(?)) AND (" + predicates + ")",
+                (selected, *(code for code, _ in accounts)),
+            )
+        ]
+        if not definitions:
+            return records
+        sources = canonical(
+            [
+                list(ref)
+                for ref in sorted(
+                    {(row["owner_business_id"], row["public_slot"]) for row in definitions}
+                )
+            ]
+        )
+        for row in definitions:
+            del row["owner_business_id"]
+        records["obligation"] = definitions
+        for table in ("settlement", "obligation_reclassification"):
+            records[table] = [
+                dict(row)
+                for row in self._session.fetchall(
+                    f"SELECT u.* FROM json_each(?) refs JOIN {table} u "
+                    "ON u.source_business_id=json_extract(refs.value,'$[0]') "
+                    "AND u.source_public_slot=json_extract(refs.value,'$[1]') "
+                    "WHERE u.result_id IN (SELECT value FROM json_each(?))",
+                    (sources, selected),
+                )
+            ]
+        return records
+
     def financial_boundaries(self, *, as_of=None):
         selection = (
             "JOIN result_slot_current c ON c.head_result_id=r.result_id " if as_of is None else ""
