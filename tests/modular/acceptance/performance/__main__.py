@@ -62,7 +62,11 @@ def main():
     )
     lifecycle.add_argument("--probe", action="store_true")
     args = parser.parse_args()
-    started_environment = environment()
+    identity_options = {}
+    if args.action == "browser" and args.static_directory is not None:
+        args.static_directory = args.static_directory.resolve()
+        identity_options["static_directory"] = args.static_directory
+    started_environment = environment(**identity_options)
     if args.action == "plan":
         balance, rows = INITIAL_BANK, []
         for index in range(args.months):
@@ -115,7 +119,7 @@ def main():
         from .scenarios import run
 
         result = run(args.root, args.output_root, args.mode, args.scenario, probe=args.probe)
-    finished_code = code_identity()
+    finished_code = code_identity(**identity_options)
     unchanged = all(started_environment[key] == value for key, value in finished_code.items())
     print(
         json.dumps(
