@@ -1,10 +1,13 @@
 """Compile installed schemas once, retaining the existing Python scalar semantics."""
 
+import re
+
 import jsonschema_rs
 from jsonschema import FormatChecker
+from jsonschema.exceptions import FormatError
 
 from ._dispatch import _CHILDREN, _LISTS, _MAPS
-from ._validation_keywords import exact_pattern, integer_bound, wire_fen
+from ._validation_keywords import integer_bound, wire_fen
 
 
 class _StrictInteger:
@@ -27,6 +30,18 @@ class _StrictConstant:
             raise ValueError("固定值的类型不符合合同")
 
 
+class _PythonPattern:
+    def __init__(self, parent, value, path):
+        pattern = re.compile(value)
+        self.match = (
+            pattern.fullmatch if value.startswith("^") and value.endswith("$") else pattern.search
+        )
+
+    def validate(self, instance):
+        if isinstance(instance, str) and self.match(instance) is None:
+            raise ValueError("字符串格式不符合合同")
+
+
 def _keyword(handler):
     class ScalarKeyword:
         def __init__(self, parent, value, path):
@@ -43,15 +58,32 @@ def _keyword(handler):
 _KEYWORDS = {
     "x-python-integer": _StrictInteger,
     "x-python-const": _StrictConstant,
-    "x-python-pattern": _keyword(exact_pattern),
+    "x-python-pattern": _PythonPattern,
     "x-integer-minimum": _keyword(integer_bound),
     "x-integer-maximum": _keyword(integer_bound),
     "x-fen-int64": _keyword(wire_fen),
 }
-_CHECKER = FormatChecker()
+
+
+def _format_checker(check, raises):
+    def conforms(instance):
+        # Match FormatChecker's two exception boundaries without its repeated
+        # name lookup or constructing a FormatError for an ordinary mismatch.
+        try:
+            try:
+                result = check(instance)
+            except raises:
+                return False
+            return bool(result)
+        except FormatError:
+            return False
+
+    return conforms
+
+
 _FORMATS = {
-    name: (lambda instance, name=name: _CHECKER.conforms(instance, name))
-    for name in _CHECKER.checkers
+    name: _format_checker(check, raises)
+    for name, (check, raises) in FormatChecker().checkers.items()
 }
 
 
