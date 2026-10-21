@@ -9,12 +9,15 @@ from typing import Literal
 
 from ai_accounting_modular.contracts.public import (
     CapturedFile,
+    ContractError,
     CurrentIssue,
     CurrentNote,
     NoteChange,
     ReadContext,
     Source,
+    canonical_json,
     loads_json,
+    validate_contract,
 )
 
 SOURCE_BLOCK_CHARS = 20000
@@ -140,7 +143,7 @@ class RecordsPlan:
         return tuple(sorted(set(result)))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ShardTarget:
     key: str
     wanted_head: int
@@ -148,9 +151,23 @@ class ShardTarget:
     current_path: str | None
     current_digest: str | None
 
+    def __post_init__(self):
+        if (
+            type(self.key) is not str
+            or type(self.wanted_head) is not int
+            or (self.published_head is not None and type(self.published_head) is not int)
+            or any(
+                value is not None and type(value) is not str
+                for value in (self.current_path, self.current_digest)
+            )
+        ):
+            raise ContractError("invalid_input", "标准文档目标必须是不可变的身份、版本和位置。")
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, slots=True)
 class DocumentSnapshot:
+    """Strict canonical JSON, detached once at construction and never exposed as containers."""
+
     company_id: str
     database_id: str
     head: int
@@ -161,6 +178,50 @@ class DocumentSnapshot:
     confirmed_set_id: str | None
     base_manifest_json: str | None
     parts_json: tuple[str, ...]
+    _part_keys: tuple[str, ...] = field(init=False, repr=False)
+
+    def __post_init__(self):
+        def document(raw, definition):
+            value = loads_json(raw)
+            validate_contract("core.schema.json", definition, value)
+            return value, canonical_json(value)
+
+        try:
+            targets = tuple(self.targets)
+            scopes = tuple(self.scopes)
+            raw_parts = tuple(self.parts_json)
+            root = Path(self.company_root)
+        except (TypeError, ValueError) as error:
+            raise ContractError(
+                "invalid_input", "标准文档快照必须包含明确的目标、范围和 JSON 原文。"
+            ) from error
+        if (
+            type(self.company_id) is not str
+            or type(self.database_id) is not str
+            or type(self.head) is not int
+            or any(type(target) is not ShardTarget for target in targets)
+            or any(type(scope) is not str for scope in scopes)
+            or (self.confirmed_set_id is not None and type(self.confirmed_set_id) is not str)
+        ):
+            raise ContractError("invalid_input", "标准文档快照身份和目标必须是不可变值。")
+        identity = document(self.company_identity_json, "CompanyIdentity")[1]
+        base = (
+            document(self.base_manifest_json, "DocumentManifest")[1]
+            if self.base_manifest_json is not None
+            else None
+        )
+        parts, keys = [], []
+        for raw in raw_parts:
+            part, body = document(raw, "StandardPart")
+            parts.append(body)
+            keys.append(part["key"])
+        object.__setattr__(self, "company_root", root)
+        object.__setattr__(self, "targets", targets)
+        object.__setattr__(self, "scopes", scopes)
+        object.__setattr__(self, "company_identity_json", identity)
+        object.__setattr__(self, "base_manifest_json", base)
+        object.__setattr__(self, "parts_json", tuple(parts))
+        object.__setattr__(self, "_part_keys", tuple(keys))
 
 
 @dataclass(frozen=True, eq=False)

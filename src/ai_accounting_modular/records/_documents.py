@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -193,15 +194,7 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
             "key": "sources",
             "sources": [sources[source_id] for source_id in sorted(sources)],
         }
-    for key, part in parts.items():
-        validate_contract("core.schema.json", "StandardPart", part)
-        target = indexed.get(key)
-        digest = hashlib.sha256(part_bytes(part)).hexdigest()
-        if target is None or (
-            target.wanted_head == target.published_head and target.current_digest != digest
-        ):
-            raise ContractError("invalid_operation", "标准文档内容变化却没有同步推进文档目标。")
-    return DocumentSnapshot(
+    snapshot = DocumentSnapshot(
         read.company_id,
         read.database_id,
         read.head,
@@ -213,6 +206,14 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
         canonical_json(base) if base is not None else None,
         tuple(canonical_json(parts[key]) for key in sorted(parts)),
     )
+    for key, raw in zip(snapshot._part_keys, snapshot.parts_json, strict=True):
+        target = indexed.get(key)
+        digest = hashlib.sha256((raw + "\n").encode("utf-8")).hexdigest()
+        if target is None or (
+            target.wanted_head == target.published_head and target.current_digest != digest
+        ):
+            raise ContractError("invalid_operation", "标准文档内容变化却没有同步推进文档目标。")
+    return snapshot
 
 
 def _part_name(key, digest):
@@ -248,28 +249,27 @@ def _markdown(manifest):
 
 
 def prepare_documents(snapshot):
+    if type(snapshot) is not DocumentSnapshot:
+        raise ContractError("invalid_input", "标准文档生成必须使用构造时严格核验的原文快照。")
+    # Only this exact immutable type's constructor owns these canonical bytes.
     base = (
-        loads_json(snapshot.base_manifest_json) if snapshot.base_manifest_json is not None else None
+        json.loads(snapshot.base_manifest_json) if snapshot.base_manifest_json is not None else None
     )
     shards = (
         [shard for shard in base["shards"] if shard["key"] not in snapshot.scopes] if base else []
     )
-    for raw in snapshot.parts_json:
-        part = loads_json(raw)
-        validate_contract("core.schema.json", "StandardPart", part)
-        data = part_bytes(part)
+    for key, raw in zip(snapshot._part_keys, snapshot.parts_json, strict=True):
+        data = (raw + "\n").encode("utf-8")
         digest = hashlib.sha256(data).hexdigest()
-        relative = "standard/parts/" + _part_name(part["key"], digest)
+        relative = "standard/parts/" + _part_name(key, digest)
         path = controlled_path(snapshot.company_root, relative, parents=True)
         if not path.exists() or path.read_bytes() != data:
             atomic_write(snapshot.company_root, relative, data)
-        shards.append(
-            {"key": part["key"], "path": relative, "sha256": digest, "byte_size": len(data)}
-        )
+        shards.append({"key": key, "path": relative, "sha256": digest, "byte_size": len(data)})
     shards.sort(key=lambda shard: shard["key"])
     manifest = {
         "format": FORMAT,
-        "company_identity": loads_json(snapshot.company_identity_json),
+        "company_identity": json.loads(snapshot.company_identity_json),
         "shards": shards,
     }
     manifest["set_id"] = content_digest(manifest)
