@@ -170,6 +170,18 @@ def adopt_source(plan, source):
         plan["basis"]["source_results"].append(deepcopy(source))
 
 
+def adopt_obligation(plan, definition):
+    adopt_source(plan, definition.source)
+    quantity = {
+        "type": "obligation",
+        "source": deepcopy(definition.reference),
+        **{key: definition.value[key] for key in ("account_code", "direction", "amount_fen")},
+    }
+    if "party_id" in definition.value:
+        quantity["party_id"] = definition.value["party_id"]
+    plan["basis"]["adopted_quantities"].append(quantity)
+
+
 def movement(plan, fact, slot, account_id, direction, value, *, party=None, parts=None, group=None):
     result = {
         "movement_id": occurrence_id(fact["business_id"], slot),

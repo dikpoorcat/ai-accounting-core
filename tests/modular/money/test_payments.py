@@ -31,6 +31,16 @@ def test_real_expense_payment_clears_debt_and_never_books_expense_twice(ids):
         {"category": "other_operating_payments", "amount_fen": "100000"}
     ]
     assert plan["basis"]["source_results"][0]["business_id"] == ids["expense"]
+    assert plan["basis"]["adopted_quantities"] == [
+        {
+            "type": "obligation",
+            "source": {"business_id": ids["expense"], "slot": "primary"},
+            "account_code": "2202",
+            "direction": "payable",
+            "amount_fen": "100000",
+            "party_id": ids["party"],
+        }
+    ]
 
 
 def test_missing_cashflow_classification_does_not_block_real_payment(ids):

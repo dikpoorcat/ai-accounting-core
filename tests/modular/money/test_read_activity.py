@@ -9,7 +9,7 @@ import pytest
 from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.money.public import MovementQuery, StatementQuery, stable_occurrence_id
 from tests.modular.application._working_case import case as case
-from tests.modular.domains.financing._support import BANK, CASH, OWNER, fact, objects
+from tests.modular.domains.financing._support import BANK, CASH, OWNER, fact, objects, payment
 
 
 def scope(case, month="2026-01", view="current"):
@@ -112,6 +112,31 @@ def test_internal_transfer_is_two_account_legs_and_one_company_transfer(case):
                 scope(case), MovementQuery(CASH), PageQuery(1, first.next_cursor), read
             )
         assert caught.value.code == "snapshot_changed"
+
+
+def test_allocation_reads_its_adopted_obligation_not_current_source_definition(case, monkeypatch):
+    initialize(case)
+    expense = case.expense()
+    paid = payment(expense, 30000, slot="primary", party=case.party)
+    apply(case, funding("200000"), expense, paid)
+    saved = case.get(paid["business_id"])["businesses"][0]["results"][0]
+    quantity = saved["basis"]["adopted_quantities"][0]
+    assert quantity["party_id"] == case.party and quantity["amount_fen"] == "100000"
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("实际付款收款人须来自消费时的正式采用量")
+
+    monkeypatch.setattr(case.kernel.ledger, "resource_definitions", forbidden)
+    with case.kernel.storage.read_unit(case.company) as read:
+        values = case.kernel.money.query_movements(
+            scope(case), MovementQuery(BANK), PageQuery(500), read
+        )
+    actual = next(
+        item for item in values.items if item["reference"]["business_id"] == paid["business_id"]
+    )
+    assert len(actual["allocations"]) == 1
+    assert actual["allocations"][0].party_id == case.party
+    assert actual["allocations"][0].amount_fen == 30000
 
 
 def test_original_text_edit_preserves_adoption_and_frozen_row_reads(case):

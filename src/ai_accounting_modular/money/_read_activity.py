@@ -48,29 +48,29 @@ def _parts(owner, movements, scope, read):
         if page.next_cursor is None:
             break
         cursor = page.next_cursor
-    refs = {
-        (item.use.value["source"]["business_id"], item.use.value["source"]["slot"]): item.use.value[
-            "source"
-        ]
-        for item in events
-    }
-    refs = list(refs.values())
+    sources = {item.use.source["result_id"]: item.use.source for item in events}
     obligations = {}
+    refs = list(sources.values())
     for start in range(0, len(refs), 500):
-        for item in owner._ledger.resource_definitions(
-            refs[start : start + 500], "obligation", read, selection=selected
+        headers = owner._ledger.get_adopted_sources(refs[start : start + 500], read)
+        for content in owner._ledger.get_adopted_contents(
+            tuple(item.reference for item in headers), read
         ):
-            obligations[item.reference["business_id"], item.reference["slot"]] = item
+            for quantity in content.basis["adopted_quantities"]:
+                if quantity["type"] == "obligation":
+                    ref = quantity["source"]
+                    key = (content.source["result_id"], ref["business_id"], ref["slot"])
+                    if key in obligations:
+                        fail("真实付款的采用依据重复定义同一义务。", "storage_corrupt")
+                    obligations[key] = quantity
     values = defaultdict(list)
     for event in events:
         ref = event.use.value["source"]
-        original = obligations.get((ref["business_id"], ref["slot"]))
+        original = obligations.get((event.use.source["result_id"], ref["business_id"], ref["slot"]))
         if original is None:
             fail("真实付款分项缺少正式来源义务。", "storage_corrupt")
         values[event.movement.value["movement_id"]].append(
-            SettlementPart(
-                ref, amount(event.use.value["amount_fen"]), original.value.get("party_id")
-            )
+            SettlementPart(ref, amount(event.use.value["amount_fen"]), original.get("party_id"))
         )
     return {key: tuple(value) for key, value in values.items()}
 

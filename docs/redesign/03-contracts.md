@@ -162,7 +162,7 @@ PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 tota
 | 公开能力 | 结果含义 |
 | --- | --- |
 | `money.account_activity(scope, read)` | 一次返回完整实际资金、原行、匹配组和整公司／逐账户汇总，包含流入、流出、划转、数量、最后发生日及原行核对状态。各账户含其划转两端，公司对外金额排除内部划转，划转金额按同一 transfer_group_id 计一次。账面期初、期末由同快照的 ledger.account_balances 提供。 |
-| `money.query_movements(scope, query, page, read)` | 查询可选账户，None 明确表示全公司；返回 ReadPage、稳定资金身份、正式采用、账户、真实日、方向、金额、交易方及精确清偿分项。整笔资金和各义务分配分别表达。 |
+| `money.query_movements(scope, query, page, read)` | 查询可选账户，None 明确表示全公司；返回 ReadPage、稳定资金身份、正式采用、账户、真实日、方向、金额、交易方及精确清偿分项。整笔资金和各义务分配分别表达。普通收付、工资组合及抵销在Basis保存实际采用义务的公开引用、科目、方向、原金额及收款人；读取实际分项沿消费时的采用量，不从后来被改写的来源猜收款人。 |
 | `money.query_statement_rows(scope, query, page, read)` | 按可选账户及 bank/platform 类型返回正式原行、稳定行身份、资料位置、原文及真实匹配组。冻结金额和日期从所选正式 Basis 取得；当前原行文字只补充已核对的同一行，不替换冻结数据。 |
 | `investment.money_fund_activity(scope, read)` | 一次返回完整产品、确认／清偿事件和整公司／逐基金汇总，包含有源期初、正式成本、申购确认、赎回成本和确认损益。成本由 ledger 余额及成本结果提供；实际付款和到账由正式清偿提供。所有 AmountCell 的缺项索引都指向同一 issues 问题池。 |
 | `investment.query_money_fund_events(scope, page, read)` | 返回有界确认与实际清偿事件，包含稳定事件键、基金、业务、精确采用、经济月、采用月及可空真实日。闭期更正的新旧分腿分别读取自身 Target/Basis，不把确认收益再次当作到账收益。 |

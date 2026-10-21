@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import ContractError, ResourceCutoff
 from ._cashflow import combine_parts, payment_parts
 from ._common import (
     account,
+    adopt_obligation,
     adopt_source,
     allocation_refs,
     amount,
@@ -128,7 +129,7 @@ def settlement(fact, context):
             credit=paid if data["direction"] == "inflow" else 0,
             party=ob.get("party_id"),
         )
-        adopt_source(plan, definition.source)
+        adopt_obligation(plan, definition)
         parts.append(payment_parts(fact, allocation, ob, context))
     line(
         plan,
@@ -276,7 +277,7 @@ def payroll_reserve(fact, context):
             debit=amount(allocation["amount_fen"]),
             party=ob.get("party_id"),
         )
-        adopt_source(plan, definition.source)
+        adopt_obligation(plan, definition)
         groups.append(payment_parts(fact, allocation, ob, context))
     for _, result in wage_results:
         adopt_source(plan, result.source)
@@ -409,5 +410,5 @@ def offset(fact, context):
             party=ob["party_id"],
         )
         _settlement(plan, fact, allocation, method="offset")
-        adopt_source(plan, definition.source)
+        adopt_obligation(plan, definition)
     return plan
