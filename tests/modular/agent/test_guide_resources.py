@@ -3,13 +3,17 @@
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp.exceptions import ResourceError
 
+from ai_accounting_modular.agent.public import create_agent
 from ai_accounting_modular.host.runtime._mcp import create_mcp, create_offline_mcp
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected():
@@ -31,6 +35,8 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
         assert rules.mime_type == "text/markdown"
         assert "经营者劳动不估价入账" in rules.content
         assert "opening.package" not in rules.content
+        work = list(await server.read_resource("accounting://guides/work"))[0].content
+        assert "owner_statement" in work and "accounting_sources(action=discard)" in work
         for uri in (
             "accounting://guides/unknown",
             "accounting://guides/business/operations.unknown",
@@ -44,6 +50,30 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
             "accounting_command",
             "accounting_security",
         }
+
+    asyncio.run(check())
+
+
+def test_mcp_bundles_discard_input_without_executing_a_business_command():
+    class SourcesApplication:
+        def accounting_sources(self, request):
+            raise AssertionError("Contract discovery must not call accounting_sources")
+
+    async def check():
+        server = create_mcp(create_agent(SourcesApplication()))
+        commands = list(await server.read_resource("accounting://contracts"))[0].content
+        sources = next(
+            item["request_schema"]
+            for item in json.loads(commands)["commands"]
+            if item["command"] == "accounting_sources"
+        )
+        branch = next(
+            item
+            for item in sources["oneOf"]
+            if item["properties"]["action"].get("const") == "discard"
+        )
+        assert branch["required"] == ["company_id", "action", "source_ids"]
+        assert branch["properties"]["source_ids"]["maxItems"] == 500
 
     asyncio.run(check())
 
@@ -73,7 +103,19 @@ def test_actual_offline_stdio_mcp_can_read_installed_runtime_guide(tmp_path):
     async def check():
         parameters = StdioServerParameters(
             command=sys.executable,
-            args=["-I", "-X", "utf8", "-m", "ai_accounting_modular.host.runtime.cli", "mcp"],
+            args=[
+                "-I",
+                "-X",
+                "utf8",
+                "-c",
+                "import sys, runpy; from pathlib import Path; "
+                "sys.path.insert(0, sys.argv.pop(1)); "
+                "import ai_accounting_modular; "
+                "assert Path(ai_accounting_modular.__file__).is_relative_to(Path(sys.path[0])); "
+                "runpy.run_module('ai_accounting_modular.host.runtime.cli', run_name='__main__')",
+                str(ROOT / "src"),
+                "mcp",
+            ],
             cwd=str(tmp_path),
         )
         async with stdio_client(parameters) as (read, write), ClientSession(read, write) as session:

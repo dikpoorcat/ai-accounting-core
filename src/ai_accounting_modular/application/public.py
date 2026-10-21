@@ -16,8 +16,8 @@ from ai_accounting_modular.contracts.public import (
     JobsRequest,
     ReadContext,
     ReportRequest,
+    SourcesCommandResult,
     SourcesRequest,
-    SourcesResult,
     TaskReceipt,
     UnitOfWork,
     canonical_json,
@@ -35,6 +35,7 @@ from . import (
     _queries,
     _rebuild,
     _schema,
+    _source_discards,
     _sources,
 )
 from ._backup_producer import create_backup_producer
@@ -124,8 +125,13 @@ class Application:
     def accounting_backup(self, request):
         return _backup_capture.start(self, request)
 
-    def accounting_sources(self, request: SourcesRequest) -> SourcesResult:
+    def accounting_sources(self, request: SourcesRequest) -> SourcesCommandResult:
         return _sources.run(self, request)
+
+    def finish_source_discards(self, company_id, *, after_marker_id=None, limit=500):
+        return _source_discards.finish(
+            self, company_id, after_marker_id=after_marker_id, limit=limit
+        )
 
     def accounting_jobs(self, request: JobsRequest) -> TaskReceipt:
         validate_contract("core.schema.json", "JobsRequest", request)

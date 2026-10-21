@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    FilePlan,
+    ReadContext,
     canonical_json,
     content_digest,
     validate_contract,
@@ -287,11 +289,11 @@ class Files:
         with self._storage.read_unit(company_id) as read:
             rows = read.repository("files").current()
         for initial in rows:
-            if initial["state"] in {"succeeded", "expired"}:
+            if not _plans.retains_inputs(initial):
                 continue
             with locked(self._lock_path(metadata, initial), 0):
                 row = self._row(company_id, initial["task_id"], plan=True)
-                if row is None or row["state"] in {"succeeded", "expired"}:
+                if row is None or not _plans.retains_inputs(row):
                     continue
                 try:
                     self._acquire_lease(metadata, row["task_id"], self._plan(metadata, row))
@@ -319,6 +321,25 @@ class Files:
         if company_id not in self._recovered:
             self.recover(company_id)
         return metadata
+
+    def retained_input_plans(self, kind: str, read_context: ReadContext) -> tuple[FilePlan, ...]:
+        """Strict accepted plans still protecting inputs, using only the caller's unit.
+
+        No recovery, lease restoration, current-head check or filesystem work is
+        performed. A failed task still protects its original inputs; succeeded
+        and expired tasks no longer do. Plan input interpretation stays with its
+        producer, including company-relative original paths in backup plans.
+        """
+        if self._closed:
+            raise ContractError("invalid_operation", "文件任务服务已经关闭。")
+        if type(kind) is not str or kind not in {"backup", "report_export"}:
+            raise ContractError("invalid_input", "仅能查询备份或报表任务仍保留的输入计划。")
+        metadata = self._storage.company_metadata(read_context)
+        return tuple(
+            self._plan(metadata, row)
+            for row in read_context.repository("files").current(kind=kind)
+            if _plans.retains_inputs(row)
+        )
 
     def get(self, company_id, task_id, *, check_current=False):
         metadata = self._metadata(company_id)

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
-from ._support import ROOT, SyntheticProducer, backup_plan, service
+from ._support import SyntheticProducer, backup_plan, service
 
 CHILD = Path(__file__).with_name("_child_worker.py")
-PYTHON = ROOT / ".tmp-kernel-venv/Scripts/python.exe"
+PYTHON = sys.executable
 
 
 def command(storage, company, task, mode, *extra):

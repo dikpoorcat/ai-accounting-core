@@ -3,15 +3,21 @@
 from contextlib import ExitStack
 from uuid import uuid4
 
-from ai_accounting_modular.contracts.public import SourcesRequest, SourcesResult, validate_contract
+from ai_accounting_modular.contracts.public import (
+    SourcesCommandResult,
+    SourcesRequest,
+    validate_contract,
+)
 from ai_accounting_modular.records.public import RecordsChange, RecordsContext
 
-from . import _documents
+from . import _documents, _source_discards
 
 
-def run(application, request: SourcesRequest) -> SourcesResult:
+def run(application, request: SourcesRequest) -> SourcesCommandResult:
     validate_contract("core.schema.json", "SourcesRequest", request)
     company_id = request["company_id"]
+    if request["action"] == "discard":
+        return _source_discards.discard(application, request)
     if request["action"] != "import":
         with application.storage.read_unit(company_id) as read:
             return application.records.sources(request, read)

@@ -80,6 +80,7 @@ from ._financial_projection_types import (
 from ._financial_selection import Selection
 from ._planning import PreparedResult, bind_plan, stored_source_reference
 from ._planning import prepare_result as _prepare_result
+from ._read_support import bounded
 from ._repository import LedgerRepository
 from ._resource_view import (
     definitions,
@@ -257,6 +258,14 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def referenced_source_ids(
+        self, source_ids: Sequence[str], read_context: ReadContext
+    ) -> tuple[str, ...]:
+        """Requested source IDs used by any retained formal result, in ID order."""
+        source_ids = bounded(source_ids)
+        repository = read_context.repository("ledger")
+        return repository.referenced_source_ids(source_ids) if source_ids else ()
+
     def capture_obligation_directory(
         self, query: ObligationDirectoryQuery, read_context: ReadContext
     ) -> ObligationDirectory:

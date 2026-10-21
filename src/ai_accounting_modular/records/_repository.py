@@ -138,6 +138,24 @@ class RecordsRepository:
             )
         )
 
+    def referenced_source_ids(self, ids):
+        if not ids:
+            return ()
+        return tuple(
+            row["source_id"]
+            for row in self._session.fetchall(
+                "SELECT DISTINCT source_id FROM source_use "
+                "WHERE source_id IN (SELECT value FROM json_each(?)) ORDER BY source_id",
+                (canonical_json(list(ids)),),
+            )
+        )
+
+    def delete_sources(self, ids):
+        return self._session.execute(
+            "DELETE FROM source WHERE source_id IN (SELECT value FROM json_each(?))",
+            (canonical_json(list(ids)),),
+        )
+
     def all_uses(self):
         return tuple(
             tuple(row)

@@ -63,6 +63,21 @@ def test_new_fact_kind_requires_an_explicit_mapping_instead_of_family_fallback()
         generator().guide_outputs(ROOT, document)
 
 
+def test_shipped_material_guidance_separates_owner_facts_from_dialogue_and_cleanup():
+    work = read_guide("work")
+    assert "owner_statement" in work
+    assert "现实会计事实和必要确认" in work
+    assert "整段聊天、程序报错或恢复、重复尝试和操作指令" in work
+    assert "真正的原始文件不改写" in work
+    assert "accounting_sources(action=discard)" in work
+    assert "不能自动扫删尚未处理的原件" in work
+    assert "实际文件清理仍待程序接续" in work
+    commands = read_guide("commands")
+    assert "SourcesCommandResult" in commands and "SourceDiscardResult" in commands
+    assert "登记已退出但文件清理尚待程序接续" in commands
+    assert "call accounting-sources" in read_guide("runtime")
+
+
 def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
     source = tmp_path / "docs/redesign"
     source.mkdir(parents=True)
@@ -133,6 +148,9 @@ assert not (Path(sys.argv[1]) / 'docs').exists()
 assert 'ai_accounting_modular.application.public' not in sys.modules
 assert '实际收付款另记' in read_guide('business', kind='operations.expense')
 assert 'company-create' in read_guide('runtime')
+assert 'owner_statement' in read_guide('work')
+assert 'SourceDiscardResult' in read_guide('commands')
+assert 'call accounting-sources' in read_guide('runtime')
 print(json.dumps(guide_index(), ensure_ascii=False))
 """
     process = subprocess.run(

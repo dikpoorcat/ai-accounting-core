@@ -3087,7 +3087,69 @@
             "limit"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": { "$ref": "#/$defs/Id" },
+            "action": { "const": "discard" },
+            "source_ids": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Id" },
+              "minItems": 1,
+              "maxItems": 500,
+              "uniqueItems": true
+            }
+          },
+          "required": ["company_id", "action", "source_ids"],
+          "additionalProperties": false
         }
+      ]
+    },
+    "SourceDiscardResult": {
+      "type": "object",
+      "properties": {
+        "company_id": { "$ref": "#/$defs/Id" },
+        "discarded_source_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Id" },
+          "maxItems": 500,
+          "uniqueItems": true
+        },
+        "missing_source_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Id" },
+          "maxItems": 500,
+          "uniqueItems": true
+        },
+        "file_cleanup": {
+          "type": "object",
+          "properties": {
+            "state": { "enum": ["complete", "pending"] },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "message": { "type": "string", "minLength": 1, "maxLength": 2000 }
+                },
+                "required": ["code", "message"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["state", "issues"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["company_id", "discarded_source_ids", "missing_source_ids", "file_cleanup"],
+      "additionalProperties": false
+    },
+    "SourcesCommandResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/SourcesResult" },
+        { "$ref": "#/$defs/SourceDiscardResult" }
       ]
     },
     "DocumentsRequest": {

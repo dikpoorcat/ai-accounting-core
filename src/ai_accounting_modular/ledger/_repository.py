@@ -95,6 +95,17 @@ class LedgerRepository(ReadRepository):
     def latest_adoption_period(self):
         return self._session.fetchone("SELECT MAX(posting_period) FROM adopted_result")[0]
 
+    def referenced_source_ids(self, source_ids):
+        return tuple(
+            row["source_id"]
+            for row in self._session.fetchall(
+                "SELECT DISTINCT s.source_id FROM result_source s "
+                "JOIN adopted_result r ON r.result_id=s.result_id "
+                "WHERE s.source_id IN (SELECT value FROM json_each(?)) ORDER BY s.source_id",
+                (canonical(list(source_ids)),),
+            )
+        )
+
     def __init__(self, session: Any):
         self._session = session
         self._prepared = {}

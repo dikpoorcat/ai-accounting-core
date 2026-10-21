@@ -29,6 +29,29 @@ class SourceStatus:
     observed_size: int | None
 
 
+@dataclass(frozen=True)
+class SourceDiscards:
+    discarded_source_ids: tuple[str, ...]
+    missing_source_ids: tuple[str, ...]
+    marker_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SourceDiscardError:
+    marker_id: str
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class SourceDiscardCleanup:
+    completed_marker_ids: tuple[str, ...]
+    pending_marker_ids: tuple[str, ...]
+    pending_source_ids: tuple[str, ...] = ()
+    errors: tuple[SourceDiscardError, ...] = ()
+    next_marker_id: str | None = None
+
+
 @dataclass(frozen=True, eq=False)
 class PreparedSources:
     """One live, company-bound verification; paths stay pinned until it closes."""

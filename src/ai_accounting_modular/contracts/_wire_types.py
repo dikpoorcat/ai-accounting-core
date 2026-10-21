@@ -299,7 +299,15 @@ type StandardPart = FactShard | ObjectShard | SourceShard | WorkShard | NotesSha
 
 type SourceImport = SourceImportVariant1 | SourceImportVariant2
 
-type SourcesRequest = SourcesRequestVariant1 | SourcesRequestVariant2 | SourcesRequestVariant3 | SourcesRequestVariant4
+type SourcesRequest = SourcesRequestVariant1 | SourcesRequestVariant2 | SourcesRequestVariant3 | SourcesRequestVariant4 | SourcesRequestVariant5
+
+class SourceDiscardResult(TypedDict):
+    company_id: Id
+    discarded_source_ids: list[Id]
+    missing_source_ids: list[Id]
+    file_cleanup: SourceDiscardResultFileCleanup
+
+type SourcesCommandResult = SourcesResult | SourceDiscardResult
 
 class DocumentsRequest(TypedDict):
     company_id: Id
@@ -9732,6 +9740,15 @@ class SourcesRequestVariant4(TypedDict):
     limit: int
     cursor: NotRequired[str]
 
+class SourcesRequestVariant5(TypedDict):
+    company_id: Id
+    action: Literal['discard']
+    source_ids: list[Id]
+
+class SourceDiscardResultFileCleanup(TypedDict):
+    state: Literal['complete', 'pending']
+    issues: list[SourceDiscardResultFileCleanupIssuesItem]
+
 class PeriodRequestVariant1(TypedDict):
     company_id: Id
     action: Literal['check']
@@ -10998,6 +11015,10 @@ class DocumentObjectVariant8Data(TypedDict):
     project_id: NotRequired[Id]
     code: NotRequired[str]
 
+class SourceDiscardResultFileCleanupIssuesItem(TypedDict):
+    code: str
+    message: str
+
 class CurrentObjectVariant1Data(TypedDict):
     identity_document: NotRequired[str]
     phone: NotRequired[str]
@@ -11116,6 +11137,8 @@ __all__ = [
     'StandardPart',
     'SourceImport',
     'SourcesRequest',
+    'SourceDiscardResult',
+    'SourcesCommandResult',
     'DocumentsRequest',
     'PeriodRequest',
     'PeriodCheck',

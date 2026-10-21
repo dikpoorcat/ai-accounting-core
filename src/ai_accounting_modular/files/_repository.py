@@ -34,10 +34,13 @@ class FilesRepository:
             f"SELECT {_SUMMARY} FROM file_task WHERE creator_request_id=? LIMIT 1", (request_id,)
         )
 
-    def current(self):
+    def current(self, *, kind=None):
+        where, args = ("", ()) if kind is None else (" WHERE kind=?", (kind,))
         return tuple(
             dict(row)
-            for row in self._session.fetchall("SELECT * FROM file_task ORDER BY kind,scope_key")
+            for row in self._session.fetchall(
+                "SELECT * FROM file_task" + where + " ORDER BY kind,scope_key", args
+            )
         )
 
     def executable(self):

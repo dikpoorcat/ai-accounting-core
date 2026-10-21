@@ -32,6 +32,7 @@ from . import (
     _periods,
     _prepared_sources,
     _snapshot,
+    _source_discards,
     _source_imports,
     _source_queries,
     _sources,
@@ -50,6 +51,9 @@ from ._types import (
     RecordsPlan,
     RecordsSnapshot,
     ShardTarget,
+    SourceDiscardCleanup,
+    SourceDiscardError,
+    SourceDiscards,
     SourceStatus,
     StandardBundle,
     StandardFile,
@@ -68,6 +72,9 @@ __all__ = [
     "RecordsPlan",
     "RecordsSnapshot",
     "ShardTarget",
+    "SourceDiscardCleanup",
+    "SourceDiscardError",
+    "SourceDiscards",
     "SourceStatus",
     "StandardBundle",
     "StandardFile",
@@ -135,6 +142,57 @@ class Records:
 
     def sources(self, request: SourcesRequest, read_context: ReadContext) -> SourcesResult:
         return _source_queries.query(self, request, read_context)
+
+    def discard_sources(
+        self,
+        source_ids: Sequence[str],
+        uow: UnitOfWork,
+        *,
+        retained_source_ids: Sequence[str],
+        protected_paths: Sequence[str],
+    ) -> SourceDiscards:
+        """Retire only explicitly selected unused sources; never unlink before commit."""
+        root = self._root(uow)
+        publication = _publication(root)
+        with publication.lock:
+            return _source_discards.discard(
+                source_ids,
+                uow,
+                root,
+                publication,
+                retained_source_ids=retained_source_ids,
+                protected_paths=protected_paths,
+            )
+
+    def has_source_discards(self, read_context: ReadContext) -> bool:
+        """A cheap scheduling hint; cleanup itself rechecks in a dedicated writer."""
+        read_context.repository("records")  # Require this company's live storage context.
+        root = self._root(read_context)
+        with _publication(root).lock:
+            return _source_discards.has_pending(root)
+
+    def finish_source_discards(
+        self,
+        uow: UnitOfWork,
+        *,
+        protected_paths: Sequence[str],
+        marker_ids: Sequence[str] | None = None,
+        limit: int = 500,
+        after_marker_id: str | None = None,
+    ) -> SourceDiscardCleanup:
+        """Use a dedicated new writer, before other writes; imports cancel old markers."""
+        root = self._root(uow)
+        publication = _publication(root)
+        with publication.lock:
+            return _source_discards.finish(
+                uow,
+                root,
+                publication,
+                protected_paths=protected_paths,
+                marker_ids=marker_ids,
+                limit=limit,
+                after_marker_id=after_marker_id,
+            )
 
     def plan_change(self, change: RecordsChange, context: RecordsContext) -> RecordsPlan:
         return _changes.plan_change(change, context, self._root(context.read_context))

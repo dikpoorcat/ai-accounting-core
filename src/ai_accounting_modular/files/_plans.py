@@ -17,6 +17,15 @@ def copy_json(value):
     return loads_json(canonical_json(value))
 
 
+def retains_inputs(row):
+    """Accepted unfinished tasks retain inputs even after automatic attempts end."""
+    if row["state"] in {"pending", "running", "failed"}:
+        return True
+    if row["state"] in {"succeeded", "expired"}:
+        return False
+    raise ContractError("storage_corrupt", "保存的文件任务状态无法确定输入保留范围。")
+
+
 def describe(producer, plan):
     scope = producer.describe(copy_json(plan))
     if not isinstance(scope, FileScope) or not isinstance(scope.key, str) or not scope.key:

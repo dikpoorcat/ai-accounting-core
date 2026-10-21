@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+import sys
 from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
@@ -443,9 +444,8 @@ with storage.read_unit(sys.argv[2]) as read:
         (captured.capture_root / 'unfinished.txt').write_bytes(b'owned temporary input')
         os._exit(37)
 """
-    executable = Path(__file__).resolve().parents[3] / ".tmp-kernel-venv/Scripts/python.exe"
     crashed = subprocess.run(
-        [str(executable), "-c", script, str(storage.catalog_path), company.company_id, capture_id],
+        [sys.executable, "-c", script, str(storage.catalog_path), company.company_id, capture_id],
         capture_output=True,
         timeout=20,
     )

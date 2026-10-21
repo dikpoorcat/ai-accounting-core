@@ -3,6 +3,8 @@
 from functools import partial
 from threading import Event, Thread
 
+from ai_accounting_modular.contracts.public import ContractError
+
 
 class Background:
     def __init__(self, runtime, *, interval=1.0):
@@ -10,6 +12,7 @@ class Background:
         self.stop_event, self.wake_event = Event(), Event()
         self.thread = Thread(target=self._run, name="modular-current-work", daemon=False)
         self.recovered = set()
+        self.source_discard_cursors = {}
 
     def start(self):
         self.thread.start()
@@ -38,6 +41,7 @@ class Background:
                     partial(self._documents, company_id),
                     *operations,
                     partial(kernel.files.run_pending, company_id),
+                    partial(self._source_discards, company_id),
                 ]
             for operation in operations:
                 try:
@@ -50,6 +54,17 @@ class Background:
         status = app.accounting_documents({"company_id": company_id, "action": "status"})
         if status["state"] != "ready":
             app.accounting_documents({"company_id": company_id, "action": "finish"})
+
+    def _source_discards(self, company_id):
+        result = self.runtime.kernel.application.finish_source_discards(
+            company_id, after_marker_id=self.source_discard_cursors.get(company_id), limit=500
+        )
+        if result.next_marker_id is None:
+            self.source_discard_cursors.pop(company_id, None)
+        else:
+            self.source_discard_cursors[company_id] = result.next_marker_id
+        for error in result.errors:
+            self.runtime.failure(ContractError(error.code, error.message))
 
     def _run(self):
         while not self.stop_event.is_set():
