@@ -47,6 +47,7 @@ _RESOURCE_FIELDS = {
         "amount_fen",
     ),
 }
+_RESOURCE_PROJECTION_FIELDS = ("source", "business_period", "posting_period", "resources")
 
 
 def _resource(table, row):
@@ -101,6 +102,55 @@ def _fen(value):
     return type(value) is int and MIN_FEN <= value <= MAX_FEN
 
 
+def validate_resources(resources):
+    """One strict shape for controlled rows in complete bodies and selected indexes."""
+    try:
+        if type(resources) is not dict or set(resources) != set(_RESOURCE_FIELDS):
+            raise ValueError
+        for table, rows in resources.items():
+            if type(rows) is not list:
+                raise ValueError
+            previous = None
+            for row in rows:
+                if (
+                    type(row) is not dict
+                    or type(row.get(CHILD_KEYS[table])) is not str
+                    or not _fen(row.get("amount_fen"))
+                    or row["amount_fen"] < 0
+                    or (previous is not None and previous >= row[CHILD_KEYS[table]])
+                ):
+                    raise ValueError
+                _resource(table, row)
+                previous = row[CHILD_KEYS[table]]
+    except (ContractError, ValueError, KeyError, TypeError) as error:
+        raise ContractError(
+            "storage_corrupt", "财务受控资源的字段、整数分或逐项顺序损坏。"
+        ) from error
+    return resources
+
+
+def validate_resource_projection(value):
+    """This role proves its actual resource fields, not unrelated body contributions."""
+    try:
+        if type(value) is not dict or set(value) != set(_RESOURCE_PROJECTION_FIELDS):
+            raise ValueError
+        validate_contract("business-facts.schema.json", "ResultSourceRef", value["source"])
+        for field in ("business_period", "posting_period"):
+            validate_contract("core.schema.json", "Month", value[field])
+        validate_resources(value["resources"])
+        if not any(value["resources"].values()):
+            raise ValueError
+    except (ContractError, ValueError, KeyError, TypeError) as error:
+        raise ContractError(
+            "storage_corrupt", "财务受控资源投影的精确来源或正文不完整。"
+        ) from error
+    return value
+
+
+def resource_projection(body):
+    return validate_resource_projection({key: body[key] for key in _RESOURCE_PROJECTION_FIELDS})
+
+
 def validate_body(body, identity):
     """Check this owner's persisted sparse shape, not a second business contract."""
     try:
@@ -131,25 +181,9 @@ def validate_body(body, identity):
             or type(body["profit"]) is not dict
             or type(body["notices"]) is not list
             or type(body["cash"]) is not list
-            or type(body["resources"]) is not dict
-            or set(body["resources"]) != {"obligation", "settlement", "obligation_reclassification"}
         ):
             raise ValueError
-        for table, rows in body["resources"].items():
-            if type(rows) is not list:
-                raise ValueError
-            previous = None
-            for row in rows:
-                if (
-                    type(row) is not dict
-                    or type(row.get(CHILD_KEYS[table])) is not str
-                    or not _fen(row.get("amount_fen"))
-                    or row["amount_fen"] < 0
-                    or (previous is not None and previous >= row[CHILD_KEYS[table]])
-                ):
-                    raise ValueError
-                _resource(table, row)
-                previous = row[CHILD_KEYS[table]]
+        validate_resources(body["resources"])
         notices = tuple(Notice.from_record(raw) for raw in body["notices"])
         if len({note.field for note in notices}) != len(notices):
             raise ValueError

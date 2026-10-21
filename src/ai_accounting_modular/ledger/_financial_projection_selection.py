@@ -71,7 +71,7 @@ class ProjectionSelection(Selection):
             if "atom" not in head:
                 ordinary.append(head)
                 continue
-            records = self.model.bodies.get_many((head["atom"],))[0]["resources"]
+            records = head["resources"]
             for table, rows in records.items():
                 if rows:
                     grouped[table][head["result_id"]] = rows

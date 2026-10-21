@@ -305,8 +305,8 @@ def test_old_projection_format_requires_explicit_rebuild(book):
         selected = book.app.ledger.financial_projection_request("summary_values", scope(book), read)
     prepare(book, blocks, (selected,))
     old = loads_json(blocks.header_json)
-    assert old["format"] == 2
-    old["format"] = 1
+    assert old["format"] == 3
+    old["format"] = 2
     blocks.header_json = canonical_json(old)
     with book.app.storage.read_unit(book.company) as read:
         with pytest.raises(ContractError) as error:

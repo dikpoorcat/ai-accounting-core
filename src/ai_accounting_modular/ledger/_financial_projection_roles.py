@@ -4,6 +4,11 @@ from collections import Counter
 
 from . import _financial_projection_chains as chains
 from ._financial_order import target_key
+from ._financial_projection_bodies import (
+    resource_projection,
+    source_atom,
+    validate_resource_projection,
+)
 from ._financial_projection_fold import Fold
 from ._financial_projection_indexes import (
     CashBalanceStrategy,
@@ -55,7 +60,7 @@ class StockRole:
             "journal": Tree("financial-gl/1", JournalStrategy(bodies), store),
             "dimensions": Tree("financial-gl-dimensions/2", PlainStrategy(), store),
             "cash": Tree("financial-cash-before/1", CashBalanceStrategy(bodies), store),
-            "resources": Tree("financial-controlled-resources/1", PlainStrategy(), store),
+            "resources": Tree("financial-controlled-resources/2", PlainStrategy(), store),
         }
         if saved is not None and set(saved) != {*self.trees, "supplements"}:
             fail("storage_corrupt", "财务存量角色的根目录不完整。")
@@ -121,7 +126,9 @@ class StockRole:
                         updates["cash"][key] = Entry(key, [atom, row[0]]) if sign == 1 else None
                 if any(body["resources"].values()):
                     key = chains.selected_key(head)
-                    updates["resources"][key] = Entry(key, atom) if sign == 1 else None
+                    updates["resources"][key] = (
+                        Entry(key, resource_projection(body)) if sign == 1 else None
+                    )
         # A replacement can change an amount or its economic order without
         # changing the number of rows. Rebuild each touched dimension from the
         # actual new journal range, never by subtracting unordered net amounts.
@@ -181,12 +188,15 @@ class StockRole:
         return result
 
     def resource_heads(self):
-        values = tuple(self.trees["resources"].entries(self.roots["resources"]))
-        bodies = self.bodies.get_many(entry.value for entry in values)
+        """Read detached selected headers and controlled rows, not whole Source bodies."""
         result = {}
-        for entry, body in zip(values, bodies, strict=True):
-            head = body_head(body) | {"atom": entry.value}
-            if chains.selected_key(head) != entry.key or not any(body["resources"].values()):
+        for entry in self.trees["resources"].entries(self.roots["resources"]):
+            value = validate_resource_projection(entry.value)
+            head = body_head(value) | {
+                "atom": source_atom(value["source"]),
+                "resources": value["resources"],
+            }
+            if chains.selected_key(head) != entry.key or head["result_id"] in result:
                 fail("storage_corrupt", "财务受控资源没有对应的正式选中来源。")
             result[head["result_id"]] = head
         return result

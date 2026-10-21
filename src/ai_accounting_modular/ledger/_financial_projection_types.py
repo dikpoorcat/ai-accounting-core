@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 
 from ai_accounting_modular.contracts.public import AmountCell, FactIssue, LedgerScope
 
-FINANCIAL_PROJECTION_FORMAT = 2
+FINANCIAL_PROJECTION_FORMAT = 3
 
 type FinancialBlockKey = tuple[str, str]
 type FinancialBlockWrite = tuple[str, str, str]
