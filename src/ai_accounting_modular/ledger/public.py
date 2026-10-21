@@ -357,6 +357,16 @@ class Ledger:
         """Complete filtered costs, retaining the wide query's full-scope totals."""
         return _read_positions.capture_positions(query, read_context, selection, kind="cost")
 
+    def capture_cost_directory(
+        self,
+        query: CostPositionQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> tuple[ResourcePosition, ...]:
+        """Complete selected cost rows, without reading other categories for statistics."""
+        return _read_positions.capture_cost_directory(query, read_context, selection)
+
     def get_obligation_positions(
         self,
         cutoff_period: str,

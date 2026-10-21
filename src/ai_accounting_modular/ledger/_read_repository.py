@@ -257,6 +257,16 @@ class ReadRepository:
             direction=direction,
         )
 
+    def read_cost_directory_rows(self, query, selection):
+        return self._position_rows(
+            "cost",
+            query.cutoff_period,
+            selection,
+            business_ids=query.business_ids,
+            categories=query.categories,
+            object_ids=query.object_ids,
+        )
+
     def read_obligation_cutoff_candidates(self, previous, cutoff):
         endpoints, args = [], [previous, cutoff, previous, cutoff, cutoff]
         for name, month in (("before_heads", previous), ("after_heads", cutoff)):
@@ -341,6 +351,7 @@ class ReadRepository:
         directory=False,
         categories=(),
         direction=None,
+        object_ids=(),
     ):
         table = "obligation" if kind == "obligation" else "cost_lot"
         predicate, source_args = selected("r", selection.as_of)
@@ -349,15 +360,16 @@ class ReadRepository:
             "r.business_id", "d.public_slot", business_ids, references
         )
         candidate, candidate_args = "", ()
-        if directory and (categories or direction is not None):
+        if categories or direction is not None or object_ids:
             clauses, candidate_values = [], []
             _in("d.category", categories, clauses, candidate_values)
+            _in("d.object_id", object_ids, clauses, candidate_values)
             if direction is not None:
                 clauses.append("d.direction=?")
                 candidate_values.append(direction)
             candidate = (
                 "candidates AS MATERIALIZED (SELECT r.business_id,d.public_slot "
-                "FROM obligation d JOIN adopted_result r ON r.result_id=d.result_id "
+                f"FROM {table} d JOIN adopted_result r ON r.result_id=d.result_id "
                 f"WHERE r.business_period<=? AND {predicate} AND {source_keys} AND "
                 + " AND ".join(clauses)
                 + "),"
@@ -419,6 +431,12 @@ class ReadRepository:
             consumption_keys, consumption_args = _resource_keys(
                 "c.source_business_id", "c.source_public_slot", business_ids, references
             )
+            if candidate:
+                consumption_keys = (
+                    "(c.source_business_id,c.source_public_slot) "
+                    "IN (SELECT business_id,public_slot FROM candidates)"
+                )
+                consumption_args = ()
             sql = (
                 "WITH used AS (SELECT c.source_business_id,c.source_public_slot,"
                 "SUM(c.amount_fen) consumed FROM cost_consumption c "

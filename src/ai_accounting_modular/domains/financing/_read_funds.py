@@ -282,9 +282,9 @@ def activity(owner, scope, read):
     cost_query = CostPositionQuery(
         scope["period_to"], categories=_COST_CATEGORIES, include_consumed=True
     )
-    costs = owner._ledger.capture_cost_positions(cost_query, read, selection=selected)
+    costs = owner._ledger.capture_cost_directory(cost_query, read, selection=selected)
     fund_ids = {item.fund_id for item in events}
-    fund_ids.update(item.definition.value["object_id"] for item in costs.items)
+    fund_ids.update(item.definition.value["object_id"] for item in costs)
     ids = sorted(fund_ids)
     objects = {}
     balances, issues, issue_indexes = {}, [], {}

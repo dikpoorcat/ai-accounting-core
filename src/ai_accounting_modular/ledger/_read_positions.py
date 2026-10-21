@@ -87,7 +87,7 @@ def get_positions(cutoff, read, selection=None, *, kind, business_ids=(), refere
     )
 
 
-def _select_positions(query, read, selection=None, *, kind, economic_from=None):
+def _selection(query, read, selection, kind):
     expected = ObligationPositionQuery if kind == "obligation" else CostPositionQuery
     if not isinstance(query, expected):
         fail("invalid_input", "资源位置须使用对应的明确查询条件。")
@@ -105,7 +105,11 @@ def _select_positions(query, read, selection=None, *, kind, economic_from=None):
         bounded(query.object_ids)
         if type(query.include_consumed) is not bool:
             fail("invalid_input", "成本来源须明确是否包含已消耗完的项目。")
-    selected = query_selection(read, selection)
+    return query_selection(read, selection)
+
+
+def _select_positions(query, read, selection=None, *, kind, economic_from=None):
+    selected = _selection(query, read, selection, kind)
     repo = read.repository("ledger")
     try:
         raw = repo.read_position_rows(kind, query.cutoff_period, selected)
@@ -145,6 +149,21 @@ def _definitions(rows, kind):
     return tuple(
         ResourcePosition(resource_definition(kind, row, row, stored_source_reference(row)), amounts)
         for row, amounts in rows
+    )
+
+
+def capture_cost_directory(query, read, selection=None):
+    """Only selected costs and their uses; no unrequested whole-company statistics."""
+    selected = _selection(query, read, selection, "cost")
+    try:
+        raw = read.repository("ledger").read_cost_directory_rows(query, selected)
+    except OperationalError as error:
+        if "integer overflow" in str(error):
+            fail("invalid_input", "所选成本使用金额超出64位整数分范围。")
+        raise
+    rows = [(row, _amounts(row, "cost")) for row in raw]
+    return _definitions(
+        [item for item in rows if query.include_consumed or item[1].remaining_fen != 0], "cost"
     )
 
 

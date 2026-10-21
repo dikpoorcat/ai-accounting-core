@@ -273,15 +273,15 @@ def test_project_cost_partial_consumption_and_pending_intangible_are_separate(as
 def test_project_costs_capture_the_complete_range_once(assembled, monkeypatch, view):
     app, company = assembled
     save(app, request(company, case("B18")))
-    capture = app.ledger.capture_cost_positions
+    capture = app.ledger.capture_cost_directory
     calls = []
 
     def captured(query, read, *, selection):
         result = capture(query, read, selection=selection)
-        calls.append((query.categories, selection.view, selection.as_of, result.filtered_count))
+        calls.append((query.categories, selection.view, selection.as_of, len(result)))
         return result
 
-    monkeypatch.setattr(app.ledger, "capture_cost_positions", captured)
+    monkeypatch.setattr(app.ledger, "capture_cost_directory", captured)
     monkeypatch.setattr(
         app.ledger, "query_cost_positions", lambda *_args, **_kwargs: pytest.fail("paged positions")
     )

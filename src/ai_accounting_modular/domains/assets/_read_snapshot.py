@@ -56,11 +56,11 @@ class AssetSnapshot:
             raise ContractError("storage_corrupt", "正式资产来源缺少本公司资产身份。")
         self.consumptions = self._consumptions()
         self.flows = tuple(values(owner._ledger, self.scope, _FLOW, read))
-        self.project_costs = owner._ledger.capture_cost_positions(
+        self.project_costs = owner._ledger.capture_cost_directory(
             CostPositionQuery(self.cutoff, categories=("project",)),
             read,
             selection=self.selection,
-        ).items
+        )
         self.ensure_mains(item.definition.reference["business_id"] for item in self.project_costs)
         self.payment_sources = self._payment_sources()
         payable_ids = {

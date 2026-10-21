@@ -112,15 +112,15 @@ def test_complete_product_costs_are_captured_once(case, monkeypatch, view):
     *_, purchase, _ = six()
     submit(case, purchase)
     ledger = case.kernel.ledger
-    capture = ledger.capture_cost_positions
+    capture = ledger.capture_cost_directory
     calls = []
 
     def captured(query, read, *, selection):
         result = capture(query, read, selection=selection)
-        calls.append((selection.view, selection.as_of, result.filtered_count))
+        calls.append((selection.view, selection.as_of, len(result)))
         return result
 
-    monkeypatch.setattr(ledger, "capture_cost_positions", captured)
+    monkeypatch.setattr(ledger, "capture_cost_directory", captured)
     monkeypatch.setattr(
         ledger, "query_cost_positions", lambda *_args, **_kwargs: pytest.fail("paged positions")
     )
