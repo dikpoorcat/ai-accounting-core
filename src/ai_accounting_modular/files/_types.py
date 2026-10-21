@@ -49,6 +49,25 @@ class RunClaim:
 
 
 @dataclass(frozen=True)
+class VerifiedArtifact(FileArtifact):
+    """The exact read-only candidate snapshot checked under this run claim."""
+
+    stream: BinaryIO
+    sha256: str
+    byte_size: int
+    claim: RunClaim
+
+    def require_scope(self, context: FileTaskContext, head: str) -> None:
+        if (
+            (self.claim.company_id, self.claim.task_id, self.claim.scope_head)
+            != (context.company.company_id, context.task_id, head)
+            or type(self.claim.attempt) is not int
+            or self.claim.attempt < 1
+        ):
+            raise ContractError("file_invalid", "已核验文件的任务身份与发布目标不一致。")
+
+
+@dataclass(frozen=True)
 class FileFailure:
     code: str
     message: str
@@ -91,7 +110,11 @@ class FileProducer(Protocol):
 
     produce writes only task_root; publish is called under the scope lock after
     fencing, and may atomically roll a backup into the configured backup root.
-    verify reads the exact candidate/download bytes, at position zero. cleanup
+    verify reads the exact candidate bytes, at position zero. Files keeps that
+    independent read-only snapshot alive through publish and reopens the actual
+    published file to require the same full SHA and size. A succeeded download
+    hashes its actual independent bytes against the saved strict result; it does
+    not rerun the producer's full semantic verification. cleanup
     removes only capture temporaries and must honor keep_capture. Files removes
     the separate delivery task_root itself. External valid backups survive it.
     is_current also runs inside the final maintenance writer transaction: it
@@ -110,7 +133,7 @@ class FileProducer(Protocol):
     recover_lease and files check pending/running physical inputs. A succeeded
     task retains its strict plan after capture cleanup: backup is_current checks
     saved semantics/structure/identity without requiring those temporary inputs;
-    verify checks the published package bytes, never rereads deleted captures.
+    Downloads never reread deleted captures.
     cleanup is idempotent when temporary files have already been removed.
     discard_capture handles an unaccepted capture with no task identity. Files
     first rules out a current backup task reference and a live lease under the
@@ -130,7 +153,9 @@ class FileProducer(Protocol):
 
     def verify(self, plan: FilePlan, stream: BinaryIO, context: FileTaskContext) -> None: ...
 
-    def publish(self, plan: FilePlan, artifact: FileArtifact, context: FileTaskContext) -> Path: ...
+    def publish(
+        self, plan: FilePlan, artifact: VerifiedArtifact, context: FileTaskContext
+    ) -> Path: ...
 
     def cleanup(self, context: FileTaskContext, *, keep_capture: bool) -> None: ...
 

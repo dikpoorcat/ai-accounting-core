@@ -123,7 +123,7 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | ledger.opening / ledger.reporting | 同领域 describe/evaluate/apply/export/query 协议 | 分别承接 opening.package、reports.continuation 的事实写入和导出；共享 ledger 采用端口，不由 application 越界代写。期初仍是其唯一事实 owner，资产卡片及后续摊折由注入的 OpeningAssetAccounting 计算，不能另造启用事实。 |
 | records.public | `prepare_source_imports(imports, read_context)`、`sources(request, read_context)`、`prepare_sources(sources, read_context)`、`plan_change/apply_current`、`resolve_sources/source_status`、`lease_source`、当前说明/待办及期间分页、`capture_documents/prepare_documents/publish_documents`、`capture_backup_materials/lease_backup_inputs/discard_backup_capture`、`open_standard_bundle/copy_standard_bundle`、`verify_snapshot` | 唯一维护来源、说明、待办和最终文档。来源内容预核验在写事务外完成，活跃证明绑定公司、位置及完整输入，并在采用和提交前复核；下载租约另提供固定字节。期间查询不把局部页当完整替换集合。备份捕获绑定同一数据库快照并保护原件和分片；离线核验把完整当前事实、对象、待办、说明及来源索引与已发布文档精确对应，同时检查未使用及冻结依据的已登记原件。完整资料可以脱离源库核验和复制。 |
 | storage.public | `read_unit/write_unit/preview_unit/maintenance_unit`、`list_companies/company_metadata`、`create_company_database`、`open_database_unit`、`publish_company_directory`、`company_structure_contract`、结构核验及一致数据库副本 | 在线和离线共用工作单元、模块仓储及实际结构核验，不开放跨公司任意 SQL。离线明确数据库和资料根，不创建虚假目录或负责人。试算复用完整核算及事务末检查，正常结束也回滚；新目标发布须原子且不覆盖已存在位置。数据库复制不承接完整包和文档编排。 |
-| files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id, check_current=False)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)`、`discard_unaccepted_capture(company_id, capture_id)` | 仅备份/报表当前任务及验证，严格 FilePlan 为 BackupPlan 或 ReportExportPlan。get默认只观察任务；check_current=True经所属生产者核对当前计划，失效才标为expired，不执行文件生产。具体内容和版本检查由注入的生产者端口负责；文件核验在事务外，最终维护事务内轻量复核有效性后按头和代次写回。未接纳捕获通过独立CaptureContext回收；当前任务任意状态或实际租约仍引用时保留，清理失败明确报错。files 不反向导入 application/reading。 |
+| files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id, check_current=False)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)`、`discard_unaccepted_capture(company_id, capture_id)` | 仅备份/报表当前任务及验证，严格FilePlan为BackupPlan或ReportExportPlan。get默认只观察任务；check_current=True经生产者核对当前计划，失效才标为expired，不执行生产。生产者完整核验候选独立字节后，Files以绑定任务、范围头和执行代次的VerifiedArtifact交给publish，再对实际发布文件完整摘要；维护事务内复核当前计划并保存成功结果。下载以独立实际字节匹配该成功摘要，并在前后核对计划，不重新核算同一文件。未接纳捕获通过独立CaptureContext回收；当前任务或实际租约仍引用时保留，清理失败明确报错。files不反向导入application/reading。 |
 | reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`retry(page_key, scope, query?)`、`export_report(scope, head, request_id, *, epochs)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页；文件计划防重及验证。context使用ContextScope；月页使用MonthScope(company_id, period?, expected_head?)；季度和业务进展使用LedgerScope，简报组及只读月度核对使用明确月份的MonthScope，来源审查使用ContextScope。主动重试须明确月份，只重启该页面失败的派生组件，不改正式账务。 |
 
 reading.page/detail通过storage建立一次只读上下文；HTTP只解析参数，不自行另开连接。月页省略月份时，在该上下文内按真实账务及工作月份选择默认月，不先另读一次context；空账套没有虚构的月份或金额。页面context可以按目录默认选择一家公司，尚无公司时只返回目录；不打开其他公司业务库。AI的accounting_context未指定公司时只列可选公司，不代替AI选定工作范围。来源审查detail使用ContextScope，不编造业务月份。
@@ -235,7 +235,7 @@ ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时�
 
 `ChangeSet` 是对调用者说明本次变化的回执，不保存过去的事实正文，也不负责读取失效。读取通知使用账务模块的 `FormalChange` 和应用层的 `ReadingImpact`，与各模块声明的 `ReadInputs` 匹配；它们不形成永久事件流，领域不列出页面缓存键。
 
-文件计划采用 core.FilePlan，具体捕获、语义头和重启接续见 [数据设计](04-data-model.md#文件任务与备份一致点)。restore/rebuild 使用 IsolatedTargetRequest/Result：输入从源文件直接取得，不需要旧公司库、旧 task_id 或旧 set_id 反查；check/run 分别返回 checked/created，失败列明检查结果。交付新目标和注册为当前公司是两个动作，离线命令不自动切换现有服务。
+文件计划采用core.FilePlan，具体捕获、语义头和重启接续见[数据设计](04-data-model.md#文件任务与备份一致点)。restore/rebuild使用IsolatedTargetRequest/Result：输入从源文件直接取得，不需要旧公司库、旧task_id或旧set_id反查；check/run分别返回checked/created，失败列明检查结果。恢复check完整核验源包；run严格检查包与实际复制字节，在隔离目标清理可重建任务和投影后，完整核验目标结构、正式账务、冻结依据及资料，成功才发布。重建也完整核验新计算的目标。交付新目标和注册为当前公司是两个动作，离线命令不自动切换现有服务。
 
 义务公开读取返回 ObligationView（正式 Obligation 与同口径 ObligationBalance）。分类唯一保存在 cashflow_weights：每项为 category 与正整数字符串 weight，同一类别只能一项，来源留在必要 Basis。权重表示相对构成，不要求等于义务金额；已知单类使用1，更正为零也保留。混合构成全部为零且无来源支持比例时省略分类，不能猜均分或找回旧错误版本。money 按累计清偿额和统一权重产生本次 FundMovement.cashflow_parts，后者才是实际金额且合计必须等于真实收付。分类不放宽义务容量，超付仍须有明确追偿等关系。缺分类不妨碍已明确金额的记账/付款，仅将受影响现金流标为未知；补齐后保持实际资金身份重算。累计分配、退款继承及闭期补差见业务和报表规范。
 
@@ -243,10 +243,10 @@ ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时�
 
 标准文档是独立的最终事实档案，使用人可读 Markdown 索引和机器可读 JSON 正文。Markdown 由 JSON 生成，不能分别编辑成两套事实。AI 提交业务内容，程序根据实际保存的有效事实生成文档；未解项仍在当前待办区，不能把未入账事实假称为正式账务。
 
-公司目录结构固定：
+公司内部目录结构固定，根目录直接采用明确指定的`company_root`，不再自动追加信用代码目录：
 
 ```text
-<公司资料根>/<统一社会信用代码>/
+<明确指定的company_root>/
   originals/YYYY-MM/<source_id>/<原文件名>
   standard/current.json
   standard/parts/<family>--<YYYY-MM>--<内容摘要>.json

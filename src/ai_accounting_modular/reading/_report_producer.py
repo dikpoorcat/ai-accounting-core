@@ -7,7 +7,12 @@ import zipfile
 from contextlib import nullcontext
 from xml.etree import ElementTree
 
-from ai_accounting_modular.files.public import FileArtifact, FileScope, ProductionError
+from ai_accounting_modular.files.public import (
+    FileArtifact,
+    FileScope,
+    ProductionError,
+    VerifiedArtifact,
+)
 from ai_accounting_modular.storage.public import company_metadata
 
 from . import _report_plans, _report_workbook
@@ -103,6 +108,11 @@ class ReportProducer:
             ) from error
 
     def publish(self, plan, artifact, context):
+        if not isinstance(artifact, VerifiedArtifact):
+            raise ProductionError(
+                "file_invalid", "报表发布须使用已核验的独立字节。", retryable=False
+            )
+        artifact.require_scope(context, plan["scope_head"])
         if artifact.relative_path != _ARTIFACT:
             raise ProductionError("report_invalid", "报表候选位置不正确。", retryable=False)
         return _path(context)

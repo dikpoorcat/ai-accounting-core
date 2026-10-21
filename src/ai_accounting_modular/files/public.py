@@ -15,6 +15,7 @@ from ._types import (
     FileTaskContext,
     ProductionError,
     RunClaim,
+    VerifiedArtifact,
     VerifiedDownload,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     "Files",
     "ProductionError",
     "RunClaim",
+    "VerifiedArtifact",
     "VerifiedDownload",
     "create_files",
     "repository_factory",

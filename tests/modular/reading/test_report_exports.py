@@ -353,19 +353,21 @@ def test_related_change_during_file_work_never_delivers_other_preview_numbers(
     producer_type = type(create_report_producer(None))
     if stage == "download":
         assert case.kernel.files.run(case.company.company_id, job)["state"] == "succeeded"
-    name = "produce" if stage == "produce" else "verify"
-    original = getattr(producer_type, name)
+    from ai_accounting_modular.files import _paths
+
+    owner, name = (producer_type, "produce") if stage == "produce" else (_paths, "snapshot_file")
+    original = getattr(owner, name)
     changed = False
 
-    def changing(producer, *args):
+    def changing(*args):
         nonlocal changed
-        result = original(producer, *args)
+        result = original(*args)
         if not changed:
             changed = True
             case.apply(amount="12000")
         return result
 
-    monkeypatch.setattr(producer_type, name, changing)
+    monkeypatch.setattr(owner, name, changing)
     if stage == "produce":
         result = case.kernel.files.run(case.company.company_id, job)
         assert result["state"] == "expired" and "path" not in result

@@ -33,8 +33,8 @@ CHUNK_SIZE = 1024 * 1024
 
 
 @dataclass(frozen=True)
-class VerifiedBackup:
-    """Files belong to the verifier's open context, not to the source archive."""
+class ExtractedBackup:
+    """Strict archive structure and exact extracted bytes, before owner verification."""
 
     company_root: Path
     _manifest_json: str
@@ -43,6 +43,11 @@ class VerifiedBackup:
     @property
     def manifest(self):
         return loads_json(self._manifest_json)
+
+
+@dataclass(frozen=True)
+class VerifiedBackup(ExtractedBackup):
+    """The extracted company also passed complete physical and owner verification."""
 
 
 def _bad(message):
@@ -134,6 +139,13 @@ class BackupVerifier:
 
     @contextmanager
     def open(self, stream):
+        with self.extract(stream) as extracted:
+            self.verify_extracted(extracted.company_root, extracted.manifest)
+            yield VerifiedBackup(extracted.company_root, extracted._manifest_json, extracted.sha256)
+
+    @contextmanager
+    def extract(self, stream):
+        """Check every archive byte and keep the independent extraction alive."""
         try:
             with TemporaryDirectory(prefix="accounting-backup-check-") as temporary:
                 scratch = Path(temporary)
@@ -144,8 +156,7 @@ class BackupVerifier:
                     entries = _entries(package, root)
                     manifest = _manifest(package, entries)
                     _extract(package, entries, manifest, root)
-                self._verify(root, manifest)
-                yield VerifiedBackup(root, canonical_json(manifest), raw_digest)
+                yield ExtractedBackup(root, canonical_json(manifest), raw_digest)
         except (
             zipfile.BadZipFile,
             zipfile.LargeZipFile,
@@ -155,7 +166,8 @@ class BackupVerifier:
         ) as error:
             raise ContractError("backup_corrupt", "备份不是可完整读取的有效ZIP文件。") from error
 
-    def _verify(self, root, manifest):
+    def verify_extracted(self, root, manifest):
+        """Fully verify the actual extracted or copied target against its manifest."""
         saved_contract = loads_json(beneath(root, CONTRACT_PATH).read_bytes())
         if saved_contract != company_structure_contract():
             _bad("备份结构合同与当前内核的完整结构不一致。")

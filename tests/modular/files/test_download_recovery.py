@@ -11,7 +11,7 @@ from ai_accounting_modular.files import _paths
 from ._support import report_plan
 
 
-@pytest.mark.parametrize("stage", ["read", "verify"])
+@pytest.mark.parametrize("stage", ["open", "read"])
 def test_transient_access_failure_keeps_same_verified_delivery(file_case, monkeypatch, stage):
     _, (company, _), producer, files = file_case
     plan = report_plan(company)
@@ -19,14 +19,16 @@ def test_transient_access_failure_keeps_same_verified_delivery(file_case, monkey
     done = files.run(company.company_id, task["task_id"])
     original = Path(done["path"]).read_bytes()
 
+    snapshot = _paths.snapshot_file
+
     def temporarily_locked(*args):
+        if stage == "read":
+            stream, _, _ = snapshot(*args)
+            stream.close()
         raise PermissionError("synthetic temporary file access")
 
     with monkeypatch.context() as patch:
-        if stage == "read":
-            patch.setattr(_paths, "snapshot_file", temporarily_locked)
-        else:
-            patch.setattr(producer, "verify_hook", temporarily_locked)
+        patch.setattr(_paths, "snapshot_file", temporarily_locked)
         with pytest.raises(ContractError) as error:
             with files.verified_download(company.company_id, task["task_id"]):
                 pytest.fail("locked file delivered")

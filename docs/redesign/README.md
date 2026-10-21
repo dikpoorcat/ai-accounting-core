@@ -53,7 +53,7 @@
 
 前端独立构建：`npm --prefix frontend run build:modular`。安装本项目后使用 `finance-modular`，源码运行使用仓库虚拟环境的 `python -m ai_accounting_modular.host.runtime.cli`。
 
-命令始终显式指定新目录库的绝对路径：`--catalog <新目录库> init`建立老板身份；`--catalog <目录库> serve`启动并打开看板，`--catalog <目录库> daemon`在前台运行；`--catalog <目录库> mcp`提供AI接口。先用`--help`查看参数；新建公司使用`company-create`的完整JSON资料，已交付恢复或重建目标使用`company-register`明确登记。`service-info`与`stop`只访问指定服务，不另起居民。没有目录参数的`mcp`只提供离线恢复与重建，不连接原账套。
+在线目录命令显式指定新目录库的绝对路径：`--catalog <新目录库> init`建立老板身份；`--catalog <目录库> serve`启动并打开看板，`--catalog <目录库> daemon`在前台运行；`--catalog <目录库> mcp`提供AI接口。先用`--help`查看参数；新建公司使用`company-create`的完整JSON资料，已交付恢复或重建目标使用`company-register`明确登记。`service-info`与`stop`只访问指定服务，不另起居民。`ids`和离线恢复、重建命令不需要目录参数；没有目录参数的`mcp`只提供离线恢复与重建，不连接原账套。
 
 这些命令不会自动搬移真实资料、接替现有入口或导入旧体系数据库。完整固定场景、浏览器、内部替换和性能验收仍在进行，运行层接通不代表项目最终验收已经完成。
 

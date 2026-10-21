@@ -18,7 +18,7 @@ from ai_accounting_modular.storage.public import (
 
 from . import _documents
 from ._backup_scope import DATABASE_PATH
-from ._target_paths import beneath, checked, copy_file
+from ._target_paths import beneath, checked, copy_file, file_digest
 
 
 def _target(request):
@@ -103,20 +103,27 @@ def _rebuild(application, bundle, root):
     _publish_documents(application, root)
 
 
-def _restore(application, verified, root):
-    for item in verified.manifest["files"]:
+def _restore(application, extracted, root):
+    manifest = extracted.manifest
+    for item in manifest["files"]:
         copy_file(
-            beneath(verified.company_root, item["path"]),
+            beneath(extracted.company_root, item["path"]),
             beneath(root, item["path"]),
             item["sha256"],
             item["byte_size"],
         )
+    for item in manifest["files"]:
+        if file_digest(beneath(root, item["path"])) != (item["sha256"], item["byte_size"]):
+            raise ContractError("target_changed", "恢复目标的实际字节与备份完整清单不一致。")
     from ai_accounting_modular.files.public import reset_for_restore as reset_files
     from ai_accounting_modular.reading.public import reset_for_restore as reset_reading
 
     with _unit(application, root, "maintenance") as unit:
         reset_files(unit)
         reset_reading(unit)
+    application.backup_verifier.verify_extracted(root, manifest)
+    with _unit(application, root) as read:
+        return company_metadata(read)
 
 
 def _message_parts(code, text, label):
@@ -179,12 +186,20 @@ def run(application, request):
                 _finish(application, stage, target, check_only, result)
         else:
             _apart(source, target)
+            opener = (
+                application.backup_verifier.open
+                if check_only
+                else application.backup_verifier.extract
+            )
             with source.open("rb") as stream:
-                with application.backup_verifier.open(stream) as verified:
-                    result["source_digest"] = verified.sha256
-                    with _stage(target, check_only) as stage:
-                        _restore(application, verified, stage)
-                        _finish(application, stage, target, check_only, result)
+                with opener(stream) as extracted:
+                    result["source_digest"] = extracted.sha256
+                    if check_only:
+                        _publish(extracted.company_root, target, True, result)
+                    else:
+                        with _stage(target, False) as stage:
+                            metadata = _restore(application, extracted, stage)
+                            _publish(stage, target, False, result, metadata)
     except (ContractError, OSError) as error:
         _failure(result, error)
     return validate_contract("core.schema.json", "IsolatedTargetResult", result)
@@ -195,6 +210,10 @@ def _finish(application, stage, target, check_only, result):
     with _unit(application, stage) as read:
         application.backup_verifier.verify_snapshot(read)
         metadata = company_metadata(read)
+    _publish(stage, target, check_only, result, metadata)
+
+
+def _publish(stage, target, check_only, result, metadata=None):
     result["checks"].append(
         {"code": "complete_target", "state": "pass", "message": "完整资料及正式账务核验通过。"}
     )

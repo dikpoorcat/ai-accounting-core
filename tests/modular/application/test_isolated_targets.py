@@ -103,7 +103,7 @@ def test_real_backup_task_restore_preserves_formal_identities_and_copies_only_ma
     package = Path(done["path"])
     assert sha256(package.read_bytes()).hexdigest() == done["sha256"]
     offline = create_offline_application()
-    opening = offline.backup_verifier.open
+    opening = offline.backup_verifier.extract
 
     @contextmanager
     def extra_scratch_file(stream):
@@ -113,7 +113,7 @@ def test_real_backup_task_restore_preserves_formal_identities_and_copies_only_ma
             )
             yield verified
 
-    monkeypatch.setattr(offline.backup_verifier, "open", extra_scratch_file)
+    monkeypatch.setattr(offline.backup_verifier, "extract", extra_scratch_file)
     target = tmp_path / "restored"
     checked = offline.accounting_isolated(request("restore", "check", package, target))
     assert checked["state"] == "checked", checked

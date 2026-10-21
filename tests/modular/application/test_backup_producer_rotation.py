@@ -188,7 +188,8 @@ def test_late_publication_of_older_point_cannot_touch_newer_package_or_pending_r
     newer, context = case.capture()
     if unfinished:
         # Install a predecessor so the newer publication has a genuine roll.
-        case.producer.publish(old, artifact, old_context)
+        with case.verified_artifact(old, artifact, old_context) as verified:
+            case.producer.publish(old, verified, old_context)
         with monkeypatch.context() as patch:
             patch.setattr(Rotation, "finish", lambda *args: (_ for _ in ()).throw(Interrupted()))
             with pytest.raises(Interrupted):
@@ -198,7 +199,8 @@ def test_late_publication_of_older_point_cannot_touch_newer_package_or_pending_r
     current, previous = _paths(context)
     before = {path.name: path.read_bytes() for path in current.parent.iterdir()}
     with pytest.raises(ProductionError) as failure:
-        case.producer.publish(old, artifact, old_context)
+        with case.verified_artifact(old, artifact, old_context) as verified:
+            case.producer.publish(old, verified, old_context)
     assert failure.value.code == "backup_superseded"
     assert not failure.value.retryable
     assert {path.name: path.read_bytes() for path in current.parent.iterdir()} == before
@@ -309,7 +311,8 @@ def test_failed_new_package_never_changes_existing_verified_current_or_previous(
             artifact = case.producer.produce(plan, context)
             _rewrite(context.task_root / artifact.relative_path, corrupt=True)
             with pytest.raises(ContractError):
-                case.producer.publish(plan, artifact, context)
+                with case.verified_artifact(plan, artifact, context) as verified:
+                    case.producer.publish(plan, verified, context)
     assert (current.read_bytes(), previous.read_bytes()) == before
     assert not list(current.parent.glob(".backup--*.zip"))
 

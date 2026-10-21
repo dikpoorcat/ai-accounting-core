@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 from copy import deepcopy
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.files import _paths
 from ai_accounting_modular.files.public import FileArtifact, ProductionError
 
 from ._support import backup_plan, report_plan
@@ -97,7 +99,7 @@ def test_missing_or_tampered_download_never_delivers(file_case, damage):
     assert files.run(company.company_id, newer["task_id"])["state"] == "succeeded"
 
 
-def test_producer_semantic_verification_is_required_even_when_digest_matches(file_case):
+def test_successful_download_reuses_its_saved_strict_semantic_proof(file_case):
     _, (company, _), producer, files = file_case
     plan = report_plan(company)
     task = files.ensure_current(plan, plan["scope_head"], "creator")
@@ -107,10 +109,42 @@ def test_producer_semantic_verification_is_required_even_when_digest_matches(fil
         raise ProductionError("wrong_company", "文件内公司不匹配。", retryable=False)
 
     producer.verify_hook = semantic_mismatch
-    with pytest.raises(ContractError) as invalid:
+    before = sum(event[0] == "verify" for event in producer.events)
+    with files.verified_download(company.company_id, task["task_id"]) as download:
+        assert download.stream.read(1)
+    assert sum(event[0] == "verify" for event in producer.events) == before == 1
+
+
+def test_same_length_and_mtime_changed_download_is_rejected_by_actual_sha(file_case):
+    _, (company, _), _, files = file_case
+    plan = report_plan(company)
+    task = files.ensure_current(plan, plan["scope_head"], "creator")
+    done = files.run(company.company_id, task["task_id"])
+    path = Path(done["path"])
+    info, raw = path.stat(), path.read_bytes()
+    path.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+    os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+    assert path.stat().st_size == info.st_size
+    assert path.stat().st_mtime_ns == info.st_mtime_ns
+    with pytest.raises(ContractError) as damaged:
         with files.verified_download(company.company_id, task["task_id"]):
-            pytest.fail("semantic mismatch delivered")
-    assert invalid.value.code == "file_invalid"
+            pytest.fail("same timestamp damage delivered")
+    assert damaged.value.code == "file_invalid"
+    assert files.get(company.company_id, task["task_id"])["state"] == "failed"
+
+
+def test_candidate_semantic_mismatch_never_becomes_a_saved_delivery(file_case):
+    _, (company, _), producer, files = file_case
+    plan = report_plan(company)
+    task = files.ensure_current(plan, plan["scope_head"], "creator")
+
+    def reject(*args):
+        raise ProductionError("wrong_company", "文件内公司不匹配。", retryable=False)
+
+    producer.verify_hook = reject
+    result = files.run(company.company_id, task["task_id"])
+    assert result["state"] == "failed" and result["error_code"] == "wrong_company"
+    assert not any(event[0] == "publish" for event in producer.events)
 
 
 def test_verifier_only_receives_read_only_exact_bytes(file_case):
@@ -141,12 +175,19 @@ def test_download_has_independent_snapshot_after_final_validity_check(file_case)
             pytest.fail("later invalid response")
 
 
-def test_plan_becoming_invalid_during_read_is_not_sent(file_case):
+def test_plan_becoming_invalid_during_read_is_not_sent(file_case, monkeypatch):
     _, (company, _), producer, files = file_case
     plan = report_plan(company)
     task = files.ensure_current(plan, plan["scope_head"], "creator")
     files.run(company.company_id, task["task_id"])
-    producer.verify_hook = lambda *args: setattr(producer, "current_heads", set())
+    snapshot = _paths.snapshot_file
+
+    def change_after_actual_read(path):
+        result = snapshot(path)
+        producer.current_heads = set()
+        return result
+
+    monkeypatch.setattr(_paths, "snapshot_file", change_after_actual_read)
     with pytest.raises(ContractError) as expired:
         with files.verified_download(company.company_id, task["task_id"]):
             pytest.fail("expired after full read")

@@ -20,10 +20,11 @@ from ai_accounting_modular.files.public import (
     FileProducer,
     FileScope,
     ProductionError,
+    VerifiedArtifact,
 )
 from ai_accounting_modular.storage.public import company_structure_contract
 
-from ._backup_io import CHUNK_SIZE, atomic_output, controlled, copy_bytes, snapshot
+from ._backup_io import CHUNK_SIZE, FileBytes, atomic_output, controlled, copy_bytes
 from ._backup_rotation import Rotation
 from ._backup_scope import CONTRACT_PATH, DATABASE_PATH, MANIFEST_PATH, backup_scope_head
 
@@ -172,9 +173,13 @@ class BackupProducer:
             )
 
     def publish(self, plan, artifact, context):
-        with snapshot(context.task_root, artifact.relative_path) as candidate:
-            self.verify(plan, candidate.stream, context)
-            return Rotation(context, self.verify_package).publish(plan, candidate)
+        if not isinstance(artifact, VerifiedArtifact):
+            raise ProductionError(
+                "file_invalid", "备份发布须使用已核验的独立字节。", retryable=False
+            )
+        artifact.require_scope(context, plan["scope_head"])
+        candidate = FileBytes(artifact.stream, artifact.sha256, artifact.byte_size)
+        return Rotation(context, self.verify_package).publish(plan, candidate)
 
     def cleanup(self, context, *, keep_capture):
         if context.capture_root is not None:

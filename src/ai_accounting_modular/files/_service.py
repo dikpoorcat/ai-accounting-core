@@ -28,6 +28,7 @@ from ._types import (
     FileTaskContext,
     ProductionError,
     RunClaim,
+    VerifiedArtifact,
     VerifiedDownload,
 )
 
@@ -515,15 +516,20 @@ class Files:
                 raise ContractError("invalid_input", "文件完成须使用受控候选文件。")
             candidate = _paths.controlled(context.task_root, result.artifact.relative_path)
             verified, digest, size = self._verify(producer, plan, context, candidate)
-            verified.close()
-            # No business transaction is held during content verification or publication.
-            path = self._output_path(
-                context, row["kind"], producer.publish(_copy(plan), result.artifact, context)
-            )
-            delivered, final_digest, final_size = self._verify(producer, plan, context, path)
-            delivered.close()
-            if (final_digest, final_size) != (digest, size):
-                raise ContractError("file_invalid", "发布文件与通过核验的候选字节不一致。")
+            try:
+                artifact = VerifiedArtifact(
+                    result.artifact.relative_path, verified, digest, size, claim
+                )
+                # No business transaction is held during validation/publication.
+                path = self._output_path(
+                    context, row["kind"], producer.publish(_copy(plan), artifact, context)
+                )
+                delivered, final_digest, final_size = _paths.snapshot_file(path)
+                delivered.close()
+                if (final_digest, final_size) != (digest, size):
+                    raise ContractError("file_invalid", "发布文件与通过核验的候选字节不一致。")
+            finally:
+                verified.close()
             if not _plans.is_current(producer, plan, context):
                 self._expire(metadata, row, ExpireTask())
                 raise ContractError("plan_expired", "文件发布前计划已经失效。")
@@ -692,7 +698,7 @@ class Files:
                     raise ContractError("plan_expired", "文件计划已失效，不能下载旧结果。")
                 path = self._output_path(context, row["kind"], Path(row["output_path"]))
                 try:
-                    stream, digest, size = self._verify(producer, plan, context, path)
+                    stream, digest, size = _paths.snapshot_file(path)
                 except (OSError, ContractError) as exc:
                     if _transient_download_error(exc):
                         raise ContractError(

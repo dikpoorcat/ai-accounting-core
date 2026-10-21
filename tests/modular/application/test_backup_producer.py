@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import uuid4
 from zipfile import ZIP_STORED, BadZipFile, ZipFile
 
@@ -19,7 +20,13 @@ from ai_accounting_modular.contracts.public import (
     loads_json,
     validate_contract,
 )
-from ai_accounting_modular.files.public import FileTaskContext, ProductionError
+from ai_accounting_modular.files._paths import snapshot_file
+from ai_accounting_modular.files.public import (
+    FileTaskContext,
+    ProductionError,
+    RunClaim,
+    VerifiedArtifact,
+)
 from ai_accounting_modular.storage.public import company_structure_contract
 
 from .conftest import initial_request
@@ -130,11 +137,26 @@ class BackupCase:
         with self.producer.recover_lease(plan, context):
             artifact = self.producer.produce(plan, context)
             candidate = context.task_root / artifact.relative_path
-            with candidate.open("rb") as stream:
-                self.producer.verify(plan, stream, context)
-            delivered = self.producer.publish(plan, artifact, context)
+            with self.verified_artifact(plan, artifact, context) as verified:
+                delivered = self.producer.publish(plan, verified, context)
             assert delivered.read_bytes() == candidate.read_bytes()
             return delivered
+
+    @contextmanager
+    def verified_artifact(self, plan, artifact, context):
+        stream, digest, size = snapshot_file(context.task_root / artifact.relative_path)
+        try:
+            self.producer.verify(plan, stream, context)
+            stream.seek(0)
+            yield VerifiedArtifact(
+                artifact.relative_path,
+                stream,
+                digest,
+                size,
+                RunClaim(self.company, context.task_id, plan["scope_head"], 1),
+            )
+        finally:
+            stream.close()
 
 
 @pytest.fixture
@@ -168,6 +190,34 @@ def test_real_inputs_produce_exact_complete_zip_and_captureless_verification(bac
     assert case.producer.is_current(plan, context)
     with delivered.open("rb") as stream:
         case.producer.verify(plan, stream, context)
+
+
+def test_publish_uses_verified_independent_bytes_after_candidate_path_changes(backup_case):
+    case = backup_case
+    plan, context = case.capture()
+    with case.producer.recover_lease(plan, context):
+        artifact = case.producer.produce(plan, context)
+        candidate = context.task_root / artifact.relative_path
+        original = candidate.read_bytes()
+        with case.verified_artifact(plan, artifact, context) as verified:
+            candidate.write_bytes(b"candidate path replaced after strict verification")
+            delivered = case.producer.publish(plan, verified, context)
+    assert delivered.read_bytes() == original
+    with delivered.open("rb") as stream:
+        assert byte_verifier(stream) == plan["manifest"]
+
+
+@pytest.mark.parametrize("field", ["company_id", "task_id", "scope_head", "attempt"])
+def test_publish_rejects_verified_bytes_for_another_run_scope(backup_case, field):
+    case = backup_case
+    plan, context = case.capture()
+    artifact = case.producer.produce(plan, context)
+    with case.verified_artifact(plan, artifact, context) as verified:
+        wrong = replace(verified.claim, **{field: 0 if field == "attempt" else "different"})
+        with pytest.raises(ContractError) as invalid:
+            case.producer.publish(plan, replace(verified, claim=wrong), context)
+    assert invalid.value.code == "file_invalid"
+    assert not context.company.backup_directory.exists()
 
 
 def test_new_business_after_capture_does_not_expire_the_historical_package(backup_case):

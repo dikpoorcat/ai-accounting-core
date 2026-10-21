@@ -39,7 +39,7 @@
 
 ### L：正式账务与结算
 
-**owner：账务负责人。** 交付 `ledger/`，含期初与统一报表取数，及 `tests/modular/ledger/`。输入是领域程序产生的完整 `PostingPlan`、公开引用和同一工作单元；输出为 `ledger.public` 的正式采用、凭证、义务、清偿、成本和财务快照。所属期初/报表接续事实也实现describe_change/evaluate_slot/apply_current/export_current/query_current，不能由application代写。AI 不可直接提交计划或自由分录。
+**owner：账务负责人。** 交付 `ledger/`，含期初与统一报表取数，及 `tests/modular/ledger/`。输入是领域程序产生的完整 `PostingPlan`、公开引用和同一工作单元；输出为 `ledger.public` 的正式采用、凭证、义务、清偿、成本和财务快照。所属期初/报表接续事实遵守[完整领域协议](03-contracts.md#模块之间的公开能力)，不能由application代写。AI不可直接提交计划或自由分录。
 
 - 私有表为 `opening_fact/report_basis_fact/opening_member`、`adopted_result/result_slot_current/result_source/result_basis_ref`、`voucher/voucher_line/voucher_sequence`、`obligation/settlement/obligation_reclassification/cost_lot/cost_consumption/period_close`、`result_fund_movement/result_tax_sale/result_report_contribution`。资金/税销售/报表贡献与同一正式result头保存和冻结，供所有消费者公开查询，不各存一份可编辑正式金额。期初与接续事实仍走共同办理入口，由本 owner 的公开端口保存。
 - 允许改本包及所属测试、结构合同；不写领域事实、真实银行行、资料待办或看板表。全平衡凭证、结果完整槽集合和稳定业务引用在此核验。
@@ -49,7 +49,7 @@
 
 ### D：业务领域并行交付
 
-**owner：各家庭负责人。** 本包按下表六个边界并行，每个 owner 只维护自己的模块和事实表。每家都实现 `describe_change/evaluate_slot/apply_current/export_current/query_current`：先声明责任、完整结果槽与机器依赖，应用按结果槽拓扑逐槽求值得到PostingPlan，完整ChangePlan才交owner保存；不提前按整业务算完全部槽。使用对应严格 Fact、采用依据和目标类型，不自行提交事务或更新别家私表。identity和records仍用其明确的plan_change，不套领域核算协议。
+**owner：各领域负责人。** 本包按下表六个边界并行，每个owner只维护自己的模块和事实表，遵守[完整领域协议](03-contracts.md#模块之间的公开能力)：先声明直接关系、责任、完整结果槽与机器依赖，应用按结果槽拓扑逐槽求值得到PostingPlan，完整候选经过领域核验后才交owner保存；不提前按整业务算完全部槽。使用对应严格Fact、采用依据和目标类型，不自行提交事务或更新别家私表。identity和records仍用其明确的plan_change，不套领域核算协议。
 
 | 独立边界 | 私有表 | 输入、输出与重点独立预期 | 复用索引 |
 | --- | --- | --- | --- |
@@ -81,7 +81,7 @@ F 合同完成后，各家庭可用公开账务/身份读取替身先实现纯�
 
 - 输入为ledger、领域、money、records、identity公开结果、storage公司元数据及统一ReadContext；输出为reading.public、冻结的五页响应、报表三接口及独立只读来源查阅。请求、字段、版本、分页、取消、差异与预算全部依 [看板规范](06-dashboard-adapter.md)。
 - 私有表仅 `read_scope_head/read_component/read_item`。文件任务仓储归F包的独立files模块；reading拥有报表plan与口径，通过共同FileTaskPort接续，不直接写 `file_task` 或反向导入application。
-- 允许改本包和所属测试；前端接续遵守根目录 FRONTEND.md。主要显示内容、UI 样式和既有交互保持，只读核对文案、精确业务范围、版本接续、失败刷新和任务轮询按看板合同实现。合作投资只接通既有财务汇总、真实资金和完整凭证，不新增专页、板块、接口或项目管理展示；通用进展无适用明细时明确说明，不阻断记账。顾问从AI提供的/review/materials深链进入第11节独立来源页，依严格ReviewMaterialsQuery/Response和SourceContentQuery打开已登记原件/老板补充。不修改主导航，不为合作另设分支或增加原五页默认请求。
+- 允许改本包和所属测试；前端接续遵守根目录 FRONTEND.md。主要显示内容、UI 样式和既有交互保持，只读核对文案、精确业务范围、版本接续、失败刷新和任务轮询按看板合同实现。合作投资只接通既有财务汇总、真实资金和完整凭证，不新增专页、板块、专项AI/HTTP接口或项目管理展示；通用进展无适用明细时明确说明，不阻断记账。顾问从AI提供的/review/materials深链进入第11节独立来源页，依严格ReviewMaterialsQuery/Response和SourceContentQuery打开已登记原件/老板补充。不修改主导航，不为合作另设分支或增加原五页默认请求。
 - 复用现有 Vue 组件、API 消费方式、取消/缓存与递增追加行为；旧 `dashboard_sort.py`、分区和组明细测试只作为行为索引。新后台不得调用旧总服务、旧事实表或跨模块私表。
 - F 及公开读取合同就绪后可用确定的语义结果替身独立开发；真实集成必须接同一公司事务中的真实领域/账务结果，并验证跨月余额、冻结读取、旧分页409、当前模型及导出所见一致。报表partial的有据金额正常显示、未知null且禁完整导出；不得无限preparing。来源页验收引用范围/分页、冻结旧依据、开放旧代409、跨公司404、原件校验失败不交付及移动读取租约，依[来源样例](examples/review-materials-cases.json)。
 - C09–C14 和看板规范全部功能、工作量与性能矩阵通过，才算交付。旧500ms成绩、纯 HTTP 耗时或只读第一页不计作新验收。
