@@ -135,8 +135,12 @@ def main():
     finally:
         if runtime is not None:
             runtime.close()
-    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
-    sys.stdout.write("\n")
+    output = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+    stream = getattr(sys.stdout, "buffer", None)
+    if stream is None:
+        sys.stdout.write(output)
+    else:
+        stream.write(output.encode("utf-8"))
     if isinstance(result, dict) and (
         result.get("status") == "rejected" or result.get("state") == "failed"
     ):
