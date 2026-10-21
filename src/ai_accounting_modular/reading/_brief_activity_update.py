@@ -57,27 +57,13 @@ def prepare(reader, scope, read, state):
         if item.collection == index.ROOTS
         and any(source["business_id"] in changed for source in item.value["sources"])
     }
-    members = [
-        item.value
-        for item in saved
-        if item.collection == "activity_members" and item.business_id not in dirty
-    ]
-    vouchers = [
-        item
-        for item in saved
-        if item.collection == "brief_vouchers" and item.business_id not in dirty
-    ]
-    roots = [
-        item for item in saved if item.collection == index.ROOTS and item.business_id not in dirty
-    ]
+    retained = saved.retain(dirty)
+    members, vouchers, roots = [], [], []
     if dirty:
-        new_members, new_vouchers, new_roots = activity.capture(
+        members, vouchers, roots = activity.capture(
             reader, scope, read, business_ids=tuple(sorted(dirty))
         )
-        members.extend(new_members)
-        vouchers.extend(new_vouchers)
-        roots.extend(new_roots)
     try:
-        return activity.assemble(members, vouchers, roots)
+        return activity.assemble(members, vouchers, roots, retained=retained)
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise ContractError("storage_corrupt", "业务活动的当前展示索引不完整。") from error

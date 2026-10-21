@@ -1,5 +1,8 @@
 """BriefActivity's current root dependencies and checked reusable display rows."""
 
+from dataclasses import dataclass, replace
+from types import MappingProxyType
+
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadInputs,
@@ -9,13 +12,40 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _dependencies
-from ._collections import IndexItem, _decode, prepare_items
+from ._collections import IndexItem, PreparedItems, _decode, read_items
 
 COMPONENT = "brief_activity"
 FORMAT_VERSION = 8
 ROOTS = "activity_roots"
 DIRTY = "activity_pending"
 COLLECTIONS = ("activity", "activity_members", "brief_vouchers", ROOTS)
+
+
+def _readonly(value):
+    if isinstance(value, dict):
+        return MappingProxyType({key: _readonly(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_readonly(item) for item in value)
+    return value
+
+
+@dataclass(frozen=True)
+class ActivityBase:
+    prepared: PreparedItems
+    items: tuple[IndexItem, ...]
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def retain(self, dirty):
+        items = tuple(
+            item
+            for item in self.items
+            if item.collection != "activity" and item.business_id not in dirty
+        )
+        return ActivityBase(
+            self.prepared.select((item.collection, item.item_id) for item in items), items
+        )
 
 
 def corrupt():
@@ -120,25 +150,16 @@ def base(repository, state):
         if content_digest(payload) != state["content_digest"]:
             corrupt()
         rows = repository.activity_rows(state["scope_key"])
-        if any(row["head"] != state["ready_head"] for row in rows):
+        if any(
+            row["head"] != state["ready_head"]
+            or row["scope_key"] != state["scope_key"]
+            or row["component_key"] != COMPONENT
+            or row["collection_key"] not in COLLECTIONS
+            for row in rows
+        ):
             corrupt()
-        items = []
-        for row in rows:
-            if row["collection_key"] not in COLLECTIONS:
-                corrupt()
-            items.append(
-                IndexItem(
-                    row["collection_key"],
-                    row["item_id"],
-                    row["sort_key"],
-                    _decode(row),
-                    **{
-                        key: row[key]
-                        for key in ("business_id", "object_id", "group_key", "category")
-                    },
-                )
-            )
-        manifest = prepare_items(items, collections=COLLECTIONS).with_summary({})["_collections"]
+        prepared, items = read_items(rows, collections=COLLECTIONS)
+        manifest = prepared.with_summary({})["_collections"]
         if manifest != payload["_collections"]:
             corrupt()
         roots = {item.item_id: root(item.value) for item in items if item.collection == ROOTS}
@@ -152,7 +173,9 @@ def base(repository, state):
             [item for item in items if item.collection == ROOTS]
         ):
             corrupt()
-        return tuple(items)
+        return ActivityBase(
+            prepared, tuple(replace(item, value=_readonly(item.value)) for item in items)
+        )
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise ContractError("storage_corrupt", "业务活动的当前依赖或展示索引不完整。") from error
 

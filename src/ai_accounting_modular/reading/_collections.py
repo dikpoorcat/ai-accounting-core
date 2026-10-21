@@ -35,6 +35,18 @@ class PreparedItems:
     manifest: tuple[tuple[str, int, str], ...]
     row_digests: tuple[str, ...]
 
+    def select(self, identities):
+        """Keep exact immutable rows; decoded display values are never a proof."""
+        identities = set(identities)
+        selected = [
+            (row, digest)
+            for row, digest in zip(self.rows, self.row_digests, strict=True)
+            if row[:2] in identities
+        ]
+        if {row[:2] for row, _ in selected} != identities:
+            raise ContractError("invalid_input", "所保留的读取项目不在已核验集合中。")
+        return _prepared(tuple(row for row, _ in selected), tuple(digest for _, digest in selected))
+
     def with_summary(self, summary):
         if "_collections" in summary:
             raise ContractError("invalid_input", "读取汇总不能覆盖集合目录。")
@@ -101,42 +113,68 @@ def _text(value):
     return isinstance(value, str) and bool(value)
 
 
-def prepare_items(items, *, collections=()):
-    """All serialization and hashes precede the short publication transaction."""
+def _index(item):
+    if not isinstance(item, IndexItem) or not isinstance(item.value, dict):
+        raise ContractError("invalid_input", "读取索引须提供明确项目和展示内容。")
+    index = {key: getattr(item, key) for key in _INDEX_FIELDS}
+    if any(not _text(index[key]) for key in ("collection", "item_id", "sort_key")) or any(
+        index[key] is not None and not _text(index[key])
+        for key in ("business_id", "object_id", "group_key", "category")
+    ):
+        raise ContractError("invalid_input", "读取项目的集合、身份或排序字段无效。")
+    for key in ("business_id", "object_id"):
+        if index[key] is not None:
+            validate_contract("core.schema.json", "Id", index[key])
+    return index
+
+
+def _bound(index, value):
+    value_json = canonical_json(value)
+    binding = f'{{"index":{canonical_json(index)},"value":{value_json}}}'
+    digest = sha256(binding.encode("utf-8")).hexdigest()
+    return (*index.values(), f'{{"digest":"{digest}","value":{value_json}}}'), digest
+
+
+def _prepared(rows, digests, collections=()):
     grouped = {}
     for key in collections:
         if not _text(key) or key in grouped:
             raise ContractError("invalid_input", "读取集合名称无效或重复。")
         grouped[key] = []
-    rows, digests, identities = [], [], set()
-    for item in items:
-        if not isinstance(item, IndexItem) or not isinstance(item.value, dict):
-            raise ContractError("invalid_input", "读取索引须提供明确项目和展示内容。")
-        index = {key: getattr(item, key) for key in _INDEX_FIELDS}
-        if any(not _text(index[key]) for key in ("collection", "item_id", "sort_key")) or any(
-            index[key] is not None and not _text(index[key])
-            for key in ("business_id", "object_id", "group_key", "category")
-        ):
-            raise ContractError("invalid_input", "读取项目的集合、身份或排序字段无效。")
-        for key in ("business_id", "object_id"):
-            if index[key] is not None:
-                validate_contract("core.schema.json", "Id", index[key])
-        identity = item.collection, item.item_id
+    identities = set()
+    for row, digest in zip(rows, digests, strict=True):
+        collection, item_id, order = row[:3]
+        identity = collection, item_id
         if identity in identities:
             raise ContractError("invalid_input", "同一读取集合不能重复保存项目身份。")
         identities.add(identity)
-        # Reuse strictly checked canonical child bytes in both fixed wrappers.
-        value_json = canonical_json(item.value)
-        binding = f'{{"index":{canonical_json(index)},"value":{value_json}}}'
-        digest = sha256(binding.encode("utf-8")).hexdigest()
-        grouped.setdefault(item.collection, []).append((item.sort_key, item.item_id, digest))
-        rows.append((*index.values(), f'{{"digest":"{digest}","value":{value_json}}}'))
-        digests.append(digest)
+        grouped.setdefault(collection, []).append((order, item_id, digest))
     manifest = tuple(
         (key, len(values), content_digest([list(value) for value in sorted(values)]))
         for key, values in sorted(grouped.items())
     )
     return PreparedItems(tuple(rows), manifest, tuple(digests))
+
+
+def prepare_items(items, *, collections=()):
+    """All serialization and hashes precede the short publication transaction."""
+    rows, digests = [], []
+    for item in items:
+        row, digest = _bound(_index(item), item.value)
+        rows.append(row)
+        digests.append(digest)
+    return _prepared(rows, digests, collections)
+
+
+def merge_items(*parts, collections=()):
+    """Combine independently prepared immutable rows without serializing their values."""
+    if any(not isinstance(part, PreparedItems) for part in parts):
+        raise TypeError("only prepared collection rows can be merged")
+    return _prepared(
+        tuple(row for part in parts for row in part.rows),
+        tuple(digest for part in parts for digest in part.row_digests),
+        collections,
+    )
 
 
 def _filters(query):
@@ -180,7 +218,7 @@ def _after(page, version):
     return tuple(value["key"])
 
 
-def _decode(row):
+def _read_item(row):
     try:
         saved = loads_json(row["payload_json"])
         index = {
@@ -190,14 +228,35 @@ def _decode(row):
             not isinstance(saved, dict)
             or set(saved) != {"digest", "value"}
             or not isinstance(saved["value"], dict)
-            or content_digest({"index": index, "value": saved["value"]}) != saved["digest"]
         ):
             raise ValueError
-        return saved["value"]
+        item = IndexItem(**index, value=saved["value"])
+        raw, digest = _bound(_index(item), item.value)
+        if digest != saved["digest"]:
+            raise ValueError
+        return item, raw, digest
     except (ContractError, KeyError, ValueError, TypeError) as error:
         raise ContractError(
             "storage_corrupt", "读取集合项目的内容或索引不完整，请重新生成。"
         ) from error
+
+
+def _decode(row):
+    return _read_item(row)[0].value
+
+
+def read_items(rows, *, collections=()):
+    """Strictly restore canonical bytes and independent display values in one pass."""
+    items, canonical, digests = [], [], []
+    try:
+        for row in rows:
+            item, raw, digest = _read_item(row)
+            items.append(item)
+            canonical.append(raw)
+            digests.append(digest)
+        return _prepared(canonical, digests, collections), tuple(items)
+    except (ContractError, KeyError, TypeError, ValueError) as error:
+        raise ContractError("storage_corrupt", "读取集合项目或完整目录不一致。") from error
 
 
 def _ready_collection(scope_key, component, collection, read):
