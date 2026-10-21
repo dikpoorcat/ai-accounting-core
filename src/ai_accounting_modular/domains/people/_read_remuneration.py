@@ -10,7 +10,7 @@ from ai_accounting_modular.contracts.public import (
     content_digest,
     validate_contract,
 )
-from ai_accounting_modular.ledger.public import ObligationPositionQuery, SettlementEventQuery
+from ai_accounting_modular.ledger.public import ObligationDirectoryQuery, SettlementEventQuery
 
 from ._read_sources import (
     OUTSTANDING_ACCOUNTS,
@@ -103,7 +103,7 @@ def _flow(ledger, scope, read, contents):
 
 
 def _recovery_parents(ledger, month, read, selection, contents, events, unpaid_claims):
-    claims = {item.definition.reference["business_id"] for item in unpaid_claims}
+    claims = {item.reference["business_id"] for item in unpaid_claims}
     # Unpaid claims survive quiet months; monthly sources/targets also retain just-settled claims.
     claims.update(event.use.value["source"]["business_id"] for event in events)
     claims.update(
@@ -169,7 +169,7 @@ def _events(ledger, month, read, selection, contents, unpaid_claims):
 
 
 def _positions(ledger, month, read, selection, contents, entries, events, parents, unpaid_payroll):
-    ids = {item.definition.reference["business_id"] for item in unpaid_payroll}
+    ids = {item.reference["business_id"] for item in unpaid_payroll}
     ids.update(entry.effective["business_id"] for entry in entries)
     ids.update(event.event.use.value["source"]["business_id"] for event in events)
     ids.update(business_id for business_id, _ in parents)
@@ -220,22 +220,20 @@ def remuneration_activity(ledger, scope, read):
         normalized["as_of"] = selection.as_of
     contents = Contents(ledger, read, selection)
     entries = _flow(ledger, normalized, read, contents)
-    unpaid = ledger.capture_obligation_positions(
-        ObligationPositionQuery(
-            month, categories=(*_UNPAID_CATEGORIES, "other"), include_settled=False
+    unpaid = ledger.capture_obligation_directory(
+        ObligationDirectoryQuery(
+            month,
+            month,
+            include_origins=False,
+            categories=(*_UNPAID_CATEGORIES, "other"),
+            selected_view=selection.view,
         ),
         read,
-        selection=selection,
-    ).items
+    ).selected
     claims = tuple(
-        item
-        for item in unpaid
-        if item.definition.value["category"] == "other"
-        and item.definition.value["direction"] == "receivable"
+        item for item in unpaid if item.category == "other" and item.direction == "receivable"
     )
-    payroll = tuple(
-        item for item in unpaid if item.definition.value["category"] in _UNPAID_CATEGORIES
-    )
+    payroll = tuple(item for item in unpaid if item.category in _UNPAID_CATEGORIES)
     events, parents = _events(ledger, month, read, selection, contents, claims)
     positions = _positions(
         ledger, month, read, selection, contents, entries, events, parents, payroll

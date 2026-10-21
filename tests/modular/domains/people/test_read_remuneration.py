@@ -8,8 +8,9 @@ import pytest
 from ai_accounting_modular.contracts.public import ContractError, PageQuery, QuerySelection
 from ai_accounting_modular.domains.people import _read_remuneration
 from ai_accounting_modular.domains.people.public import create_people
+from ai_accounting_modular.ledger import _read_positions
 from ai_accounting_modular.ledger.opening.public import opening_payroll_references
-from ai_accounting_modular.ledger.public import ObligationPositionQuery
+from ai_accounting_modular.ledger.public import ObligationDirectoryQuery, ObligationPositionQuery
 from tests.modular.application._working_case import case as case
 
 from .test_application import replacement, request
@@ -44,6 +45,15 @@ def activity(book, month="2026-01", *, view="as_posted", **extra):
     }
     with book.kernel.storage.read_unit(book.company) as read:
         return create_people(ledger=book.kernel.ledger).remuneration_activity(scope, read)
+
+
+def forbid_wide_positions(monkeypatch, ledger):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("payroll discovery must not read wide positions or whole-scope totals")
+
+    for name in ("capture_obligation_positions", "query_obligation_positions"):
+        monkeypatch.setattr(ledger, name, forbidden)
+    monkeypatch.setattr(_read_positions, "_totals", forbidden)
 
 
 def correct(book, fact, *, period=None, seq=1):
@@ -113,35 +123,43 @@ def test_complete_costs_and_same_person_labor_are_formal_not_relationship_filter
 
 
 @pytest.mark.parametrize("view", ["as_posted", "current"])
-def test_complete_position_ranges_are_captured_once_with_the_actual_selection(
+def test_only_the_light_directory_is_captured_once_with_the_actual_selection(
     case, monkeypatch, view
 ):
     case.seed(expense=False)
     wage = business_case("B17Z")
     add(case, no_contributions(), wage)
     ledger = case.kernel.ledger
-    capture = ledger.capture_obligation_positions
+    capture = ledger.capture_obligation_directory
     calls = []
 
-    def captured(query, read, *, selection):
-        result = capture(query, read, selection=selection)
-        calls.append((query.categories, selection.view, selection.as_of, result.filtered_count))
+    def captured(query, read):
+        result = capture(query, read)
+        assert result.origins is None
+        calls.append(
+            (
+                query.cutoff_period,
+                query.current_cutoff_period,
+                query.categories,
+                query.selected_view,
+                query.include_origins,
+                len(result.selected),
+            )
+        )
         return result
 
-    monkeypatch.setattr(ledger, "capture_obligation_positions", captured)
-    monkeypatch.setattr(
-        ledger,
-        "query_obligation_positions",
-        lambda *_args, **_kwargs: pytest.fail("paged positions"),
-    )
+    monkeypatch.setattr(ledger, "capture_obligation_directory", captured)
+    forbid_wide_positions(monkeypatch, ledger)
     result = activity(case, view=view)
     assert result.summary.amounts.gross_salary_fen == int(wage["data"]["gross_fen"])
     assert result.summary.outstanding_employee_net_fen == result.summary.amounts.net_salary_fen
     assert calls == [
         (
+            "2026-01",
+            "2026-01",
             ("net_pay", "social", "housing", "withholding", "other"),
             view,
-            "2026-01" if view == "as_posted" else None,
+            False,
             1,
         ),
     ]
@@ -512,7 +530,7 @@ def test_actual_overpaid_wage_recovery_keeps_direction_and_formal_parent_without
 
 
 @pytest.mark.parametrize("view", ["as_posted", "current"])
-def test_union_positions_pass_the_exact_previous_public_subsets_to_each_payroll_step(
+def test_light_discovery_preserves_every_previous_public_resource_field_for_each_payroll_step(
     case, monkeypatch, view
 ):
     paid_wage_recovery(case)
@@ -538,23 +556,97 @@ def test_union_positions_pass_the_exact_previous_public_subsets_to_each_payroll_
     recover, position = _read_remuneration._recovery_parents, _read_remuneration._positions
     seen = []
 
+    def previous_fields(items):
+        return {
+            (item.definition.reference["business_id"], item.definition.reference["slot"]): (
+                item.definition.source,
+                item.definition.value["direction"],
+                item.definition.value["category"],
+                item.definition.value["business_period"],
+                item.definition.value.get("party_id"),
+                item.amounts,
+            )
+            for item in items
+        }
+
+    def discovered_fields(items):
+        return {
+            (item.reference["business_id"], item.reference["slot"]): (
+                item.source,
+                item.direction,
+                item.category,
+                item.business_period,
+                item.party_id,
+                item.amounts,
+            )
+            for item in items
+        }
+
     def recover_exact(ledger, month, read, selected, contents, events, unpaid):
-        assert unpaid == claims
+        assert discovered_fields(unpaid) == previous_fields(claims)
         seen.append("recovery")
         return recover(ledger, month, read, selected, contents, events, unpaid)
 
     def positions_exact(ledger, month, read, selected, contents, entries, events, parents, unpaid):
-        assert unpaid == payroll
+        assert discovered_fields(unpaid) == previous_fields(payroll)
         seen.append("payroll")
         return position(ledger, month, read, selected, contents, entries, events, parents, unpaid)
 
     monkeypatch.setattr(_read_remuneration, "_recovery_parents", recover_exact)
     monkeypatch.setattr(_read_remuneration, "_positions", positions_exact)
+    forbid_wide_positions(monkeypatch, case.kernel.ledger)
     result = activity(case, "2026-02", view=view)
     assert seen == ["recovery", "payroll"]
     assert any(
         item.recovery and item.position.amounts.remaining_fen == 20000 for item in result.positions
     )
+
+
+def test_current_quiet_historical_month_discovers_unpaid_created_by_a_later_closed_correction(
+    case, monkeypatch
+):
+    case.seed(expense=False)
+    wage = business_case("B17Z")
+    wage["data"]["gross_fen"] = "0"
+    add(case, no_contributions(), wage)
+    assert case.close(case.check())["state"] == "closed"
+    add(case, case.expense("1", "2026-02"))
+    wage["data"]["gross_fen"] = "120000"
+    correct(case, wage, period="2026-03")
+    with case.kernel.storage.read_unit(case.company) as read:
+        expected = case.kernel.ledger.get_obligation_positions(
+            "2026-02",
+            read,
+            business_ids=(wage["business_id"],),
+            selection=QuerySelection("current"),
+        )
+        posted_directory = case.kernel.ledger.capture_obligation_directory(
+            ObligationDirectoryQuery(
+                "2026-02",
+                "2026-02",
+                include_origins=False,
+                categories=("net_pay", "social", "housing", "withholding", "other"),
+                selected_view="as_posted",
+            ),
+            read,
+        )
+        assert posted_directory.selected == posted_directory.current == ()
+    forbid_wide_positions(monkeypatch, case.kernel.ledger)
+    posted = activity(case, "2026-02")
+    current = activity(case, "2026-02", view="current")
+    assert posted.entries == posted.positions == posted.settlements == ()
+    assert posted.summary.outstanding_employee_net_fen == 0
+    assert current.entries == current.settlements == ()
+    assert current.summary.outstanding_employee_net_fen == 120000
+    assert tuple(item.position for item in current.positions) == expected
+    assert len(current.sources) == 1
+    unpaid = [item.position for item in current.positions if item.position.amounts.remaining_fen]
+    assert len(unpaid) == 1
+    position = unpaid[0]
+    assert position.definition.reference == {"business_id": wage["business_id"], "slot": "net_pay"}
+    assert (position.amounts.amount_fen, position.amounts.money_settled_fen) == (120000, 0)
+    assert current.sources[0].reference["posting_period"] == "2026-03"
+    assert current.sources[0].amounts.net_fen == 120000
 
 
 def test_nonpayroll_overpayment_is_not_classified_as_a_payroll_recovery(case):
