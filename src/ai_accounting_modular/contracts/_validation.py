@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from copy import deepcopy
 from functools import lru_cache
 from importlib.resources import files
@@ -14,9 +13,12 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError, val
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from . import _native_validation
 from ._dispatch import install_guards, one_of
 from ._errors import ContractError
-from ._scalars import MAX_FEN, MIN_FEN, parse_fen
+from ._validation_keywords import exact_pattern as _exact_pattern
+from ._validation_keywords import integer_bound as _integer_bound
+from ._validation_keywords import wire_fen as _wire_fen
 from ._wire_types import JsonValue
 
 CONTRACT = "ai-accounting-modular/1"
@@ -99,40 +101,6 @@ def content_digest(value: JsonValue) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _integer_bound(validator, bound, instance, schema):
-    if isinstance(instance, str):
-        try:
-            value = parse_fen(instance)
-        except ValueError:
-            yield ValidationError("整数分必须使用规范 int64 字符串")
-            return
-        minimum = int(schema.get("x-integer-minimum", MIN_FEN))
-        maximum = int(schema.get("x-integer-maximum", MAX_FEN))
-        if not minimum <= value <= maximum:
-            yield ValidationError("整数分超出合同范围")
-
-
-def _wire_fen(validator, enabled, instance, schema):
-    if enabled and isinstance(instance, str):
-        try:
-            parse_fen(instance)
-        except ValueError:
-            yield ValidationError("整数分必须使用规范 int64 字符串")
-
-
-def _exact_pattern(validator, pattern, instance, schema):
-    if isinstance(instance, str):
-        # Anchored contract patterns specify the complete scalar. fullmatch
-        # avoids Python's special `$` match immediately before a final newline.
-        match = (
-            re.fullmatch(pattern, instance)
-            if pattern.startswith("^") and pattern.endswith("$")
-            else re.search(pattern, instance)
-        )
-        if match is None:
-            yield ValidationError("字符串格式不符合合同")
-
-
 def _strict_const(validator, expected, instance, schema):
     if type(expected) in {int, bool} and type(instance) is not type(expected):
         yield ValidationError("固定值的类型不符合合同")
@@ -205,23 +173,41 @@ def schema_document(schema_name: str, definition: str | None = None) -> dict:
 
 
 @lru_cache(maxsize=256)
-def _validator(schema_name: str, definition: str):
-    documents, registry = _bundle()
-    _selected_document(schema_name, definition)
+def _uri(schema_name, definition):
+    document = _selected_document(schema_name, definition)
     if schema_name == "dashboard-response-v2.json":
-        uri = _BASE + "dashboard/" + definition
-    else:
-        uri = (
-            documents[schema_name]["$id"]
-            + "#/$defs/"
-            + definition.replace("~", "~0").replace("/", "~1")
-        )
-    return _Validator({"$ref": uri}, registry=registry, format_checker=FormatChecker())
+        return _BASE + "dashboard/" + definition
+    return document["$id"] + "#/$defs/" + definition.replace("~", "~0").replace("/", "~1")
+
+
+@lru_cache(maxsize=256)
+def _validator(schema_name: str, definition: str):
+    return _Validator(
+        {"$ref": _uri(schema_name, definition)},
+        registry=_bundle()[1],
+        format_checker=FormatChecker(),
+    )
+
+
+@lru_cache(maxsize=1)
+def _native_registry():
+    return _native_validation.registry(_bundle()[0], _BASE)
+
+
+@lru_cache(maxsize=256)
+def _native_validator(schema_name, definition):
+    return _native_validation.validator(
+        {"$ref": _uri(schema_name, definition)}, registry=_native_registry()
+    )
 
 
 def validate_contract[T](schema_name: str, definition: str, value: T) -> T:
     try:
         _check_json(value)
+        if _native_validator(schema_name, definition).is_valid(value):
+            return value
+        # Failure diagnostics retain the same interpreter, first error and
+        # escaped JSON pointer. No production data is cached between calls.
         error = next(_validator(schema_name, definition).iter_errors(value), None)
     except ContractError:
         raise
