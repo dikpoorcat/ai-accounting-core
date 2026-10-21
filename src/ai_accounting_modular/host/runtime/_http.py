@@ -95,19 +95,27 @@ def create_server(runtime, *, port=0, static_directory=None):
             if runtime.stopping:
                 raise ContractError("busy", "后台正在退出，请稍后重新连接。")
 
-        def _body(self):
-            if (
-                self.headers.get("Transfer-Encoding")
-                or self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json"
-            ):
+        def _read_body(self):
+            lengths = self.headers.get_all("Content-Length", ())
+            if self.headers.get_all("Transfer-Encoding") is not None or len(lengths) != 1:
                 raise ContractError("invalid_input", "请求须为有明确长度的 JSON。")
+            declared = lengths[0].strip()
+            if not declared.isascii() or not declared.isdecimal():
+                raise ContractError("invalid_input", "请求长度不正确。")
             try:
-                length = int(self.headers.get("Content-Length", ""))
+                length = int(declared)
             except ValueError:
                 raise ContractError("invalid_input", "请求长度不正确。") from None
             if not 0 < length <= MAX_REQUEST_BYTES:
                 raise ContractError("batch_too_large", "请求内容为空或超过本机入口限制。")
             body = self.rfile.read(length)
+            if len(body) != length:
+                raise ContractError("invalid_input", "请求正文未完整传输。")
+            return body
+
+        def _parse_body(self, body):
+            if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+                raise ContractError("invalid_input", "请求须为有明确长度的 JSON。")
             value = loads_json(body)
             if not isinstance(value, dict):
                 raise ContractError("invalid_input", "请求须为一个 JSON 对象。")
@@ -174,11 +182,12 @@ def create_server(runtime, *, port=0, static_directory=None):
 
         def do_POST(self):
             try:
+                raw = self._read_body()
                 path = urlsplit(self.path).path
                 private = path.startswith("/private/")
                 # browser-session consumes the launch ticket, before a browser surface exists.
                 self._guard(private=private, post=not private)
-                body = self._body()
+                body = self._parse_body(raw)
                 if private:
                     result = runtime.private(path, body)
                     self._json(
