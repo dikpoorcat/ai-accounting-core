@@ -19,6 +19,7 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 from ._equations import balance_totals as balance_totals
 from ._equations import cash_totals as cash_totals
 from ._equations import profit_totals as profit_totals
+from ._equations import profit_totals_fen as profit_totals_fen
 from ._facts import KIND, fail, validate_fact
 from ._planning import evaluate
 from ._repository import ReportingRepository

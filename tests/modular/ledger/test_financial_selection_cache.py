@@ -162,3 +162,47 @@ def test_invalid_generation_cannot_hit_an_existing_integer_source(generation):
     with pytest.raises(ContractError):
         selection.source(dict(head) | {"generation": generation})
     assert selection.source(head) == expected
+
+
+def test_main_profit_rows_are_computed_once_per_precise_head_and_cannot_be_mutated(monkeypatch):
+    heads = [_head(index) for index in range(100)]
+    calculate, calls = financial.profit_rows, []
+
+    def actual_rows(lines):
+        calls.append(lines)
+        return calculate(lines)
+
+    monkeypatch.setattr(financial, "profit_rows", actual_rows)
+    selection = _selection(heads)
+    lines = {
+        head["result_id"]: [{"account_code": "5602", "debit_fen": str(index), "credit_fen": "0"}]
+        for index, head in enumerate(heads)
+    }
+    for _ in range(3):
+        for index, head in enumerate(heads):
+            rows = selection.profit_rows(head, lines[head["result_id"]])
+            assert rows == {14: index}
+    assert len(calls) == 100
+    with pytest.raises(TypeError):
+        rows[14] = 999
+    head = heads[0]
+    changed = dict(head) | {"generation": 2}
+    new_lines = [{"account_code": "5602", "debit_fen": "7", "credit_fen": "0"}]
+    assert selection.profit_rows(changed, new_lines) == {14: 7}
+    assert selection.profit_rows(head, lines[head["result_id"]]) == {14: 0}
+    assert len(calls) == 101
+    # No process-wide reuse: another read selection sees its own selected journals.
+    assert _selection(heads).profit_rows(head, new_lines) == {14: 7}
+    assert len(calls) == 102
+
+
+@pytest.mark.parametrize("generation", [True, 1.0])
+def test_profit_cache_does_not_confuse_invalid_generation_with_a_known_integer(generation):
+    head = _head(1)
+    selection = _selection((head,))
+    normal = [{"account_code": "5602", "debit_fen": "1", "credit_fen": "0"}]
+    assert selection.profit_rows(head, normal) == {14: 1}
+    # Journals are already validated by lines(); the cache itself must not skip a distinct key.
+    damaged = [{"account_code": "5602", "debit_fen": "invalid", "credit_fen": "0"}]
+    with pytest.raises(ValueError):
+        selection.profit_rows(dict(head) | {"generation": generation}, damaged)

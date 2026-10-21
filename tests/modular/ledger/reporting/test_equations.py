@@ -5,8 +5,13 @@ from types import MappingProxyType
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
-from ai_accounting_modular.ledger.reporting.public import balance_totals, cash_totals, profit_totals
+from ai_accounting_modular.contracts.public import MAX_FEN, ContractError
+from ai_accounting_modular.ledger.reporting.public import (
+    balance_totals,
+    cash_totals,
+    profit_totals,
+    profit_totals_fen,
+)
 
 
 def known(value):
@@ -222,3 +227,41 @@ def test_known_sum_overflow_is_explicit_and_never_converts_to_float(calculate, l
 def test_input_is_a_mapping_not_an_implicit_row_sequence(value):
     with pytest.raises(ContractError, match="映射"):
         profit_totals(value)
+
+
+def test_integer_profit_totals_share_the_fixed_equations_without_mutating_inputs():
+    rows = {1: 100, 2: 20, 3: 4, 11: 5, 14: 6, 18: 7, 20: 8, 22: 9, 24: 10, 31: 11}
+    before = dict(rows)
+    assert profit_totals_fen(MappingProxyType(rows)) == {21: 66, 30: 65, 32: 54}
+    assert rows == before
+    assert profit_totals_fen(rows | {21: 999, 30: 999, 32: 999}) == {21: 66, 30: 65, 32: 54}
+    assert profit_totals({line: known(value) for line, value in rows.items()}) == {
+        21: known(66),
+        30: known(65),
+        32: known(54),
+    }
+
+
+@pytest.mark.parametrize("bad", [True, 1.0, None, "1", MAX_FEN + 1])
+def test_integer_profit_totals_reject_non_integer_unknown_and_out_of_range_values(bad):
+    rows = dict.fromkeys((1, 2, 3, 11, 14, 18, 20, 22, 24, 31), 0)
+    rows[4] = bad  # An unused detail remains strictly typed.
+    with pytest.raises(ContractError, match="64位整数分"):
+        profit_totals_fen(rows)
+
+
+@pytest.mark.parametrize("bad_key", [True, 1.0, "1", 0, 33])
+def test_integer_profit_totals_keep_strict_line_keys(bad_key):
+    rows = {bad_key: 0, **dict.fromkeys((2, 3, 11, 14, 18, 20, 22, 24, 31), 0)}
+    with pytest.raises(ContractError, match="行号"):
+        profit_totals_fen(rows)
+
+
+def test_integer_profit_totals_require_all_base_rows_and_still_check_net_profit_overflow():
+    rows = dict.fromkeys((1, 2, 3, 11, 14, 18, 20, 22, 24, 31), 0)
+    with pytest.raises(ContractError, match="缺少基础行：31"):
+        profit_totals_fen({key: value for key, value in rows.items() if key != 31})
+    with pytest.raises(ContractError, match="报表第32行合计"):
+        profit_totals_fen(rows | {1: MAX_FEN, 31: -1})
+    with pytest.raises(ContractError, match="映射"):
+        profit_totals_fen([])

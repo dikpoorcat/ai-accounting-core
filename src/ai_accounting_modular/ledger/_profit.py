@@ -3,12 +3,12 @@
 from collections import defaultdict
 
 from ai_accounting_modular.contracts.public import (
+    checked_fen,
     content_digest,
-    format_fen,
     parse_fen,
     schema_document,
 )
-from ai_accounting_modular.ledger.reporting.public import profit_totals
+from ai_accounting_modular.ledger.reporting.public import profit_totals_fen
 
 from ._balances import sum_amounts
 
@@ -54,15 +54,14 @@ def profit_rows(lines):
 
 
 def pretax_values(rows):
-    cells = {
-        line: {"state": "known", "amount_fen": format_fen(rows.get(line, 0))}
-        for line in (1, 2, 3, 11, 14, 18, 20, 22, 24, 31)
+    values = {
+        line: checked_fen(rows.get(line, 0)) for line in (1, 2, 3, 11, 14, 18, 20, 22, 24, 31)
     }
-    totals = profit_totals(cells)
+    totals = profit_totals_fen(values)
     return (
         rows.get(1, 0),
         rows.get(2, 0),
-        parse_fen(totals[30]["amount_fen"]),
+        totals[30],
     )
 
 

@@ -2,6 +2,7 @@
 
 import json
 from collections import Counter
+from types import MappingProxyType
 
 from ai_accounting_modular.contracts.public import parse_fen, validate_contract
 from ai_accounting_modular.ledger.opening.public import is_zero_origin
@@ -10,6 +11,7 @@ from ._balances import sum_amounts
 from ._financial_cells import known, zeros
 from ._formal_output import target_vouchers
 from ._planning import stored_source_reference
+from ._profit import profit_rows
 from ._report_details import hydrate_report_contributions
 from ._values import fail
 
@@ -43,6 +45,7 @@ class Selection:
         self._balance_cubes = {}
         self._details = {}
         self._sources, self._targets = {}, {}
+        self._profit_rows = {}
         boundaries = repo.financial_boundaries(as_of=end if view == "as_posted" else None)
         self.opening = self.continuation = None
         for head in boundaries:
@@ -98,6 +101,13 @@ class Selection:
         elif saved[0] != raw:
             fail("storage_corrupt", "同一正式结果的目标正文在财务读取中不一致。")
         return saved[1]
+
+    def profit_rows(self, head, lines):
+        """Borrow main rows of already selected journals, only within this read selection."""
+        key = _identity(head)
+        if key not in self._profit_rows:
+            self._profit_rows[key] = MappingProxyType(profit_rows(lines))
+        return self._profit_rows[key]
 
     def boundary_kind(self, head):
         target = self.target(head)

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from ai_accounting_modular.contracts.public import (
     AmountCell,
     ContractError,
+    checked_fen,
     format_fen,
     parse_fen,
     sum_fen,
@@ -82,6 +83,37 @@ def balance_totals(rows: Mapping[int, AmountCell]) -> dict[int, AmountCell]:
 def profit_totals(rows: Mapping[int, AmountCell]) -> dict[int, AmountCell]:
     """Return PL21/30/32, propagating only issues from their actual inputs."""
     return _totals(rows, _PROFIT, 32)
+
+
+def profit_totals_fen(rows: Mapping[int, int]) -> dict[int, int]:
+    """The same PL21/30/32 equations for known integer inputs; unknowns are not zero."""
+    if not isinstance(rows, Mapping):
+        raise ContractError("invalid_input", "报表合计输入须为行号到整数分的映射。")
+    working = dict(rows)
+    for line, amount in working.items():
+        if type(line) is not int or not 1 <= line <= 32:
+            raise ContractError("invalid_input", "报表行号须为1至32的整数。")
+        try:
+            checked_fen(amount)
+        except ValueError as error:
+            raise ContractError(
+                "invalid_input", f"报表第{line}行金额须为有符号64位整数分。"
+            ) from error
+    required = {source for terms in _PROFIT.values() for source, _ in terms} - _PROFIT.keys()
+    missing = sorted(required - working.keys())
+    if missing:
+        raise ContractError(
+            "invalid_input", f"固定报表合计缺少基础行：{','.join(map(str, missing))}。"
+        )
+    result = {}
+    for line, terms in _PROFIT.items():
+        try:
+            working[line] = result[line] = sum_fen(sign * working[source] for source, sign in terms)
+        except ValueError as error:
+            raise ContractError(
+                "invalid_input", f"报表第{line}行合计超出有符号64位整数分范围。"
+            ) from error
+    return result
 
 
 def cash_totals(rows: Mapping[int, AmountCell]) -> dict[int, AmountCell]:
