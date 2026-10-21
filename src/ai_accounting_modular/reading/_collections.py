@@ -193,8 +193,7 @@ def _decode(row):
         ) from error
 
 
-def collection_page(scope_key, component, collection, query, page, read):
-    _filters(query)
+def _ready_collection(scope_key, component, collection, read):
     repository = read.repository("reading")
     state = repository.state(scope_key, component)
     if state is None or state["state"] != "ready":
@@ -218,6 +217,32 @@ def collection_page(scope_key, component, collection, query, page, read):
     manifest = manifests.get(collection)
     if not isinstance(manifest, dict) or set(manifest) != {"count", "digest"}:
         raise ContractError("invalid_input", "所选模型不提供这个读取集合。")
+    return repository, state, manifest
+
+
+def collection_items(scope_key, component, collection, item_ids, read):
+    """Join expected projection references in one bounded batch, without copying descriptors."""
+    if (
+        not isinstance(item_ids, tuple | list)
+        or len(item_ids) > 500
+        or any(not _text(item_id) for item_id in item_ids)
+        or len(set(item_ids)) != len(item_ids)
+    ):
+        raise ContractError("invalid_input", "集合批量定位须提供最多500个不重复的项目身份。")
+    repository, state, manifest = _ready_collection(scope_key, component, collection, read)
+    total, _ = repository.item_counts(scope_key, component, collection, CollectionFilter())
+    if type(manifest["count"]) is not int or total != manifest["count"]:
+        raise ContractError("storage_corrupt", "读取集合项目数量与完整目录不一致。")
+    rows = repository.item_get(scope_key, component, collection, item_ids) if item_ids else ()
+    by_id = {row["item_id"]: row for row in rows}
+    if set(by_id) != set(item_ids) or any(row["head"] != state["ready_head"] for row in rows):
+        raise ContractError("storage_corrupt", "读取集合引用缺失或混入了其他版本，请重新生成。")
+    return tuple(_decode(by_id[item_id]) for item_id in item_ids)
+
+
+def collection_page(scope_key, component, collection, query, page, read):
+    _filters(query)
+    repository, state, manifest = _ready_collection(scope_key, component, collection, read)
     filters = asdict(query)
     filters["categories"] = list(query.categories)
     version = content_digest(

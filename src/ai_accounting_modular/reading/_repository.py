@@ -103,12 +103,27 @@ class ReadingRepository:
 
     def item_counts(self, scope_key, component, collection, query):
         values = []
+        previous = None
         for selected in (None, query):
             where, args = self._item_scope(scope_key, component, collection, selected)
+            if (where, args) == previous:
+                values.append(values[0])
+                continue
             values.append(
                 self._session.fetchone("SELECT COUNT(*) FROM read_item WHERE " + where, args)[0]
             )
+            previous = where, args
         return tuple(values)
+
+    def item_get(self, scope_key, component, collection, item_ids):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key=? AND item_id IN (SELECT value FROM json_each(?))",
+                (scope_key, component, collection, canonical_json(list(item_ids))),
+            )
+        )
 
     def item_page(self, scope_key, component, collection, query, after, limit):
         where, args = self._item_scope(scope_key, component, collection, query)

@@ -326,6 +326,14 @@ class Ledger:
             scope, kinds, page, read_context, business_ids=business_ids, roles=roles
         )
 
+    def get_effective_voucher_directory(
+        self,
+        locators: Sequence[ResultRef],
+        read_context: ReadContext,
+    ) -> tuple[VoucherDirectoryEntry | None, ...]:
+        """Locate each target's real journal, following formal-only baseline inheritance."""
+        return _read_contents.get_effective_voucher_directory(locators, read_context)
+
     def get_vouchers(
         self,
         locators: Sequence[VoucherLocator],

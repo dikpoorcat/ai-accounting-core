@@ -339,6 +339,15 @@ class ReadRepository:
             )
         ]
 
+    def read_voucher_headers(self, result_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM voucher WHERE result_id IN (SELECT value FROM json_each(?))",
+                (canonical_json(list(result_ids)),),
+            )
+        ]
+
     def read_vouchers(self, voucher_ids):
         return [
             dict(row)

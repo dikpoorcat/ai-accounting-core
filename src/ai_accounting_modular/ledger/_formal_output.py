@@ -39,12 +39,14 @@ def target_voucher(repo, row):
     return target_vouchers(repo, [row])[row["result_id"]] if row is not None else None
 
 
-def target_vouchers(repo, heads):
-    """Select complete effective journals in batches, never add correction deltas.
+def target_vouchers(repo, heads, *, headers_only=False):
+    """Select effective journals or headers with the same inheritance, never add deltas.
 
     Formal-only heads inherit their baseline. Withdrawal or a reversal without
     replacement ends inheritance, including an explicitly empty corrected target.
     """
+    load_heads = repo.read_heads if headers_only else repo.results
+    load_vouchers = repo.read_voucher_headers if headers_only else repo.vouchers
     rows = {head["result_id"]: head for head in heads}
     pending = {key: key for key in rows}
     seen, result = set(), {}
@@ -52,9 +54,9 @@ def target_vouchers(repo, heads):
         ids = set(pending.values())
         missing = ids - rows.keys()
         if missing:
-            rows.update((row["result_id"], row) for row in repo.results(missing))
+            rows.update((row["result_id"], row) for row in load_heads(missing))
         grouped = defaultdict(list)
-        for voucher in repo.vouchers(ids):
+        for voucher in load_vouchers(ids):
             grouped[voucher["result_id"]].append(voucher)
         following = {}
         for head_id, result_id in pending.items():

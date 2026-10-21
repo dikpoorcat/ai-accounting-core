@@ -12,6 +12,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
+from ._formal_output import target_vouchers
 from ._planning import stored_source_reference
 from ._read_support import after_key, bounded, cursor, scope_selection, version
 from ._types import (
@@ -43,6 +44,17 @@ def reference(row):
     return validate_contract("core.schema.json", "ResultRef", ref)
 
 
+def _locate(locator, row):
+    if row is None:
+        fail("not_found", "指定正式结果不存在。")
+    if any(
+        row[key] != locator[key]
+        for key in ("business_id", "result_slot", "generation", "business_period", "posting_period")
+    ):
+        fail("snapshot_changed", "指定开放结果已经变化，请重新读取。")
+    return row
+
+
 def get_adopted_contents(locators, read):
     locators = bounded(locators, "ResultRef")
     ids = [ref["result_id"] for ref in locators]
@@ -52,23 +64,41 @@ def get_adopted_contents(locators, read):
     rows = {row["result_id"]: row for row in repo.results(ids)}
     result = []
     for locator in locators:
-        row = rows.get(locator["result_id"])
-        if row is None:
-            fail("not_found", "指定正式结果不存在。")
-        if any(
-            row[key] != locator[key]
-            for key in (
-                "business_id",
-                "result_slot",
-                "generation",
-                "business_period",
-                "posting_period",
-            )
-        ):
-            fail("snapshot_changed", "指定开放结果已经变化，请重新读取。")
+        row = _locate(locator, rows.get(locator["result_id"]))
         target = _content(row, "target", "ResultTarget")
         basis = _content(row, "basis", "AdoptedBasis")
         result.append(AdoptedContent(reference(row), stored_source_reference(row), target, basis))
+    return tuple(result)
+
+
+def get_effective_voucher_directory(locators, read):
+    locators = bounded(locators, "ResultRef")
+    ids = [locator["result_id"] for locator in locators]
+    if len(set(ids)) != len(ids):
+        fail("invalid_input", "一次不能重复定位同一正式结果。")
+    repo = read.repository("ledger")
+    heads = {row["result_id"]: row for row in repo.read_heads(ids)}
+    for locator in locators:
+        _locate(locator, heads.get(locator["result_id"]))
+    selected = target_vouchers(repo, heads.values(), headers_only=True)
+    owner_ids = {voucher["result_id"] for voucher in selected.values() if voucher is not None}
+    heads.update((row["result_id"], row) for row in repo.read_heads(owner_ids - heads.keys()))
+    result = []
+    for locator in locators:
+        voucher = selected[locator["result_id"]]
+        result.append(
+            None
+            if voucher is None
+            else VoucherDirectoryEntry(
+                voucher["voucher_id"],
+                voucher["period"],
+                voucher["number"],
+                voucher["role"],
+                voucher["summary"],
+                reference(heads[voucher["result_id"]]),
+                voucher["reverses_voucher_id"],
+            )
+        )
     return tuple(result)
 
 

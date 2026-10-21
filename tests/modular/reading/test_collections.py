@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import ContractError, PageQuery, loa
 from ai_accounting_modular.reading._collections import (
     CollectionFilter,
     IndexItem,
+    collection_items,
     collection_page,
     prepare_items,
     prepare_model,
@@ -74,6 +75,49 @@ def test_only_the_requested_page_decodes_payload_and_corruption_is_explicit(tmp_
     with pytest.raises(ContractError) as error:
         page(book, request=PageQuery(500, first.next_cursor))
     assert error.value.code == "storage_corrupt"
+
+
+def test_batch_join_uses_one_bounded_item_query_and_preserves_requested_order(
+    tmp_path, monkeypatch
+):
+    book = assemble(tmp_path)
+    publish(book, (item(number) for number in range(501)))
+    requested = [f"item-{number:04d}" for number in range(499, -1, -1)]
+    with book.storage.read_unit(book.company) as read:
+        session = read.repository("reading")._session
+        original, calls = type(session).fetchall, []
+
+        def counted(owner, sql, parameters=()):
+            if "FROM read_item WHERE" in sql:
+                calls.append(sql)
+            return original(owner, sql, parameters)
+
+        monkeypatch.setattr(type(session), "fetchall", counted)
+        values = collection_items(SCOPE, COMPONENT, "entries", requested, read)
+        assert [value["number"] for value in values] == list(range(499, -1, -1))
+        assert all(value["amount_fen"] == "9007199254740993" for value in values)
+        assert len(calls) == 1 and "item_id IN" in calls[0]
+        assert collection_items(SCOPE, COMPONENT, "entries", [], read) == ()
+        assert len(calls) == 1
+        for invalid in (requested + ["item-0500"], ["item-0000", "item-0000"], [[]]):
+            with pytest.raises(ContractError) as error:
+                collection_items(SCOPE, COMPONENT, "entries", invalid, read)
+            assert error.value.code == "invalid_input"
+
+
+def test_batch_join_checks_expected_references_and_only_decodes_requested_rows(tmp_path):
+    book = assemble(tmp_path)
+    publish(book, (item(number) for number in range(3)))
+    with book.storage.maintenance_unit(book.company) as unit:
+        unit.repository("reading")._session.execute(
+            "UPDATE read_item SET payload_json='{}' WHERE item_id='item-0002'"
+        )
+    with book.storage.read_unit(book.company) as read:
+        assert collection_items(SCOPE, COMPONENT, "entries", ["item-0001"], read)[0]["number"] == 1
+        for requested in (["item-0002"], ["absent"], ["item-0000", "absent"]):
+            with pytest.raises(ContractError) as error:
+                collection_items(SCOPE, COMPONENT, "entries", requested, read)
+            assert error.value.code == "storage_corrupt"
 
 
 def test_empty_collection_and_unchanged_collection_version_survive_other_collection_changes(
