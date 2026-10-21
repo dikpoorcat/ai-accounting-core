@@ -87,7 +87,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `accounting_jobs` | company_id、task_id | 仅查询明确文件任务，pending/running/succeeded/failed；结果包含已验证文件，不扫描全部任务。 |
 | `accounting_report` | ReportRequest：company_id、year、quarter、可选 expected_head | FinancialSnapshot：共享三表及所得税取数依据；导出沿 [看板规范](06-dashboard-adapter.md) 的三接口绑定同一内容。 |
 
-资料 import 由程序生成/核对来源身份和摘要；inspect 只读支持文件的有界文本块与原件定位，未知格式明确 unsupported_media，不执行文件内容。解析所得不是正式事实，AI 仍需按业务合同整理。SourcesResult、SourceInspection 和 DocumentsResult 是对应返回真源。来源目录按所属月与来源身份稳定分页，只观察当前页文件状态，不以文件存在冒充摘要已经核对；inspect对所选原件核对完整字节后提供有界文本块。支持文本、CSV、XLS/XLSX（含隐藏行列、公式及缓存值）及PDF文本；未知格式或无法提取的PDF页明确说明，长行和单元格可以接续。自动来源身份按公司、种类和内容摘要确定，同一原件的并发导入不会另造两份。
+资料 import 由程序生成/核对来源身份和摘要；inspect 只读支持文件的有界文本块与原件定位，未知格式明确 unsupported_media，不执行文件内容。解析所得不是正式事实，AI 仍需按业务合同整理。SourcesResult、SourceInspection 和 DocumentsResult 是对应返回真源。来源目录按所属月与来源身份稳定分页，只观察当前页文件状态，不以文件存在冒充摘要已经核对；inspect对所选原件核对完整字节后提供有界文本块。支持文本、CSV、XLS/XLSX隐藏行列及PDF文本；XLSX提供公式及缓存值，XLS仅提供缓存值，每页检查均按实际工作表提示公式表达式不能提取、空缓存不代表业务事实为空。未知格式或无法提取的PDF页明确说明，长行和单元格可以接续。自动来源身份按公司、种类和内容摘要确定，同一原件的并发导入不会另造两份。
 
 ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
 

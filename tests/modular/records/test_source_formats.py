@@ -107,6 +107,63 @@ def test_xls_includes_hidden_sheet_row_and_column_values(records_case):
     assert json.loads(cell["text"])["value"] == "100.25"
 
 
+def test_xls_formula_limitations_stay_visible_on_every_page_and_actual_sheet(records_case):
+    storage, (company, _), records = records_case
+    book = xlwt.Workbook()
+    normal = book.add_sheet("正常")
+    normal.write(0, 0, "真实原文")
+    normal.write(0, 1, xlwt.Formula("100+200"))
+    hidden = book.add_sheet("隐藏")
+    hidden.visibility = 1
+    hidden.write(1, 2, xlwt.Formula("SUM(1,2)"))
+    raw = io.BytesIO()
+    book.save(raw)
+    source = store(storage, company, records, [incoming(company, "公式原表.xls", raw.getvalue())])[
+        0
+    ]
+    cursor, blocks, warnings = None, [], None
+    while True:
+        scope = {"cursor": cursor} if cursor is not None else {}
+        result = query(
+            records,
+            storage,
+            company,
+            action="inspect",
+            source_id=source["source_id"],
+            limit=1,
+            **scope,
+        )["inspection"]
+        assert result["unsupported_media"]
+        if warnings is None:
+            warnings = result["unsupported_sections"]
+        assert result["unsupported_sections"] == warnings
+        assert len(warnings) == 2
+        assert all(
+            "公式表达式不能提取，仅提供缓存值；空缓存不代表业务事实为空" in value
+            for value in warnings
+        )
+        assert {value.split("：", 1)[0] for value in warnings} == {"sheet:正常", "sheet:隐藏"}
+        blocks.extend(result["blocks"])
+        cursor = result["page"]["next_cursor"]
+        if cursor is None:
+            break
+    assert len(blocks) == result["page"]["total_count"] == 3
+    formula = next(block for block in blocks if block["location"] == "sheet:正常!B1")
+    assert json.loads(formula["text"]) == {"type": 1, "value": ""}
+    assert any(block["location"] == "sheet:隐藏!C2 [hidden]" for block in blocks)
+    sheet = query(
+        records,
+        storage,
+        company,
+        action="inspect",
+        source_id=source["source_id"],
+        section="sheet:正常",
+        limit=20,
+    )["inspection"]
+    assert sheet["unsupported_media"] and sheet["unsupported_sections"] == warnings
+    assert sheet["page"]["filtered_count"] == 2
+
+
 def pdf_bytes():
     writer = PdfWriter()
     page = writer.add_blank_page(width=200, height=200)

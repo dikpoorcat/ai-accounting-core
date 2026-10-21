@@ -192,7 +192,7 @@ def xlsx(stream, sections):
         ) from error
 
 
-def xls(stream, sections):
+def xls(stream, sections, unsupported):
     # xlrd accepts a read-only mmap, avoiding another full in-memory copy of the verified file.
     with (
         mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data,
@@ -210,6 +210,9 @@ def xls(stream, sections):
                 sheet = book.sheet_by_index(index)
                 section = "sheet:" + sheet.name
                 sections.add(section)
+                unsupported.append(
+                    section + "：XLS公式表达式不能提取，仅提供缓存值；空缓存不代表业务事实为空。"
+                )
                 for row in range(sheet.nrows):
                     for column in range(sheet.row_len(row)):
                         cell = sheet.cell(row, column)

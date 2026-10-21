@@ -87,7 +87,7 @@ def _scan(stream, source, sections, unsupported):
     elif head.startswith(bytes.fromhex("d0cf11e0a1b11ae1")) and suffix == ".xls":
         from ._source_spreadsheets import xls
 
-        yield from xls(stream, sections)
+        yield from xls(stream, sections, unsupported)
     elif suffix in {".txt", ".md", ".csv", ".tsv", ".json", ".jsonl", ".log"} or source.get(
         "media_type", ""
     ).startswith("text/"):
