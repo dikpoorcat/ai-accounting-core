@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, ReadInputs
 from ai_accounting_modular.ledger.public import CostPositionQuery, ObligationPositionQuery
 
 from ._common import add_months, total
@@ -12,6 +12,7 @@ from ._read_types import AssetPaymentSummary
 
 _LIFECYCLE = ("assets.acquisition", "assets.activation", "assets.disposal", "opening.package")
 _FLOW = ("assets.acquisition", "assets.activation", "assets.disposal", "assets.consumption")
+_DIRECTORY = (*_LIFECYCLE, "assets.consumption")
 
 
 def quantities(content):
@@ -32,9 +33,7 @@ class AssetSnapshot:
         self._payments = {}
         self.asset_objects = tuple(objects(owner._identity, "asset", read))
         self.objects = {obj["object_id"]: obj for obj in self.asset_objects}
-        self.entries = tuple(
-            directory(owner._ledger, self.scope, (*_LIFECYCLE, "assets.consumption"), read)
-        )
+        self.entries = tuple(directory(owner._ledger, self.scope, _DIRECTORY, read))
         self.load_refs(
             entry.reference for entry in self.entries if entry.reference["result_slot"] == "main"
         )
@@ -227,3 +226,17 @@ class AssetSnapshot:
         if obj is None or (kind is not None and obj["kind"] != kind):
             raise ContractError("storage_corrupt", "正式资产或项目结果缺少所需的真实对象身份。")
         return obj
+
+    def read_inputs(self):
+        return ReadInputs(
+            result_kinds=_DIRECTORY,
+            cost_categories=("project",),
+            business_ids=tuple(
+                sorted(
+                    {content.reference["business_id"] for content in self.contents.values()}
+                    | set(self.payables)
+                )
+            ),
+            object_ids=tuple(sorted(self.objects)),
+            object_kinds=("asset",),
+        )

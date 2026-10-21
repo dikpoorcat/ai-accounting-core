@@ -36,10 +36,13 @@ def batches(values):
         yield values[offset : offset + 500]
 
 
+OUTSTANDING_ACCOUNTS = ("221101", "224104")
+
+
 def outstanding_basis(ledger, month, read, selection):
     """A missing opening cannot make the observed obligations a complete accumulated balance."""
     rows = ledger.account_balances(
-        (AccountBalanceKey("221101"), AccountBalanceKey("224104")),
+        tuple(AccountBalanceKey(code) for code in OUTSTANDING_ACCOUNTS),
         month,
         read,
         selection=selection,
@@ -68,6 +71,7 @@ class Contents:
         self.ledger, self.read, self.selection = ledger, read, selection
         self.exact, self.selected, self.loaded, self.opening = {}, {}, set(), {}
         self.remunerations = {}
+        self.roster_business_ids = set()
 
     def load(self, refs):
         missing = {ref["result_id"]: ref for ref in refs if ref["result_id"] not in self.exact}
@@ -131,6 +135,7 @@ class Contents:
             )
             for item in found.items:
                 if item.target["kind"] == "people.remuneration":
+                    self.roster_business_ids.add(item.reference["business_id"])
                     values = item.target["values"]
                     roles[values["person_id"]].add(
                         "labor" if values["remuneration_type"] == "labor" else "employee"

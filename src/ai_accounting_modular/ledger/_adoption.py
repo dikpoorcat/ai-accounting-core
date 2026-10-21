@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 
+from ._adoption_changes import describe_changes
 from ._balances import unique_movements, validate_capacities
 from ._formal_output import same_journal, target_voucher
 from ._planning import PlannedAdoption, bind_plan, check_source_references
@@ -83,7 +84,7 @@ def adopt(change_plans, uow, correction_period, explanation=None):
         uses.check_plan(plan)
     if not responsibilities:
         completed[0] = True
-        return (), (), False
+        return (), (), False, ()
     if correction_period is not None:
         validate_contract("core.schema.json", "Month", correction_period)
     touched = repo.linked_sources(list(responsibilities))
@@ -185,6 +186,9 @@ def adopt(change_plans, uow, correction_period, explanation=None):
         check_changed_source_refs(repo, changed_sources)
 
     uow.check_before_commit(before_commit)
+    # Open output is replaced in-place below. Capture its public input changes
+    # while the exact old target and resource children still exist.
+    formal_changes = describe_changes(repo, retired, proposed, old_by_key)
     retired_keys = []
     for old in retired:
         for table in ("obligation", "cost_lot"):
@@ -244,4 +248,5 @@ def adopt(change_plans, uow, correction_period, explanation=None):
         tuple(references[key] for key in keys),
         tuple({"business_id": r["business_id"], "slot": r["result_slot"]} for r in retired),
         bool(retired) or any(not item.bound.unchanged for item in proposed),
+        tuple(formal_changes),
     )

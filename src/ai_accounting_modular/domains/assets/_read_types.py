@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
     CurrentObject,
     FactIssue,
     LedgerScope,
+    ReadInputs,
     ReadPage,
     ResultRef,
     ResultSourceRef,
@@ -155,6 +156,7 @@ class AssetActivity:
     project_totals: ProjectCostTotals
     ledger: AssetLedgerAmounts
     card_issues: tuple[FactIssue, ...]
+    inputs: ReadInputs
 
 
 @dataclass(frozen=True)

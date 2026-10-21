@@ -2,7 +2,12 @@
 
 from dataclasses import asdict
 
-from ai_accounting_modular.contracts.public import PageQuery, content_digest, validate_contract
+from ai_accounting_modular.contracts.public import (
+    PageQuery,
+    ReadInputs,
+    content_digest,
+    validate_contract,
+)
 
 from ._common import amount, fail
 from ._cooperation_common import PREFIX
@@ -133,4 +138,11 @@ def positions(owner, scope, read, contract_ids):
     )
     if scope.get("expected_head", version) != version:
         fail("合作月末位置已经变化，请重新读取。", "snapshot_changed")
-    return CooperationPositions(version, tuple(values))
+    return CooperationPositions(
+        version,
+        tuple(values),
+        ReadInputs(
+            result_kinds=(PREFIX + "position",),
+            business_ids=tuple(item.contract_id for item in values),
+        ),
+    )

@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
 
 from . import _brief_open_groups as groups
 from . import _brief_open_positions as positions
@@ -10,6 +10,7 @@ from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_vouchers, _monthly
 from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_model, wire_page
+from ._dependencies import bind
 
 _COMPONENT = "brief_open_items"
 
@@ -17,7 +18,8 @@ _COMPONENT = "brief_open_items"
 def prepare(reader, scope, read):
     captured = sources.capture(reader, scope, read)
     members = rows.project(captured, scope["company_id"], reader.identity, read)
-    selected_positions = reader.investment.cooperation_positions(scope, read).positions
+    cooperation = reader.investment.cooperation_positions(scope, read)
+    selected_positions = cooperation.positions
     current_scope = {
         "company_id": scope["company_id"],
         "period_from": captured.current_cutoff,
@@ -63,14 +65,55 @@ def prepare(reader, scope, read):
         )
         for index, member in enumerate(members)
     )
-    return prepare_model(
+    descriptors = _brief_vouchers.descriptors_for_references(
+        reader, [member["_detail_scope"]["reference"] for member in members], read
+    )
+    display_ids = {
+        ident
+        for descriptor in descriptors
+        if descriptor is not None
+        for kind in ("parties", "assets")
+        for ident in descriptor["display"][kind]
+    }
+    display_ids.update(
+        item.definition.value["party_id"]
+        for item in (*captured.selected, *captured.current.values())
+        if item.definition.value.get("party_id")
+    )
+    display_ids.update(
+        obligation[key]
+        for member in members
+        for obligation in member["_detail_scope"]["obligations"]
+        for key in ("person_id", "recipient_id")
+        if obligation.get(key)
+    )
+    display_ids.update(
+        member["_detail_scope"]["position"][key]
+        for member in members
+        if "position" in member["_detail_scope"]
+        for key in ("operator_id", "project_id")
+    )
+    model = prepare_model(
         {
             "open_items": summary,
-            "_voucher_display_head": _brief_vouchers.display_head(
-                reader, [member["_detail_scope"]["reference"] for member in members], read
-            ),
+            "_voucher_display_head": _brief_vouchers.display_head_from_descriptors(descriptors),
         },
         items=prepare_items(entries, collections=("open_items", "open_members")),
+    )
+    businesses = tuple(
+        sorted({body.reference["business_id"] for body in captured.contents.values()})
+    )
+    return bind(
+        model,
+        cooperation.inputs.merge(
+            ReadInputs(
+                result_kinds=("opening.package",),
+                all_obligations=True,
+                business_ids=businesses,
+                current_business_ids=tuple(sorted(set(businesses) | set(contracts))),
+                object_ids=tuple(sorted(display_ids)),
+            )
+        ),
     )
 
 

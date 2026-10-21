@@ -8,6 +8,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     PageQuery,
     QuerySelection,
+    ReadInputs,
     ReadPage,
     canonical_json,
     content_digest,
@@ -24,6 +25,8 @@ from ._common import amount, fail, total
 from ._read_types import MoneyFundActivity, MoneyFundEvent, MoneyFundProduct
 
 KINDS = ("investment.money_fund_purchase", "investment.money_fund_redemption")
+_ACCOUNT = "1101"
+_COST_CATEGORIES = ("money_fund",)
 
 
 def _scope(scope, read):
@@ -277,7 +280,7 @@ def _balance_cell(cell, local_issues, issues, indexes):
 def activity(owner, scope, read):
     _, selected, events = _events(owner, scope, read)
     cost_query = CostPositionQuery(
-        scope["period_to"], categories=("money_fund",), include_consumed=True
+        scope["period_to"], categories=_COST_CATEGORIES, include_consumed=True
     )
     cursor, fund_ids = None, {item.fund_id for item in events}
     while True:
@@ -295,7 +298,7 @@ def activity(owner, scope, read):
         batch = ids[start : start + 500]
         objects.update((obj["object_id"], obj) for obj in owner._identity.get_batch(batch, read))
         for item in owner._ledger.account_balances(
-            tuple(AccountBalanceKey("1101", identity) for identity in batch),
+            tuple(AccountBalanceKey(_ACCOUNT, identity) for identity in batch),
             scope["period_to"],
             read,
             selection=selected,
@@ -307,7 +310,7 @@ def activity(owner, scope, read):
     if set(objects) != fund_ids:
         fail("正式基金成本或事件缺少具体产品身份。", "storage_corrupt")
     overall = owner._ledger.account_balances(
-        (AccountBalanceKey("1101"),), scope["period_to"], read, selection=selected
+        (AccountBalanceKey(_ACCOUNT),), scope["period_to"], read, selection=selected
     )[0]
     opening, closing = (
         _balance_cell(cell, overall.issues, issues, issue_indexes)
@@ -350,4 +353,12 @@ def activity(owner, scope, read):
         tuple(products),
         tuple(events),
         tuple(issues),
+        ReadInputs(
+            result_kinds=("opening.package",),
+            posted_result_kinds=KINDS,
+            account_codes=(_ACCOUNT,),
+            cost_categories=_COST_CATEGORIES,
+            business_ids=tuple(sorted({event.business_id for event in events})),
+            object_ids=tuple(ids),
+        ),
     )

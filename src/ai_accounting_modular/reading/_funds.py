@@ -1,9 +1,10 @@
 """One complete funds month, with hot pages served only from its published item index."""
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
 
 from . import _funds_accounts, _funds_items, _funds_sources, _funds_statements, _monthly
 from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_model, wire_page
+from ._dependencies import bind
 
 COMPONENT = "funds"
 COLLECTIONS = ("accounts", "movements", "statements", "investment_products", "investment_events")
@@ -39,7 +40,7 @@ def prepare(reader, scope, read):
     summary = _funds_accounts.summary(activity, balances, cards)
     summary["investments"] = investments
     first = ordered[0].value if ordered else None
-    return prepare_model(
+    model = prepare_model(
         {
             "data": summary,
             "first_account": None
@@ -47,6 +48,20 @@ def prepare(reader, scope, read):
             else {"type": first["type"], "account_id": first["account_id"]},
         },
         items=prepare_items(items, collections=COLLECTIONS),
+    )
+    return bind(
+        model,
+        activity.inputs.merge(
+            funds.inputs,
+            ReadInputs(
+                result_kinds=("opening.package",),
+                account_codes=_funds_accounts.ACCOUNT_CODES,
+                business_ids=tuple(
+                    sorted({entry.reference["business_id"] for entry in sources.entries.values()})
+                ),
+                object_ids=tuple(sorted(objects)),
+            ),
+        ),
     )
 
 

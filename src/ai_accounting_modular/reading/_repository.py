@@ -54,6 +54,15 @@ class ReadingRepository:
         )
         return dict(row) if row else None
 
+    def input_dependencies(self, scope_key, component):
+        """Read only the declared sparse inputs; never load collection items."""
+        row = self._session.fetchone(
+            "SELECT json_extract(payload_json,'$._inputs') FROM read_component "
+            "WHERE scope_key=? AND component_key=?",
+            (scope_key, component),
+        )
+        return row[0] if row else None
+
     def publish(self, scope_key, component, wanted_head, format_version, model):
         if not isinstance(model, PreparedModel):
             raise TypeError("model must be prepared before publication")

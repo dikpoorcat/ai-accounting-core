@@ -369,4 +369,6 @@ def test_old_month_projection_is_not_read_or_repaired_until_explicit_retry(case,
     assert review(case)["state"] == "prepared"
     with case.kernel.storage.read_unit(case.company) as read:
         assert read.head == before[0]
-        assert {state["format_version"] for state in read.repository("reading").scopes()} == {2}
+        assert {state["format_version"] for state in read.repository("reading").scopes()} == {
+            _monthly.FORMAT_VERSION
+        }

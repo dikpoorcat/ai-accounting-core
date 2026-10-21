@@ -168,7 +168,11 @@ def asset_activity(owner, scope, read):
     )
     if scope.get("expected_head", version) != version:
         raise ContractError("snapshot_changed", "资产范围已变化，请重新读取。")
-    return AssetActivity(version=version, **payload)
+    return AssetActivity(
+        version=version,
+        **payload,
+        inputs=snapshot.read_inputs().merge(owner._ledger.financial_summary_inputs(_LEDGER_FIELDS)),
+    )
 
 
 def query_cards(owner, scope, query, page, read):

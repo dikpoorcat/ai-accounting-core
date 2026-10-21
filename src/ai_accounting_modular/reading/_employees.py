@@ -2,12 +2,13 @@
 
 from collections import Counter, defaultdict
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
 
 from . import _employees_amounts as amounts
 from . import _employees_relationships as relationships
 from . import _monthly
 from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_model, wire_page
+from ._dependencies import bind
 from ._employees_sources import labor_sources
 
 _COLLECTIONS = ("employees", "labor_workers", "labor_sources")
@@ -112,7 +113,15 @@ def prepare(reader, scope, read):
     saved.update(
         _owner_version=activity.version, _categories=categories, _workforce=amounts.brief(activity)
     )
-    return prepare_model(saved, items=prepare_items(entries, collections=_COLLECTIONS))
+    return bind(
+        prepare_model(saved, items=prepare_items(entries, collections=_COLLECTIONS)),
+        activity.inputs.merge(
+            reader.people.relationship_inputs(),
+            ReadInputs(
+                object_ids=tuple(sorted(selected_ids)),
+            ),
+        ),
+    )
 
 
 def build(snapshot, read, query, *, identity):

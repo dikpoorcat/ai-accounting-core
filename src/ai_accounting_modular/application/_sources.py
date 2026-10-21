@@ -4,7 +4,6 @@ from contextlib import ExitStack
 from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import SourcesRequest, SourcesResult, validate_contract
-from ai_accounting_modular.reading.public import ReadingImpact
 from ai_accounting_modular.records.public import RecordsChange, RecordsContext
 
 from . import _documents
@@ -28,19 +27,6 @@ def run(application, request: SourcesRequest) -> SourcesResult:
             application.records.apply_current(plan, unit)
             if plan.changed_source_ids:
                 application.records.mark_document_targets(("sources",), unit)
-                application._notify_reading(
-                    ReadingImpact(
-                        changes={
-                            "families": [],
-                            "business_ids": [],
-                            "object_ids": [],
-                            "periods": [],
-                            "slots": [],
-                        },
-                        source_ids=tuple(plan.changed_source_ids),
-                    ),
-                    unit,
-                )
     with application.storage.read_unit(company_id) as read:
         status = application.records.document_status(read)
     if status["state"] != "ready":

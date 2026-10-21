@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from ai_accounting_modular.contracts.public import (
+    ReadInputs,
     content_digest,
     parse_fen,
     query_selection,
@@ -20,6 +21,31 @@ from ._financial_selection import Selection
 from ._read_support import json_value
 from ._types import AccountBalance, AccountBalanceKey, FinancialSummary
 from ._values import fail
+
+_ACCOUNT_FIELDS = (
+    ("bank", ("1002",), 1),
+    ("cash", ("1001",), 1),
+    ("payment_platform", ("1012",), 1),
+    ("fixed_cost", ("1601",), 1),
+    ("fixed_accumulated", ("1602",), -1),
+    ("fixed_net", ("1601", "1602"), 1),
+    ("intangible_cost", ("1701",), 1),
+    ("intangible_accumulated", ("1702",), -1),
+    ("intangible_net", ("1701", "1702"), 1),
+    ("long_term_cost", ("1601", "1701", "1604", "189901", "4301"), 1),
+    ("long_term_accumulated", ("1602", "1702"), -1),
+    ("long_term_net", ("1601", "1602", "1701", "1702", "1604", "189901", "4301"), 1),
+)
+
+
+def summary_inputs(names):
+    known = {name: codes for name, codes, _ in _ACCOUNT_FIELDS}
+    if any(name not in known for name in names):
+        fail("invalid_input", "所选财务余额字段没有明确的科目读取声明。")
+    return ReadInputs(
+        result_kinds=("opening.package",),
+        account_codes=tuple(sorted({code for name in names for code in known[name]})),
+    )
 
 
 def _sources(selection):
@@ -78,20 +104,7 @@ def financial_summary(scope, read):
             )
         },
     }
-    for name, codes, sign in (
-        ("bank", ("1002",), 1),
-        ("cash", ("1001",), 1),
-        ("payment_platform", ("1012",), 1),
-        ("fixed_cost", ("1601",), 1),
-        ("fixed_accumulated", ("1602",), -1),
-        ("fixed_net", ("1601", "1602"), 1),
-        ("intangible_cost", ("1701",), 1),
-        ("intangible_accumulated", ("1702",), -1),
-        ("intangible_net", ("1701", "1702"), 1),
-        ("long_term_cost", ("1601", "1701", "1604", "189901", "4301"), 1),
-        ("long_term_accumulated", ("1602", "1702"), -1),
-        ("long_term_net", ("1601", "1602", "1701", "1702", "1604", "189901", "4301"), 1),
-    ):
+    for name, codes, sign in _ACCOUNT_FIELDS:
         values[name] = _amount(selection, last, codes, sign=sign, field="/" + name)
     sources = _sources(selection)
     identity = {

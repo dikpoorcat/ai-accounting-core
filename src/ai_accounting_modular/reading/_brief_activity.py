@@ -1,6 +1,11 @@
 """Prepare scalar month activities and precise voucher descriptors without journal lines."""
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery, QuerySelection
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    PageQuery,
+    QuerySelection,
+    ReadInputs,
+)
 from ai_accounting_modular.ledger.public import ObligationPositionQuery
 
 from . import _brief_groups, _brief_vouchers, _brief_vouchers_display
@@ -8,6 +13,7 @@ from ._brief_activity_amounts import EVENT_KINDS
 from ._brief_activity_parts import ActivityEvent, parts, rows, semantic
 from ._brief_activity_sources import Contents, identities, pages
 from ._collections import IndexItem, prepare_items, prepare_model
+from ._dependencies import bind
 
 COMPONENT = "brief_activity"
 COLLECTIONS = ("activity", "activity_members", "brief_vouchers")
@@ -244,7 +250,7 @@ def prepare(reader, scope, read):
             )
         )
     groups, category_counts = _brief_groups.indexes(members)
-    return prepare_model(
+    model = prepare_model(
         {
             "activity_count": len(members),
             "group_count": sum(item["group_count"] for item in category_counts),
@@ -253,4 +259,20 @@ def prepare(reader, scope, read):
             "review_businesses": _brief_groups.review_businesses(members),
         },
         items=prepare_items([*groups, *vouchers], collections=COLLECTIONS),
+    )
+    display_ids = {
+        ident
+        for voucher in vouchers
+        for kind in ("parties", "assets")
+        for ident in voucher.value["display"][kind]
+    }
+    return bind(
+        model,
+        ReadInputs(
+            posted_results=True,
+            business_ids=tuple(
+                sorted({body.reference["business_id"] for body in cache.saved.values()})
+            ),
+            object_ids=tuple(sorted(set(objects) | display_ids)),
+        ),
     )

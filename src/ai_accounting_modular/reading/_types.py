@@ -9,13 +9,13 @@ from ai_accounting_modular.contracts.public import (
     BusinessGet,
     BusinessGetResult,
     BusinessQuery,
-    ChangeSet,
     ContextRequest,
     ContextResult,
     ContractError,
     ReadContext,
     validate_contract,
 )
+from ai_accounting_modular.ledger.public import FormalChange
 
 
 class BusinessReader(Protocol):
@@ -60,30 +60,46 @@ class PeriodRange:
 
 @dataclass(frozen=True)
 class ReadingImpact:
-    """Explicit economic/posting impacts and independent display/material changes.
+    """Changed public inputs; Ledger alone determines their real posting scope."""
 
-    The caller supplies actual affected ranges. In particular, a later-period
-    correction does not turn its frozen original month into a posting change.
-    Object display identities are changes.object_ids. This contains no old bodies.
-    """
-
-    changes: ChangeSet
-    current_ranges: tuple[PeriodRange, ...] = ()
-    posted_ranges: tuple[PeriodRange, ...] = ()
-    source_ids: tuple[str, ...] = ()
     note_scopes: tuple[str, ...] = ()
     issue_scopes: tuple[str, ...] = ()
+    formal_changes: tuple[FormalChange, ...] = ()
+    objects: tuple[tuple[str, str], ...] = ()
+    facts: tuple[tuple[str, str, str | None], ...] = ()
+    closure_ranges: tuple[PeriodRange, ...] = ()
+    working_period_changed: bool = False
 
     def __post_init__(self):
-        validate_contract("core.schema.json", "ChangeSet", self.changes)
-        for value in self.current_ranges + self.posted_ranges:
+        for value in self.closure_ranges:
             if not isinstance(value, PeriodRange):
                 raise ContractError("invalid_input", "读取影响须使用明确月份范围。")
-        for source_id in self.source_ids:
-            validate_contract("core.schema.json", "Id", source_id)
         for scope in self.note_scopes + self.issue_scopes:
             if not isinstance(scope, str) or not 1 <= len(scope) <= 200:
                 raise ContractError("invalid_input", "读取影响的说明或待办范围无效。")
+        if any(not isinstance(value, FormalChange) for value in self.formal_changes):
+            raise TypeError("formal reading changes must come from Ledger adoption")
+        for object_id, kind in self.objects:
+            validate_contract("core.schema.json", "Id", object_id)
+            if not isinstance(kind, str) or not kind:
+                raise TypeError("changed object kind is required")
+        for business_id, kind, period in self.facts:
+            validate_contract("core.schema.json", "Id", business_id)
+            if not isinstance(kind, str) or not kind:
+                raise TypeError("changed Fact kind is required")
+            if period is not None:
+                validate_contract("core.schema.json", "Month", period)
+
+    def __bool__(self):
+        return bool(
+            self.formal_changes
+            or self.objects
+            or self.facts
+            or self.note_scopes
+            or self.issue_scopes
+            or self.closure_ranges
+            or self.working_period_changed
+        )
 
 
 @dataclass(frozen=True)

@@ -4,18 +4,20 @@ from dataclasses import dataclass, fields
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    ReadInputs,
     canonical_json,
     content_digest,
     loads_json,
     validate_contract,
 )
 
+from . import _dependencies
 from ._collections import collection_items as _collection_items
 from ._collections import collection_page, prepare_model
 from ._context import last_period, period
 from ._types import ModelDelivery, MonthScope
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 FINANCIAL = "financial"
 FUNDS = "funds"
 ASSETS = "assets"
@@ -97,7 +99,8 @@ def _load(repository, scope_key, component, state):
         value = loads_json(payload["payload_json"])
         if not isinstance(value, dict) or content_digest(value) != state["content_digest"]:
             raise ValueError
-        return value
+        _dependencies.inputs(value)
+        return {key: item for key, item in value.items() if key != "_inputs"}
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise _CorruptComponent(component) from error
 
@@ -252,7 +255,9 @@ def capture(reader, component, scope, read):
             if field.name != "sources"
         }
         summary["issues"] = list(formal.issues)
-        return prepare_model({"financial": summary})
+        return _dependencies.bind(
+            prepare_model({"financial": summary}), ReadInputs(all_results=True)
+        )
     if component == FUNDS:
         from ._funds import prepare
 
@@ -276,37 +281,22 @@ def capture(reader, component, scope, read):
     if component == BRIEF_CONTEXT:
         from ._brief_context import prepare
 
-        return prepare(reader, normalized, read)
+        return _dependencies.bind(prepare(reader, normalized, read), ReadInputs())
     raise ContractError("storage_corrupt", "月度读取组件尚未装配。")
 
 
-def affected(scope, component, impact):
+def affected(scope, component, impact, selected):
     if component not in COMPONENTS:
         raise ContractError("storage_corrupt", "月度读取目标包含未装配组件。")
     if component == BRIEF_CONTEXT:
-        return bool(impact.note_scopes or impact.issue_scopes or impact.source_ids)
-    if component == FUNDS and (
-        impact.changes["object_ids"]
-        or (
-            "money" in impact.changes["families"]
-            and scope["period_to"] in impact.changes["periods"]
-        )
+        return bool("period:" + scope["period_to"] in impact.note_scopes or impact.issue_scopes)
+    if component == BRIEF_OPEN_ITEMS and impact.working_period_changed:
+        return True
+    if component == FINANCIAL and any(
+        value.period_from <= scope["period_to"] for value in impact.closure_ranges
     ):
         return True
-    if component == ASSETS and impact.changes["object_ids"]:
-        return True
-    if component == EMPLOYEES and (
-        impact.changes["object_ids"] or "people" in impact.changes["families"]
-    ):
-        return True
-    if component in (BRIEF_ACTIVITY, BRIEF_OPEN_ITEMS) and impact.changes["object_ids"]:
-        return True
-    if component == BRIEF_OPEN_ITEMS:
-        # Historical balances also show their actual subsequent settlement progress.
-        return bool(
-            impact.posted_ranges or impact.current_ranges or "people" in impact.changes["families"]
-        )
-    return any(value.period_from <= scope["period_to"] for value in impact.posted_ranges)
+    return _dependencies.affected(selected, scope["period_to"], impact)
 
 
 def retry(reader, scope, components):

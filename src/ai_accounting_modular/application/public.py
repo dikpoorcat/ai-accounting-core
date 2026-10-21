@@ -87,7 +87,7 @@ class Application:
     def _notify_reading(self, impact, unit):
         return (
             bool(self._reading_targets(impact, unit))
-            if self._reading_targets is not None
+            if impact and self._reading_targets is not None
             else False
         )
 

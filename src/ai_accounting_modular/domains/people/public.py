@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
     LedgerScope,
     PostingPlan,
     ReadContext,
+    ReadInputs,
     UnitOfWork,
     validate_contract,
 )
@@ -320,6 +321,10 @@ class People:
             project_relationship(person_id, period, facts.get(person_id), read_context)
             for person_id in ids
         )
+
+    def relationship_inputs(self) -> ReadInputs:
+        """Relationship projections consume current effective history, not the Fact filing month."""
+        return ReadInputs(fact_kinds=("people.relationship",))
 
     def query_current(self, query: BusinessQuery, read_context: ReadContext) -> tuple[Fact, ...]:
         validate_contract("core.schema.json", "BusinessQuery", query)

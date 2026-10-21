@@ -134,13 +134,8 @@ class Book:
         )
 
     def mark(self, month):
-        change = {
-            "families": ["operations"],
-            "business_ids": [],
-            "object_ids": [],
-            "periods": [month],
-            "slots": [],
-        }
+        from ai_accounting_modular.ledger.public import FormalChange
+
         with self.storage.write_unit(self.company) as unit:
             # A genuine business write makes next_head the committed sequence.
             obj = self.identity.get_batch([PARTY], unit)[0]
@@ -149,7 +144,11 @@ class Book:
             plan = self.identity.plan_change([data], identity.IdentityContext(unit, str(uuid4())))
             self.identity.apply_current(plan, unit)
             return self.reading.mark_targets(
-                reading.ReadingImpact(change, posted_ranges=(reading.PeriodRange(month, month),)),
+                reading.ReadingImpact(
+                    formal_changes=(
+                        FormalChange(PARTY, "main", (month,), (month,), ("operations.expense",)),
+                    )
+                ),
                 unit,
             )
 

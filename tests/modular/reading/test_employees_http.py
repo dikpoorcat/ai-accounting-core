@@ -154,5 +154,7 @@ def test_unrelated_expense_and_ordinary_person_leave_complete_employee_response_
         )
     )
     assert saved["completion"] == "complete", saved
-    current = ready(case, parameters)
+    with case.kernel.dashboard.get("/api/dashboard/employees", parameters) as response:
+        assert response.status == 200 and response.body["state"] == "ready"
+        current = response.body["response"]
     assert current == original

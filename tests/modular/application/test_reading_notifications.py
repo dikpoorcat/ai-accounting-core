@@ -45,6 +45,10 @@ def ranges(values):
     return [(value.period_from, value.period_to) for value in values]
 
 
+def formal_periods(impact, field):
+    return sorted({period for change in impact.formal_changes for period in getattr(change, field)})
+
+
 def test_open_change_refreshes_real_model_and_retry_and_future_month_preserve_it(case, monkeypatch):
     fact = case.seed()
     initial = ready(case)
@@ -56,8 +60,10 @@ def test_open_change_refreshes_real_model_and_retry_and_future_month_preserve_it
     request["mutations"][0].update(op="replace", expected_seq=1)
     response = case.app.accounting_apply(request)
     assert response["reading"] == "preparing", response
-    assert ranges(calls[-1].current_ranges) == [("2026-01", "2026-01")]
-    assert ranges(calls[-1].posted_ranges) == [("2026-01", "2026-01")]
+    assert formal_periods(calls[-1], "business_periods") == ["2026-01"]
+    assert formal_periods(calls[-1], "posted_periods") == ["2026-01"]
+    assert calls[-1].formal_changes[0].result_kinds == ("operations.expense",)
+    assert calls[-1].formal_changes[0].account_codes
     assert case.kernel.reading.page("quarterly_report", scope(case), {}).state == "preparing"
     changed = ready(case)
     assert changed.version != initial.version
@@ -69,7 +75,7 @@ def test_open_change_refreshes_real_model_and_retry_and_future_month_preserve_it
     assert len(calls) == count and ready(case).version == changed.version
     future = case.app.accounting_apply(case.request(case.expense("9000", "2026-04")))
     assert future["reading"] == "preparing"
-    assert ranges(calls[-1].posted_ranges) == [("2026-04", "2026-04")]
+    assert formal_periods(calls[-1], "posted_periods") == ["2026-04"]
     assert case.kernel.reading.page("quarterly_report", scope(case), {}).state == "ready"
     assert ready(case).version == changed.version
 
@@ -92,14 +98,14 @@ def test_management_and_note_notifications_do_not_refresh_financial_component(ca
         )
     )
     assert renamed["accounting"] == renamed["reading"] == "unchanged", renamed
-    assert calls[-1].changes["object_ids"] == [case.party]
-    assert not calls[-1].current_ranges and not calls[-1].posted_ranges
+    assert calls[-1].objects == ((case.party, "organization"),)
+    assert not calls[-1].formal_changes
     extra = source("合成补充来源只补资料，不改变已明确的1000元维修费。")
     request = case.request(sources=[extra])
+    count = len(calls)
     result = case.app.accounting_apply(request)
     assert result["accounting"] == result["reading"] == "unchanged", result
-    assert extra["source_id"] in calls[-1].source_ids
-    assert not calls[-1].current_ranges and not calls[-1].posted_ranges
+    assert len(calls) == count
     request = case.request(
         notes=[
             note("company", "公司经营维修。", case.source_id),
@@ -119,7 +125,7 @@ def test_management_and_note_notifications_do_not_refresh_financial_component(ca
         == "complete"
     )
     assert calls[-1].note_scopes == ("period:2026-01",)
-    assert not calls[-1].current_ranges and not calls[-1].posted_ranges
+    assert not calls[-1].formal_changes
     assert ready(case).version == initial.version
 
 
@@ -135,8 +141,8 @@ def test_closed_baseline_is_not_refreshed_by_a_later_quarter_correction(case, mo
     request["mutations"][0].update(op="replace", expected_seq=1)
     response = case.app.accounting_apply(request)
     assert response["completion"] == "complete" and response["reading"] == "preparing", response
-    assert ranges(calls[-1].current_ranges) == [("2026-01", "2026-01")]
-    assert ranges(calls[-1].posted_ranges) == [("2026-04", "2026-04")]
+    assert formal_periods(calls[-1], "business_periods") == ["2026-01"]
+    assert formal_periods(calls[-1], "posted_periods") == ["2026-04"]
     assert case.kernel.reading.page("quarterly_report", scope(case), {}).state == "ready"
     assert ready(case).version == frozen.version
     assert (
@@ -151,8 +157,8 @@ def test_close_marks_the_newly_covered_range_once_and_retry_reuses_it(case, monk
     calls = spy(case, monkeypatch)
     closed = case.close(case.check("2026-03"))
     assert closed["state"] == "closed"
-    assert ranges(calls[-1].posted_ranges) == [("2026-01", "2026-03")]
-    assert not calls[-1].current_ranges and calls[-1].changes["business_ids"] == []
+    assert ranges(calls[-1].closure_ranges) == [("2026-01", "2026-03")]
+    assert not calls[-1].formal_changes
     assert case.kernel.reading.page("quarterly_report", scope(case), {}).state == "preparing"
     ready(case)
     count = len(calls)

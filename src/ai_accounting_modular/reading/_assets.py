@@ -6,6 +6,7 @@ from . import _monthly
 from ._assets_cards import card_value, project_value
 from ._assets_summary import public_summary, summary
 from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_model, wire_page
+from ._dependencies import bind
 
 
 def prepare(reader, scope, read):
@@ -35,7 +36,10 @@ def prepare(reader, scope, read):
         for index, item in enumerate(activity.project_costs)
         if item.remaining_fen != 0
     )
-    return prepare_model(saved, items=prepare_items(entries, collections=("assets", "projects")))
+    return bind(
+        prepare_model(saved, items=prepare_items(entries, collections=("assets", "projects"))),
+        activity.inputs,
+    )
 
 
 def _categories(filter):

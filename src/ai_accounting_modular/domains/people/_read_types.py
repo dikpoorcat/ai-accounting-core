@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     BusinessRef,
     FactIssue,
     LedgerScope,
+    ReadInputs,
     ResultRef,
     ResultSourceRef,
 )
@@ -159,3 +160,4 @@ class RemunerationActivity:
     sources: tuple[RemunerationSource, ...]
     roster: tuple[RemunerationRosterPerson, ...]
     issues: tuple[FactIssue, ...]
+    inputs: ReadInputs

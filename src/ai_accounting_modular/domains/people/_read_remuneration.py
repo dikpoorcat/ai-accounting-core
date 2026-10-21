@@ -6,12 +6,19 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     PageQuery,
     QuerySelection,
+    ReadInputs,
     content_digest,
     validate_contract,
 )
 from ai_accounting_modular.ledger.public import ObligationPositionQuery, SettlementEventQuery
 
-from ._read_sources import Contents, batches, outstanding_basis, remuneration_meaning
+from ._read_sources import (
+    OUTSTANDING_ACCOUNTS,
+    Contents,
+    batches,
+    outstanding_basis,
+    remuneration_meaning,
+)
 from ._read_totals import people, summary
 from ._read_types import (
     RemunerationActivity,
@@ -22,6 +29,7 @@ from ._read_types import (
 )
 
 _KINDS = ("people.remuneration", "opening.package")
+_UNPAID_CATEGORIES = ("net_pay", "social", "housing", "withholding")
 
 
 def _all(query, *, positions=False):
@@ -172,7 +180,7 @@ def _events(ledger, month, read, selection, contents):
 def _positions(ledger, month, read, selection, contents, entries, events, parents):
     query = ObligationPositionQuery(
         month,
-        categories=("net_pay", "social", "housing", "withholding"),
+        categories=_UNPAID_CATEGORIES,
         include_settled=False,
     )
     unpaid = _all(
@@ -243,6 +251,17 @@ def remuneration_activity(ledger, scope, read):
     persons = people(entries, positions, events, roster, known=known)
     totals = summary(entries, positions, events, known=known)
     sources = contents.activity_sources(entries, positions, events)
+    consumed = {source.reference["business_id"] for source in sources}
+    consumed.update(contents.roster_business_ids)
+    consumed.update(item.position.definition.reference["business_id"] for item in positions)
+    consumed.update(
+        identity
+        for item in events
+        for identity in (
+            item.event.use.source["business_id"],
+            item.event.use.value["source"]["business_id"],
+        )
+    )
     payload = {
         "company": read.company_id,
         "database": read.database_id,
@@ -270,4 +289,10 @@ def remuneration_activity(ledger, scope, read):
         sources,
         roster,
         issues,
+        ReadInputs(
+            result_kinds=_KINDS,
+            account_codes=OUTSTANDING_ACCOUNTS,
+            obligation_categories=_UNPAID_CATEGORIES,
+            business_ids=tuple(sorted(consumed)),
+        ),
     )

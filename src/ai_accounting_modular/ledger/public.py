@@ -41,6 +41,7 @@ from . import (
     _read_positions,
 )
 from ._adoption import adopt as _adopt
+from ._adoption_changes import FormalChange as FormalChange
 from ._balances import balance_wire, obligation_balances
 from ._candidate import CandidateLedger
 from ._cashflow import contributions as _cashflow_contributions
@@ -147,6 +148,7 @@ class AdoptionResult:
     results: tuple[dict, ...]
     retired_slots: tuple[dict, ...]
     changed: bool
+    formal_changes: tuple[FormalChange, ...]
 
 
 def repository_factory():
@@ -249,6 +251,10 @@ class Ledger:
 
     def financial_summary(self, scope: LedgerScope, read_context: ReadContext) -> FinancialSummary:
         return _financial_reads.financial_summary(scope, read_context)
+
+    def financial_summary_inputs(self, names):
+        """Public dependencies of the selected explicit balance fields."""
+        return _financial_reads.summary_inputs(names)
 
     def account_balances(
         self,
@@ -491,8 +497,10 @@ class Ledger:
         correction_period=None,
         explanation=None,
     ) -> AdoptionResult:
-        refs, retired, changed = _adopt(change_plans, uow, correction_period, explanation)
-        return AdoptionResult(refs, retired, changed)
+        refs, retired, changed, formal_changes = _adopt(
+            change_plans, uow, correction_period, explanation
+        )
+        return AdoptionResult(refs, retired, changed, formal_changes)
 
     def _validate_query(self, query):
         if not isinstance(query, LedgerQuery):

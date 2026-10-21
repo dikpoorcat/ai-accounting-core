@@ -5,12 +5,14 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import (
     ContractError,
     PageQuery,
+    ReadInputs,
     ReadPage,
 )
 from ai_accounting_modular.ledger.public import SettlementEventQuery
 
 from ._common import amount, fail, total
 from ._queries import page_values, scope_selection, version
+from ._read_statements import KINDS as STATEMENT_KINDS
 from ._read_statements import original_rows
 from ._read_types import (
     AccountActivity,
@@ -20,6 +22,8 @@ from ._read_types import (
     StatementActivity,
 )
 from ._reconciliation import validate_complete_statement
+
+_ACCOUNT_KINDS = ("bank_account", "cash_account", "platform_account")
 
 
 def _movements(owner, scope, read):
@@ -121,7 +125,7 @@ def movement_views(owner, definitions, scope, read):
 
 def _accounts(owner, read):
     result = {}
-    for kind in ("bank_account", "cash_account", "platform_account"):
+    for kind in _ACCOUNT_KINDS:
         query = {"action": "find", "company_id": read.company_id, "kind": kind, "limit": 500}
         while True:
             page = owner._identity.find(query, read)
@@ -257,4 +261,14 @@ def account_activity(owner, scope, read):
         movements,
         rows,
         groups,
+        ReadInputs(
+            business_result_kinds=STATEMENT_KINDS,
+            business_ids=tuple(sorted({item.reference["business_id"] for item in definitions})),
+            current_fact_ids=tuple(
+                sorted({item.reference["business_id"] for item in statements.values()})
+            ),
+            object_ids=tuple(sorted(accounts)),
+            object_kinds=_ACCOUNT_KINDS,
+            movements=True,
+        ),
     )

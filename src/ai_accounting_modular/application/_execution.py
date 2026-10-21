@@ -154,9 +154,6 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
         if application.money is None:
             raise ContractError("invalid_operation", "实际资金身份模块尚未装配。")
         application.money.register_occurrences(posting_plans, unit)
-    before_results = (
-        context.previous_result_refs if application._reading_targets is not None else ()
-    )
     adoption = application.ledger.adopt(
         [plan for _, plan in plans],
         unit,
@@ -246,20 +243,20 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
     )
     reading_changed = False
     if changed and application._reading_targets is not None:
-        source_ids = set(records_plan.changed_source_ids)
-        for change in changes:
-            if change.changed:
-                for fact in (change.fact, previous_facts.get(change.business_id)):
-                    if fact is not None:
-                        source_ids.update(fact_source_ids(fact))
         impact = _reading.applied(
-            changes=changes,
-            before=before_results,
             adoption=adoption,
-            heads=final_heads,
-            previous_heads=prior_heads,
-            objects=identity_plan.changed_ids,
-            sources=source_ids,
+            objects=tuple(
+                obj
+                for obj in identity_plan.objects
+                if obj["object_id"] in identity_plan.changed_ids
+            ),
+            facts=tuple(
+                fact
+                for change in changes
+                if change.changed
+                for fact in (previous_facts.get(change.business_id), change.fact)
+                if fact is not None
+            ),
             notes=set(invalidated_notes)
             | {
                 note["scope"]
@@ -267,6 +264,7 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
                 if before_notes.get(note["scope"]) != note["seq"]
             },
             issues=(submission.unresolved_scope,) if "work" in context_plan.changed_scopes else (),
+            working_period_changed=context.evaluation_period_to != previous_period_to,
         )
         if application._notify_reading(impact, unit):
             reading_changed = True

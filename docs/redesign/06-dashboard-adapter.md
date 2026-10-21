@@ -192,7 +192,7 @@ partial时export.available=false、preview_digest=null、epochs=null；不能创
 
 保留 `owner_review_request.preview_digest` 和 `/api/dashboard/close-review` 的外部字段名，内部改为当前只读检查头。标识由公司、数据库、月份、相关正式结果头、检查合同及检查内容计算为64位小写十六进制字符串；不绑定批准、密码、授权或老板“已确认”，不保存开放期旧预览正文，也不作为关账许可。
 
-期间模块提供当前检查结论和影响范围，reading与账务／业务摘要组合为 `PublicOwnerReview`。只读检查可查看本月六项金额、按业务性质分组的数量金额及当前问题状态；`status=ready/ai_reviewing`表示检查结果和仍有问题，不表示负责人已批准。
+reading复用同版简报的完整金额、实际资金核对状态和当前未解事项形成`PublicOwnerReview`；关账及覆盖状态只取真实冻结边界。只读检查可查看本月六项金额、按业务性质分组的数量金额及当前问题状态；`status=ready/ai_reviewing`表示检查结果和仍有问题，不表示负责人已批准。
 
 只有开放月份已经有与主响应同版的完整金额和当前检查内容时，简报返回owner_review_request；没有则为null。此引用只是可查看入口，不另造老板审批待办。真实缺项仍由既有owner_tasks及AI办理状态表达。读取核对内容不要求用户先执行旧preview_close命令。
 

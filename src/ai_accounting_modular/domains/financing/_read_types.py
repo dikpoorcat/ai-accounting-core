@@ -3,7 +3,13 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from ai_accounting_modular.contracts.public import AmountCell, FactIssue, ResultRef, ResultSourceRef
+from ai_accounting_modular.contracts.public import (
+    AmountCell,
+    FactIssue,
+    ReadInputs,
+    ResultRef,
+    ResultSourceRef,
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,7 @@ class MoneyFundActivity:
     products: tuple[MoneyFundProduct, ...]
     events: tuple[MoneyFundEvent, ...]
     issues: tuple[FactIssue, ...]
+    inputs: ReadInputs
 
 
 @dataclass(frozen=True)
@@ -74,3 +81,4 @@ class CooperationPosition:
 class CooperationPositions:
     version: str
     positions: tuple[CooperationPosition, ...]
+    inputs: ReadInputs

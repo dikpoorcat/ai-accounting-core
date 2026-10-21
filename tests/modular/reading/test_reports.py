@@ -241,8 +241,7 @@ def test_close_then_later_correction_keeps_the_frozen_quarter(tmp_path):
 
         book.reading.mark_targets(
             ReadingImpact(
-                {"families": [], "business_ids": [], "object_ids": [], "periods": [], "slots": []},
-                posted_ranges=(PeriodRange("2026-01", "2026-03"),),
+                closure_ranges=(PeriodRange("2026-01", "2026-03"),),
             ),
             unit,
         )

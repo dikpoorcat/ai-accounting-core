@@ -205,7 +205,7 @@ class Reading:
         with self.storage.maintenance_unit(company_id) as unit:
             repository = unit.repository("reading")
             for component in components:
-                repository.retry(scope_key, component)
+                repository.retry(scope_key, component, format_version=_models.FORMAT_VERSION)
 
 
 def create_reading(

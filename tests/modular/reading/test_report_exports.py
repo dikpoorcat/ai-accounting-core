@@ -225,14 +225,7 @@ def test_same_content_new_ready_head_keeps_accepted_file_but_old_preview_epochs_
         )
         case.kernel.reading.mark_targets(
             ReadingImpact(
-                {
-                    "families": [],
-                    "business_ids": [],
-                    "object_ids": [case.party],
-                    "periods": [],
-                    "slots": [],
-                },
-                posted_ranges=(PeriodRange("2026-01", "2026-01"),),
+                closure_ranges=(PeriodRange("2026-01", "2026-01"),),
             ),
             unit,
         )

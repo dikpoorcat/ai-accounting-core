@@ -8,6 +8,7 @@ TYPES = {
     "cash_account": ("cash", "1001"),
     "platform_account": ("payment_platform", "1012"),
 }
+ACCOUNT_CODES = tuple(value[1] for value in TYPES.values())
 LABELS = {
     "pending": "银行流水尚未完成核对",
     "not_applicable": "本月无需银行核对",
@@ -30,7 +31,7 @@ def total(values):
 
 
 def positions(ledger, accounts, month, read):
-    keys = [AccountBalanceKey(code) for code in ("1001", "1002", "1012")]
+    keys = [AccountBalanceKey(code) for code in ACCOUNT_CODES]
     keys.extend(AccountBalanceKey(TYPES[item.kind][1], item.account_id) for item in accounts)
     result = {}
     selection = QuerySelection("as_posted", month)

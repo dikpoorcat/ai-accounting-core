@@ -262,7 +262,11 @@ def descriptors_for_references(reader, references, read):
 
 def display_head(reader, references, read):
     """Sparse dependency for historical unpaid sources, without persisting their descriptors."""
-    return _brief_vouchers_display.head(descriptors_for_references(reader, references, read))
+    return display_head_from_descriptors(descriptors_for_references(reader, references, read))
+
+
+def display_head_from_descriptors(descriptors):
+    return _brief_vouchers_display.head(descriptors)
 
 
 def complete_page(items, version):

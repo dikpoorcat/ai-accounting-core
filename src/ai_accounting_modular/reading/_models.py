@@ -4,13 +4,14 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    ReadInputs,
     canonical_json,
     content_digest,
     loads_json,
     validate_contract,
 )
 
-from . import _monthly
+from . import _dependencies, _monthly
 from ._collections import prepare_model
 from ._types import ModelDelivery, ReadingImpact
 
@@ -137,8 +138,36 @@ def mark_targets(impact, unit):
         scope = selection["scope"]
         if scope["company_id"] != unit.company_id:
             raise ContractError("storage_corrupt", "读取目标包含其他公司范围。")
+        version = _monthly.FORMAT_VERSION if selection["page"] == "monthly" else FORMAT_VERSION
+        if state["format_version"] != version:
+            repository.fail(
+                state["scope_key"],
+                state["component_key"],
+                state["wanted_head"],
+                "storage_corrupt",
+                expected_state=state["state"],
+            )
+            continue
+        if state["state"] != "ready":
+            # A first capture has no declared rows yet. Keep its wanted point
+            # current so an older in-flight capture cannot publish stale inputs.
+            if state["state"] == "preparing":
+                repository.mark(state["scope_key"], state["component_key"], unit.next_head)
+            continue
         if selection["page"] == "monthly":
-            if _monthly.affected(scope, state["component_key"], impact):
+            try:
+                raw = repository.input_dependencies(state["scope_key"], state["component_key"])
+                selected = _dependencies.inputs({"_inputs": loads_json(raw)})
+            except (ContractError, TypeError, ValueError):
+                repository.fail(
+                    state["scope_key"],
+                    state["component_key"],
+                    state["wanted_head"],
+                    "storage_corrupt",
+                    expected_state=state["state"],
+                )
+                continue
+            if _monthly.affected(scope, state["component_key"], impact, selected):
                 repository.mark(state["scope_key"], state["component_key"], unit.next_head)
                 touched.append(state["scope_key"])
             continue
@@ -146,7 +175,9 @@ def mark_targets(impact, unit):
             raise ContractError("storage_corrupt", "季度读取目标包含未装配组件。")
         # Earlier postings can affect ending stock and accumulated profit. A
         # future posting cannot affect this as-posted report.
-        if any(r.period_from <= scope["period_to"] for r in impact.posted_ranges):
+        if _dependencies.affected(ReadInputs(all_results=True), scope["period_to"], impact) or any(
+            r.period_from <= scope["period_to"] for r in impact.closure_ranges
+        ):
             repository.mark(state["scope_key"], FINANCIAL, unit.next_head)
             touched.append(state["scope_key"])
     return tuple(touched)

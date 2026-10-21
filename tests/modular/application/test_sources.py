@@ -43,10 +43,7 @@ def test_import_archives_complete_sources_and_retries_without_establishing_books
     validate_contract("core.schema.json", "SourcesResult", result)
     assert len(result["sources"]) == 2 and result["missing_source_ids"] == []
     assert {item["state"] for item in result["source_statuses"]} == {"present"}
-    assert len(calls) == 1
-    assert set(calls[0].source_ids) == {source["source_id"] for source in result["sources"]}
-    assert not any(calls[0].changes.values())
-    assert not calls[0].current_ranges and not calls[0].posted_ranges
+    assert calls == []  # Source intake has no input consumed by a prepared accounting page.
     with case.kernel.storage.read_unit(case.company) as read:
         assert read.head == 1
         assert case.kernel.ledger.latest_period(read) is None
@@ -59,7 +56,7 @@ def test_import_archives_complete_sources_and_retries_without_establishing_books
     assert case.app.accounting_sources(request(case, "import", sources=inputs)) == result
     with case.kernel.storage.read_unit(case.company) as read:
         assert read.head == 1
-    assert len(calls) == 1
+    assert calls == []
 
 
 def test_source_archive_change_updates_documents_but_preserves_formal_business(case):
@@ -132,11 +129,11 @@ def test_get_find_and_inspect_use_the_selected_company_and_leave_no_write(case, 
         assert read.head == 1
 
 
-def test_whole_source_batch_rolls_back_when_a_target_notification_fails(case, monkeypatch):
+def test_whole_source_batch_rolls_back_when_its_document_target_cannot_be_marked(case, monkeypatch):
     def fail(*_args):
-        raise ContractError("temporary_failure", "合成读取目标暂时不可写。")
+        raise ContractError("temporary_failure", "合成标准资料目标暂时不可写。")
 
-    monkeypatch.setattr(case.kernel.reading, "mark_targets", fail)
+    monkeypatch.setattr(case.kernel.records, "mark_document_targets", fail)
     with pytest.raises(ContractError) as failed:
         case.app.accounting_sources(
             request(

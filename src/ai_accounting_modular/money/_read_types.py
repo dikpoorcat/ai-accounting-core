@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     BusinessRef,
     ContractError,
     FundMovement,
+    ReadInputs,
     ResultRef,
     ResultSourceRef,
     SourceLocation,
@@ -113,3 +114,4 @@ class FundsActivity:
     movements: tuple[MovementView, ...]
     original_rows: tuple[OriginalRowView, ...]
     reconciliation_groups: tuple[ReconciliationGroup, ...]
+    inputs: ReadInputs

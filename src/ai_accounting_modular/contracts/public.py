@@ -26,6 +26,7 @@ from ._fact_sources import (
     partial_fact_source_ids,
     partial_fact_source_paths,
 )
+from ._read_inputs import ReadInputs
 from ._read_queries import PageQuery, QuerySelection, ReadPage, query_selection
 from ._resource_dependencies import (
     ALL_RESOURCE_COMPONENTS,
@@ -74,6 +75,7 @@ __all__ = [
     "PageQuery",
     "QuerySelection",
     "ReadPage",
+    "ReadInputs",
     "ReadContext",
     "ResourceCutoff",
     "ResourceDefinition",
