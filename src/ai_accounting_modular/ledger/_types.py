@@ -1,5 +1,7 @@
 """Process-local ledger queries and their formal read results."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -135,6 +137,61 @@ class PositionSelection:
     items: tuple[ResourcePosition, ...]
     full_totals: tuple[PositionTotal, ...]
     filtered_totals: tuple[PositionTotal, ...]
+
+
+@dataclass(frozen=True)
+class ObligationDirectoryQuery:
+    """Compare selected open resources with current matches; None selects all businesses."""
+
+    cutoff_period: str
+    current_cutoff_period: str
+    include_origins: bool
+    business_ids: tuple[str, ...] | None = None
+    categories: tuple[str, ...] = ()
+    direction: Literal["receivable", "payable"] | None = None
+    selected_view: Literal["as_posted", "current"] = "as_posted"
+
+
+@dataclass(frozen=True)
+class ObligationDirectorySource:
+    reference: ResultRef
+    source: ResultSourceRef
+
+
+@dataclass(frozen=True)
+class ObligationDirectoryItem:
+    """Only these resource fields are checked, not the complete resource definition."""
+
+    reference: BusinessRef
+    source: ResultSourceRef
+    direction: Literal["receivable", "payable"]
+    category: str
+    business_period: str
+    party_id: str | None
+    amounts: PositionAmounts
+
+
+@dataclass(frozen=True)
+class ObligationDirectory:
+    """Complete selected open items; current contains only their exact resource matches.
+
+    Current matches can be settled. No pagination, ordering or whole-scope totals are promised.
+    """
+
+    selected: tuple[ObligationDirectoryItem, ...]
+    current: tuple[ObligationDirectoryItem, ...]
+    sources: tuple[ObligationDirectorySource, ...]
+    origins: dict[str, AdoptedOriginProjection | AdoptedContent] | None
+
+
+@dataclass(frozen=True)
+class AdoptedOriginProjection:
+    """Selected frozen fields, explicitly different from complete validated adopted contents."""
+
+    reference: ResultRef
+    source: ResultSourceRef
+    target_fields: dict
+    basis_fields: dict
 
 
 @dataclass(frozen=True)

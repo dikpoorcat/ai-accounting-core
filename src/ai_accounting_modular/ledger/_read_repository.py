@@ -239,11 +239,99 @@ class ReadRepository:
         return result
 
     def read_position_rows(self, kind, cutoff, selection, *, business_ids=(), references=()):
+        return self._position_rows(
+            kind, cutoff, selection, business_ids=business_ids, references=references
+        )
+
+    def read_obligation_directory_rows(
+        self, cutoff, selection, *, business_ids=(), references=(), categories=(), direction=None
+    ):
+        return self._position_rows(
+            "obligation",
+            cutoff,
+            selection,
+            business_ids=business_ids,
+            references=references,
+            directory=True,
+            categories=categories,
+            direction=direction,
+        )
+
+    def has_adoptions_after(self, period):
+        return bool(
+            self._session.fetchone(
+                "SELECT EXISTS(SELECT 1 FROM adopted_result WHERE posting_period>?) AS found",
+                (period,),
+            )["found"]
+        )
+
+    def read_origin_rows(self, result_ids, selections):
+        # Plans contain only owner-declared names, never caller JSON paths or SQL.
+        def token(owner, path):
+            return f"substr(r.{owner}_json -> '{path}',1)"
+
+        cases = []
+        for kind, fields in selections:
+            tokens = [
+                token("target", "$.kind"),
+                token("basis", "$.kind"),
+                token("basis", "$.adopted_quantities"),
+            ]
+            tokens.extend(token("basis", "$.input." + field) for field in fields)
+            cases.append(f"WHEN '{kind}' THEN json_array(" + ",".join(tokens) + ")")
+        fields = HEAD_FIELDS.replace("r.target_state,", "")
+        sql = (
+            f"SELECT {fields},json_extract(r.target_json,'$.kind') AS business_kind,"
+            "CASE json_extract(r.target_json,'$.kind') "
+            + " ".join(cases)
+            + " END AS projection_json FROM adopted_result r "
+            "WHERE r.result_id IN (SELECT value FROM json_each(?))"
+        )
+        return [
+            dict(row) for row in self._session.fetchall(sql, (canonical_json(list(result_ids)),))
+        ]
+
+    def _position_rows(
+        self,
+        kind,
+        cutoff,
+        selection,
+        *,
+        business_ids=(),
+        references=(),
+        directory=False,
+        categories=(),
+        direction=None,
+    ):
         table = "obligation" if kind == "obligation" else "cost_lot"
         predicate, source_args = selected("r", selection.as_of)
         use_predicate, use_args = selected("u", selection.as_of)
         source_keys, source_key_args = _resource_keys(
             "r.business_id", "d.public_slot", business_ids, references
+        )
+        candidate, candidate_args = "", ()
+        if directory and (categories or direction is not None):
+            clauses, candidate_values = [], []
+            _in("d.category", categories, clauses, candidate_values)
+            if direction is not None:
+                clauses.append("d.direction=?")
+                candidate_values.append(direction)
+            candidate = (
+                "candidates AS MATERIALIZED (SELECT r.business_id,d.public_slot "
+                "FROM obligation d JOIN adopted_result r ON r.result_id=d.result_id "
+                f"WHERE r.business_period<=? AND {predicate} AND {source_keys} AND "
+                + " AND ".join(clauses)
+                + "),"
+            )
+            candidate_args = (cutoff, *source_args, *source_key_args, *candidate_values)
+            source_keys = (
+                "(r.business_id,d.public_slot) IN (SELECT business_id,public_slot FROM candidates)"
+            )
+            source_key_args = ()
+        definition_fields = (
+            "d.result_id,d.public_slot,d.party_id,d.direction,d.category,d.amount_fen,d.business_period"
+            if directory
+            else "d.*"
         )
         if kind == "obligation":
             settlement_keys, settlement_args = _resource_keys(
@@ -252,6 +340,16 @@ class ReadRepository:
             relation_keys, relation_args = _resource_keys(
                 "x.source_business_id", "x.source_public_slot", business_ids, references
             )
+            if candidate:
+                settlement_keys = (
+                    "(s.source_business_id,s.source_public_slot) "
+                    "IN (SELECT business_id,public_slot FROM candidates)"
+                )
+                relation_keys = (
+                    "(x.source_business_id,x.source_public_slot) "
+                    "IN (SELECT business_id,public_slot FROM candidates)"
+                )
+                settlement_args = relation_args = ()
             sql = (
                 "WITH used AS (SELECT s.source_business_id,s.source_public_slot,"
                 "SUM(CASE WHEN s.method='money' THEN s.amount_fen ELSE 0 END) money,"
@@ -267,7 +365,7 @@ class ReadRepository:
                 "JOIN adopted_result u ON u.result_id=x.result_id "
                 f"WHERE u.business_period<=? AND {use_predicate} AND {relation_keys} "
                 "GROUP BY x.source_business_id,x.source_public_slot) "
-                "SELECT d.*,COALESCE(s.money,0) money,COALESCE(s.agency,0) agency,"
+                f"SELECT {definition_fields},COALESCE(s.money,0) money,COALESCE(s.agency,0) agency,"
                 "COALESCE(s.offset,0) offset,COALESCE(x.transferred,0) transferred,"
                 "COALESCE(x.excess,0) excess,0 consumed,"
             )
@@ -296,6 +394,9 @@ class ReadRepository:
                 "AND s.source_public_slot=d.public_slot "
             )
             args = (cutoff, *use_args, *consumption_args)
+        if candidate:
+            sql = "WITH " + candidate + sql.removeprefix("WITH ")
+            args = (*candidate_args, *args)
         head = ",".join(
             "r." + key
             for key in (
@@ -311,13 +412,13 @@ class ReadRepository:
                 "basis_digest",
                 "target_digest",
             )
+            if not directory or key != "target_state"
         )
         sql += head + ",r.business_period AS owner_business_period "
         sql += f"FROM {table} d JOIN adopted_result r ON r.result_id=d.result_id " + joins
-        sql += (
-            f"WHERE r.business_period<=? AND {predicate} AND {source_keys} "
-            "ORDER BY r.business_id,d.public_slot"
-        )
+        sql += f"WHERE r.business_period<=? AND {predicate} AND {source_keys} "
+        if not directory:
+            sql += "ORDER BY r.business_id,d.public_slot"
         return [
             dict(row)
             for row in self._session.fetchall(sql, (*args, cutoff, *source_args, *source_key_args))

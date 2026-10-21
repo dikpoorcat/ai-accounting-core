@@ -39,6 +39,8 @@ from . import (
     _financial_reads,
     _read_contents,
     _read_events,
+    _read_obligation_directory,
+    _read_origins,
     _read_positions,
 )
 from ._adoption import adopt as _adopt
@@ -81,6 +83,9 @@ from ._types import (
     AdoptedDirectoryEntry as AdoptedDirectoryEntry,
 )
 from ._types import (
+    AdoptedOriginProjection as AdoptedOriginProjection,
+)
+from ._types import (
     AdoptedTarget as AdoptedTarget,
 )
 from ._types import (
@@ -94,6 +99,18 @@ from ._types import (
 )
 from ._types import (
     FinancialSummary as FinancialSummary,
+)
+from ._types import (
+    ObligationDirectory as ObligationDirectory,
+)
+from ._types import (
+    ObligationDirectoryItem as ObligationDirectoryItem,
+)
+from ._types import (
+    ObligationDirectoryQuery as ObligationDirectoryQuery,
+)
+from ._types import (
+    ObligationDirectorySource as ObligationDirectorySource,
 )
 from ._types import (
     ObligationPositionQuery as ObligationPositionQuery,
@@ -220,6 +237,18 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def capture_obligation_directory(
+        self, query: ObligationDirectoryQuery, read_context: ReadContext
+    ) -> ObligationDirectory:
+        """Selected open resources and exact current matches, with optional frozen origins."""
+        return _read_obligation_directory.capture(query, read_context)
+
+    def get_obligation_origins(
+        self, locators: Sequence[ResultRef], read_context: ReadContext
+    ) -> tuple[AdoptedOriginProjection | AdoptedContent, ...]:
+        """Exact frozen origin fields, with complete contents for unsupported projection shapes."""
+        return _read_origins.get_origins(locators, read_context)
+
     def query_business_settlements(
         self,
         query: SettlementEventQuery,
