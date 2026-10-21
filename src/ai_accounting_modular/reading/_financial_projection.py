@@ -213,18 +213,21 @@ def blocked(reader, scope, kind, read):
 def retry(reader, scope, kind, scope_key, version, unit):
     repository, target = unit.repository("reading"), store(unit)
     state = repository.state(scope_key, "financial")
-    if state is None or (state["state"] != "failed" and state["format_version"] == version):
-        # A consumer waiting on a failed dependency is still technically preparing.
-        reason = waiting(reader, scope, kind, unit) if state is not None else None
-        if reason is None:
-            return
+    if state is None:
+        return
     producer = target.state()
     full = producer is not None and (
         producer["format_version"] != FINANCIAL_PROJECTION_FORMAT
         or producer["error_code"] == "storage_corrupt"
     )
-    full |= state is not None and state["error_code"] == "storage_corrupt"
+    if not full and state["state"] != "failed" and state["format_version"] == version:
+        # A consumer waiting on a failed dependency is still technically preparing.
+        if waiting(reader, scope, kind, unit) is None:
+            return
+    full |= state["error_code"] == "storage_corrupt"
     queue(reader, request(reader, scope, kind, unit), unit, retry=True, rebuild=full)
+    if full:
+        target.mark_consumer(scope_key, unit.head)
     repository.retry(scope_key, "financial", format_version=version)
 
 

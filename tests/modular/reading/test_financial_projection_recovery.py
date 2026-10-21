@@ -2,7 +2,10 @@
 
 from uuid import uuid4
 
-from ai_accounting_modular.contracts.public import canonical_json
+import pytest
+
+from ai_accounting_modular.contracts.public import canonical_json, content_digest
+from ai_accounting_modular.ledger.public import FINANCIAL_PROJECTION_FORMAT
 from ai_accounting_modular.reading import _financial_projection as projection
 from ai_accounting_modular.reading import _monthly
 from ai_accounting_modular.reading._financial_store import CONTROL, OWNER_PREFIX
@@ -11,11 +14,157 @@ from ai_accounting_modular.reading.public import MonthScope
 from ._financial_projection_case import (
     drain,
     page,
+    quarter,
     scope,
 )
 from ._financial_projection_case import (
     financial_case as financial_case,
 )
+from .test_financial_projection_integration import live_case as live_case
+
+
+def reading_rows(case, *, healthy_only=False):
+    with case.kernel.storage.read_unit(case.company) as read:
+        session = read.repository("reading")._session
+        where = " WHERE component_key NOT IN ('financial','projection')" if healthy_only else ""
+        return {
+            table: sorted(
+                canonical_json(dict(row))
+                for row in session.fetchall("SELECT * FROM " + table + where)
+            )
+            for table in ("read_scope_head", "read_component", "read_item")
+        }
+
+
+def formal_documents(case):
+    with case.kernel.storage.read_unit(case.company) as read:
+        root = case.kernel.storage.company_metadata(read).company_root / "standard"
+        return (
+            read.head,
+            case.kernel.records.document_status(read),
+            {
+                path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            },
+        )
+
+
+def ready_views(case):
+    reader, selected = case.kernel.reading, MonthScope(case.company, "2026-01")
+    reader.page("brief", selected, {})
+    quarter(case)
+    drain(case)
+    brief, report = reader.page("brief", selected, {}), quarter(case)
+    assert brief.state == report.state == "ready"
+    return page(case), report
+
+
+def retry_view(case, entry):
+    if entry == "monthly":
+        return case.kernel.reading.retry("brief", MonthScope(case.company, "2026-01"), {})
+    return case.kernel.reading.retry(
+        "quarterly_report",
+        {
+            "company_id": case.company,
+            "period_from": "2026-01",
+            "period_to": "2026-03",
+            "view": "as_posted",
+        },
+    )
+
+
+@pytest.mark.parametrize("entry", ("monthly", "quarterly"))
+@pytest.mark.parametrize("damage", ("old_format", "storage_corrupt"))
+def test_ready_consumer_explicit_retry_rebuilds_obsolete_or_corrupt_real_producer(
+    live_case, entry, damage
+):
+    case = live_case
+    case.seed()
+    expected = ready_views(case)
+    unchanged, documents = reading_rows(case, healthy_only=True), formal_documents(case)
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        target = projection.store(unit)
+        work = target.work()
+        assert not work["pending"]
+        if damage == "old_format":
+            # The former owner format also used different request identities.
+            work["registered"] = {
+                content_digest(
+                    {
+                        "format": 1,
+                        "company_id": unit.company_id,
+                        "database_id": unit.database_id,
+                        **value,
+                    }
+                ): value
+                for value in work["registered"].values()
+            }
+            target.save_work(work, unit.head)
+            target._session.execute(
+                "UPDATE read_scope_head SET format_version=1,state='ready' WHERE scope_key=?",
+                (target.scope_key,),
+            )
+        else:
+            target._session.execute(
+                "UPDATE read_scope_head SET state='failed',error_code='storage_corrupt' "
+                "WHERE scope_key=?",
+                (target.scope_key,),
+            )
+        assert all(
+            state["state"] == "ready"
+            for state in unit.repository("reading").scopes()
+            if state["component_key"] == "financial"
+        )
+    retry_view(case, entry)
+    with case.kernel.storage.read_unit(case.company) as read:
+        target = projection.store(read)
+        assert target.state()["state"] == "preparing"
+        assert target.state()["format_version"] == FINANCIAL_PROJECTION_FORMAT
+        assert target.work()["rebuild"] is True
+        consumers = [
+            state
+            for state in read.repository("reading").scopes()
+            if state["component_key"] == "financial" and state["state"] == "preparing"
+        ]
+        assert len(consumers) == 1
+        assert ('"page":"monthly"' in consumers[0]["scope_key"]) == (entry == "monthly")
+    assert reading_rows(case, healthy_only=True) == unchanged
+    completed = drain(case)
+    assert consumers[0]["scope_key"] in completed
+    assert ready_views(case) == expected
+    assert reading_rows(case, healthy_only=True) == unchanged
+    assert formal_documents(case) == documents
+
+
+def test_ready_real_producer_and_consumers_explicit_retry_is_a_noop(live_case):
+    case = live_case
+    case.seed()
+    expected = ready_views(case)
+    before, documents = reading_rows(case), formal_documents(case)
+    retry_view(case, "monthly")
+    retry_view(case, "quarterly")
+    assert reading_rows(case) == before
+    assert case.kernel.reading.run_pending(case.company) == ()
+    assert ready_views(case) == expected
+    assert reading_rows(case) == before
+    assert formal_documents(case) == documents
+
+
+def test_retry_does_not_register_an_unvisited_scope_even_with_an_obsolete_producer(live_case):
+    case = live_case
+    case.seed()
+    quarter(case)
+    drain(case)
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        target = projection.store(unit)
+        target._session.execute(
+            "UPDATE read_scope_head SET format_version=1 WHERE scope_key=?", (target.scope_key,)
+        )
+    before = reading_rows(case)
+    retry_view(case, "monthly")
+    assert reading_rows(case) == before
+    assert case.kernel.reading.run_pending(case.company) == ()
 
 
 def descriptor(case):
