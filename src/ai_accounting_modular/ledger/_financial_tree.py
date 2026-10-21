@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Mapping
 from copy import deepcopy
@@ -10,7 +11,7 @@ from hashlib import sha256
 from os.path import commonprefix
 from typing import Any, Protocol
 
-from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
+from ai_accounting_modular.contracts.public import ContractError, canonical_json
 
 from ._values import fail
 
@@ -55,6 +56,19 @@ class Entry:
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_weight", len(raw.encode("utf-8")))
 
+    @staticmethod
+    def _from_structure(checked, index):
+        # The only alternate constructor accepts an actual strict decoder,
+        # never a caller's value, weight or "already checked" flag.
+        if type(checked) is not _CheckedStructure:
+            raise TypeError("a decoded entry requires checked immutable node bytes")
+        key, value, weight = checked._rows[index]
+        result = object.__new__(Entry)
+        object.__setattr__(result, "key", key)
+        object.__setattr__(result, "_value", value)
+        object.__setattr__(result, "_weight", weight)
+        return result
+
     @property
     def value(self):
         return deepcopy(self._value)
@@ -96,6 +110,7 @@ class _Node:
     entries: tuple[Entry, ...]
     children: tuple[_Ref, ...]
     payload_json: str
+    summary_json: str
 
 
 class SummaryStrategy(Protocol):
@@ -123,12 +138,40 @@ def _ref(value):
     return _Ref(*value)
 
 
-def structure(raw, identity):
-    """Check actual immutable bytes and graph metadata without financial formulas."""
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate financial node field")
+        result[key] = value
+    return result
+
+
+def _reject_number(value):
+    raise ValueError("financial nodes contain integers, never JSON floats or constants")
+
+
+def _encode_parsed(value):
+    # Only fresh parsed JSON or values just accepted by canonical_json reach
+    # this encoder. The parser makes exact dict/list/scalar types and rejects
+    # floats/duplicate keys; comparison with the original text also rejects
+    # surrogates and noncanonical escapes. External values use canonical_json.
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _structure(raw, identity):
+    """Strictly decode actual bytes once, retaining ownership of fresh JSON."""
     try:
         if not _identity(identity) or type(raw) is not str or digest(raw) != identity:
             corrupt()
-        value = loads_json(raw)
+        value = json.loads(
+            raw,
+            object_pairs_hook=_unique_object,
+            parse_float=_reject_number,
+            parse_constant=_reject_number,
+        )
         common = {
             "format",
             "domain",
@@ -162,10 +205,11 @@ def structure(raw, identity):
             or value["first"] > value["last"]
             or value["prefix"] != commonprefix((_route(value["first"]), _route(value["last"])))
             or type(value["oversize"]) is not bool
-            or canonical_json(value) != raw
+            or _encode_parsed(value) != raw
         ):
             corrupt()
-        too_large = len(raw.encode("utf-8")) > value["max_bytes"]
+        size = len(raw.encode("utf-8"))
+        too_large = size > value["max_bytes"]
         if kind == "leaf":
             if (
                 type(value["entries"]) is not list
@@ -173,10 +217,9 @@ def structure(raw, identity):
                 or value["count"] > value["max_items"]
                 or value["key_prefix"] != commonprefix((value["first"], value["last"]))
                 or value["oversize"]
-                != (
-                    len(canonical_json(value | {"oversize": False}).encode("utf-8"))
-                    > value["max_bytes"]
-                )
+                # The canonical False envelope is exactly one byte longer
+                # than True, including the one-byte singleton boundary.
+                != (size + int(value["oversize"]) > value["max_bytes"])
                 or (too_large and value["count"] != 1)
             ):
                 corrupt()
@@ -184,14 +227,16 @@ def structure(raw, identity):
             for entry in value["entries"]:
                 if type(entry) is not list or len(entry) != 2 or type(entry[0]) is not str:
                     corrupt()
-                entries.append(Entry(value["key_prefix"] + entry[0], entry[1]))
+                key = value["key_prefix"] + entry[0]
+                weight = len(_encode_parsed([key, entry[1]]).encode("utf-8"))
+                entries.append((key, entry[1], weight))
             if (
-                entries[0].key != value["first"]
-                or entries[-1].key != value["last"]
+                entries[0][0] != value["first"]
+                or entries[-1][0] != value["last"]
                 or any(
-                    left.key >= right.key for left, right in zip(entries, entries[1:], strict=False)
+                    left[0] >= right[0] for left, right in zip(entries, entries[1:], strict=False)
                 )
-                or sum(entry._weight for entry in entries) != value["weight"]
+                or sum(entry[2] for entry in entries) != value["weight"]
             ):
                 corrupt()
             children = ()
@@ -225,10 +270,51 @@ def structure(raw, identity):
                 corrupt()
             entries = []
         return value, tuple(entries), children
-    except (ContractError, KeyError, TypeError, ValueError, UnicodeError, IndexError) as error:
+    except (
+        ContractError,
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeError,
+        IndexError,
+        RecursionError,
+    ) as error:
         raise ContractError(
             "storage_corrupt", "财务派生树的正文、摘要、顺序或引用不完整。"
         ) from error
+
+
+@dataclass(frozen=True, init=False)
+class _CheckedStructure:
+    """Private owned JSON, obtainable only by strict decoding of actual bytes.
+
+    Its nested values never leave this boundary except through isolated Entry
+    and structure views. TreeStore may share it only for its one read lifetime;
+    financial strategy validation remains the responsibility of each Tree.
+    """
+
+    payload_json: str
+    identity: str
+    _value: dict = field(repr=False)
+    _rows: tuple = field(repr=False)
+    children: tuple[_Ref, ...]
+
+    def __init__(self, raw, identity):
+        value, rows, children = _structure(raw, identity)
+        object.__setattr__(self, "payload_json", raw)
+        object.__setattr__(self, "identity", identity)
+        object.__setattr__(self, "_value", value)
+        object.__setattr__(self, "_rows", rows)
+        object.__setattr__(self, "children", children)
+
+    def entries(self):
+        return tuple(Entry._from_structure(self, index) for index in range(len(self._rows)))
+
+
+def structure(raw, identity):
+    """Independently check bytes, returning an isolated structural view."""
+    checked = _CheckedStructure(raw, identity)
+    return deepcopy(checked._value), checked.entries(), checked.children
 
 
 class Tree:
@@ -245,8 +331,10 @@ class Tree:
         self.max_items, self.max_bytes = max_items, max_bytes
         self._loaded = {}
 
-    def _decode(self, raw, identity):
-        value, entries, children = structure(raw, identity)
+    def _decode(self, checked):
+        if type(checked) is not _CheckedStructure:
+            corrupt()
+        value = checked._value
         if (value["domain"], value["max_items"], value["max_bytes"]) != (
             self.domain,
             self.max_items,
@@ -255,15 +343,14 @@ class Tree:
             corrupt()
         try:
             summary = self.strategy.decode_summary(deepcopy(value["summary"]))
-            if canonical_json(self.strategy.encode_summary(summary)) != canonical_json(
-                value["summary"]
-            ):
+            summary_json = _encode_parsed(value["summary"])
+            if canonical_json(self.strategy.encode_summary(summary)) != summary_json:
                 corrupt()
         except (AssertionError, KeyError, TypeError, ValueError):
             corrupt()
         return _Node(
             TreeChild(
-                identity,
+                checked.identity,
                 value["first"],
                 value["last"],
                 value["count"],
@@ -271,20 +358,21 @@ class Tree:
                 deepcopy(summary),
             ),
             value["prefix"],
-            entries,
-            children,
-            raw,
+            checked.entries(),
+            checked.children,
+            checked.payload_json,
+            summary_json,
         )
 
     def _load(self, refs):
         refs = tuple(refs)
         needed = tuple(dict.fromkeys(ref.digest for ref in refs if ref.digest not in self._loaded))
         if needed:
-            raws = self.store.read_nodes(needed)
-            for identity, raw in zip(needed, raws, strict=True):
-                if raw is None:
+            checked_nodes = self.store.checked_nodes(needed)
+            for identity, checked in zip(needed, checked_nodes, strict=True):
+                if checked is None:
                     corrupt()
-                self._loaded[identity] = self._decode(raw, identity)
+                self._loaded[identity] = self._decode(checked)
         result = []
         for ref in refs:
             node = self._loaded[ref.digest]
@@ -294,9 +382,10 @@ class Tree:
                 for name in ("digest", "first", "last", "count", "weight")
             ):
                 corrupt()
-            if isinstance(ref, TreeChild) and canonical_json(
-                self.strategy.encode_summary(ref.summary)
-            ) != canonical_json(self.strategy.encode_summary(node.ref.summary)):
+            if (
+                isinstance(ref, TreeChild)
+                and canonical_json(self.strategy.encode_summary(ref.summary)) != node.summary_json
+            ):
                 corrupt()
             result.append(node)
         return tuple(result)
@@ -348,6 +437,7 @@ class Tree:
             entries,
             tuple(_Ref(*child.wire()) for child in children),
             raw,
+            _encode_parsed(value["summary"]),
         )
         return node
 

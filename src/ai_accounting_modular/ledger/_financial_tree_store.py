@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 
-from ._financial_tree import _identity, corrupt, digest, structure
+from ._financial_tree import _CheckedStructure, _identity, corrupt, digest
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class TreeStore:
     def __init__(self, reader):
         self.reader = reader
         self._base, self._staged, self._edges = {}, {}, {}
+        self._checked = {}
 
     def _read(self, keys):
         keys = tuple(keys)
@@ -52,7 +53,7 @@ class TreeStore:
             self._base.update(zip(requested, actual, strict=True))
         return tuple(self._base[key] for key in keys)
 
-    def read_nodes(self, identities):
+    def checked_nodes(self, identities):
         identities = tuple(identities)
         if any(not _identity(identity) for identity in identities):
             corrupt()
@@ -60,27 +61,36 @@ class TreeStore:
         actual = dict(
             zip(missing, self._read((self.NODES, identity) for identity in missing), strict=True)
         )
-        return tuple(
-            self._staged[identity] if identity in self._staged else actual[identity]
-            for identity in identities
-        )
+        result = []
+        for identity in identities:
+            raw = self._staged[identity] if identity in self._staged else actual[identity]
+            result.append(None if raw is None else self._check(raw, identity))
+        return tuple(result)
 
     def stage_node(self, raw, children):
         identity = digest(raw)
-        _, _, references = structure(raw, identity)
-        if tuple(children) != tuple(ref.digest for ref in references):
+        children = tuple(children)
+        checked = self._check(raw, identity)
+        if children != tuple(ref.digest for ref in checked.children):
             corrupt()
         if identity in self._staged and self._staged[identity] != raw:
             corrupt()
-        self._staged[identity], self._edges[identity] = raw, tuple(children)
+        self._staged[identity], self._edges[identity] = raw, children
         return identity
+
+    def _check(self, raw, identity):
+        checked = self._checked.get(identity)
+        if checked is None:
+            checked = self._checked[identity] = _CheckedStructure(raw, identity)
+        elif type(raw) is not str or checked.payload_json != raw:
+            corrupt()
+        return checked
 
     def _node(self, identity):
         raw = self._read(((self.NODES, identity),))[0]
         if raw is None:
             corrupt()
-        _, _, children = structure(raw, identity)
-        return raw, tuple(child.digest for child in children)
+        return raw, tuple(child.digest for child in self._check(raw, identity).children)
 
     def _new_nodes(self, roots):
         pending, result, visited = tuple(roots), set(), set()
@@ -93,7 +103,7 @@ class TreeStore:
             following = []
             for identity, raw in zip(wanted, actual, strict=True):
                 if raw is not None:
-                    structure(raw, identity)
+                    self._check(raw, identity)
                     if identity in self._staged and self._staged[identity] != raw:
                         corrupt()
                 else:
