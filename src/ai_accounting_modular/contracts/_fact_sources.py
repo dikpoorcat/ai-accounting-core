@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 from jsonschema import FormatChecker
 
+from ._dispatch import possible_branch
 from ._errors import ContractError
 from ._validation import _bundle, _Validator, validate_contract
 from ._wire_types import Fact, PartialFact
@@ -78,7 +79,9 @@ def _source_plan(definition):
     compiled, active = {}, set()
 
     def predicate(uri):
-        return _Validator({"$ref": uri}, registry=registry, format_checker=FormatChecker()).is_valid
+        branch = registry.resolver().lookup(uri).contents
+        validator = _Validator({"$ref": uri}, registry=registry, format_checker=FormatChecker())
+        return lambda value: possible_branch(branch, value) and validator.is_valid(value)
 
     def compile_node(uri):
         if uri in compiled:
@@ -143,6 +146,11 @@ def fact_source_paths(fact: Fact) -> dict[str, tuple[str, ...]]:
 
 def _paths(fact, definition):
     validate_contract("business-facts.schema.json", definition, fact)
+    return _validated_paths(fact, definition)
+
+
+def _validated_paths(fact, definition):
+    """The caller owns the strict validation of this exact, unchanged value."""
     paths = {}
     for index, source in enumerate(fact.get("evidence_ids", ())):
         paths.setdefault(source, set()).add(f"/evidence_ids/{index}")

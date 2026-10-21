@@ -78,20 +78,23 @@ def install_guards(schemas):
     _GUARDS.update(compiled)
 
 
+def possible_branch(branch, instance):
+    """Reject only branches whose own necessary fields/literals cannot hold."""
+    if not isinstance(instance, dict):
+        return True
+    entry = _GUARDS.get(id(branch))
+    checks = entry[1] if entry is not None and entry[0] is branch else ()
+    return all(
+        (
+            not required
+            if name not in instance
+            else values is None or type(instance[name]) is str and instance[name] in values
+        )
+        for name, values, required in checks
+    )
+
+
 def one_of(validator, branches, instance, schema):
     if isinstance(instance, dict):
-        candidates = []
-        for branch in branches:
-            entry = _GUARDS.get(id(branch))
-            checks = entry[1] if entry is not None and entry[0] is branch else ()
-            if all(
-                (
-                    not required
-                    if name not in instance
-                    else values is None or type(instance[name]) is str and instance[name] in values
-                )
-                for name, values, required in checks
-            ):
-                candidates.append(branch)
-        branches = candidates
+        branches = [branch for branch in branches if possible_branch(branch, instance)]
     yield from Draft202012Validator.VALIDATORS["oneOf"](validator, branches, instance, schema)

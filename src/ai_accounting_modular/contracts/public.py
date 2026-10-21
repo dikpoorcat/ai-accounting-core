@@ -19,6 +19,7 @@ from ._contexts import (
     UnitOfWork,
 )
 from ._errors import ContractError
+from ._fact_analysis import FactAnalysis, analyze_fact
 from ._fact_collections import restore_fact_collection, split_fact_collection
 from ._fact_sources import (
     fact_source_ids,
@@ -87,6 +88,8 @@ __all__ = [
     "UnitOfWork",
     "query_selection",
     "ContractError",
+    "FactAnalysis",
+    "analyze_fact",
     "restore_fact_collection",
     "split_fact_collection",
     "fact_source_ids",
