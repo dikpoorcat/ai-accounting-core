@@ -35,6 +35,7 @@ dev = [
 
 [project.scripts]
 finance-local = "ai_accounting.kernel.cli:main"
+finance-modular = "ai_accounting_modular.host.runtime.cli:main"
 
 [tool.uv]
 # Keep local and CI lock-file resolution on the same audited uv release.
@@ -62,6 +63,8 @@ sources = ["src"]
 artifacts = [
   "src/ai_accounting_modular/contracts/_schemas/*.json",
   "src/ai_accounting_modular/storage/schema/*.json",
+  "src/ai_accounting_modular/reading/_templates/*.xlsx",
+  "src/ai_accounting_modular/static/dashboard/**",
   "src/ai_accounting/static/dashboard/**",
   "src/ai_accounting/kernel/schema_contracts/**/*.json",
 ]

@@ -63,7 +63,7 @@
 
 三表沿用原税务模板和页面格式，保留公式、缓存及样式，按实际采用金额、公司显示和模板版本判断有效性；未知金额不补零。下载核对完整内容、计划和任务身份，明确失败即停止等待。来源列表不读取原件正文，实际下载核对完整摘要和最终范围。
 
-`host.public.create_kernel` 通过公开工厂装配业务、真实备份、读取和看板适配；`create_offline_application` 不连接源目录，直接核验选定 ZIP 或标准清单并交付独立新目标。恢复保留原账务及必要冻结历史，清除旧文件任务和派生读取；重建重新核算最终事实。两者都支持只检查，创建后仍须明确登记接入。网页、MCP/CLI 及后台自动调度仍需接通，读取生成使用显式 worker。验证使用新建合成公司。
+`host.public.create_kernel` 通过公开工厂装配业务、真实备份、读取和看板适配；`create_offline_application` 不连接源目录，直接核验选定 ZIP 或标准清单并交付独立新目标。恢复保留原账务及必要冻结历史，清除旧文件任务和派生读取；重建重新核算最终事实。两者都支持只检查，创建后仍须明确登记接入。`host.runtime`提供独立常驻服务、CLI和MCP，自动接续文档、读取及文件任务。新运行协议、按目录隔离的浏览器会话及静态资源不占用现有5173服务；老板密码与恢复码在原生窗口处理，运行连接能力按本机用户保护。异常退出后通过目录实例锁接续，业务请求不自动重放。验证使用新建合成公司。
 
 公共生成物与模块边界检查：
 
@@ -74,6 +74,14 @@
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/contracts tests/modular/storage tests/modular/ledger tests/modular/architecture
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/identity tests/modular/domains tests/modular/money tests/modular/records tests/modular/application
 ```
+
+## 新体系运行入口
+
+前端独立构建：`npm --prefix frontend run build:modular`。安装本项目后使用 `finance-modular`，源码运行使用仓库虚拟环境的 `python -m ai_accounting_modular.host.runtime.cli`。
+
+命令始终显式指定新目录库的绝对路径：`--catalog <新目录库> init`建立老板身份；`--catalog <目录库> serve`启动并打开看板，`--catalog <目录库> daemon`在前台运行；`--catalog <目录库> mcp`提供AI接口。先用`--help`查看参数；新建公司使用`company-create`的完整JSON资料，已交付恢复或重建目标使用`company-register`明确登记。`service-info`与`stop`只访问指定服务，不另起居民。没有目录参数的`mcp`只提供离线恢复与重建，不连接原账套。
+
+这些命令不会自动搬移真实资料、接替现有入口或导入旧体系数据库。完整固定场景、浏览器、内部替换和性能验收仍在进行，运行层接通不代表项目最终验收已经完成。
 
 ## 开发前如何核对
 

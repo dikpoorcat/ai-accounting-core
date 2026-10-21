@@ -1,0 +1,58 @@
+"""One fixed command surface; every business operation belongs to Application."""
+
+from ai_accounting_modular.application.public import Application
+from ai_accounting_modular.contracts.public import CONTRACT, ContractError
+
+from ._contracts import REQUESTS, isolated_schema, request_schema
+
+__all__ = ["Agent", "INSTRUCTIONS", "create_agent", "offline_contracts"]
+
+INSTRUCTIONS = """你是老板的会计助手，帮助不懂财务的老板知道下一步做什么、提供什么资料。
+先调用 accounting_schema 了解实际支持范围，再读取公司说明、当前业务和待办；已有资料应复用。
+完整命令输入见只读资源 accounting://contracts，按其中的请求合同和所选业务合同提交。
+一次提交完整且有来源的业务事实。金额使用整数分字符串，不提交自由分录，不手算未支持税额。
+缺现实资料时先核查已有来源，再问老板具体问题；专业判断有疑问时继续核查，必要时请教顾问。
+区分账务已保存、标准文档待完成和看板准备中。后两者由程序接续，不重复记账。
+沿原业务身份更正，资料只保存最终正确事实。老板办理真实付款、申报等外部事项，没有审批步骤。
+本机密码及恢复码只在原生窗口处理，不放进工具参数、业务资料、消息或日志。"""
+
+
+class Agent:
+    def __init__(self, application: Application):
+        self._application = application
+
+    @property
+    def commands(self) -> tuple[str, ...]:
+        return tuple(name for name in REQUESTS if callable(getattr(self._application, name, None)))
+
+    def dispatch(self, command: str, request: dict) -> dict:
+        """Only declared public commands are callable; no dynamic service fallback."""
+        if command not in self.commands:
+            raise ContractError("unsupported_business", "当前实例没有此公开业务入口。")
+        if not isinstance(request, dict):
+            raise ContractError("invalid_input", "命令内容须为一个 JSON 对象。")
+        return getattr(self._application, command)(request)
+
+    def contracts(self) -> dict:
+        """Transport metadata only; this never reads or changes company business."""
+        return {
+            "contract": CONTRACT,
+            "instructions": INSTRUCTIONS,
+            "commands": [
+                {"command": name, "request_schema": request_schema(name)} for name in self.commands
+            ],
+        }
+
+
+def create_agent(application: Application) -> Agent:
+    return Agent(application)
+
+
+def offline_contracts():
+    return {
+        "contract": CONTRACT,
+        "commands": [
+            {"command": "accounting_" + action, "request_schema": isolated_schema(action)}
+            for action in ("restore", "rebuild")
+        ],
+    }

@@ -48,7 +48,9 @@ export default defineConfig(async ({ command, mode }) => {
       strictPort: true,
     },
     build: {
-      outDir: mode === "release" ? "../src/ai_accounting/static/dashboard" : "dist",
+      outDir: mode === "modular"
+        ? "../src/ai_accounting_modular/static/dashboard"
+        : mode === "release" ? "../src/ai_accounting/static/dashboard" : "dist",
       emptyOutDir: true,
       rollupOptions: {
         input: {
