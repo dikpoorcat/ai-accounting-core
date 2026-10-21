@@ -66,7 +66,10 @@ def prepare(reader, scope, read):
         for index, member in enumerate(members)
     )
     descriptors = _brief_vouchers.descriptors_for_references(
-        reader, [member["_detail_scope"]["reference"] for member in members], read
+        reader,
+        [member["_detail_scope"]["reference"] for member in members],
+        read,
+        known_contents=captured.contents.values(),
     )
     display_ids = {
         ident

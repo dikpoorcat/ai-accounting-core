@@ -2,6 +2,7 @@
 
 from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.ledger.opening.public import opening_payroll_references
+from ai_accounting_modular.ledger.public import AdoptedContent
 
 
 def same_reference(left, right):
@@ -33,6 +34,33 @@ class Contents:
     def __init__(self, ledger, read):
         self.ledger, self.read, self.saved = ledger, read, {}
         self._opening = {}
+
+    def reuse(self, contents):
+        """Borrow exact Ledger outputs explicitly passed by this preparation's caller."""
+        for content in contents:
+            if not isinstance(content, AdoptedContent):
+                raise ContractError("storage_corrupt", "复用正文须来自同次正式读取。")
+            ref, source = content.reference, content.source
+            if (
+                type(ref["generation"]) is not int
+                or type(source["result_generation"]) is not int
+                or source["result_generation"] != ref["generation"]
+                or any(
+                    source[key] != ref[key] for key in ("business_id", "result_id", "result_slot")
+                )
+            ):
+                raise ContractError("storage_corrupt", "复用正文的定位与完整来源身份不一致。")
+            identity = ref["result_id"], ref["generation"]
+            old = self.saved.get(identity)
+            if old is not None and (
+                not same_reference(old.reference, ref)
+                or old.source != source
+                or old.target != content.target
+                or old.basis != content.basis
+            ):
+                raise ContractError("storage_corrupt", "复用正文的精确定位或完整来源相互冲突。")
+            if old is None:
+                self.saved[identity] = content
 
     def opening(self, content):
         identity = content.source["result_id"], content.source["result_generation"]

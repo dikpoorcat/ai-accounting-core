@@ -238,10 +238,11 @@ def effective_headers(reader, references, read):
     return tuple(found[ref["result_id"]] for ref in references)
 
 
-def descriptors_for_references(reader, references, read):
+def descriptors_for_references(reader, references, read, *, known_contents=()):
     """Per-input nullable descriptor, using ledger's exact effective journal inheritance."""
     entries = effective_headers(reader, references, read)
     cache = Contents(reader.ledger, read)
+    cache.reuse(known_contents)
     cache.load([entry.result for entry in entries if entry is not None])
     unique = {token(locator(entry)): entry for entry in entries if entry is not None}
     raw = []
