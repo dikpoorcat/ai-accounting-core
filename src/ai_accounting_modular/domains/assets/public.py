@@ -11,15 +11,19 @@ from ai_accounting_modular.contracts.public import (
     DirectRelation,
     EvaluationContext,
     Fact,
+    LedgerScope,
     OpeningAssetSlots,
+    PageQuery,
     PostingPlan,
     ReadContext,
+    ReadPage,
     ResourceCutoff,
     UnitOfWork,
     validate_contract,
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
+from . import _reading
 from ._common import assets_in, finalize_plan, reject
 from ._consumption import consumption, slot_for
 from ._description import DescriptionContext, activation_months, direct_dependencies, publications
@@ -31,7 +35,37 @@ from ._opening import describe as describe_opening
 from ._opening import evaluate as evaluate_opening
 from ._opening import validate as validate_opening
 from ._origins import require_existing_origins, validate_origins
+from ._read_types import (
+    AssetActivity,
+    AssetCard,
+    AssetCardQuery,
+    AssetExit,
+    AssetLedgerAmounts,
+    AssetPaymentSummary,
+    AssetProjectCost,
+    AssetTypeSummary,
+    ProjectCostPage,
+    ProjectCostQuery,
+    ProjectCostTotals,
+)
 from ._repository import AssetsRepository
+
+__all__ = [
+    "Assets",
+    "AssetActivity",
+    "AssetCard",
+    "AssetCardQuery",
+    "AssetExit",
+    "AssetLedgerAmounts",
+    "AssetPaymentSummary",
+    "AssetProjectCost",
+    "AssetTypeSummary",
+    "ProjectCostPage",
+    "ProjectCostQuery",
+    "ProjectCostTotals",
+    "create_assets",
+    "repository_factory",
+]
 
 
 def repository_factory() -> RepositoryFactory:
@@ -40,6 +74,27 @@ def repository_factory() -> RepositoryFactory:
 
 class Assets:
     supported_kinds = tuple(CALCULATORS)
+
+    def __init__(self, *, ledger=None, identity=None):
+        self._ledger, self._identity = ledger, identity
+
+    def asset_activity(self, scope: LedgerScope, read_context: ReadContext) -> AssetActivity:
+        """Full synchronous projection; UI pagination belongs to its saved read model."""
+        return _reading.asset_activity(self, scope, read_context)
+
+    def query_cards(
+        self, scope: LedgerScope, query: AssetCardQuery, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[AssetCard]:
+        return _reading.query_cards(self, scope, query, page, read_context)
+
+    def query_project_costs(
+        self,
+        scope: LedgerScope,
+        query: ProjectCostQuery,
+        page: PageQuery,
+        read_context: ReadContext,
+    ) -> ProjectCostPage:
+        return _reading.query_project_costs(self, scope, query, page, read_context)
 
     def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         return tuple(
@@ -208,5 +263,5 @@ class Assets:
         return read_context.repository("domains.assets").query(query)
 
 
-def create_assets() -> Assets:
-    return Assets()
+def create_assets(*, ledger=None, identity=None) -> Assets:
+    return Assets(ledger=ledger, identity=identity)

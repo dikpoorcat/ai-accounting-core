@@ -168,6 +168,14 @@ PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 tota
 
 `people.relationships(person_ids, period, read)`一次读取最多500个明确人员的当前正确关系时间线和月内成员状态。没有关系事实时返回未知；每项含可空业务身份、版本、保持月或日精度的关系段、月末状态、确定与可能状态、员工及劳务成员、来源和具体精度问题。relationship_start 只标明确确认的关系起点，不把首次记录或恢复上班自动当入职。不附事件修订版本，不借缴费参数推断在职，也不由关系资料重新计算工资。
 
+### 资产的完整读取
+
+`assets.asset_activity(scope, read)`一次返回完整卡片、项目成本和固定／无形资产汇总。卡片保留当前档案、正式成本及启用来源、截至所选月的累计摊折、当月发生、退出时账面价值和付款范围；未知保持未知，期初没有取得日就不补造。更正发生额的正负两腿各用自己的正式类别，当前档案不覆盖历史资产类型。
+
+整批取得的付款保留整批范围，项目转资产的付款保留全部所用来源范围，不按单卡原价猜分摊。真实付款、抵销等清偿和超付追偿分别表达。AssetLedgerAmounts只含九项资产余额和本地issues，所有缺项索引指向此池；卡片问题独立放在card_issues，不夹带无关利润或现金流。
+
+`query_cards(scope, AssetCardQuery, PageQuery, read)`按all/active/fixed/intangible/pending/exited和可选asset_id读取；明确的身份与筛选同时生效。`query_project_costs(scope, ProjectCostQuery, PageQuery, read)`按可选project_id及include_consumed读取，默认排除已耗尽成本，返回分页前完整范围和筛选范围合计。它们是同一投影的便利查询；reading生成月度组件只调用一次完整活动，热续页从自己的集合读取。
+
 期初资产协作只增加一个进程内计算端口：`opening_asset_cards(fact,context)` 核验并生成公开卡片；`describe_opening_assets` 返回附加结果槽、依赖、发布及问题；`evaluate_opening_asset_slot` 计算指定摊折槽；`validate_opening_asset_candidate` 只读核验完整候选。期初合并完整责任，保留自己的 main 槽并委托资产槽。各方仍只保存自身事实和表，资产公式只有一份；未装配端口时明确说明资产接续不可用，不静默遗漏。
 
 业务及当前资料的有效保存一次推进 global_seq；纯读取、文档发布确认、读取模型和文件任务维护不推进它。维护事务只能使用对应派生/任务仓储，不能在不推进业务头的情况下更改事实、来源或说明正文。这样缓存生成、备份进度不会反过来让业务依据失效。

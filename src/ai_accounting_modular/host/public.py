@@ -85,7 +85,7 @@ def _modules():
     identities, bookkeeping = identity.create_identity(), ledger.create_ledger()
     materials = records.create_records(lambda read: company_metadata(read).company_root)
     funds = money.create_money(ledger=bookkeeping, identity=identities)
-    asset_accounting = assets.create_assets()
+    asset_accounting = assets.create_assets(ledger=bookkeeping, identity=identities)
     domains = (
         operations.create_operations(),
         people.create_people(),
