@@ -86,3 +86,29 @@ def assets(query, scope):
         if name in selected:
             validate_contract("core.schema.json", "Id", selected[name])
     return selected
+
+
+def employees(query, scope):
+    selected = _base(
+        query,
+        scope,
+        ("employee_filter", "employee_id"),
+        ("employees", "labor_workers", "labor_sources"),
+    )
+    employee_filter = selected.get("employee_filter", "employment_active")
+    if not isinstance(employee_filter, str) or employee_filter not in {
+        "all",
+        "in_period",
+        "unknown",
+        "ended",
+        "employment_active",
+        "employment_unpaid_leave",
+        "employment_departed",
+        "employment_unknown",
+    }:
+        raise ContractError("invalid_input", "人员关系筛选无效。")
+    if "employee_id" in selected:
+        validate_contract("core.schema.json", "Id", selected["employee_id"])
+    if selected.get("section") == "labor_sources" and "employee_id" not in selected:
+        raise ContractError("invalid_input", "劳务来源须明确所选人员身份。")
+    return selected

@@ -70,6 +70,7 @@ def monthly(page_key, values):
             "movement_account_selection",
         },
         "assets": {"asset_filter", "asset_id", "project_id"},
+        "employees": {"employee_filter", "employee_id"},
     }
     if page_key not in extras:
         raise ContractError("invalid_command", "此月页尚未接入。")

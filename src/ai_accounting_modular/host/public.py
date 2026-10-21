@@ -48,6 +48,7 @@ class _Modules:
     money: money.Money
     investment: financing.Financing
     assets: assets.Assets
+    people: people.People
     domains: tuple
     repositories: tuple
     verifier: application.BackupVerifier
@@ -89,9 +90,10 @@ def _modules():
     funds = money.create_money(ledger=bookkeeping, identity=identities)
     asset_accounting = assets.create_assets(ledger=bookkeeping, identity=identities)
     investments = financing.create_investment(ledger=bookkeeping, identity=identities)
+    payroll = people.create_people(ledger=bookkeeping)
     domains = (
         operations.create_operations(),
-        people.create_people(),
+        payroll,
         asset_accounting,
         taxes.create_taxes(),
         financing.create_financing(),
@@ -114,6 +116,7 @@ def _modules():
         money=funds,
         investment=investments,
         assets=asset_accounting,
+        people=payroll,
         domains=domains,
         repositories=repositories,
         verifier=verifier,
@@ -157,6 +160,7 @@ def create_kernel(
         money=modules.money,
         investment=modules.investment,
         assets=modules.assets,
+        people=modules.people,
     )
     return Kernel(
         storage,

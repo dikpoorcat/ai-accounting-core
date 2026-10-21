@@ -54,14 +54,26 @@ class Reading:
         money=None,
         investment=None,
         assets=None,
+        people=None,
     ):
         self.storage, self.ledger = storage, ledger
         self.records, self.businesses = records, businesses
         self.files = files
         self.identity, self.money, self.investment = identity, money, investment
         self.assets = assets
+        self.people = people
 
     def page(self, page_key, scope, query):
+        if page_key == "employees":
+            from ._employees import build
+
+            query = _month_queries.employees(query, scope)
+            return _monthly.deliver(
+                self,
+                scope,
+                (_monthly.EMPLOYEES,),
+                lambda snapshot, read: build(snapshot, read, query, identity=self.identity),
+            )
         if page_key == "assets":
             from ._assets import build
 
@@ -135,6 +147,9 @@ class Reading:
             elif page_key == "assets":
                 _month_queries.assets(query, scope)
                 components = (_monthly.ASSETS,)
+            elif page_key == "employees":
+                _month_queries.employees(query, scope)
+                components = (_monthly.EMPLOYEES,)
             else:
                 raise ContractError("invalid_input", "此读取页面尚未接入。")
             normalized = _monthly.normalize(
@@ -163,6 +178,7 @@ def create_reading(
     money=None,
     investment=None,
     assets=None,
+    people=None,
 ):
     return Reading(
         storage=storage,
@@ -174,4 +190,5 @@ def create_reading(
         money=money,
         investment=investment,
         assets=assets,
+        people=people,
     )

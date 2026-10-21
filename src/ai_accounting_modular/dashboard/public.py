@@ -15,6 +15,7 @@ LOCAL_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 _MONTH_PAGES = {
     "/api/dashboard/funds": ("funds", 9),
     "/api/dashboard/assets": ("assets", 10),
+    "/api/dashboard/employees": ("employees", 13),
 }
 
 

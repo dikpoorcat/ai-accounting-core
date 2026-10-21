@@ -184,7 +184,7 @@ function routePeriod(): string | null {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
 
-async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>) {
+async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>, retryModel = false) {
   const generation = ++requestGeneration;
   const selection = selectionKey();
   controller?.abort();
@@ -199,7 +199,7 @@ async function loadPeriod(periodKey: string | null, contextGate?: Promise<void>)
     const request = fetchEmployeesDashboard(periodKey, activeController.signal, { employee_filter: focusedEmployeeId.value ? "all" : filter.value, employee_id: focusedEmployeeId.value || undefined }, () => {
       if (!isCurrent(generation, selection) || controller !== activeController) return;
       preparing.value = true; response.value = null; clearPageRequests();
-    });
+    }, retryModel);
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || controller !== activeController) return;
     prepareDashboardCollections(result.data);
@@ -264,10 +264,10 @@ async function refreshCurrent(keepContent: boolean) {
         if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === period))
           throw new Error("当前公司或期间已变化，请重新选择。");
       });
-      await loadPeriod(period, contextGate);
+      await loadPeriod(period, contextGate, keepContent);
     } else {
       await refreshContext();
-      if (isCurrent(generation, selection)) await loadPeriod(routePeriod());
+      if (isCurrent(generation, selection)) await loadPeriod(routePeriod(), undefined, keepContent);
     }
   } catch (caught: unknown) {
     if (isCurrent(generation, selection)) { response.value = null; preparing.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); }

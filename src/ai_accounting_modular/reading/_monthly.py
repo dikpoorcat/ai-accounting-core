@@ -18,7 +18,8 @@ FORMAT_VERSION = 1
 FINANCIAL = "financial"
 FUNDS = "funds"
 ASSETS = "assets"
-COMPONENTS = (FINANCIAL, FUNDS, ASSETS)
+EMPLOYEES = "employees"
+COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES)
 
 
 def normalize(scope):
@@ -241,6 +242,10 @@ def capture(reader, component, scope, read):
         from ._assets import prepare
 
         return prepare(reader, normalized, read)
+    if component == EMPLOYEES:
+        from ._employees import prepare
+
+        return prepare(reader, normalized, read)
     raise ContractError("storage_corrupt", "月度读取组件尚未装配。")
 
 
@@ -256,6 +261,10 @@ def affected(scope, component, impact):
     ):
         return True
     if component == ASSETS and impact.changes["object_ids"]:
+        return True
+    if component == EMPLOYEES and (
+        impact.changes["object_ids"] or "people" in impact.changes["families"]
+    ):
         return True
     return any(value.period_from <= scope["period_to"] for value in impact.posted_ranges)
 

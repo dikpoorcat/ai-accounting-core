@@ -57,7 +57,7 @@ function matchesDeliveryRequest(url: URL, delivery: DashboardEmployeesDeliveryRe
       && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
 }
 
-export function fetchEmployeesDashboard(periodKey: string | null, signal?: AbortSignal, options: EmployeesQuery = {}, onPreparing?: () => void) {
+export function fetchEmployeesDashboard(periodKey: string | null, signal?: AbortSignal, options: EmployeesQuery = {}, onPreparing?: () => void, retry = false) {
   const query = new URLSearchParams(periodKey ? { period: periodKey } : {});
   query.set("preparation", "deferred");
   pageQuery(query, options);
@@ -69,6 +69,6 @@ export function fetchEmployeesDashboard(periodKey: string | null, signal?: Abort
   }
   return requestGeneratedDashboard(
     path, "/api/dashboard/employees", validateDashboardEmployeesDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
-    validateDashboardEmployeesResponse, matchesRequest, { signal, onPreparing },
+    validateDashboardEmployeesResponse, matchesRequest, { signal, onPreparing, retry },
   );
 }
