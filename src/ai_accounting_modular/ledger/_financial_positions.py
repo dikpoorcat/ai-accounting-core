@@ -3,6 +3,7 @@
 import calendar
 from collections import defaultdict
 from datetime import date
+from itertools import chain
 
 from ai_accounting_modular.contracts.public import parse_fen
 from ai_accounting_modular.ledger.opening.public import is_zero_origin
@@ -11,6 +12,7 @@ from ai_accounting_modular.ledger.reporting.public import balance_totals
 from ._balance_cube import balance_cube, previous
 from ._balances import obligation_remaining, sum_amounts
 from ._financial_cells import known, zeros
+from ._journal_amounts import journal_amount
 from ._profit import is_profit_account
 
 _PAIRS = {
@@ -254,8 +256,8 @@ def cash_before(selection, first, last, column):
             journals = selection.lines(heads)
             return known(
                 sum_amounts(
-                    parse_fen(row["debit_fen"]) - parse_fen(row["credit_fen"])
-                    for row in [*rows, *(line for lines in journals.values() for line in lines)]
+                    journal_amount(row["debit_fen"]) - journal_amount(row["credit_fen"])
+                    for row in chain(rows, chain.from_iterable(journals.values()))
                     if row["account_code"] in ("1001", "1002", "1012")
                 )
             )

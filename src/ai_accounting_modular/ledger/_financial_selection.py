@@ -1,7 +1,7 @@
 """One same-transaction selection for stock, flow, classification and their sources."""
 
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from types import MappingProxyType
 
 from ai_accounting_modular.contracts.public import parse_fen, validate_contract
@@ -45,6 +45,7 @@ class Selection:
         self._balance_cubes = {}
         self._details = {}
         self._sources, self._targets = {}, {}
+        self._raw_targets = {}
         self._profit_rows = {}
         boundaries = repo.financial_boundaries(as_of=end if view == "as_posted" else None)
         self.opening = self.continuation = None
@@ -93,7 +94,10 @@ class Selection:
 
     def target(self, head):
         """Borrow an internal Target for read-only calculations; never export or mutate it."""
-        key, raw = _identity(head), head["target_json"]
+        key = _identity(head)
+        if "target_json" not in head:
+            self.load_targets([head])
+        raw = head["target_json"] if "target_json" in head else self._raw_targets[key]
         saved = self._targets.get(key)
         if saved is None:
             saved = raw, json.loads(raw)
@@ -101,6 +105,23 @@ class Selection:
         elif saved[0] != raw:
             fail("storage_corrupt", "同一正式结果的目标正文在财务读取中不一致。")
         return saved[1]
+
+    def load_targets(self, heads):
+        """Batch only requested raw bodies; decoding stays at its original calculation step."""
+        missing = [
+            head
+            for head in heads
+            if "target_json" not in head and _identity(head) not in self._raw_targets
+        ]
+        if missing:
+            bodies = {
+                _identity(row): row["target_json"]
+                for row in self.repo.financial_targets([head["result_id"] for head in missing])
+            }
+            for head in missing:
+                if _identity(head) not in bodies:
+                    fail("storage_corrupt", "财务读取所需的精确正式目标不存在。")
+                self._raw_targets[_identity(head)] = bodies[_identity(head)]
 
     def profit_rows(self, head, lines):
         """Borrow main rows of already selected journals, only within this read selection."""
@@ -110,13 +131,17 @@ class Selection:
         return self._profit_rows[key]
 
     def boundary_kind(self, head):
-        target = self.target(head)
-        kind = target["kind"]
-        return kind if kind != "system.withdrawal" else target["business_kind"]
+        kind = head["business_kind"]
+        if not isinstance(kind, str) or not kind:
+            fail("storage_corrupt", "财务读取的正式结果缺少业务类型。")
+        return kind
+
+    def kind(self, head):
+        return head["target_kind"]
 
     def stock(self, cutoff):
         if cutoff not in self._stocks:
-            heads = self.repo.financial_heads(cutoff, view=self.view)
+            heads = self.repo.financial_heads(cutoff, view=self.view, metadata_only=True)
             selected = {
                 h["result_id"]: h
                 for h in heads
@@ -132,7 +157,7 @@ class Selection:
             if self.view == "current":
                 heads = [h for h in self.stock(last).values() if first <= h["business_period"]]
             else:
-                heads = self.repo.adoptions_between(first, last)
+                heads = self.repo.adoptions_between(first, last, metadata_only=True)
             heads = [
                 h
                 for h in heads
@@ -145,7 +170,8 @@ class Selection:
                 missing = ids - self.heads.keys()
                 if missing:
                     self.heads.update(
-                        (h["result_id"], h) for h in self.repo.financial_results(missing)
+                        (h["result_id"], h)
+                        for h in self.repo.financial_results(missing, metadata_only=True)
                     )
                 coefficients.subtract(
                     h["baseline_result_id"] for h in heads if h["baseline_result_id"]
@@ -156,12 +182,13 @@ class Selection:
     def lines(self, heads):
         missing = [head for head in heads if head["result_id"] not in self._lines]
         if missing:
-            self._lines.update(
-                {
-                    key: voucher["lines"] if voucher else []
-                    for key, voucher in target_vouchers(self.repo, missing).items()
-                }
-            )
+            journals = target_vouchers(self.repo, missing, headers_only=True)
+            ids = {row["voucher_id"] for row in journals.values() if row is not None}
+            grouped = defaultdict(list)
+            for row in self.repo.financial_lines(ids) if ids else ():
+                grouped[row["voucher_id"]].append(row)
+            for head_id, voucher in journals.items():
+                self._lines[head_id] = grouped[voucher["voucher_id"]] if voucher else []
         for head in heads:
             if self._lines[head["result_id"]]:
                 self.source(head)

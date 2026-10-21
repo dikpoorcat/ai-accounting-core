@@ -12,7 +12,11 @@ from ai_accounting_modular.contracts.public import ContractError, canonical_json
 from ai_accounting_modular.ledger import public as ledger_public
 from ai_accounting_modular.ledger._read_repository import _in
 from ai_accounting_modular.ledger._read_selection import business_kind
-from ai_accounting_modular.ledger._repository import _FINANCIAL_FIELDS, LedgerRepository
+from ai_accounting_modular.ledger._repository import (
+    _FINANCIAL_FIELDS,
+    _FINANCIAL_HEADERS,
+    LedgerRepository,
+)
 from ai_accounting_modular.storage.public import RepositoryFactory
 
 MODES = ("original", "aggregate_join")
@@ -45,15 +49,13 @@ class AggregateJoinLedgerRepository(LedgerRepository):
         table, args = _selected_table(as_of, business_ids)
         return [dict(row) for row in self._session.fetchall("SELECT r.* FROM " + table, args)]
 
-    def financial_heads(self, cutoff, *, view):
+    def financial_heads(self, cutoff, *, view, metadata_only=False):
         if view != "as_posted":
-            return super().financial_heads(cutoff, view=view)
+            return super().financial_heads(cutoff, view=view, metadata_only=metadata_only)
         table, args = _selected_table(cutoff)
+        fields = _FINANCIAL_HEADERS if metadata_only else _FINANCIAL_FIELDS
         return [
-            dict(row)
-            for row in self._session.fetchall(
-                "SELECT " + _FINANCIAL_FIELDS + " FROM " + table, args
-            )
+            dict(row) for row in self._session.fetchall("SELECT " + fields + " FROM " + table, args)
         ]
 
     def read_result_scope(

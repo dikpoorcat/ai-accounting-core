@@ -28,6 +28,8 @@ def _head(index):
         "calculation_revision": "1",
         "basis_digest": "a" * 64,
         "target_digest": "b" * 64,
+        "target_kind": "operations.expense",
+        "business_kind": "operations.expense",
         "target_json": json.dumps(
             {
                 "kind": "operations.expense",
@@ -46,6 +48,16 @@ def _selection(heads):
     repo = SimpleNamespace(
         financial_boundaries=lambda **kwargs: (),
         financial_heads=lambda *args, **kwargs: heads,
+        financial_lines=lambda ids: [
+            {
+                "voucher_id": identity,
+                "line_no": 1,
+                "account_code": "5602",
+                "debit_fen": 1,
+                "credit_fen": 0,
+            }
+            for identity in ids
+        ],
     )
     return financial.Selection(repo, "current", "2026-01", "2026-01", Issues())
 
@@ -75,9 +87,10 @@ def test_hundred_heads_three_source_passes_verify_once_and_decode_target_once(mo
         digests.append(args)
         return digest(*args)
 
-    def actual_journals(repo, requested):
+    def actual_journals(repo, requested, *, headers_only):
+        assert headers_only
         journals.append(tuple(head["result_id"] for head in requested))
-        return {head["result_id"]: {"lines": [{"account_code": "5602"}]} for head in requested}
+        return {head["result_id"]: {"voucher_id": head["result_id"]} for head in requested}
 
     monkeypatch.setattr(financial, "stored_source_reference", actual_source)
     monkeypatch.setattr(financial.json, "loads", actual_decode)
@@ -206,3 +219,47 @@ def test_profit_cache_does_not_confuse_invalid_generation_with_a_known_integer(g
     damaged = [{"account_code": "5602", "debit_fen": "invalid", "credit_fen": "0"}]
     with pytest.raises(ValueError):
         selection.profit_rows(dict(head) | {"generation": generation}, damaged)
+
+
+def test_metadata_targets_load_once_in_batch_and_decode_only_when_consumed(monkeypatch):
+    full = [_head(index) for index in range(3)]
+    metadata = [
+        {key: value for key, value in head.items() if key != "target_json"} for head in full
+    ]
+    selection = _selection(metadata)
+    requested, decoded = [], []
+    decode = json.loads
+
+    def bodies(ids):
+        requested.append(tuple(ids))
+        return [
+            {key: head[key] for key in ("result_id", "generation", "target_json")}
+            for head in full
+            if head["result_id"] in ids
+        ]
+
+    def actual_decode(raw, *args, **kwargs):
+        decoded.append(raw)
+        return decode(raw, *args, **kwargs)
+
+    selection.repo.financial_targets = bodies
+    monkeypatch.setattr(financial.json, "loads", actual_decode)
+    selection.load_targets(metadata)
+    assert requested == [tuple(head["result_id"] for head in metadata)] and decoded == []
+    for head, expected in zip(metadata, full, strict=True):
+        assert selection.target(head) == decode(expected["target_json"])
+        assert selection.target(head) == decode(expected["target_json"])
+    assert len(decoded) == 3
+    selection.load_targets(metadata)
+    assert len(requested) == 1
+
+
+@pytest.mark.parametrize("generation", [True, 1.0, 2])
+def test_target_batch_cannot_substitute_another_typed_generation(generation):
+    head = _head(1)
+    metadata = {key: value for key, value in head.items() if key != "target_json"}
+    selection = _selection((metadata,))
+    selection.repo.financial_targets = lambda ids: [head | {"generation": generation}]
+    with pytest.raises(ContractError) as caught:
+        selection.load_targets((metadata,))
+    assert caught.value.code == "storage_corrupt"

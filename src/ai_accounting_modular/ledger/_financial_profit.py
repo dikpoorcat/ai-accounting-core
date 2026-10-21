@@ -5,10 +5,12 @@ from ai_accounting_modular.ledger.reporting.public import profit_totals
 
 from ._balances import sum_amounts
 from ._financial_cells import known
+from ._journal_amounts import journal_amount
 from ._profit import has_unmapped_line, pretax_values
 
 # Unknown contributions carry issue indexes, never an inferred zero amount.
 type _Amount = int | tuple[int, ...]
+_TARGET_VALUES = frozenset(("operations.other_income", "taxes.assessment"))
 
 
 def _from_cell(cell) -> _Amount:
@@ -32,7 +34,7 @@ def _add(left: _Amount, right: _Amount) -> _Amount:
 
 def _contribution(selection, head, lines, details, column):
     local = dict(selection.profit_rows(head, lines))
-    target = selection.target(head)
+    target = selection.target(head) if selection.kind(head) in _TARGET_VALUES else None
     explicit = {value["line"] for value in details}
     for value in details:
         line = value["line"]
@@ -51,28 +53,33 @@ def _contribution(selection, head, lines, details, column):
         local[line] = _add(local.get(line, 0), amount)
     if 19 not in explicit:
         interest = sum_amounts(
-            parse_fen(line["debit_fen"]) - parse_fen(line["credit_fen"])
+            journal_amount(line["debit_fen"]) - journal_amount(line["credit_fen"])
             for line in lines
             if line["account_code"] == "560301"
         )
         if (
-            target["kind"] == "operations.other_income"
+            target is not None
+            and target["kind"] == "operations.other_income"
             and target["values"].get("expense_or_income_class") == "bank_interest"
         ):
             interest = sum_amounts(
-                parse_fen(line["debit_fen"]) - parse_fen(line["credit_fen"])
+                journal_amount(line["debit_fen"]) - journal_amount(line["credit_fen"])
                 for line in lines
                 if line["account_code"] in ("5603", "560301")
             )
         local[19] = interest
     local[29] = sum_amounts(
-        parse_fen(line["debit_fen"]) - parse_fen(line["credit_fen"])
+        journal_amount(line["debit_fen"]) - journal_amount(line["credit_fen"])
         for line in lines
         if line["account_code"] == "571103"
     )
-    if target["kind"] == "taxes.assessment" and "payable_vat_fen" in target["values"]:
+    if (
+        target is not None
+        and target["kind"] == "taxes.assessment"
+        and "payable_vat_fen" in target["values"]
+    ):
         income = sum_amounts(
-            parse_fen(line["credit_fen"]) - parse_fen(line["debit_fen"])
+            journal_amount(line["credit_fen"]) - journal_amount(line["debit_fen"])
             for line in lines
             if line["account_code"] in ("6301", "630101")
         )
@@ -93,6 +100,7 @@ def profit(selection, first, last, column):
     coefficients = selection.flow(first, last)
     heads = [selection.heads[key] for key in coefficients]
     journals, details = selection.lines(heads), selection.report_details(heads)
+    selection.load_targets([head for head in heads if selection.kind(head) in _TARGET_VALUES])
     result = {
         line: _from_cell(cell) for line, cell in selection.prior("profit", first, last).items()
     }

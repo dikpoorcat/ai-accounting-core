@@ -106,6 +106,12 @@ class _Selected:
     def target(self, head):
         return self.items[head["result_id"]]["target"]
 
+    def kind(self, head):
+        return self.target(head)["kind"]
+
+    def load_targets(self, heads):
+        pass  # This arithmetic fixture already holds the actual validated Targets.
+
     def profit_rows(self, head, lines):
         return profit_rows(lines)
 

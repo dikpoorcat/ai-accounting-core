@@ -5,12 +5,12 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import (
     checked_fen,
     content_digest,
-    parse_fen,
     schema_document,
 )
 from ai_accounting_modular.ledger.reporting.public import profit_totals_fen
 
 from ._balances import sum_amounts
+from ._journal_amounts import journal_amount
 
 _ACCOUNTS = {
     "5001": (1, -1),
@@ -35,7 +35,7 @@ def has_unmapped_line(lines):
     """Unknown formal accounts cannot silently become zero profit or zero assets."""
     return any(
         line["account_code"] not in _CONTROLLED_ACCOUNTS
-        and (parse_fen(line["debit_fen"]) or parse_fen(line["credit_fen"]))
+        and (journal_amount(line["debit_fen"]) or journal_amount(line["credit_fen"]))
         for line in lines
     )
 
@@ -48,7 +48,10 @@ def profit_rows(lines):
         if mapping is not None:
             row, sign = mapping
             rows[row] = sum_amounts(
-                (rows[row], sign * (parse_fen(line["debit_fen"]) - parse_fen(line["credit_fen"])))
+                (
+                    rows[row],
+                    sign * (journal_amount(line["debit_fen"]) - journal_amount(line["credit_fen"])),
+                )
             )
     return dict(rows)
 

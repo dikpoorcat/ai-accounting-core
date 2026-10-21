@@ -1,10 +1,10 @@
 """One selected debit-balance cube retains party and object dimensions."""
 
 from collections import defaultdict
-
-from ai_accounting_modular.contracts.public import parse_fen
+from itertools import chain
 
 from ._balances import sum_amounts
+from ._journal_amounts import journal_amount
 
 
 def previous(period):
@@ -21,10 +21,14 @@ def balance_cube(selection, cutoff):
             heads = list(selection.stock(cutoff).values()) if cutoff >= selection.start else []
             journals = selection.lines(heads)
             values = defaultdict(int)
-            for row in [*opening, *(row for rows in journals.values() for row in rows)]:
+            for row in chain(opening, chain.from_iterable(journals.values())):
                 key = row["account_code"], row.get("party_id"), row.get("object_id")
                 values[key] = sum_amounts(
-                    (values[key], parse_fen(row["debit_fen"]), -parse_fen(row["credit_fen"]))
+                    (
+                        values[key],
+                        journal_amount(row["debit_fen"]),
+                        -journal_amount(row["credit_fen"]),
+                    )
                 )
             selection._balance_cubes[cutoff] = dict(values)
     return selection._balance_cubes[cutoff]

@@ -16,6 +16,7 @@ from ._output_digest import (
     verify_output_digests,
 )
 from ._read_repository import ReadRepository
+from ._read_selection import business_kind as _business_kind
 from ._read_selection import selected as _selected
 from ._resource_rows import resource_rows
 from ._values import fail
@@ -25,24 +26,28 @@ _CHILD_TABLES = (
     "result_basis_ref",
     *RESOURCE_TABLES,
 )
-_FINANCIAL_FIELDS = ",".join(
-    "r." + name
-    for name in (
-        "result_id",
-        "business_id",
-        "result_slot",
-        "generation",
-        "business_period",
-        "posting_period",
-        "state",
-        "target_state",
-        "baseline_result_id",
-        "calculation_key",
-        "calculation_revision",
-        "basis_digest",
-        "target_digest",
-        "target_json",
-    )
+_FINANCIAL_COLUMNS = (
+    "result_id",
+    "business_id",
+    "result_slot",
+    "generation",
+    "business_period",
+    "posting_period",
+    "state",
+    "target_state",
+    "baseline_result_id",
+    "calculation_key",
+    "calculation_revision",
+    "basis_digest",
+    "target_digest",
+    "target_json",
+)
+_FINANCIAL_KINDS = (
+    ",json_extract(r.target_json,'$.kind') AS target_kind," + _business_kind() + " AS business_kind"
+)
+_FINANCIAL_FIELDS = ",".join("r." + name for name in _FINANCIAL_COLUMNS) + _FINANCIAL_KINDS
+_FINANCIAL_HEADERS = (
+    ",".join("r." + name for name in _FINANCIAL_COLUMNS if name != "target_json") + _FINANCIAL_KINDS
 )
 _HEAD_FIELDS = ",".join(
     "r." + name
@@ -245,11 +250,12 @@ class LedgerRepository(ReadRepository):
             )
         ]
 
-    def financial_heads(self, cutoff, *, view):
+    def financial_heads(self, cutoff, *, view, metadata_only=False):
         """Complete ordinary targets at a report comparison point, not all history."""
+        fields = _FINANCIAL_HEADERS if metadata_only else _FINANCIAL_FIELDS
         if view == "as_posted":
             sql = (
-                "SELECT " + _FINANCIAL_FIELDS + " FROM adopted_result r WHERE r.posting_period<=? "
+                "SELECT " + fields + " FROM adopted_result r WHERE r.posting_period<=? "
                 "AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
                 "WHERE newer.business_id=r.business_id "
                 "AND newer.result_slot=r.result_slot AND newer.posting_period<=? "
@@ -258,30 +264,54 @@ class LedgerRepository(ReadRepository):
             args = cutoff, cutoff
         else:
             sql = (
-                "SELECT " + _FINANCIAL_FIELDS + " FROM adopted_result r JOIN result_slot_current c "
+                "SELECT " + fields + " FROM adopted_result r JOIN result_slot_current c "
                 "ON c.head_result_id=r.result_id WHERE r.business_period<=?"
             )
             args = (cutoff,)
         return [dict(row) for row in self._session.fetchall(sql, args)]
 
-    def financial_results(self, result_ids):
+    def financial_results(self, result_ids, *, metadata_only=False):
+        fields = _FINANCIAL_HEADERS if metadata_only else _FINANCIAL_FIELDS
         return [
             dict(row)
             for row in self._session.fetchall(
-                "SELECT " + _FINANCIAL_FIELDS + " FROM adopted_result r WHERE r.result_id IN "
+                "SELECT " + fields + " FROM adopted_result r WHERE r.result_id IN "
                 "(SELECT value FROM json_each(?))",
                 (canonical(list(result_ids)),),
             )
         ]
 
-    def adoptions_between(self, period_from, period_to):
+    def adoptions_between(self, period_from, period_to, *, metadata_only=False):
+        fields = _FINANCIAL_HEADERS if metadata_only else _FINANCIAL_FIELDS
         return [
             dict(row)
             for row in self._session.fetchall(
                 "SELECT "
-                + _FINANCIAL_FIELDS
+                + fields
                 + " FROM adopted_result r WHERE r.posting_period>=? AND r.posting_period<=?",
                 (period_from, period_to),
+            )
+        ]
+
+    def financial_targets(self, result_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT result_id,generation,target_json FROM adopted_result "
+                "WHERE result_id IN (SELECT value FROM json_each(?))",
+                (canonical(list(result_ids)),),
+            )
+        ]
+
+    def financial_lines(self, voucher_ids):
+        """Calculation columns retain SQL int64 amounts and the journal's original line order."""
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT voucher_id,line_no,account_code,debit_fen,credit_fen,party_id,object_id "
+                "FROM voucher_line WHERE voucher_id IN (SELECT value FROM json_each(?)) "
+                "ORDER BY voucher_id,line_no",
+                (canonical(list(voucher_ids)),),
             )
         ]
 
@@ -290,7 +320,9 @@ class LedgerRepository(ReadRepository):
             "JOIN result_slot_current c ON c.head_result_id=r.result_id " if as_of is None else ""
         )
         sql = (
-            "SELECT r.* FROM adopted_result r "
+            "SELECT r.*"
+            + _FINANCIAL_KINDS
+            + " FROM adopted_result r "
             + selection
             + (
                 "WHERE r.result_slot='main' AND json_extract(r.target_json,'$.kind') "
