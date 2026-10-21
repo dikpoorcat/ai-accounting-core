@@ -277,3 +277,41 @@ def test_request_mutation_and_missing_declared_descriptor_do_not_turn_into_empty
         with pytest.raises(ContractError) as error:
             book.app.ledger.read_financial_projection(selected, read, blocks)
         assert error.value.code == "storage_corrupt"
+
+
+def test_consumer_reads_its_roles_while_publication_checks_the_complete_graph(tmp_path):
+    book, blocks = support.assemble(tmp_path), Blocks()
+    book.submit(
+        support.opening(cash="1000"),
+        support.expense("january-cost", "11"),
+        support.expense("february-cost", "17", "2026-02"),
+    )
+    with book.app.storage.read_unit(book.company) as read:
+        january, february = (
+            book.app.ledger.financial_projection_request("summary_values", scope(book, month), read)
+            for month in ("2026-01", "2026-02")
+        )
+        blocks.publish(
+            book.app.ledger.prepare_financial_projection((january, february), (), (), read)
+        )
+        model = Model(read, blocks)
+        _, role = model.flow_role("as_posted", "2026-01", "2026-01", include_cash=False)
+        january_node = ("_financial_nodes", role.root.digest)
+        before = book.app.ledger.read_financial_projection(february, read, blocks)
+        assert before.value.values["expense"]["amount_fen"] == "17"
+        assert (
+            book.app.ledger.read_financial_projection(january, read, blocks).value.values[
+                "expense"
+            ]["amount_fen"]
+            == "11"
+        )
+        # An unrelated month's broken role cannot block a valid consumer. It
+        # still blocks both its own consumer and a complete graph publication.
+        blocks.values[january_node] = "{}"
+        assert book.app.ledger.read_financial_projection(february, read, blocks) == before
+        with pytest.raises(ContractError, match="财务派生树") as failure:
+            book.app.ledger.read_financial_projection(january, read, blocks)
+        assert failure.value.code == "storage_corrupt"
+        with pytest.raises(ContractError) as failure:
+            book.app.ledger.prepare_financial_projection((february,), (), (), read, base=blocks)
+        assert failure.value.code == "storage_corrupt"

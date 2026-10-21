@@ -153,7 +153,6 @@ class Model:
             spec = _role_spec(saved["spec"])
             if content_digest(spec) != key:
                 fail("storage_corrupt", "财务角色定位与范围不一致。")
-            self.roles[key] = self._role(spec, saved["data"])
         for key, spec in header["requests"].items():
             if type(spec) is not dict or set(spec) != {"kind", "scope"}:
                 fail("storage_corrupt", "财务读取请求保存目录损坏。")
@@ -173,6 +172,10 @@ class Model:
         return cls(spec, self.store, self.bodies, saved)
 
     def root_ids(self):
+        # Publication owns the complete graph. A consumer instead resolves only
+        # the roles declared by its request, within this same read snapshot.
+        for saved in self.header["roles"].values():
+            self._get_role(saved["spec"])
         roots = [root.digest for root in (self.bodies.root, self.chain_root) if root]
         roots.extend(identity for role in self.roles.values() for identity in role.root_ids())
         return tuple(roots)
@@ -187,6 +190,9 @@ class Model:
 
     def _get_role(self, spec):
         key = content_digest(spec)
+        if key not in self.roles and key in self.header["roles"]:
+            saved = self.header["roles"][key]
+            self.roles[key] = self._role(saved["spec"], saved["data"])
         if key not in self.roles or self.roles[key].spec != spec:
             fail("storage_corrupt", "财务请求缺少实际覆盖的正式角色。")
         return key, self.roles[key]
@@ -364,7 +370,7 @@ class Model:
             "contract": "ledger-financial-selection/2",
             "request": value.key,
             "roles": {
-                content_digest(spec): self.roles[content_digest(spec)].wire()
+                content_digest(spec): self._get_role(spec)[1].wire()
                 for spec in required_roles(value, self.read.start_period, saved=saved)
             },
             "boundaries": [
