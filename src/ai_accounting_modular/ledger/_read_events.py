@@ -1,6 +1,6 @@
 """Actual selected resource uses retain their own cash allocation and identities."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from ai_accounting_modular.contracts.public import ReadPage, query_selection, validate_contract
 
@@ -23,7 +23,7 @@ def _key(row):
     )
 
 
-def query_settlement_events(query, page, read, selection=None):
+def query_settlement_events(query, page, read, selection=None, *, business_scope=False):
     if not isinstance(query, SettlementEventQuery):
         fail("invalid_input", "清偿事件须使用明确的期间及来源查询。")
     for month in (query.period_from, query.period_to):
@@ -35,20 +35,32 @@ def query_settlement_events(query, page, read, selection=None):
     bounded(query.movement_ids)
     bounded(query.components, "text")
     bounded(query.source_business_kinds, "text")
+    if business_scope and not (
+        query.source_refs or query.consumer_business_ids or query.movement_ids
+    ):
+        fail("invalid_input", "业务清偿查询须指定实际来源、消费业务或资金身份。")
     if set(query.components) - {"money", "agency", "offset", "transfer", "reclassify_excess"}:
         fail("invalid_input", "清偿事件仅支持实际资金、代理、抵销和义务重分类。")
     selected = query_selection(read, selection)
     repo = read.repository("ledger")
     sql, args = repo.read_event_scope(query, selected)
     rows = repo.read_event_identities(sql, args)
-    base = SettlementEventQuery(query.period_from, query.period_to)
+    base = (
+        replace(query, components=(), source_business_kinds=())
+        if business_scope
+        else SettlementEventQuery(query.period_from, query.period_to)
+    )
     if query == base:
         full = rows
     else:
         base_sql, base_args = repo.read_event_scope(base, selected)
         full = repo.read_event_identities(base_sql, base_args)
     identity = version(
-        read, "settlement_events", asdict(query), selected, {"full": full, "filtered": rows}
+        read,
+        "business_settlements" if business_scope else "settlement_events",
+        asdict(query),
+        selected,
+        {"full": full, "filtered": rows},
     )
     after = after_key(page, identity, (str, int, str, str, str, str))
     picked = repo.read_event_page(sql, args, after=after, limit=page.limit + 1)

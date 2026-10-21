@@ -79,6 +79,8 @@ def test_direct_business_needs_no_monthly_models_and_keeps_historical_and_curren
 
     monkeypatch.setattr(case.kernel.storage, "read_unit", read_once)
     monkeypatch.setattr(case.kernel.ledger, "get_vouchers", no_full_journals)
+    monkeypatch.setattr(case.kernel.ledger, "query_obligation_positions", no_full_journals)
+    monkeypatch.setattr(case.kernel.ledger, "query_settlement_events", no_full_journals)
     payload = progress(case, expense["business_id"])
     assert contexts == [case.company]
     data = payload["data"]

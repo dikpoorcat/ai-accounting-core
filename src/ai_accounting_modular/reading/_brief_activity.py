@@ -2,11 +2,9 @@
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    PageQuery,
     QuerySelection,
     ReadInputs,
 )
-from ai_accounting_modular.ledger.public import ObligationPositionQuery
 
 from . import _brief_groups, _brief_vouchers, _brief_vouchers_display
 from ._brief_activity_amounts import EVENT_KINDS
@@ -27,37 +25,29 @@ def _obligations(reader, scope, read, contents):
     def collect(bodies, cutoff, selection):
         ids = sorted({item.reference["business_id"] for item in bodies.values()})
         for start in range(0, len(ids), 500):
-            cursor = None
-            while True:
-                page = reader.ledger.query_obligation_positions(
-                    ObligationPositionQuery(cutoff, business_ids=tuple(ids[start : start + 500])),
-                    PageQuery(500, cursor),
-                    read,
-                    selection=selection,
-                ).page
-                for position in page.items:
-                    definition = position.definition
-                    content = bodies.get(definition.source["result_id"])
-                    if content is None or content.source != definition.source:
-                        continue
-                    person = (
-                        content.target.get("values", {}).get("person_id")
-                        if content.target["kind"] == "people.remuneration"
-                        else None
-                    )
-                    found.setdefault(definition.source["result_id"], []).append(
-                        {
-                            "source": definition.reference,
-                            "producer": definition.source,
-                            "person_id": person,
-                            "recipient_id": definition.value.get("party_id"),
-                            "payroll_period": content.basis["period"] if person else None,
-                            "component": definition.reference["slot"] if person else None,
-                        }
-                    )
-                cursor = page.next_cursor
-                if cursor is None:
-                    break
+            positions = reader.ledger.get_obligation_positions(
+                cutoff, read, business_ids=tuple(ids[start : start + 500]), selection=selection
+            )
+            for position in positions:
+                definition = position.definition
+                content = bodies.get(definition.source["result_id"])
+                if content is None or content.source != definition.source:
+                    continue
+                person = (
+                    content.target.get("values", {}).get("person_id")
+                    if content.target["kind"] == "people.remuneration"
+                    else None
+                )
+                found.setdefault(definition.source["result_id"], []).append(
+                    {
+                        "source": definition.reference,
+                        "producer": definition.source,
+                        "person_id": person,
+                        "recipient_id": definition.value.get("party_id"),
+                        "payroll_period": content.basis["period"] if person else None,
+                        "component": definition.reference["slot"] if person else None,
+                    }
+                )
 
     collect(selected, scope["period_to"], QuerySelection(scope["view"], scope["as_of"]))
     # A correction leg still describes its old adoption. Its obligations can have

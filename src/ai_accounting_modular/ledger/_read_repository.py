@@ -30,6 +30,18 @@ def _in(column, values, clauses, args):
         args.append(canonical_json(list(values)))
 
 
+def _resource_keys(business, slot, business_ids, references):
+    clauses, args = [], []
+    _in(business, business_ids, clauses, args)
+    if references:
+        clauses.append(
+            f"({business},{slot}) IN (SELECT json_extract(value,'$.business_id'),"
+            "json_extract(value,'$.slot') FROM json_each(?))"
+        )
+        args.append(canonical_json(list(references)))
+    return "(" + " OR ".join(clauses) + ")" if clauses else "1", tuple(args)
+
+
 class ReadRepository:
     def read_first_recorded(self, keys, *, as_of=None):
         where = " WHERE (l.debit_fen<>0 OR l.credit_fen<>0)"
@@ -79,9 +91,9 @@ class ReadRepository:
             _in(component, query.components, clauses, args)
             if query.source_refs:
                 clauses.append(
-                    "EXISTS(SELECT 1 FROM json_each(?) wanted "
-                    "WHERE json_extract(wanted.value,'$.business_id')=x.source_business_id "
-                    "AND json_extract(wanted.value,'$.slot')=x.source_public_slot)"
+                    "(x.source_business_id,x.source_public_slot) IN "
+                    "(SELECT json_extract(value,'$.business_id'),json_extract(value,'$.slot') "
+                    "FROM json_each(?))"
                 )
                 args.append(canonical_json(list(query.source_refs)))
             if query.source_business_kinds:
@@ -186,25 +198,34 @@ class ReadRepository:
             result.update(((table, row["result_id"], row[event_id]), dict(row)) for row in rows)
         return result
 
-    def read_position_rows(self, kind, cutoff, selection):
+    def read_position_rows(self, kind, cutoff, selection, *, business_ids=(), references=()):
         table = "obligation" if kind == "obligation" else "cost_lot"
         predicate, source_args = selected("r", selection.as_of)
         use_predicate, use_args = selected("u", selection.as_of)
+        source_keys, source_key_args = _resource_keys(
+            "r.business_id", "d.public_slot", business_ids, references
+        )
         if kind == "obligation":
+            settlement_keys, settlement_args = _resource_keys(
+                "s.source_business_id", "s.source_public_slot", business_ids, references
+            )
+            relation_keys, relation_args = _resource_keys(
+                "x.source_business_id", "x.source_public_slot", business_ids, references
+            )
             sql = (
                 "WITH used AS (SELECT s.source_business_id,s.source_public_slot,"
                 "SUM(CASE WHEN s.method='money' THEN s.amount_fen ELSE 0 END) money,"
                 "SUM(CASE WHEN s.method='agency' THEN s.amount_fen ELSE 0 END) agency,"
                 "SUM(CASE WHEN s.method='offset' THEN s.amount_fen ELSE 0 END) offset "
                 "FROM settlement s JOIN adopted_result u ON u.result_id=s.result_id "
-                f"WHERE u.business_period<=? AND {use_predicate} "
+                f"WHERE u.business_period<=? AND {use_predicate} AND {settlement_keys} "
                 "GROUP BY s.source_business_id,s.source_public_slot),"
                 "reclassified AS (SELECT x.source_business_id,x.source_public_slot,"
                 "SUM(CASE WHEN x.mode='transfer' THEN x.amount_fen ELSE 0 END) transferred,"
                 "SUM(CASE WHEN x.mode='reclassify_excess' THEN x.amount_fen ELSE 0 END) excess "
                 "FROM obligation_reclassification x "
                 "JOIN adopted_result u ON u.result_id=x.result_id "
-                f"WHERE u.business_period<=? AND {use_predicate} "
+                f"WHERE u.business_period<=? AND {use_predicate} AND {relation_keys} "
                 "GROUP BY x.source_business_id,x.source_public_slot) "
                 "SELECT d.*,COALESCE(s.money,0) money,COALESCE(s.agency,0) agency,"
                 "COALESCE(s.offset,0) offset,COALESCE(x.transferred,0) transferred,"
@@ -216,13 +237,16 @@ class ReadRepository:
                 "LEFT JOIN reclassified x ON x.source_business_id=r.business_id "
                 "AND x.source_public_slot=d.public_slot "
             )
-            args = (cutoff, *use_args, cutoff, *use_args)
+            args = (cutoff, *use_args, *settlement_args, cutoff, *use_args, *relation_args)
         else:
+            consumption_keys, consumption_args = _resource_keys(
+                "c.source_business_id", "c.source_public_slot", business_ids, references
+            )
             sql = (
                 "WITH used AS (SELECT c.source_business_id,c.source_public_slot,"
                 "SUM(c.amount_fen) consumed FROM cost_consumption c "
                 "JOIN adopted_result u ON u.result_id=c.result_id "
-                f"WHERE u.business_period<=? AND {use_predicate} "
+                f"WHERE u.business_period<=? AND {use_predicate} AND {consumption_keys} "
                 "GROUP BY c.source_business_id,c.source_public_slot) "
                 "SELECT d.*,0 money,0 agency,0 offset,0 transferred,0 excess,"
                 "COALESCE(s.consumed,0) consumed,"
@@ -231,7 +255,7 @@ class ReadRepository:
                 "LEFT JOIN used s ON s.source_business_id=r.business_id "
                 "AND s.source_public_slot=d.public_slot "
             )
-            args = (cutoff, *use_args)
+            args = (cutoff, *use_args, *consumption_args)
         head = ",".join(
             "r." + key
             for key in (
@@ -250,8 +274,16 @@ class ReadRepository:
         )
         sql += head + ",r.business_period AS owner_business_period "
         sql += f"FROM {table} d JOIN adopted_result r ON r.result_id=d.result_id " + joins
-        sql += f"WHERE r.business_period<=? AND {predicate} ORDER BY r.business_id,d.public_slot"
-        return [dict(row) for row in self._session.fetchall(sql, (*args, cutoff, *source_args))]
+        sql += (
+            f"WHERE r.business_period<=? AND {predicate} AND {source_keys} "
+            "ORDER BY r.business_id,d.public_slot"
+        )
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                sql, (*args, cutoff, *source_args, *source_key_args)
+            )
+        ]
 
     def read_result_scope(
         self, scope, kinds, selection, *, flow=False, business_ids=(), result_slots=()

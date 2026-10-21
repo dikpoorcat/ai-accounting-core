@@ -62,6 +62,30 @@ def _totals(rows):
     )
 
 
+def get_positions(cutoff, read, selection=None, *, kind, business_ids=(), references=()):
+    """Read only known keys; omitted or unselected resources do not become zero."""
+    validate_contract("core.schema.json", "Month", cutoff)
+    business_ids = bounded(business_ids)
+    references = bounded(references, "BusinessRef")
+    selected = query_selection(read, selection)
+    if not business_ids and not references:
+        return ()
+    try:
+        rows = read.repository("ledger").read_position_rows(
+            kind, cutoff, selected, business_ids=business_ids, references=references
+        )
+    except OperationalError as error:
+        if "integer overflow" in str(error):
+            fail("invalid_input", "指定资源使用金额超出64位整数分范围。")
+        raise
+    return tuple(
+        ResourcePosition(
+            resource_definition(kind, row, row, stored_source_reference(row)), _amounts(row, kind)
+        )
+        for row in rows
+    )
+
+
 def query_positions(query, page, read, selection=None, *, kind, economic_from=None):
     expected = ObligationPositionQuery if kind == "obligation" else CostPositionQuery
     if not isinstance(query, expected):

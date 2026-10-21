@@ -30,7 +30,7 @@ def capture(reader, selected, settlements, view, read):
     for batch in batches(references):
         page = PageQuery(500)
         while True:
-            result = reader.ledger.query_settlement_events(
+            result = reader.ledger.query_business_settlements(
                 SettlementEventQuery(read.start_period, cutoff, source_refs=batch),
                 page,
                 read,

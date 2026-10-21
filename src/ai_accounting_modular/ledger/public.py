@@ -14,6 +14,7 @@ from typing import Literal
 
 from ai_accounting_modular.contracts.public import (
     MAX_FEN,
+    BusinessRef,
     ChangePlan,
     ContractError,
     LedgerScope,
@@ -213,6 +214,19 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def query_business_settlements(
+        self,
+        query: SettlementEventQuery,
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> ReadPage[SettlementEvent]:
+        """Count and version only settlements within the specified known identities."""
+        return _read_events.query_settlement_events(
+            query, page, read_context, selection, business_scope=True
+        )
+
     def query_settlement_events(
         self,
         query: SettlementEventQuery,
@@ -244,6 +258,44 @@ class Ledger:
         selection: QuerySelection | None = None,
     ) -> PositionPage:
         return _read_positions.query_positions(query, page, read_context, selection, kind="cost")
+
+    def get_obligation_positions(
+        self,
+        cutoff_period: str,
+        read_context: ReadContext,
+        *,
+        business_ids: Sequence[str] = (),
+        references: Sequence[BusinessRef] = (),
+        selection: QuerySelection | None = None,
+    ) -> tuple[ResourcePosition, ...]:
+        """Complete positions of known businesses/keys; no whole-company statistics."""
+        return _read_positions.get_positions(
+            cutoff_period,
+            read_context,
+            selection,
+            kind="obligation",
+            business_ids=business_ids,
+            references=references,
+        )
+
+    def get_cost_positions(
+        self,
+        cutoff_period: str,
+        read_context: ReadContext,
+        *,
+        business_ids: Sequence[str] = (),
+        references: Sequence[BusinessRef] = (),
+        selection: QuerySelection | None = None,
+    ) -> tuple[ResourcePosition, ...]:
+        """Complete positions of known businesses/keys; absent resources stay absent."""
+        return _read_positions.get_positions(
+            cutoff_period,
+            read_context,
+            selection,
+            kind="cost",
+            business_ids=business_ids,
+            references=references,
+        )
 
     def account_names(self, codes: Sequence[str]) -> dict[str, str]:
         """Display labels for controlled subjects; this does not open a database."""

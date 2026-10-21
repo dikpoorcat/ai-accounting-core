@@ -115,11 +115,12 @@ def values(ledger, scope, kinds, read):
         cursor = page.next_cursor
 
 
-def positions(ledger, query, read, selection, *, kind):
+def cost_positions(ledger, query, read, selection):
     cursor = None
-    method = ledger.query_cost_positions if kind == "cost" else ledger.query_obligation_positions
     while True:
-        page = method(query, PageQuery(500, cursor), read, selection=selection).page
+        page = ledger.query_cost_positions(
+            query, PageQuery(500, cursor), read, selection=selection
+        ).page
         yield from page.items
         if page.next_cursor is None:
             return

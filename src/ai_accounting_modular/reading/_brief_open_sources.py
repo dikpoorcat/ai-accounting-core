@@ -107,11 +107,11 @@ def capture(reader, scope, read):
     for batch in batches(sorted({item.definition.reference["business_id"] for item in selected})):
         current.update(
             (ref_key(item.definition.reference), item)
-            for item in positions(
-                reader.ledger,
-                ObligationPositionQuery(current_cutoff, business_ids=batch),
-                QuerySelection("current"),
+            for item in reader.ledger.get_obligation_positions(
+                current_cutoff,
                 read,
+                business_ids=batch,
+                selection=QuerySelection("current"),
             )
         )
     sources = {}

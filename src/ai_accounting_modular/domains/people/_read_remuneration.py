@@ -130,7 +130,7 @@ def _recovery_parents(ledger, month, read, selection, contents, events):
             source_business_kinds=_KINDS,
         )
         links = _all(
-            lambda page, query=query: ledger.query_settlement_events(
+            lambda page, query=query: ledger.query_business_settlements(
                 query, page, read, selection=selection
             )
         )
@@ -195,12 +195,8 @@ def _positions(ledger, month, read, selection, contents, entries, events, parent
     contents.select(ids)
     positions = []
     for batch in batches(sorted(ids)):
-        query = ObligationPositionQuery(month, business_ids=batch)
-        rows = _all(
-            lambda page, query=query: ledger.query_obligation_positions(
-                query, page, read, selection=selection
-            ),
-            positions=True,
+        rows = ledger.get_obligation_positions(
+            month, read, business_ids=batch, selection=selection
         )
         for position in rows:
             ref = position.definition.reference

@@ -3,11 +3,11 @@
 from collections import defaultdict
 
 from ai_accounting_modular.contracts.public import ContractError, ReadInputs
-from ai_accounting_modular.ledger.public import CostPositionQuery, ObligationPositionQuery
+from ai_accounting_modular.ledger.public import CostPositionQuery
 
 from ._common import add_months, total
 from ._inputs import batches
-from ._read_support import directory, objects, positions, selected_scope, values
+from ._read_support import cost_positions, directory, objects, selected_scope, values
 from ._read_types import AssetPaymentSummary
 
 _LIFECYCLE = ("assets.acquisition", "assets.activation", "assets.disposal", "opening.package")
@@ -57,12 +57,11 @@ class AssetSnapshot:
         self.consumptions = self._consumptions()
         self.flows = tuple(values(owner._ledger, self.scope, _FLOW, read))
         self.project_costs = tuple(
-            positions(
+            cost_positions(
                 owner._ledger,
                 CostPositionQuery(self.cutoff, categories=("project",)),
                 read,
                 self.selection,
-                kind="cost",
             )
         )
         self.ensure_mains(item.definition.reference["business_id"] for item in self.project_costs)
@@ -73,14 +72,11 @@ class AssetSnapshot:
         payable_ids.update(item.definition.reference["business_id"] for item in self.project_costs)
         self.payables = defaultdict(list)
         for batch in batches(sorted(payable_ids)):
-            for item in positions(
-                owner._ledger,
-                ObligationPositionQuery(self.cutoff, business_ids=batch, direction="payable"),
-                read,
-                self.selection,
-                kind="obligation",
+            for item in owner._ledger.get_obligation_positions(
+                self.cutoff, read, business_ids=batch, selection=self.selection
             ):
-                self.payables[item.definition.reference["business_id"]].append(item)
+                if item.definition.value["direction"] == "payable":
+                    self.payables[item.definition.reference["business_id"]].append(item)
         extra_ids = set()
         extra_ids.update(item.definition.value["object_id"] for item in self.project_costs)
         for content in self.mains.values():

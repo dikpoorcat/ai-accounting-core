@@ -45,7 +45,7 @@ def _parts(owner, movements, scope, read):
         components=("money",),
     )
     while True:
-        page = owner._ledger.query_settlement_events(
+        page = owner._ledger.query_business_settlements(
             query, PageQuery(500, cursor), read, selection=selected
         )
         events.extend(page.items)

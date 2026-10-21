@@ -7,7 +7,6 @@ from ai_accounting_modular.ledger.opening.public import (
     opening_obligation_references,
     opening_payroll_references,
 )
-from ai_accounting_modular.ledger.public import ObligationPositionQuery
 
 from . import _brief_open_positions, _brief_open_rows, _brief_open_sources
 from ._context import last_period
@@ -29,12 +28,16 @@ class Settlements:
     strict: bool
 
 
-def _positions(reader, identifiers, cutoff, selection, read):
+def _positions(reader, identifiers, cutoff, selection, read, references=()):
     result = []
-    for batch in _brief_open_sources.batches(sorted(identifiers)):
+    keys = references or tuple(sorted(identifiers))
+    for batch in _brief_open_sources.batches(keys):
         result.extend(
-            _brief_open_sources.positions(
-                reader.ledger, ObligationPositionQuery(cutoff, business_ids=batch), selection, read
+            reader.ledger.get_obligation_positions(
+                cutoff,
+                read,
+                selection=selection,
+                **({"references": batch} if references else {"business_ids": batch}),
             )
         )
     return tuple(result)
@@ -169,8 +172,11 @@ def capture(reader, scope, selected, read):
         expected[identity] = source
     subject = selected.business["state"]["business_id"]
     identifiers = {identity[0] for identity in expected} or {subject}
-    historical = _positions(reader, identifiers, month, QuerySelection("as_posted", month), read)
-    current = _positions(reader, identifiers, cutoff, QuerySelection("current"), read)
+    references = tuple({"business_id": business, "slot": slot} for business, slot in expected)
+    historical = _positions(
+        reader, identifiers, month, QuerySelection("as_posted", month), read, references
+    )
+    current = _positions(reader, identifiers, cutoff, QuerySelection("current"), read, references)
     if not expected and selected.content is not None:
         candidates = historical
         if not any(item.definition.source == selected.content.source for item in candidates):
@@ -181,6 +187,7 @@ def capture(reader, scope, selected, read):
                 original_month,
                 QuerySelection("as_posted", original_month),
                 read,
+                references,
             )
         expected = {
             key(item.definition.reference): selected.content.source
@@ -202,7 +209,7 @@ def capture(reader, scope, selected, read):
             historical = tuple(
                 item
                 for item in _positions(
-                    reader, identifiers, month, QuerySelection("as_posted", month), read
+                    reader, identifiers, month, QuerySelection("as_posted", month), read, references
                 )
                 if matches(item)
             )
