@@ -32,6 +32,8 @@ def test_summary_uses_all_profit_main_rows_and_keeps_bank_despite_unknown_loan(s
     assert actual.net_profit == {"state": "known", "amount_fen": "128"}
     assert actual.bank == {"state": "known", "amount_fen": "178"}
     assert actual.liabilities["state"] == "unestablished"
+    assert actual.current_liabilities["state"] == "unestablished"
+    assert actual.non_current_liabilities["state"] == "unestablished"
 
 
 def test_account_cube_retains_bank_and_fund_objects_without_inventing_initial_zero(store):

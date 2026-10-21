@@ -70,6 +70,8 @@ def financial_summary(scope, read):
             for name, number in (
                 ("assets", 30),
                 ("liabilities", 47),
+                ("current_liabilities", 41),
+                ("non_current_liabilities", 46),
                 ("equity", 52),
                 ("capital", 48),
                 ("retained_profit", 51),

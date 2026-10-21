@@ -54,3 +54,23 @@ class MoneyFundActivity:
     products: tuple[MoneyFundProduct, ...]
     events: tuple[MoneyFundEvent, ...]
     issues: tuple[FactIssue, ...]
+
+
+@dataclass(frozen=True)
+class CooperationPosition:
+    contract_id: str
+    operator_id: str
+    project_id: str
+    as_of_period: str
+    held_fen: int
+    operator_due_fen: int
+    company_due_fen: int
+    status: Literal["active", "operations_ended", "settled"]
+    reference: ResultRef
+    source: ResultSourceRef
+
+
+@dataclass(frozen=True)
+class CooperationPositions:
+    version: str
+    positions: tuple[CooperationPosition, ...]

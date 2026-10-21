@@ -42,8 +42,11 @@ from ._cooperation_position import position_plan
 from ._funds import purchase, redemption
 from ._interest import interest, validate_interest
 from ._loans import contract, drawdown, owner_funding
+from ._read_cooperation import positions as cooperation_positions
 from ._read_funds import activity as fund_activity
 from ._read_funds import query_events as fund_events
+from ._read_types import CooperationPosition as CooperationPosition
+from ._read_types import CooperationPositions as CooperationPositions
 from ._read_types import MoneyFundActivity as MoneyFundActivity
 from ._read_types import MoneyFundEvent as MoneyFundEvent
 from ._read_types import MoneyFundProduct as MoneyFundProduct
@@ -215,6 +218,13 @@ class Financing:
         if self.family != "investment" or self._ledger is None or self._identity is None:
             fail("基金活动读取未装配投资、正式账务及产品端口。", "unsupported_business")
         return fund_activity(self, scope, read_context)
+
+    def cooperation_positions(
+        self, scope: LedgerScope, read_context: ReadContext, *, contract_ids: tuple[str, ...] = ()
+    ) -> CooperationPositions:
+        if self.family != "investment" or self._ledger is None:
+            fail("合作位置读取未装配投资及正式账务端口。", "unsupported_business")
+        return cooperation_positions(self, scope, read_context, contract_ids)
 
     def query_money_fund_events(
         self, scope: LedgerScope, page: PageQuery, read_context: ReadContext

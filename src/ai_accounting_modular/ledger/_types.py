@@ -27,6 +27,8 @@ class FinancialSummary:
     net_profit: AmountCell
     assets: AmountCell
     liabilities: AmountCell
+    current_liabilities: AmountCell
+    non_current_liabilities: AmountCell
     equity: AmountCell
     capital: AmountCell
     retained_profit: AmountCell

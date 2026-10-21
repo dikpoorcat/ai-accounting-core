@@ -66,6 +66,8 @@ def test_closed_summary_uses_saved_profit_even_if_current_calculator_changes(sto
         actual = ledger.financial_summary(scope(), read)
     assert actual.expense == {"state": "known", "amount_fen": "100000"}
     assert actual.net_profit == {"state": "known", "amount_fen": "-100000"}
+    assert actual.current_liabilities == {"state": "known", "amount_fen": "100000"}
+    assert actual.non_current_liabilities == {"state": "known", "amount_fen": "0"}
 
 
 def test_large_exact_resource_amount_never_passes_through_float(store):

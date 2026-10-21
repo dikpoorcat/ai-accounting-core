@@ -140,7 +140,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 
 | 端口 | 输入与返回 |
 | --- | --- |
-| `financial_summary(scope, read)` | FinancialSummary 含版本、范围、全部损益收入/费用/净利润、资产/负债/权益/资本/留存利润、银行/现金/平台，以及固定和无形资产各自原价/累计/净值及长期资产合计；每项为 AmountCell，附具体问题及采用来源。共用三表选择与余额，不以主营收入或税前利润替代完整结果。 |
+| `financial_summary(scope, read)` | FinancialSummary 含版本、范围、全部损益收入/费用/净利润、资产/负债（含流动与非流动）/权益/资本/留存利润、银行/现金/平台，以及固定和无形资产各自原价/累计/净值及长期资产合计；每项为 AmountCell，附具体问题及采用来源。共用三表选择与余额，不以主营收入或税前利润替代完整结果。 |
 | `account_balances(keys, period, read, selection=...)` | 最多500个 AccountBalanceKey(account_code, object_id?)；对象省略表示该科目全部对象。返回每项有据月初/月末余额、首个正式记账月、问题及来源。current 使用最终有效事实；as_posted 的 as_of 必须等于所查月份，月初沿用上月正式余额。1101 与基金身份按同一口径读取成本，不从购买事实累计反推。 |
 | `query_obligation_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别/方向及 include_settled。纳入以前月份截至该月的完整义务及清偿，返回 PositionPage。 |
 | `query_cost_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别及 include_consumed。已耗尽来源仍有正式身份，不因剩余为零从完整目录消失；页面可以明确筛掉。 |
@@ -166,6 +166,7 @@ PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 tota
 | `money.query_statement_rows(scope, query, page, read)` | 按可选账户及 bank/platform 类型返回正式原行、稳定行身份、资料位置、原文及真实匹配组。冻结金额和日期从所选正式 Basis 取得；当前原行文字只补充已核对的同一行，不替换冻结数据。 |
 | `investment.money_fund_activity(scope, read)` | 一次返回完整产品、确认／清偿事件和整公司／逐基金汇总，包含有源期初、正式成本、申购确认、赎回成本和确认损益。成本由 ledger 余额及成本结果提供；实际付款和到账由正式清偿提供。所有 AmountCell 的缺项索引都指向同一 issues 问题池。 |
 | `investment.query_money_fund_events(scope, page, read)` | 返回有界确认与实际清偿事件，包含稳定事件键、基金、业务、精确采用、经济月、采用月及可空真实日。闭期更正的新旧分腿分别读取自身 Target/Basis，不把确认收益再次当作到账收益。 |
+| `investment.cooperation_positions(scope, read, contract_ids=())` | 返回截至明确月每合同最近有效正式位置、实际采用合同中的经营者和项目、代管金额及双方应补、状态和精确来源。只读取既有正式结果，不重算、不造普通义务；静月沿最近位置接续，as_of_period保留真实原月。所选月的历史采用与当前最终事实分别读取，应补减少不等于实际付款。 |
 
 这些入口生成完整月度组件，reading 从已形成的组件筛选、计数和分页；续页不重新枚举历史业务。生成完整金额时须读完实际相关的窄分页，不能用首20项代表全月。基金按原义务种类筛真实清偿，金额取分配额；合作投资沿正式资金和凭证展示，不混入货币基金专用字段。
 
