@@ -1,4 +1,4 @@
-"""Bounded process-local ledger queries and their formal read results."""
+"""Process-local ledger queries and their formal read results."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -112,6 +112,18 @@ class PositionTotal:
 @dataclass(frozen=True)
 class PositionPage:
     page: ReadPage[ResourcePosition]
+    full_totals: tuple[PositionTotal, ...]
+    filtered_totals: tuple[PositionTotal, ...]
+
+
+@dataclass(frozen=True)
+class PositionSelection:
+    """One complete filtered range, with unchanged whole-scope quantities."""
+
+    version: str
+    total_count: int
+    filtered_count: int
+    items: tuple[ResourcePosition, ...]
     full_totals: tuple[PositionTotal, ...]
     filtered_totals: tuple[PositionTotal, ...]
 

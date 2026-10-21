@@ -22,16 +22,6 @@ def ref_key(reference):
     return reference["business_id"], reference["slot"]
 
 
-def positions(ledger, query, selection, read):
-    page, rows = PageQuery(500), []
-    while True:
-        result = ledger.query_obligation_positions(query, page, read, selection=selection).page
-        rows.extend(result.items)
-        if result.next_cursor is None:
-            return tuple(rows)
-        page = PageQuery(500, result.next_cursor, result.version)
-
-
 def _complete(ledger, scope, read):
     request, page = dict(scope), PageQuery(500)
     request["period_from"] = read.start_period
@@ -96,12 +86,11 @@ def _withdrawn(reader, scope, selected, current, contents, cutoff, read):
 
 def capture(reader, scope, read):
     month = scope["period_to"]
-    selected = positions(
-        reader.ledger,
+    selected = reader.ledger.capture_obligation_positions(
         ObligationPositionQuery(month, include_settled=False),
-        QuerySelection("as_posted", month),
         read,
-    )
+        selection=QuerySelection("as_posted", month),
+    ).items
     current_cutoff = last_period(reader, read) or month
     current = {}
     for batch in batches(sorted({item.definition.reference["business_id"] for item in selected})):

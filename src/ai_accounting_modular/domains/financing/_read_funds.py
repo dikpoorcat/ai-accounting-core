@@ -282,15 +282,9 @@ def activity(owner, scope, read):
     cost_query = CostPositionQuery(
         scope["period_to"], categories=_COST_CATEGORIES, include_consumed=True
     )
-    cursor, fund_ids = None, {item.fund_id for item in events}
-    while True:
-        page = owner._ledger.query_cost_positions(
-            cost_query, PageQuery(500, cursor), read, selection=selected
-        )
-        fund_ids.update(item.definition.value["object_id"] for item in page.page.items)
-        if page.page.next_cursor is None:
-            break
-        cursor = page.page.next_cursor
+    costs = owner._ledger.capture_cost_positions(cost_query, read, selection=selected)
+    fund_ids = {item.fund_id for item in events}
+    fund_ids.update(item.definition.value["object_id"] for item in costs.items)
     ids = sorted(fund_ids)
     objects = {}
     balances, issues, issue_indexes = {}, [], {}

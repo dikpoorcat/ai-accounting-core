@@ -7,7 +7,7 @@ from ai_accounting_modular.ledger.public import CostPositionQuery
 
 from ._common import add_months, total
 from ._inputs import batches
-from ._read_support import cost_positions, directory, objects, selected_scope, values
+from ._read_support import directory, objects, selected_scope, values
 from ._read_types import AssetPaymentSummary
 
 _LIFECYCLE = ("assets.acquisition", "assets.activation", "assets.disposal", "opening.package")
@@ -56,14 +56,11 @@ class AssetSnapshot:
             raise ContractError("storage_corrupt", "正式资产来源缺少本公司资产身份。")
         self.consumptions = self._consumptions()
         self.flows = tuple(values(owner._ledger, self.scope, _FLOW, read))
-        self.project_costs = tuple(
-            cost_positions(
-                owner._ledger,
-                CostPositionQuery(self.cutoff, categories=("project",)),
-                read,
-                self.selection,
-            )
-        )
+        self.project_costs = owner._ledger.capture_cost_positions(
+            CostPositionQuery(self.cutoff, categories=("project",)),
+            read,
+            selection=self.selection,
+        ).items
         self.ensure_mains(item.definition.reference["business_id"] for item in self.project_costs)
         self.payment_sources = self._payment_sources()
         payable_ids = {

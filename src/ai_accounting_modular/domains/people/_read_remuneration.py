@@ -32,13 +32,11 @@ _KINDS = ("people.remuneration", "opening.package")
 _UNPAID_CATEGORIES = ("net_pay", "social", "housing", "withholding")
 
 
-def _all(query, *, positions=False):
+def _all(query):
     request = PageQuery(500)
     result = []
     while True:
         page = query(request)
-        if positions:
-            page = page.page
         result.extend(page.items)
         if page.next_cursor is None:
             return result
@@ -108,10 +106,7 @@ def _recovery_parents(ledger, month, read, selection, contents, events):
     query = ObligationPositionQuery(
         month, categories=("other",), direction="receivable", include_settled=False
     )
-    unpaid = _all(
-        lambda page: ledger.query_obligation_positions(query, page, read, selection=selection),
-        positions=True,
-    )
+    unpaid = ledger.capture_obligation_positions(query, read, selection=selection).items
     claims = {item.definition.reference["business_id"] for item in unpaid}
     # Unpaid claims survive quiet months; monthly sources/targets also retain just-settled claims.
     claims.update(event.use.value["source"]["business_id"] for event in events)
@@ -183,10 +178,7 @@ def _positions(ledger, month, read, selection, contents, entries, events, parent
         categories=_UNPAID_CATEGORIES,
         include_settled=False,
     )
-    unpaid = _all(
-        lambda page: ledger.query_obligation_positions(query, page, read, selection=selection),
-        positions=True,
-    )
+    unpaid = ledger.capture_obligation_positions(query, read, selection=selection).items
     ids = {item.definition.reference["business_id"] for item in unpaid}
     ids.update(entry.effective["business_id"] for entry in entries)
     ids.update(event.event.use.value["source"]["business_id"] for event in events)
@@ -195,9 +187,7 @@ def _positions(ledger, month, read, selection, contents, entries, events, parent
     contents.select(ids)
     positions = []
     for batch in batches(sorted(ids)):
-        rows = ledger.get_obligation_positions(
-            month, read, business_ids=batch, selection=selection
-        )
+        rows = ledger.get_obligation_positions(month, read, business_ids=batch, selection=selection)
         for position in rows:
             ref = position.definition.reference
             info = contents.source(ref)

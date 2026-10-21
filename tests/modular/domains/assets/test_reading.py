@@ -254,6 +254,28 @@ def test_project_cost_partial_consumption_and_pending_intangible_are_separate(as
         assert complete.page.filtered_count == 1 and complete.page.items[0].consumed_fen == 100000
 
 
+@pytest.mark.parametrize("view", ["as_posted", "current"])
+def test_project_costs_capture_the_complete_range_once(assembled, monkeypatch, view):
+    app, company = assembled
+    save(app, request(company, case("B18")))
+    capture = app.ledger.capture_cost_positions
+    calls = []
+
+    def captured(query, read, *, selection):
+        result = capture(query, read, selection=selection)
+        calls.append((query.categories, selection.view, selection.as_of, result.filtered_count))
+        return result
+
+    monkeypatch.setattr(app.ledger, "capture_cost_positions", captured)
+    monkeypatch.setattr(
+        app.ledger, "query_cost_positions", lambda *_args, **_kwargs: pytest.fail("paged positions")
+    )
+    result = activity(app, company, "2026-01", view=view)
+    assert result.project_totals.count == len(result.project_costs) == 1
+    assert result.project_totals.cost_fen == result.project_totals.remaining_fen == 100000
+    assert calls == [(("project",), view, "2026-01" if view == "as_posted" else None, 1)]
+
+
 def test_501_cards_have_complete_activity_and_bounded_exact_pagination(assembled):
     app, company = assembled
     batch, enabled = bulk_fixed_assets(501)

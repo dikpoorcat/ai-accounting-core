@@ -102,6 +102,9 @@ from ._types import (
     PositionPage as PositionPage,
 )
 from ._types import (
+    PositionSelection as PositionSelection,
+)
+from ._types import (
     PositionTotal as PositionTotal,
 )
 from ._types import (
@@ -258,6 +261,26 @@ class Ledger:
         selection: QuerySelection | None = None,
     ) -> PositionPage:
         return _read_positions.query_positions(query, page, read_context, selection, kind="cost")
+
+    def capture_obligation_positions(
+        self,
+        query: ObligationPositionQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> PositionSelection:
+        """Complete filtered obligations, retaining the wide query's full-scope totals."""
+        return _read_positions.capture_positions(query, read_context, selection, kind="obligation")
+
+    def capture_cost_positions(
+        self,
+        query: CostPositionQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> PositionSelection:
+        """Complete filtered costs, retaining the wide query's full-scope totals."""
+        return _read_positions.capture_positions(query, read_context, selection, kind="cost")
 
     def get_obligation_positions(
         self,

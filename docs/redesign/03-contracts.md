@@ -160,7 +160,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `query_adopted_directory(scope, kinds, page, read, business_ids=..., result_slots=...)` | 返回月末所选正式结果的窄目录，包含无凭证结果和退休结果。`get_adopted_contents(locators, read)` 按最多500个精确 ResultRef 返回 source/target/basis，不附凭证或全部资源。 |
 | `fund_movements(account_id, from, to, read, selection=...)` | 账户为 None 时明确取全公司。按真实发生月份、实际日及稳定 movement_id 返回真实资金定义；正式冲正、替代凭证不制造第二次资金。 |
 
-PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 totals；义务按方向及类别分组，成本按类别分组，不能把不同对象的应收应付净抵。每项 ResourcePosition 含正式定义、采用来源及 PositionAmounts：确认额、money/agency/offset 清偿、transfer 转出、excess_reclassified、cost 消耗和剩余，均为整数分。汇总也使用相同分量和完整来源数量，在分页前形成。这里的 cutoff_period 只表示经济月末；核算需要精确实际日时继续使用既有 ResourceCutoff/ResourceWindow。
+PositionPage同时包含有界ReadPage、完整范围totals和筛选后totals；义务按方向及类别分组，成本按类别分组，不能把不同对象的应收应付净抵。每项ResourcePosition含正式定义、采用来源及PositionAmounts：确认额、money/agency/offset清偿、transfer转出、excess_reclassified、cost消耗和剩余，均为整数分。汇总也使用相同分量和完整来源数量，在分页前形成。程序生成完整模型时使用`capture_obligation_positions(query, read, selection=...)`或`capture_cost_positions(...)`，一次返回PositionSelection的完整筛选items、版本、计数及同口径汇总；有界分页与完整捕获共用选择算法，避免逐页重算全范围，不形成跨事务缓存。这里的cutoff_period只表示经济月末；核算需要精确实际日时继续使用既有ResourceCutoff/ResourceWindow。
 
 目录先在所属模块中限定月份、种类、对象及筛选，计数后沿稳定键取页，再批量读取本页正文。游标和版本绑定公司、数据库、选择口径、范围、集合及筛选；相关变化返回 snapshot_changed。当前对象名称可更新显示，不能改变冻结采用中的类型、金额和实际日期。
 

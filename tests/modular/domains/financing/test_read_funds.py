@@ -106,6 +106,34 @@ def test_mixed_payment_is_allocated(case):
         assert sorted(part.amount_fen for part in money.movements[0]["allocations"]) == [300, 700]
 
 
+@pytest.mark.parametrize("view", ["as_posted", "current"])
+def test_complete_product_costs_are_captured_once(case, monkeypatch, view):
+    owner = initialize(case)
+    *_, purchase, _ = six()
+    submit(case, purchase)
+    ledger = case.kernel.ledger
+    capture = ledger.capture_cost_positions
+    calls = []
+
+    def captured(query, read, *, selection):
+        result = capture(query, read, selection=selection)
+        calls.append((selection.view, selection.as_of, result.filtered_count))
+        return result
+
+    monkeypatch.setattr(ledger, "capture_cost_positions", captured)
+    monkeypatch.setattr(
+        ledger, "query_cost_positions", lambda *_args, **_kwargs: pytest.fail("paged positions")
+    )
+    with case.kernel.storage.read_unit(case.company) as read:
+        result = owner.money_fund_activity(scope(case, view=view), read)
+    assert result.closing_cost == {
+        "state": "known",
+        "amount_fen": purchase["data"]["purchase_price_fen"],
+    }
+    assert len(result.products) == 1 and result.products[0].fund_id == PRODUCT
+    assert calls == [(view, "2026-01" if view == "as_posted" else None, 1)]
+
+
 def test_501_sources_are_fully_counted_and_pages_do_not_repeat(case):
     owner = initialize(case)
     *_, prototype, _ = six()

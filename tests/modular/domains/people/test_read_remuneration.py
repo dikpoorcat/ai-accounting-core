@@ -111,6 +111,42 @@ def test_complete_costs_and_same_person_labor_are_formal_not_relationship_filter
     assert activity(case) == result
 
 
+@pytest.mark.parametrize("view", ["as_posted", "current"])
+def test_complete_position_ranges_are_captured_once_with_the_actual_selection(
+    case, monkeypatch, view
+):
+    case.seed(expense=False)
+    wage = business_case("B17Z")
+    add(case, no_contributions(), wage)
+    ledger = case.kernel.ledger
+    capture = ledger.capture_obligation_positions
+    calls = []
+
+    def captured(query, read, *, selection):
+        result = capture(query, read, selection=selection)
+        calls.append((query.categories, selection.view, selection.as_of, result.filtered_count))
+        return result
+
+    monkeypatch.setattr(ledger, "capture_obligation_positions", captured)
+    monkeypatch.setattr(
+        ledger,
+        "query_obligation_positions",
+        lambda *_args, **_kwargs: pytest.fail("paged positions"),
+    )
+    result = activity(case, view=view)
+    assert result.summary.amounts.gross_salary_fen == int(wage["data"]["gross_fen"])
+    assert result.summary.outstanding_employee_net_fen == result.summary.amounts.net_salary_fen
+    assert calls == [
+        (("other",), view, "2026-01" if view == "as_posted" else None, 0),
+        (
+            ("net_pay", "social", "housing", "withholding"),
+            view,
+            "2026-01" if view == "as_posted" else None,
+            1,
+        ),
+    ]
+
+
 def test_contribution_parameters_alone_are_not_another_payroll_cost(case):
     case.seed(expense=False)
     add(case, business_case("B14"), business_case("B16"))

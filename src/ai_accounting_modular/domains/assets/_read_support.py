@@ -115,18 +115,6 @@ def values(ledger, scope, kinds, read):
         cursor = page.next_cursor
 
 
-def cost_positions(ledger, query, read, selection):
-    cursor = None
-    while True:
-        page = ledger.query_cost_positions(
-            query, PageQuery(500, cursor), read, selection=selection
-        ).page
-        yield from page.items
-        if page.next_cursor is None:
-            return
-        cursor = page.next_cursor
-
-
 def objects(identity, kind, read):
     query = {"action": "find", "company_id": read.company_id, "kind": kind, "limit": 500}
     while True:

@@ -15,6 +15,7 @@ from ._types import (
     ObligationPositionQuery,
     PositionAmounts,
     PositionPage,
+    PositionSelection,
     PositionTotal,
     ResourcePosition,
 )
@@ -86,7 +87,7 @@ def get_positions(cutoff, read, selection=None, *, kind, business_ids=(), refere
     )
 
 
-def query_positions(query, page, read, selection=None, *, kind, economic_from=None):
+def _select_positions(query, read, selection=None, *, kind, economic_from=None):
     expected = ObligationPositionQuery if kind == "obligation" else CostPositionQuery
     if not isinstance(query, expected):
         fail("invalid_input", "资源位置须使用对应的明确查询条件。")
@@ -137,6 +138,33 @@ def query_positions(query, page, read, selection=None, *, kind, economic_from=No
     identity = version(
         read, kind + "_positions", {**asdict(query), "economic_from": economic_from}, selected, raw
     )
+    return identity, rows, filtered
+
+
+def _definitions(rows, kind):
+    return tuple(
+        ResourcePosition(resource_definition(kind, row, row, stored_source_reference(row)), amounts)
+        for row, amounts in rows
+    )
+
+
+def capture_positions(query, read, selection=None, *, kind):
+    """Select and aggregate once for an owner that needs every filtered item."""
+    identity, rows, filtered = _select_positions(query, read, selection, kind=kind)
+    return PositionSelection(
+        identity,
+        len(rows),
+        len(filtered),
+        _definitions(filtered, kind),
+        _totals(rows),
+        _totals(filtered),
+    )
+
+
+def query_positions(query, page, read, selection=None, *, kind, economic_from=None):
+    identity, rows, filtered = _select_positions(
+        query, read, selection, kind=kind, economic_from=economic_from
+    )
     after = after_key(page, identity, (str, str))
     picked = [
         item
@@ -144,10 +172,7 @@ def query_positions(query, page, read, selection=None, *, kind, economic_from=No
         if after is None or (item[0]["business_id"], item[0]["public_slot"]) > tuple(after)
     ][: page.limit + 1]
     more, picked = len(picked) > page.limit, picked[: page.limit]
-    items = tuple(
-        ResourcePosition(resource_definition(kind, row, row, stored_source_reference(row)), amounts)
-        for row, amounts in picked
-    )
+    items = _definitions(picked, kind)
     next_cursor = (
         cursor(identity, (picked[-1][0]["business_id"], picked[-1][0]["public_slot"]))
         if more

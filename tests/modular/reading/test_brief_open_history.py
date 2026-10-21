@@ -81,7 +81,7 @@ def test_opening_preserves_declared_nature_original_reference_and_tax_month_with
     assert by_title["增值税"]["purpose"] == "2025-12 税款"
 
 
-def test_closed_withdrawal_retains_january_but_current_progress_is_withdrawn(case):
+def test_closed_withdrawal_retains_january_but_current_progress_is_withdrawn(case, monkeypatch):
     expense = case.seed()
     assert case.close(case.check())["state"] == "closed"
     saved = case.app.accounting_apply(
@@ -94,10 +94,30 @@ def test_closed_withdrawal_retains_january_but_current_progress_is_withdrawn(cas
         )
     )
     assert saved["completion"] == "complete", saved
+    ledger = case.kernel.ledger
+    capture, get = ledger.capture_obligation_positions, ledger.get_obligation_positions
+    captures, current = [], []
+
+    def captured(query, read, *, selection):
+        captures.append((query.cutoff_period, selection.view, selection.as_of))
+        return capture(query, read, selection=selection)
+
+    def known(cutoff, read, **query):
+        current.append((cutoff, query["selection"].view))
+        return get(cutoff, read, **query)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Complete open balances must not loop over public pages")
+
+    monkeypatch.setattr(ledger, "capture_obligation_positions", captured)
+    monkeypatch.setattr(ledger, "get_obligation_positions", known)
+    monkeypatch.setattr(ledger, "query_obligation_positions", forbidden)
     january = page(case, publish(case))["collections"]["open_items"]["items"][0]
     assert january["outstanding_fen"] == "100000"
     assert (january["current_status"], january["current_outstanding_fen"]) == ("withdrawn", "0")
     assert page(case, publish(case, "2026-02"))["open_items"]["total_count"] == 0
+    assert captures == [("2026-01", "as_posted", "2026-01"), ("2026-02", "as_posted", "2026-02")]
+    assert current == [("2026-02", "current")]
 
 
 def test_no_voucher_adoption_inherits_the_actual_older_frozen_voucher(case):

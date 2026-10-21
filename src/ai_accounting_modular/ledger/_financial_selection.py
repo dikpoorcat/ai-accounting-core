@@ -13,11 +13,19 @@ from ._planning import stored_source_reference
 from ._report_details import hydrate_report_contributions
 from ._values import fail
 
+_SOURCE_FIELDS = (
+    "business_id",
+    "result_slot",
+    "calculation_key",
+    "calculation_revision",
+    "basis_digest",
+    "target_digest",
+)
 
-def boundary_kind(head):
-    target = json.loads(head["target_json"])
-    kind = target["kind"]
-    return kind if kind != "system.withdrawal" else target["business_kind"]
+
+def _identity(head):
+    # A bool or float must not hit an already validated integer generation.
+    return head["result_id"], type(head["generation"]), head["generation"]
 
 
 class Selection:
@@ -34,12 +42,13 @@ class Selection:
         self.used = set()
         self._balance_cubes = {}
         self._details = {}
+        self._sources, self._targets = {}, {}
         boundaries = repo.financial_boundaries(as_of=end if view == "as_posted" else None)
         self.opening = self.continuation = None
         for head in boundaries:
             self.heads[head["result_id"]] = head
             basis = self.basis(head)
-            kind = boundary_kind(head)
+            kind = self.boundary_kind(head)
             if basis["period"] != start:
                 continue
             attribute = "opening" if kind == "opening.package" else "continuation"
@@ -67,8 +76,33 @@ class Selection:
             self._bases[head["result_id"]] = value
 
     def source(self, head):
+        key = _identity(head)
+        signature = tuple((type(head[field]), head[field]) for field in _SOURCE_FIELDS)
+        saved = self._sources.get(key)
+        if saved is None:
+            saved = signature, stored_source_reference(head)
+            self._sources[key] = saved
+        elif saved[0] != signature:
+            fail("storage_corrupt", "同一正式结果的精确来源在财务读取中不一致。")
         self.used.add(head["result_id"])
-        return stored_source_reference(head)
+        # Sources enter public DTOs. Their scalar dictionaries cannot expose this cache.
+        return dict(saved[1])
+
+    def target(self, head):
+        """Borrow an internal Target for read-only calculations; never export or mutate it."""
+        key, raw = _identity(head), head["target_json"]
+        saved = self._targets.get(key)
+        if saved is None:
+            saved = raw, json.loads(raw)
+            self._targets[key] = saved
+        elif saved[0] != raw:
+            fail("storage_corrupt", "同一正式结果的目标正文在财务读取中不一致。")
+        return saved[1]
+
+    def boundary_kind(self, head):
+        target = self.target(head)
+        kind = target["kind"]
+        return kind if kind != "system.withdrawal" else target["business_kind"]
 
     def stock(self, cutoff):
         if cutoff not in self._stocks:
@@ -76,7 +110,7 @@ class Selection:
             selected = {
                 h["result_id"]: h
                 for h in heads
-                if boundary_kind(h) not in ("opening.package", "reports.continuation")
+                if self.boundary_kind(h) not in ("opening.package", "reports.continuation")
             }
             self.heads.update(selected)
             self._stocks[cutoff] = selected
@@ -92,7 +126,7 @@ class Selection:
             heads = [
                 h
                 for h in heads
-                if boundary_kind(h) not in ("opening.package", "reports.continuation")
+                if self.boundary_kind(h) not in ("opening.package", "reports.continuation")
             ]
             self.heads.update((h["result_id"], h) for h in heads)
             coefficients = Counter(h["result_id"] for h in heads)
@@ -148,7 +182,7 @@ class Selection:
         self.source(head)
         quantities = self.basis(head)["adopted_quantities"]
         values = [item for item in quantities if item["type"] == "opening_balance"]
-        target = json.loads(head["target_json"])["values"]
+        target = self.target(head)["values"]
         for field in ("debit_fen", "credit_fen"):
             if sum_amounts(parse_fen(item[field]) for item in values) != parse_fen(target[field]):
                 fail("storage_corrupt", "正式期初的采用余额与完整目标总额不一致。")
@@ -173,7 +207,7 @@ class Selection:
                 item["line"]: known(parse_fen(item[column])) for item in data["prior_" + statement]
             }
         if self.opening and not self.continuation and last >= self.start:
-            target = json.loads(self.opening["target_json"])
+            target = self.target(self.opening)
             if is_zero_origin(target, self.basis(self.opening)) and first[:4] == self.start[:4]:
                 self.source(self.opening)
                 return result

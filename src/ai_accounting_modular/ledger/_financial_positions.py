@@ -1,7 +1,6 @@
 """Ledger balances remain primary; resource positions only classify and reconcile them."""
 
 import calendar
-import json
 from collections import defaultdict
 from datetime import date
 
@@ -155,7 +154,7 @@ def positions(selection, cutoff, column):
             and not selection.continuation
             and cutoff == f"{int(selection.start[:4]) - 1:04d}-12"
             and is_zero_origin(
-                json.loads(selection.opening["target_json"]), selection.basis(selection.opening)
+                selection.target(selection.opening), selection.basis(selection.opening)
             )
         ):
             selection.source(selection.opening)
