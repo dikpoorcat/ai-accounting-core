@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+import socket
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,12 @@ from ai_accounting_modular.contracts.public import ContractError, loads_json
 from ._state import MAX_REQUEST_BYTES, PROTOCOL
 
 _DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+
+class _ResidentHTTPServer(ThreadingHTTPServer):
+    # A cold Vue page opens several asset connections while other work is busy.
+    # Let the local OS size the pending queue instead of inheriting five slots.
+    request_queue_size = socket.SOMAXCONN
 
 
 def create_server(runtime, *, port=0, static_directory=None):
@@ -256,6 +263,6 @@ def create_server(runtime, *, port=0, static_directory=None):
             except Exception as error:
                 self._error(runtime.failure(error))
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = _ResidentHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = False
     return server
