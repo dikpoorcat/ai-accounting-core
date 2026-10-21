@@ -4,6 +4,7 @@ from collections import Counter
 
 from . import _financial_projection_chains as chains
 from ._financial_order import target_key
+from ._financial_projection_fold import Fold
 from ._financial_projection_indexes import (
     CashBalanceStrategy,
     FlowStrategy,
@@ -52,7 +53,7 @@ class StockRole:
         self.spec, self.bodies = spec, bodies
         self.trees = {
             "journal": Tree("financial-gl/1", JournalStrategy(bodies), store),
-            "dimensions": Tree("financial-gl-dimensions/1", PlainStrategy(), store),
+            "dimensions": Tree("financial-gl-dimensions/2", PlainStrategy(), store),
             "cash": Tree("financial-cash-before/1", CashBalanceStrategy(bodies), store),
             "resources": Tree("financial-controlled-resources/1", PlainStrategy(), store),
         }
@@ -101,7 +102,7 @@ class StockRole:
             return
         self.bodies.get_many(_atoms(head for pair in selected for head in pair))
         updates = {name: {} for name in self.trees}
-        dimensions = Counter()
+        dimensions, parts = Counter(), {}
         for old, new in selected:
             for head, sign in ((old, -1), (new, 1)):
                 if head is None:
@@ -114,42 +115,51 @@ class StockRole:
                     updates["journal"][key] = Entry(key, [atom, row[0]]) if sign == 1 else None
                     dimension = dimension_key(*row[1:4])
                     dimensions[dimension] += sign
+                    parts[dimension] = row[1:4]
                     if row[1] in ("1001", "1002", "1012"):
                         key = order_key((*target_key(head), f"{row[0]:019d}"))
                         updates["cash"][key] = Entry(key, [atom, row[0]]) if sign == 1 else None
                 if any(body["resources"].values()):
                     key = chains.selected_key(head)
                     updates["resources"][key] = Entry(key, atom) if sign == 1 else None
-        tree = self.trees["dimensions"]
-        keys = tuple(key for key, delta in dimensions.items() if delta)
+        # A replacement can change an amount or its economic order without
+        # changing the number of rows. Rebuild each touched dimension from the
+        # actual new journal range, never by subtracting unordered net amounts.
+        journal = self.trees["journal"]
+        self.roots["journal"] = journal.patch(self.roots["journal"], updates.pop("journal"))
+        tree, keys = self.trees["dimensions"], tuple(dimensions)
         old_values = tree.get_many(self.roots["dimensions"], keys)
-        parts = {}
-        for head in (head for pair in selected for head in pair if head is not None):
-            for row in self.bodies.get_many((head["atom"],))[0]["journal"]:
-                parts[dimension_key(*row[1:4])] = row[1:4]
         for key, old in zip(keys, old_values, strict=True):
-            value = old.value if old else [*parts[key], 0]
-            self._dimension(key, value, empty=old is None)
-            count = value[3] + dimensions[key]
+            value = old.value if old else None
+            if value is not None:
+                self._dimension(key, value)
+            count = (value[3] if value is not None else 0) + dimensions[key]
             if count < 0:
                 fail("storage_corrupt", "财务余额维度的真实分录计数损坏。")
-            updates["dimensions"][key] = Entry(key, [*value[:3], count]) if count else None
+            summary = journal.summary(self.roots["journal"], first=key, last=prefix_end(key))
+            if (count == 0 and summary is not None) or (
+                count and (summary is None or summary[0] != key)
+            ):
+                fail("storage_corrupt", "财务余额维度缺少对应的实际分录摘要。")
+            updates["dimensions"][key] = (
+                Entry(key, [*parts[key], count, summary[1].record()]) if count else None
+            )
         for name, changes in updates.items():
             self.roots[name] = self.trees[name].patch(self.roots[name], changes)
 
     @staticmethod
-    def _dimension(key, value, *, empty=False):
+    def _dimension(key, value):
         if (
             type(value) is not list
-            or len(value) != 4
+            or len(value) != 5
             or type(value[0]) is not str
             or any(part is not None and type(part) is not str for part in value[1:3])
             or type(value[3]) is not int
-            or value[3] < (0 if empty else 1)
+            or value[3] < 1
             or dimension_key(*value[:3]) != key
         ):
             fail("storage_corrupt", "财务余额维度目录损坏。")
-        return tuple(value[:3])
+        return tuple(value[:3]), Fold.from_record(value[4])
 
     def cube(self, opening):
         from ._balances import sum_amounts
@@ -166,13 +176,8 @@ class StockRole:
                 )
             )
         for entry in self.trees["dimensions"].entries(self.roots["dimensions"]):
-            dim = self._dimension(entry.key, entry.value)
-            summary = self.trees["journal"].summary(
-                self.roots["journal"], first=entry.key, last=prefix_end(entry.key)
-            )
-            if summary is None or summary[0] != entry.key:
-                fail("storage_corrupt", "财务余额维度缺少实际分录摘要。")
-            result[dim] = summary[1].finish(result.get(dim, 0))
+            dim, fold = self._dimension(entry.key, entry.value)
+            result[dim] = fold.finish(result.get(dim, 0))
         return result
 
     def resource_heads(self):
