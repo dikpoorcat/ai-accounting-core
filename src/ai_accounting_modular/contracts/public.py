@@ -27,6 +27,7 @@ from ._fact_sources import (
     partial_fact_source_ids,
     partial_fact_source_paths,
 )
+from ._projection_validation import validate_contract_items
 from ._read_inputs import ReadInputs
 from ._read_queries import PageQuery, QuerySelection, ReadPage, query_selection
 from ._resource_dependencies import (
@@ -114,4 +115,5 @@ __all__ = [
     "loads_json",
     "schema_document",
     "validate_contract",
+    "validate_contract_items",
 ]
