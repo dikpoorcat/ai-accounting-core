@@ -129,6 +129,15 @@ class FinancingRepository:
 
     def save(self, fact, family):
         table = _table(family)
+        main_object = self._main_object(fact)
+        previous = (
+            self._session.fetchone(
+                "SELECT main_object_id FROM investment_fact WHERE business_id=?",
+                (fact["business_id"],),
+            )
+            if family == "investment" and fact["kind"] == PREFIX + "contract"
+            else None
+        )
         self._session.execute(
             f"INSERT INTO {table}(business_id,schema_key,effective_on,main_object_id,data_json) "
             "VALUES(?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET "
@@ -139,10 +148,19 @@ class FinancingRepository:
                 fact["business_id"],
                 fact["kind"],
                 _effective_on(fact),
-                self._main_object(fact),
+                main_object,
                 canonical_json(fact),
             ),
         )
+        if previous is not None and previous["main_object_id"] != main_object:
+            # The current contract owns its events' project index, not their frozen facts.
+            self._session.execute(
+                "UPDATE investment_fact SET main_object_id=? "
+                "WHERE substr(schema_key,1,?)=? "
+                "AND json_extract(data_json,'$.data.contract_id')=? "
+                "AND main_object_id IS NOT ?",
+                (main_object, len(PREFIX), PREFIX, fact["business_id"], main_object),
+            )
 
     def remove(self, business_id, family):
         self._session.execute(f"DELETE FROM {_table(family)} WHERE business_id=?", (business_id,))
