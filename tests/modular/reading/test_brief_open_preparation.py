@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
+from ai_accounting_modular.reading import _brief_open_buckets as buckets
 from ai_accounting_modular.reading import _brief_open_index as index
 from ai_accounting_modular.reading import _monthly
 from ai_accounting_modular.reading._collections import IndexItem
@@ -69,7 +70,7 @@ def test_full_packet_matches_previous_digest_extraction_bytes_without_decoding_n
     with monkeypatch.context() as hook:
         no_new_body_decodes(hook)
         actual = index.complete(summary, values, 17)
-    assert actual == expected  # All payload bytes, hash, ordinary rows and leaf rows.
+    assert actual == expected  # All payload bytes, hash, ordinary rows and physical buckets.
 
 
 def test_patch_packet_matches_previous_digest_extraction_bytes_and_keeps_base_proof(
@@ -98,8 +99,8 @@ def test_patch_packet_matches_previous_digest_extraction_bytes_and_keeps_base_pr
     assert actual == expected  # Includes the exact deletes, base version and item epoch.
 
 
-@pytest.mark.parametrize("damage", ["value", "index", "leaf"])
-def test_prepared_metadata_never_replaces_persisted_body_index_or_leaf_verification(case, damage):
+@pytest.mark.parametrize("damage", ["value", "index", "bucket"])
+def test_prepared_metadata_never_replaces_persisted_body_index_or_bucket_verification(case, damage):
     case.seed(expense=False)
     model = publish(case, entries())
     key = _monthly.key(scope(case))
@@ -124,10 +125,10 @@ def test_prepared_metadata_never_replaces_persisted_body_index_or_leaf_verificat
         else:
             session.execute(
                 "DELETE FROM read_item WHERE scope_key=? AND collection_key=? AND item_id=?",
-                (key, index.DIGESTS, index.leaf_id("open_members", "member-2")),
+                (key, index.BUCKETS, buckets.key("open_members", "member-2")),
             )
     with case.kernel.storage.read_unit(case.company) as read:
-        directory = index.Directory(read.repository("reading"), key, payload)
         with pytest.raises(ContractError) as failure:
+            directory = index.Directory(read.repository("reading"), key, payload)
             directory.get("open_members", ("member-2",), required=True)
     assert failure.value.code == "storage_corrupt"

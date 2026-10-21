@@ -11,7 +11,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_open_buckets as buckets
-from ._collections import IndexItem, PreparedItems, PreparedModel, _decode, prepare_items
+from ._collections import IndexItem, PreparedModel, _decode, prepare_items
 
 COMPONENT = "brief_open_items"
 DIRTY = "_open_pending"
@@ -19,8 +19,9 @@ BUSINESSES = "_open_businesses"
 OBJECTS = "_open_objects"
 FOLDS = "_open_folds"
 VOUCHERS = "_open_displays"
-DIGESTS = "_open_digests"
+BUCKETS = "_open_buckets"
 COLLECTIONS = ("open_items", "open_members", BUSINESSES, OBJECTS, FOLDS, VOUCHERS)
+PUBLIC = ("open_items", "open_members")
 
 
 def corrupt(message="待收待付读取索引不完整，请重新生成。"):
@@ -29,10 +30,6 @@ def corrupt(message="待收待付读取索引不完整，请重新生成。"):
 
 def item(collection, identity, value):
     return IndexItem(collection, identity, identity, value)
-
-
-def leaf_id(collection, identity):
-    return canonical_json([collection, identity])
 
 
 def semantic(payload):
@@ -50,7 +47,7 @@ def validate(payload):
     if type(epoch) is not int or epoch < 0 or payload["_semantic_digest"] != semantic(payload):
         corrupt()
     roots = payload["_buckets"]
-    buckets.validate(roots, COLLECTIONS, VOUCHERS)
+    buckets.validate(roots, COLLECTIONS, VOUCHERS, PUBLIC)
     if (
         buckets.manifest(roots) != payload["_collections"]
         or buckets.display_head(roots[VOUCHERS]) != payload["_voucher_display_head"]
@@ -66,37 +63,58 @@ def seal(payload, rows, epoch):
     return PreparedModel(canonical_json(payload), content_digest(payload), tuple(rows))
 
 
-def leaves(prepared: PreparedItems):
-    """Mirror only index and content hashes, so later scans never fetch member bodies."""
-    result = []
-    for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
-        collection, identity, order = row[:3]
-        result.append(
-            (
-                DIGESTS,
-                leaf_id(collection, identity),
-                order,
-                None,
-                None,
-                buckets.key(collection, identity),
-                None,
-                canonical_json({"item_id": identity, "digest": digest}),
-            )
-        )
-    return tuple(result)
-
-
-def complete(summary, entries, epoch):
-    prepared = prepare_items(entries, collections=COLLECTIONS)
-    roots = {collection: {} for collection in COLLECTIONS}
-    grouped = {}
+def _prepared(entries):
+    public, grouped, identities = [], {}, set()
+    for entry in entries:
+        if (
+            not isinstance(entry, IndexItem)
+            or entry.collection not in COLLECTIONS
+            or not isinstance(entry.item_id, str)
+            or not entry.item_id
+        ):
+            corrupt("待收待付项目引用了未声明的集合。")
+        identity = entry.collection, entry.item_id
+        if identity in identities:
+            corrupt("待收待付集合不能重复保存同一项目。")
+        identities.add(identity)
+        if entry.collection in PUBLIC:
+            public.append(entry)
+        else:
+            if entry.sort_key != entry.item_id or any(
+                getattr(entry, field) is not None
+                for field in ("business_id", "object_id", "group_key", "category")
+            ):
+                corrupt("待收待付私有项目只能使用其明确身份。")
+            grouped.setdefault(buckets.key(*identity), {})[entry.item_id] = entry.value
+    prepared = prepare_items(public)
     for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
         collection, identity, order = row[:3]
         grouped.setdefault(buckets.key(collection, identity), {})[identity] = order, digest
+    return prepared.rows, grouped
+
+
+def _bucket(identity, values):
+    collection, bucket = identity.rsplit(":", 1)
+    descriptor, raw = buckets.prepare(
+        collection,
+        bucket,
+        values,
+        private=collection not in PUBLIC,
+        displays=collection == VOUCHERS,
+    )
+    return descriptor, (BUCKETS, identity, identity, None, None, None, None, raw)
+
+
+def complete(summary, entries, epoch):
+    public, grouped = _prepared(entries)
+    roots = {collection: {} for collection in COLLECTIONS}
+    rows = list(public)
     for key, values in grouped.items():
         collection, bucket = key.rsplit(":", 1)
-        roots[collection][bucket] = buckets.describe(values, displays=collection == VOUCHERS)
-    return seal(_summary(summary, roots), (*prepared.rows, *leaves(prepared)), epoch)
+        descriptor, row = _bucket(key, values)
+        roots[collection][bucket] = descriptor
+        rows.append(row)
+    return seal(_summary(summary, roots), rows, epoch)
 
 
 def decoded(row, epoch):
@@ -114,35 +132,6 @@ def _summary(summary, roots):
     )
 
 
-def _leaf(row, epoch):
-    try:
-        saved = loads_json(row["payload_json"])
-        if not isinstance(saved, dict) or set(saved) != {"item_id", "digest"}:
-            corrupt()
-        identity, digest = saved["item_id"], saved["digest"]
-    except (ContractError, KeyError, TypeError, ValueError) as error:
-        raise ContractError("storage_corrupt", "待收待付摘要索引不完整，请重新生成。") from error
-    if not isinstance(row["group_key"], str) or ":" not in row["group_key"]:
-        corrupt()
-    collection = row["group_key"].rsplit(":", 1)[0]
-    if (
-        row["collection_key"] != DIGESTS
-        or collection not in COLLECTIONS
-        or row["head"] != epoch
-        or row["item_id"] != leaf_id(collection, identity)
-        or row["group_key"] != buckets.key(collection, identity)
-        or not isinstance(identity, str)
-        or not identity
-        or not isinstance(row["sort_key"], str)
-        or not row["sort_key"]
-        or not isinstance(digest, str)
-        or len(digest) != 64
-        or any(char not in "0123456789abcdef" for char in digest)
-    ):
-        corrupt()
-    return (collection, identity), (row["sort_key"], digest)
-
-
 class Directory:
     """Same-read bucket proofs only; never a cache across transactions or scopes."""
 
@@ -150,31 +139,62 @@ class Directory:
         self.repository, self.scope_key = repository, scope_key
         self.epoch = validate(payload)
         self.roots, self.loaded = payload["_buckets"], {}
+        if repository.open_bucket_count(scope_key) != sum(
+            len(root) for root in self.roots.values()
+        ):
+            corrupt("待收待付物理桶数量与完整目录不一致。")
 
     def load(self, keys):
         missing = set(keys) - self.loaded.keys()
         if not missing:
             return
-        selected = {key: {} for key in missing}
-        # The header binds each complete leaf set. Actual bodies are checked on
-        # use; Reading alone publishes changed bodies and leaves atomically.
-        # Even declared empty buckets are queried: an unexpected leaf is corruption.
-        for row in self.repository.open_digest_buckets(self.scope_key, tuple(sorted(missing))):
-            (collection, identity), value = _leaf(row, self.epoch)
-            key = buckets.key(collection, identity)
-            if key not in selected or identity in selected[key]:
-                corrupt()
-            selected[key][identity] = value
-        for key, values in selected.items():
+        for key in missing:
             collection, bucket = key.rsplit(":", 1)
-            empty = buckets.describe({}, displays=collection == VOUCHERS)
-            if buckets.describe(values, displays=collection == VOUCHERS) != self.roots[
-                collection
-            ].get(bucket, empty):
+            if (
+                collection not in COLLECTIONS
+                or len(bucket) != 2
+                or any(c not in "0123456789abcdef" for c in bucket)
+            ):
                 corrupt()
+        selected = {}
+        for row in self.repository.open_bucket_rows(self.scope_key, tuple(sorted(missing))):
+            key = row["item_id"]
+            if (
+                key not in missing
+                or key in selected
+                or row["collection_key"] != BUCKETS
+                or row["sort_key"] != key
+                or row["scope_key"] != self.scope_key
+                or row["component_key"] != COMPONENT
+                or row["head"] != self.epoch
+                or any(
+                    row[field] is not None
+                    for field in ("business_id", "object_id", "group_key", "category")
+                )
+            ):
+                corrupt()
+            collection, bucket = key.rsplit(":", 1)
+            expected = self.roots[collection].get(bucket)
+            if expected is None:
+                corrupt("未声明的待收待付桶中存在额外内容。")
+            selected[key] = buckets.read(
+                row["payload_json"],
+                collection,
+                bucket,
+                expected,
+                private=collection not in PUBLIC,
+                displays=collection == VOUCHERS,
+            )
+        for key in missing - selected.keys():
+            collection, bucket = key.rsplit(":", 1)
+            if bucket in self.roots[collection]:
+                corrupt()
+            selected[key] = {}
         self.loaded.update(selected)
 
     def known(self, collection, identities):
+        if collection not in COLLECTIONS:
+            raise ContractError("invalid_input", "待收待付目录未声明所选集合。")
         identities = set(identities)
         self.load(buckets.key(collection, identity) for identity in identities)
         return {
@@ -185,6 +205,12 @@ class Directory:
 
     def check(self, row):
         collection, identity = row["collection_key"], row["item_id"]
+        if (
+            collection not in PUBLIC
+            or row["scope_key"] != self.scope_key
+            or row["component_key"] != COMPONENT
+        ):
+            corrupt()
         key = buckets.key(collection, identity)
         self.load((key,))
         value = decoded(row, self.epoch)
@@ -193,11 +219,22 @@ class Directory:
             corrupt()
         return value
 
+    def check_many(self, rows):
+        """One bucket read anchors every returned row and any paging lookahead."""
+        self.load(buckets.key(row["collection_key"], row["item_id"]) for row in rows)
+        return tuple(self.check(row) for row in rows)
+
     def get(self, collection, identities, *, required=False):
         identities = tuple(dict.fromkeys(identities))
         expected = self.known(collection, identities)
         if required and expected != set(identities):
             corrupt()
+        if collection not in PUBLIC:
+            return {
+                identity: deepcopy(self.loaded[buckets.key(collection, identity)][identity])
+                for identity in identities
+                if identity in expected
+            }
         rows = (
             self.repository.item_get(self.scope_key, COMPONENT, collection, identities)
             if identities
@@ -218,28 +255,33 @@ class PreparedOpenPatch:
 
 
 def patch(summary, entries, deletes, directory, state):
-    prepared = prepare_items(entries)
+    public, updates = _prepared(entries)
     deletes = set(deletes)
-    changed = deletes | {(row[0], row[1]) for row in prepared.rows}
+    if any(collection not in COLLECTIONS for collection, _ in deletes):
+        corrupt()
+    changed = deletes | {
+        (key.rsplit(":", 1)[0], identity) for key, values in updates.items() for identity in values
+    }
     keys = {buckets.key(*identity) for identity in changed}
     directory.load(keys)
     values = {key: dict(directory.loaded[key]) for key in keys}
     for collection, identity in deletes:
         values[buckets.key(collection, identity)].pop(identity, None)
-    for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
-        collection, identity, order = row[:3]
-        values[buckets.key(collection, identity)][identity] = order, digest
+    for key, additions in updates.items():
+        values[key].update(additions)
     roots = deepcopy(directory.roots)
+    rows = list(public)
+    removed = {(collection, identity) for collection, identity in changed if collection in PUBLIC}
     for key, selected in values.items():
         collection, bucket = key.rsplit(":", 1)
+        removed.add((BUCKETS, key))
         if selected:
-            roots[collection][bucket] = buckets.describe(selected, displays=collection == VOUCHERS)
+            roots[collection][bucket], row = _bucket(key, selected)
+            rows.append(row)
         else:
             roots[collection].pop(bucket, None)
-    removed = changed
-    removed |= {(DIGESTS, leaf_id(*identity)) for identity in removed.copy()}
     return PreparedOpenPatch(
-        seal(_summary(summary, roots), (*prepared.rows, *leaves(prepared)), directory.epoch),
+        seal(_summary(summary, roots), rows, directory.epoch),
         tuple(sorted(removed)),
         state["ready_head"],
         state["content_digest"],

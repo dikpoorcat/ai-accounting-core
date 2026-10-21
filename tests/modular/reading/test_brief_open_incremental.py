@@ -18,10 +18,11 @@ from ai_accounting_modular.reading import (
 )
 from ai_accounting_modular.reading._collections import CollectionFilter, collection_page
 from ai_accounting_modular.reading._repository import ReadingRepository
+from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_read_remuneration import bank_object
 
-from .test_brief_open import apply, payment, publish
+from .test_brief_open import apply, members, page, payment, publish
 
 
 def scope(case):
@@ -177,14 +178,14 @@ def test_stale_patch_cannot_publish_or_clear_a_newer_committed_business(case):
     matches_cold(case)
 
 
-def test_corrupt_compact_leaf_fails_and_explicit_full_retry_includes_later_changes(case):
+def test_corrupt_compact_bucket_fails_and_explicit_full_retry_includes_later_changes(case):
     first = case.seed()
     publish(case)
     key = _monthly.key(scope(case))
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         unit.repository("reading")._session.execute(
             "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND collection_key=?",
-            (key, _brief_open_index.DIGESTS),
+            (key, _brief_open_index.BUCKETS),
         )
     change(case, first, "90000")
     assert case.kernel.reading.run_pending(case.company) == ()
@@ -351,9 +352,14 @@ def test_missing_dependency_index_cannot_silently_ignore_a_later_notification(ca
         apply(case, case.expense("1000", "2026-02"), objects=[bank])
     publish(case)
     key = _monthly.key(scope(case))
+    identity = first["business_id"] if formal else case.party
     with case.kernel.storage.maintenance_unit(case.company) as unit:
-        unit.repository("reading")._session.execute(
-            "DELETE FROM read_item WHERE scope_key=? AND collection_key=?", (key, collection)
+        assert (
+            unit.repository("reading")._session.execute(
+                "DELETE FROM read_item WHERE scope_key=? AND collection_key=? AND item_id=?",
+                (key, _brief_open_index.BUCKETS, _brief_open_buckets.key(collection, identity)),
+            )
+            == 1
         )
     if formal:
         apply(case, payment(case, first["business_id"], bank["object_id"], "60000", "2026-02"))
@@ -381,7 +387,7 @@ def test_missing_dependency_index_cannot_silently_ignore_a_later_notification(ca
 
 @pytest.mark.parametrize("collection", [_brief_open_index.BUSINESSES, _brief_open_index.OBJECTS])
 @pytest.mark.parametrize(
-    "corruption", ["identity", "anchor_identity", "sort", "epoch", "digest", "both"]
+    "corruption", ["identity", "sort", "epoch", "body", "collection", "metadata"]
 )
 def test_same_count_dependency_damage_cannot_hide_a_real_notification(
     case, monkeypatch, collection, corruption
@@ -395,16 +401,14 @@ def test_same_count_dependency_damage_cannot_hide_a_real_notification(
     publish(case)
     key = _monthly.key(scope(case))
     identity = first["business_id"] if formal else case.party
-    anchor = corruption not in {"identity", "both"}
-    row_collection = _brief_open_index.DIGESTS if anchor else collection
-    row_id = _brief_open_index.leaf_id(collection, identity) if anchor else identity
+    row_id = _brief_open_buckets.key(collection, identity)
     edits = {
         "identity": ("item_id=?", str(uuid4())),
-        "anchor_identity": ("item_id=?", str(uuid4())),
         "sort": ("sort_key=?", "damaged order"),
         "epoch": ("head=?", 0),
-        "digest": ("payload_json=json_set(payload_json,'$.digest',?)", "0" * 64),
-        "both": ("item_id=?", str(uuid4())),
+        "body": ("payload_json=json_set(payload_json,'$.values',json(?))", "[]"),
+        "collection": ("payload_json=json_set(payload_json,'$.collection',?)", "wrong"),
+        "metadata": ("group_key=?", "not a logical group"),
     }
     expression, replacement = edits[corruption]
     with case.kernel.storage.maintenance_unit(case.company) as unit:
@@ -412,22 +416,10 @@ def test_same_count_dependency_damage_cannot_hide_a_real_notification(
             unit.repository("reading")._session.execute(
                 f"UPDATE read_item SET {expression} WHERE scope_key=? AND component_key=? "
                 "AND collection_key=? AND item_id=?",
-                (replacement, key, _monthly.BRIEF_OPEN_ITEMS, row_collection, row_id),
+                (replacement, key, _monthly.BRIEF_OPEN_ITEMS, _brief_open_index.BUCKETS, row_id),
             )
             == 1
         )
-        if corruption == "both":
-            assert (
-                unit.repository("reading")._session.execute(
-                    "DELETE FROM read_item WHERE scope_key=? AND collection_key=? AND item_id=?",
-                    (
-                        key,
-                        _brief_open_index.DIGESTS,
-                        _brief_open_index.leaf_id(collection, identity),
-                    ),
-                )
-                == 1
-            )
 
     notification = (
         payment(case, first["business_id"], bank["object_id"], "60000", "2026-02")
@@ -438,14 +430,14 @@ def test_same_count_dependency_damage_cannot_hide_a_real_notification(
         _brief_open_buckets.key(collection, identity),
         *([_brief_open_buckets.key(collection, notification["business_id"])] if formal else []),
     }
-    original = ReadingRepository.open_digest_buckets
+    original = ReadingRepository.open_bucket_rows
 
     def bounded(repository, selected_scope, keys):
         assert set(keys) <= allowed, "a notification reads only involved identity buckets"
         return original(repository, selected_scope, keys)
 
     with monkeypatch.context() as patch:
-        patch.setattr(ReadingRepository, "open_digest_buckets", bounded)
+        patch.setattr(ReadingRepository, "open_bucket_rows", bounded)
         if formal:
             apply(case, notification)
         else:
@@ -561,3 +553,54 @@ def test_explicit_full_retry_does_not_depend_on_a_corrupt_old_header_or_pending_
         snapshot(case).components[_monthly.BRIEF_OPEN_ITEMS]["open_items"]["payable_fen"] == "90000"
     )
     matches_cold(case)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_both_real_factories_keep_private_bucket_delta_and_public_pages_cold_equal(tmp_path, mode):
+    with install_ledger_implementation(mode):
+        fixture = case.__wrapped__(tmp_path)
+        book = next(fixture)
+        try:
+            first = book.seed()
+            second = book.expense("200000")
+            apply(book, second)
+            publish(book)
+            revised, party = deepcopy(first), str(uuid4())
+            revised["data"].update(creditor_id=party, amount_fen="80000")
+            apply(
+                book,
+                mutations=[{"op": "replace", "expected_seq": 1, "fact": revised}],
+                objects=[
+                    {
+                        "object_id": party,
+                        "kind": "organization",
+                        "name": "新实际供应商",
+                        "expected_seq": 0,
+                        "data": {},
+                    }
+                ],
+            )
+            assert book.kernel.reading.run_pending(book.company)
+            matches_cold(book)
+            apply(
+                book,
+                mutations=[
+                    {
+                        "op": "withdraw",
+                        "expected_seq": 1,
+                        "business_id": second["business_id"],
+                    }
+                ],
+            )
+            assert book.kernel.reading.run_pending(book.company)
+            hot = snapshot(book)
+            overview = page(book, hot)
+            assert overview["open_items"]["payable_fen"] == "80000"
+            group = overview["collections"]["open_items"]["items"][0]["group_key"]
+            detail = members(book, hot, group, limit=500)
+            matches_cold(book)
+            cold = publish(book)
+            assert page(book, cold) == overview
+            assert members(book, cold, group, limit=500) == detail
+        finally:
+            fixture.close()

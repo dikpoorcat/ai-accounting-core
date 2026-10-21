@@ -15,7 +15,7 @@ from . import _dependencies, _monthly
 from ._collections import prepare_model
 from ._types import ModelDelivery, ReadingImpact
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 FINANCIAL = "financial"
 
 

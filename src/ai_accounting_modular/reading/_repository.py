@@ -135,17 +135,23 @@ class ReadingRepository:
             )
         )
 
-    def open_digest_buckets(self, scope_key, bucket_keys):
+    def open_bucket_count(self, scope_key):
+        return self._session.fetchone(
+            "SELECT COUNT(*) FROM read_item WHERE scope_key=? AND component_key=? "
+            "AND collection_key=?",
+            (scope_key, open_index.COMPONENT, open_index.BUCKETS),
+        )[0]
+
+    def open_bucket_rows(self, scope_key, bucket_keys):
         return tuple(
             dict(row)
             for row in self._session.fetchall(
                 "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
-                "AND collection_key=? AND group_key IN (SELECT value FROM json_each(?)) "
-                "ORDER BY group_key,sort_key,item_id",
+                "AND collection_key=? AND item_id IN (SELECT value FROM json_each(?))",
                 (
                     scope_key,
                     open_index.COMPONENT,
-                    open_index.DIGESTS,
+                    open_index.BUCKETS,
                     canonical_json(list(bucket_keys)),
                 ),
             )
