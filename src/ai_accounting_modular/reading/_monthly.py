@@ -11,7 +11,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from . import _brief_activity_index, _dependencies, _financial_projection
+from . import _brief_activity_index, _brief_open_index, _dependencies, _financial_projection
 from ._collections import collection_items as _collection_items
 from ._collections import collection_page
 from ._context import last_period, period
@@ -31,6 +31,8 @@ COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES, BRIEF_ACTIVITY, BRIEF_OPEN_IT
 def version(component):
     if component == FINANCIAL:
         return 8
+    if component == BRIEF_OPEN_ITEMS:
+        return _brief_open_index.FORMAT_VERSION
     return _brief_activity_index.FORMAT_VERSION if component == BRIEF_ACTIVITY else FORMAT_VERSION
 
 

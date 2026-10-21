@@ -45,16 +45,18 @@ def group_item(value):
     )
 
 
-def prepare(rows, cutoff_period, current_cutoff, *, complete):
+def prepare(member_entries, cutoff_period, current_cutoff, *, complete):
     grouped = defaultdict(list)
-    for row in rows:
-        grouped[row["group_key"]].append(row)
+    for entry in member_entries:
+        grouped[entry.group_key].append(entry)
     folds, categories, entries = {}, {}, []
     for identity, members in grouped.items():
         fold = folds[identity] = totals.empty()
         for member in members:
-            totals.adjust(fold, member, 1)
-        value = totals.group(members[0], fold)
+            totals.adjust(fold, member.value, 1)
+        first = min(members, key=lambda item: (item.sort_key, item.item_id))
+        fold["first"] = {"id": first.item_id, "sort": first.sort_key}
+        value = totals.group(first.value, fold)
         totals.category_adjust(categories, value, 1)
         entries.append(group_item(value))
     return (

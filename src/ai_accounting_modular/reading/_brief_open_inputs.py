@@ -9,6 +9,15 @@ from . import _brief_open_index as index
 from ._collections import _decode
 
 _IDENTITIES = ("business_ids", "current_business_ids", "current_fact_ids", "object_ids")
+ORDINARY = ReadInputs(result_kinds=("opening.package",), all_obligations=True)
+
+
+def business_ids(selected):
+    return (
+        set(selected.business_ids)
+        | set(selected.current_business_ids)
+        | set(selected.current_fact_ids)
+    )
 
 
 def static(inputs: ReadInputs):
@@ -63,7 +72,7 @@ def records(captured, members, bindings):
     return result
 
 
-def full(inputs, records, fixed_objects):
+def with_provider(inputs, records):
     records = {key: dict(value) for key, value in records.items()}
     for name, flag in (
         ("business_ids", "business"),
@@ -83,8 +92,7 @@ def full(inputs, records, fixed_objects):
                 },
             )
             value[flag] = True
-    used = {identity for value in records.values() for identity in value["objects"]}
-    fixed = sorted(set(fixed_objects) | (set(inputs.object_ids) - used))
+    fixed = sorted(set(inputs.object_ids))
     if fixed:
         records["@fixed"] = {
             "business": False,
@@ -132,26 +140,7 @@ def affected(directory, month, impact):
     return False
 
 
-def _cooperation_affects_selected(impact, month, directory):
-    changes = [
-        change
-        for change in impact.formal_changes
-        if any(kind.startswith("investment.cooperation_") for kind in change.result_kinds)
-    ]
-    identities = {
-        identity
-        for change in changes
-        for identity in (change.business_id, *change.resource_business_ids)
-    }
-    known = directory.get(index.BUSINESSES, identities) if directory and identities else {}
-    return any(
-        any(period <= month for period in change.posted_periods)
-        or {change.business_id, *change.resource_business_ids} & known.keys()
-        for change in changes
-    )
-
-
-def mark(repository, scope_key, impact, head, selected, directory, *, month, full=False):
+def mark(repository, scope_key, impact, head, selected, cooperation, directory, *, full=False):
     objects = (
         directory.get(index.OBJECTS, {identity for identity, _ in impact.objects})
         if directory
@@ -166,11 +155,11 @@ def mark(repository, scope_key, impact, head, selected, directory, *, month, ful
         objects
         or any(kind in selected.object_kinds for _, kind in impact.objects)
         or any(
-            facts.get(identity, {}).get("fact") or kind in selected.fact_kinds
+            (facts.get(identity, {}).get("fact") or kind in selected.fact_kinds)
+            and not (identity in cooperation.current_fact_ids or kind in cooperation.fact_kinds)
             for identity, kind, _ in impact.facts
         )
         or impact.closure_ranges
-        or _cooperation_affects_selected(impact, month, directory)
         or any(
             kind == "opening.package"
             for change in impact.formal_changes
@@ -182,6 +171,7 @@ def mark(repository, scope_key, impact, head, selected, directory, *, month, ful
         for change in impact.formal_changes
         for identity in (change.business_id, *change.resource_business_ids)
     }
+    identities.update(identity for identity, _, _ in impact.facts)
     repository.open_mark(scope_key, head, identities, full=full)
 
 

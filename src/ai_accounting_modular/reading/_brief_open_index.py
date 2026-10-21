@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    ReadInputs,
     canonical_json,
     content_digest,
     loads_json,
@@ -14,6 +15,7 @@ from . import _brief_open_buckets as buckets
 from ._collections import IndexItem, PreparedModel, _decode, prepare_items
 
 COMPONENT = "brief_open_items"
+FORMAT_VERSION = 8
 DIRTY = "_open_pending"
 BUSINESSES = "_open_businesses"
 OBJECTS = "_open_objects"
@@ -43,6 +45,7 @@ def semantic(payload):
 
 
 def validate(payload):
+    cooperation_inputs(payload)
     epoch = payload["_item_epoch"]
     if type(epoch) is not int or epoch < 0 or payload["_semantic_digest"] != semantic(payload):
         corrupt()
@@ -54,6 +57,13 @@ def validate(payload):
     ):
         corrupt()
     return epoch
+
+
+def cooperation_inputs(payload):
+    try:
+        return ReadInputs.from_wire(payload["_cooperation_inputs"])
+    except (KeyError, TypeError, ValueError):
+        corrupt("待收待付缺少完整的合作位置输入依赖，请重新生成。")
 
 
 def seal(payload, rows, epoch):

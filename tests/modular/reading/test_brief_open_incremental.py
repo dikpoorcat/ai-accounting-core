@@ -55,6 +55,7 @@ def matches_cold(case):
         expected.pop(key)
         actual.pop(key)
     assert expected == actual
+    return fresh
 
 
 def change(case, fact, amount, seq=1, **options):
@@ -166,7 +167,11 @@ def test_stale_patch_cannot_publish_or_clear_a_newer_committed_business(case):
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
         assert not repository.publish(
-            key, _monthly.BRIEF_OPEN_ITEMS, state["wanted_head"], _monthly.FORMAT_VERSION, prepared
+            key,
+            _monthly.BRIEF_OPEN_ITEMS,
+            state["wanted_head"],
+            _monthly.version(_monthly.BRIEF_OPEN_ITEMS),
+            prepared,
         )
         full, pending = _brief_open_inputs.pending(repository, key)
         assert not full and pending == {first["business_id"], second["business_id"]}

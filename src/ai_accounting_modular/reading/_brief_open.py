@@ -2,14 +2,14 @@
 
 from collections import Counter
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
+from ai_accounting_modular.contracts.public import ContractError, PageQuery
 
+from . import _brief_open_cooperation as cooperation
 from . import _brief_open_displays as displays
 from . import _brief_open_groups as groups
 from . import _brief_open_index as index
 from . import _brief_open_inputs as inputs
 from . import _brief_open_members as member_rows
-from . import _brief_open_positions as positions
 from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_vouchers, _monthly
@@ -34,6 +34,12 @@ def member_item(member, *, position_order=None):
     )
 
 
+def member_items(ordinary, extras):
+    return [member_item(member) for member in ordinary] + [
+        member_item(member, position_order=position) for position, member in enumerate(extras)
+    ]
+
+
 def bind_displays(reader, members, captured, read):
     return displays.capture(
         reader,
@@ -47,71 +53,16 @@ def bind_displays(reader, members, captured, read):
 def prepare(reader, scope, read):
     captured = sources.capture(reader, scope, read)
     members = rows.project(captured, scope["company_id"], reader.identity, read)
-    cooperation = reader.investment.cooperation_positions(scope, read)
-    selected_positions = cooperation.positions
-    current_scope = {
-        "company_id": scope["company_id"],
-        "period_from": captured.current_cutoff,
-        "period_to": captured.current_cutoff,
-        "view": "current",
-    }
-    current_positions = []
-    contracts = sorted(
-        {
-            item.contract_id
-            for item in selected_positions
-            if item.operator_due_fen or item.company_due_fen
-        }
-    )
-    for batch in sources.batches(contracts):
-        current_positions.extend(
-            reader.investment.cooperation_positions(
-                current_scope, read, contract_ids=batch
-            ).positions
-        )
-    extra = positions.project(
-        selected_positions,
-        current_positions,
-        company_id=scope["company_id"],
-        cutoff_period=scope["period_to"],
-        identity=reader.identity,
-        read=read,
-    )
-    ordinary_count = len(members)
+    extra, cooperation_inputs = cooperation.capture(reader, scope, read, captured.current_cutoff)
+    member_entries = member_items(members, extra)
     members.extend(extra)
     summary, entries, folds, categories = groups.prepare(
-        members, scope["period_to"], captured.current_cutoff, complete=captured.complete
+        member_entries, scope["period_to"], captured.current_cutoff, complete=captured.complete
     )
-    member_entries = [member_item(member) for member in members[:ordinary_count]]
-    member_entries.extend(
-        member_item(member, position_order=position) for position, member in enumerate(extra)
-    )
-    first = {}
-    for value in member_entries:
-        candidate = value.sort_key, value.item_id
-        current = first.get(value.group_key)
-        if current is None or candidate < current:
-            first[value.group_key] = candidate
-    for identity, fold in folds.items():
-        order, member_id = first[identity]
-        fold["first"] = {"id": member_id, "sort": order}
     entries.extend(member_entries)
     bindings = bind_displays(reader, members, captured, read)
     records = inputs.records(captured, members, bindings)
-    display_ids = {identity for value in records.values() for identity in value["objects"]}
-    businesses = tuple(
-        sorted({body.reference["business_id"] for body in captured.contents.values()})
-    )
-    dependencies = cooperation.inputs.merge(
-        ReadInputs(
-            result_kinds=("opening.package",),
-            all_obligations=True,
-            business_ids=businesses,
-            current_business_ids=tuple(sorted(set(businesses) | set(contracts))),
-            object_ids=tuple(sorted(display_ids)),
-        )
-    )
-    records = inputs.full(dependencies, records, cooperation.inputs.object_ids)
+    records = inputs.with_provider(cooperation_inputs, records)
     entries.extend(
         index.item(index.BUSINESSES, identity, value) for identity, value in records.items()
     )
@@ -128,7 +79,8 @@ def prepare(reader, scope, read):
         {
             "open_items": summary,
             "_category_folds": categories,
-            "_inputs": inputs.static(dependencies).wire(),
+            "_inputs": inputs.static(inputs.ORDINARY.merge(cooperation_inputs)).wire(),
+            "_cooperation_inputs": cooperation_inputs.wire(),
         },
         entries,
         read.head,

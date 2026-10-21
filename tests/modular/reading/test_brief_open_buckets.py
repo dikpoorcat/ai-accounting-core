@@ -28,15 +28,19 @@ from tests.modular.application._working_case import case as case
 from .test_brief_open_incremental import scope
 
 
+def summary():
+    return {"_inputs": ReadInputs().wire(), "_cooperation_inputs": ReadInputs().wire()}
+
+
 def publish(case, entries):
     key = _monthly.key(scope(case))
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repo = unit.repository("reading")
-        repo.register(key, index.COMPONENT, unit.head, _monthly.FORMAT_VERSION)
+        repo.register(key, index.COMPONENT, unit.head, _monthly.version(index.COMPONENT))
         state = repo.state(key, index.COMPONENT)
-        model = index.complete({"_inputs": ReadInputs().wire()}, entries, unit.head)
+        model = index.complete(summary(), entries, unit.head)
         assert repo.publish(
-            key, index.COMPONENT, state["wanted_head"], _monthly.FORMAT_VERSION, model
+            key, index.COMPONENT, state["wanted_head"], _monthly.version(index.COMPONENT), model
         )
     return model
 
@@ -52,7 +56,7 @@ def patch(case, entries, deletes):
         prepared = index.patch(summary, entries, deletes, directory, state)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         assert unit.repository("reading").publish(
-            key, index.COMPONENT, state["wanted_head"], _monthly.FORMAT_VERSION, prepared
+            key, index.COMPONENT, state["wanted_head"], _monthly.version(index.COMPONENT), prepared
         )
     return prepared.model
 
@@ -104,7 +108,7 @@ def test_cross_bucket_add_delete_and_content_change_match_full_and_preserve_othe
     }
     actual = loads_json(result.payload_json)
     expected = index.complete(
-        {"_inputs": ReadInputs().wire()},
+        summary(),
         [changed, members[2], added, *groups],
         actual["_item_epoch"],
     )
@@ -169,7 +173,7 @@ def test_same_bucket_collision_keeps_other_members_and_is_read_only_once(case, m
         actual = patch(case, [new], [("open_members", first)])
     assert seen == [buckets.key("open_members", first)]
     epoch = loads_json(actual.payload_json)["_item_epoch"]
-    expected = index.complete({"_inputs": ReadInputs().wire()}, [original[1], new], epoch)
+    expected = index.complete(summary(), [original[1], new], epoch)
     assert actual.payload_json == expected.payload_json
 
 
@@ -184,7 +188,7 @@ def test_an_undeclared_bucket_rejects_extra_physical_content(case):
     )
     extra = IndexItem("open_members", identity, identity, {"label": "unexpected"})
     payload = loads_json(original.payload_json)
-    forged = index.complete({"_inputs": ReadInputs().wire()}, [extra], payload["_item_epoch"])
+    forged = index.complete(summary(), [extra], payload["_item_epoch"])
     key = _monthly.key(scope(case))
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         session = unit.repository("reading")._session
@@ -228,7 +232,7 @@ def test_private_buckets_have_one_body_no_item_mirrors_and_get_returns_isolated_
     changed = index.item(index.BUSINESSES, "business-new", {"members": ["new"]})
     actual = patch(case, [changed], [(index.BUSINESSES, "business-0")])
     expected = index.complete(
-        {"_inputs": ReadInputs().wire()},
+        summary(),
         [value for value in values if value.item_id != "business-0"] + [changed],
         payload["_item_epoch"],
     )
@@ -240,10 +244,7 @@ def test_private_buckets_have_one_body_no_item_mirrors_and_get_returns_isolated_
         [(value.collection, value.item_id) for value in values[1:]]
         + [(index.BUSINESSES, "business-new"), (index.FOLDS, "group")],
     )
-    assert (
-        empty.payload_json
-        == index.complete({"_inputs": ReadInputs().wire()}, (), payload["_item_epoch"]).payload_json
-    )
+    assert empty.payload_json == index.complete(summary(), (), payload["_item_epoch"]).payload_json
 
 
 def test_full_factory_rejects_duplicate_private_identity_and_does_not_make_binding_rows(

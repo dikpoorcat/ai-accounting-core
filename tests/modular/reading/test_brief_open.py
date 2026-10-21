@@ -30,10 +30,10 @@ def publish(case, month="2026-01"):
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
         component = _monthly.BRIEF_OPEN_ITEMS
-        repository.register(_monthly.key(scope), component, unit.head, _monthly.FORMAT_VERSION)
+        repository.register(_monthly.key(scope), component, unit.head, _monthly.version(component))
         repository.mark(_monthly.key(scope), component, unit.head)
         assert repository.publish(
-            _monthly.key(scope), component, unit.head, _monthly.FORMAT_VERSION, model
+            _monthly.key(scope), component, unit.head, _monthly.version(component), model
         )
     with case.kernel.storage.read_unit(case.company) as read:
         return _monthly.ready_snapshot(case.kernel.reading, scope, (component,), read)

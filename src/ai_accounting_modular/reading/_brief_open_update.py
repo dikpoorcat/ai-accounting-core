@@ -1,4 +1,4 @@
-"""Apply ordinary obligation changes to BriefOpen's existing member and group indexes."""
+"""Patch changed claims and the cooperation provider into the existing Open indexes."""
 
 from collections import Counter, defaultdict
 from copy import deepcopy
@@ -11,6 +11,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_open as brief
+from . import _brief_open_cooperation as cooperation
 from . import _brief_open_groups as groups
 from . import _brief_open_index as index
 from . import _brief_open_inputs as inputs
@@ -18,8 +19,8 @@ from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_open_totals as totals
 from . import _dependencies, _monthly
-from ._business_labels import origin_fields
 from ._collections import CollectionFilter
+from ._context import last_period
 
 
 def base(repository, state):
@@ -53,8 +54,8 @@ def mark(repository, state, scope, impact, head):
                 impact,
                 head,
                 selected,
+                index.cooperation_inputs(payload) if payload is not None else ReadInputs(),
                 directory,
-                month=scope["period_to"],
                 full=payload is None,
             )
         if affected or state["state"] == "preparing":
@@ -87,12 +88,12 @@ def _references(directory, collection, before, after, entries, deletes):
             entries.append(index.item(collection, identity, {"count": count}))
 
 
-def _groups(directory, old, new, category_folds, entries, deletes):
+def _groups(directory, old, new_entries, category_folds, entries, deletes):
     previous, proposed = defaultdict(list), defaultdict(list)
     for value in old.values():
         previous[value["group_key"]].append(value)
-    for value in new:
-        proposed[value["group_key"]].append(value)
+    for entry in new_entries:
+        proposed[entry.group_key].append(entry)
     identities = set(previous) | set(proposed)
     folds = directory.get(index.FOLDS, identities)
     old_groups = directory.get("open_items", folds, required=True)
@@ -105,14 +106,12 @@ def _groups(directory, old, new, category_folds, entries, deletes):
             totals.category_adjust(category_folds, old_groups[identity], -1)
         for value in previous[identity]:
             totals.adjust(fold, value, -1)
-        for value in proposed[identity]:
-            totals.adjust(fold, value, 1)
+        for entry in proposed[identity]:
+            totals.adjust(fold, entry.value, 1)
         deletes.update(((index.FOLDS, identity), ("open_items", identity)))
         if not fold["count"]:
             continue
-        candidates = [
-            (brief.member_item(value).sort_key, value["id"], value) for value in proposed[identity]
-        ]
+        candidates = [(entry.sort_key, entry.item_id, entry.value) for entry in proposed[identity]]
         previous_first = (old_first["sort"], old_first["id"]) if old_first is not None else None
         if old_count and previous_first is None:
             index.corrupt()
@@ -169,6 +168,13 @@ def prepare(reader, scope, read, state):
     payload = base(repository, state)
     if payload is None:
         return brief.prepare(reader, scope, read)
+    current_cutoff = last_period(reader, read) or scope["period_to"]
+    if current_cutoff < payload["open_items"]["current_cutoff_period"]:
+        return brief.prepare(reader, scope, read)
+    extra, cooperation_inputs = cooperation.capture(reader, scope, read, current_cutoff)
+    dirty.update(inputs.business_ids(index.cooperation_inputs(payload)))
+    dirty.update(inputs.business_ids(cooperation_inputs))
+    dirty.add("@fixed")
     directory = index.Directory(repository, key, payload)
     old_records = directory.get(index.BUSINESSES, dirty)
     old_members = directory.get(
@@ -183,28 +189,27 @@ def prepare(reader, scope, read, state):
         for value in (old_members[identity],)
     ):
         index.corrupt()
-    if any("_locator" not in value for value in old_members.values()):
-        return brief.prepare(reader, scope, read)
     captured = sources.capture(
-        reader, scope, read, business_ids=dirty, complete=payload["open_items"]["complete"]
+        reader,
+        scope,
+        read,
+        business_ids=dirty - {"@fixed"},
+        complete=payload["open_items"]["complete"],
     )
-    if captured.current_cutoff < payload["open_items"]["current_cutoff_period"] or any(
-        origin_fields(content)[0]["kind"] == "opening.package"
-        or origin_fields(content)[0]["kind"].startswith("investment.cooperation_")
-        for content in captured.contents.values()
-    ):
-        return brief.prepare(reader, scope, read)
     members = rows.project(captured, scope["company_id"], reader.identity, read)
+    member_entries = brief.member_items(members, extra)
+    members.extend(extra)
     bindings = brief.bind_displays(reader, members, captured, read)
     records = inputs.records(captured, members, bindings)
-    entries = [brief.member_item(value) for value in members]
+    records = inputs.with_provider(cooperation_inputs, records)
+    entries = list(member_entries)
     entries.extend(
         index.item(index.BUSINESSES, identity, value) for identity, value in records.items()
     )
     deletes = {("open_members", identity) for identity in old_members}
     deletes.update((index.BUSINESSES, identity) for identity in old_records)
     category_folds = deepcopy(payload["_category_folds"])
-    _groups(directory, old_members, members, category_folds, entries, deletes)
+    _groups(directory, old_members, member_entries, category_folds, entries, deletes)
     _references(
         directory,
         index.OBJECTS,
@@ -227,6 +232,8 @@ def prepare(reader, scope, read, state):
         if name not in {"_item_epoch", "_semantic_digest", "_collections"}
     }
     summary["_category_folds"] = category_folds
+    summary["_cooperation_inputs"] = cooperation_inputs.wire()
+    summary["_inputs"] = inputs.static(inputs.ORDINARY.merge(cooperation_inputs)).wire()
     summary["open_items"] = totals.summary(
         category_folds,
         groups.CATEGORIES,
