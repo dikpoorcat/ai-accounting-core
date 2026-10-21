@@ -162,8 +162,8 @@ JSON中的invoke由H包测试适配层按下表执行，不增加生产API，也
 ```powershell
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/contracts tests/modular/storage tests/modular/files
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/ledger tests/modular/domains tests/modular/money
-& '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/application tests/modular/identity tests/modular/agent tests/modular/records
-& '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/reading tests/modular/dashboard
+& '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/application tests/modular/identity tests/modular/host tests/modular/records
+& '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/reading
 & '.tmp-kernel-venv/Scripts/python.exe' -m pytest tests/modular/architecture tests/modular/integration tests/modular/acceptance
 npm --prefix frontend test
 npm --prefix frontend run build
