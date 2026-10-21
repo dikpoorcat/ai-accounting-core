@@ -4,6 +4,7 @@ from ai_accounting_modular.contracts.public import canonical_json, loads_json
 
 from . import _brief_activity_index as activity_index
 from . import _brief_open_index as open_index
+from . import _brief_open_rollover as open_rollover
 from ._collections import PreparedModel
 from ._financial_projection import PreparedFinancial
 from ._financial_store import FinancialStore
@@ -83,26 +84,43 @@ class ReadingRepository:
             format_version,
         ):
             return False
-        if patch is not None and (
-            component != open_index.COMPONENT
-            or state["ready_head"] != patch.base_ready
-            or state["content_digest"] != patch.base_digest
-        ):
-            return False
-        epoch = (
-            open_index.validate(loads_json(model.payload_json))
-            if component == open_index.COMPONENT
-            else wanted_head
-        )
+        fork = patch is not None and patch.base_scope != scope_key
+        if patch is not None:
+            if component != open_index.COMPONENT:
+                return False
+            if fork:
+                if not open_rollover.initial(self, state):
+                    return False
+            elif (state["ready_head"], state["content_digest"]) != (
+                patch.base_ready,
+                patch.base_digest,
+            ):
+                return False
+        if component == open_index.COMPONENT:
+            payload = loads_json(model.payload_json)
+            epoch = open_index.validate(payload)
+        else:
+            payload, epoch = None, wanted_head
         if patch is not None and epoch != patch.item_epoch:
             return False
+        if fork and not open_rollover.matches(self, patch, scope_key, payload):
+            return False
         rows = tuple((scope_key, *row, component, epoch) for row in model.rows)
-        if patch is None:
+        if patch is None or fork:
             self._session.execute(
                 "DELETE FROM read_item WHERE scope_key=? AND component_key=?",
                 (scope_key, component),
             )
-        else:
+        if fork:
+            self._session.execute(
+                "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
+                "object_id,group_key,category,payload_json,component_key,head) "
+                "SELECT ?,collection_key,item_id,sort_key,business_id,object_id,group_key,"
+                "category,payload_json,component_key,head FROM read_item "
+                "WHERE scope_key=? AND component_key=? AND collection_key IN (?,?,?)",
+                (scope_key, patch.base_scope, component, *open_index.PUBLIC, open_index.BUCKETS),
+            )
+        if patch is not None:
             self._session.executemany(
                 "DELETE FROM read_item WHERE scope_key=? AND component_key=? "
                 "AND collection_key=? AND item_id=?",

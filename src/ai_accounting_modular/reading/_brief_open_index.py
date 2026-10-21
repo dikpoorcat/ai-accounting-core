@@ -12,6 +12,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_open_buckets as buckets
+from . import _dependencies
 from ._collections import IndexItem, PreparedModel, _decode, prepare_items
 
 COMPONENT = "brief_open_items"
@@ -57,6 +58,18 @@ def validate(payload):
     ):
         corrupt()
     return epoch
+
+
+def base(repository, state):
+    row = repository.payload(state["scope_key"], COMPONENT)
+    if row is None:
+        return None
+    value = loads_json(row["payload_json"])
+    if row["head"] != state["ready_head"] or content_digest(value) != state["content_digest"]:
+        corrupt()
+    validate(value)
+    _dependencies.inputs(value)
+    return value
 
 
 def cooperation_inputs(payload):
@@ -262,6 +275,7 @@ class PreparedOpenPatch:
     base_ready: int
     base_digest: str
     item_epoch: int
+    base_scope: str
 
 
 def patch(summary, entries, deletes, directory, state):
@@ -296,4 +310,5 @@ def patch(summary, entries, deletes, directory, state):
         state["ready_head"],
         state["content_digest"],
         directory.epoch,
+        directory.scope_key,
     )

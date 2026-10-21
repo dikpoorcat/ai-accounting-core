@@ -6,8 +6,6 @@ from copy import deepcopy
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadInputs,
-    content_digest,
-    loads_json,
 )
 
 from . import _brief_open as brief
@@ -15,24 +13,14 @@ from . import _brief_open_cooperation as cooperation
 from . import _brief_open_groups as groups
 from . import _brief_open_index as index
 from . import _brief_open_inputs as inputs
+from . import _brief_open_rollover as rollover
 from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_open_totals as totals
 from . import _dependencies, _monthly
+from ._brief_open_index import base
 from ._collections import CollectionFilter
 from ._context import last_period
-
-
-def base(repository, state):
-    row = repository.payload(state["scope_key"], index.COMPONENT)
-    if row is None:
-        return None
-    value = loads_json(row["payload_json"])
-    if row["head"] != state["ready_head"] or content_digest(value) != state["content_digest"]:
-        index.corrupt()
-    index.validate(value)
-    _dependencies.inputs(value)
-    return value
 
 
 def mark(repository, state, scope, impact, head):
@@ -163,19 +151,50 @@ def _groups(directory, old, new_entries, category_folds, entries, deletes):
 def prepare(reader, scope, read, state):
     repository, key = read.repository("reading"), state["scope_key"]
     full, dirty = inputs.pending(repository, key)
-    if full:
+    initial = rollover.initial(repository, state)
+    if full and not initial:
         return brief.prepare(reader, scope, read)
     payload = base(repository, state)
-    if payload is None:
-        return brief.prepare(reader, scope, read)
     current_cutoff = last_period(reader, read) or scope["period_to"]
-    if current_cutoff < payload["open_items"]["current_cutoff_period"]:
-        return brief.prepare(reader, scope, read)
+    if payload is None:
+        previous = (
+            rollover.select(repository, scope, current_cutoff, read.start_period)
+            if initial
+            else None
+        )
+        if previous is None:
+            return brief.prepare(reader, scope, read)
+        state, payload, directory = previous
+        candidates = reader.ledger.obligation_cutoff_candidates(
+            payload["open_items"]["cutoff_period"], scope["period_to"], read
+        )
+        dirty.update(candidates.business_ids)
+        complete = sources._complete(reader.ledger, scope, read)
+    else:
+        if current_cutoff < payload["open_items"]["current_cutoff_period"]:
+            return brief.prepare(reader, scope, read)
+        directory = index.Directory(repository, key, payload)
+        complete = payload["open_items"]["complete"]
+    return prepare_from_base(
+        reader,
+        scope,
+        read,
+        state,
+        payload,
+        directory,
+        dirty,
+        current_cutoff=current_cutoff,
+        complete=complete,
+    )
+
+
+def prepare_from_base(
+    reader, scope, read, state, payload, directory, dirty, *, current_cutoff, complete
+):
     extra, cooperation_inputs = cooperation.capture(reader, scope, read, current_cutoff)
     dirty.update(inputs.business_ids(index.cooperation_inputs(payload)))
     dirty.update(inputs.business_ids(cooperation_inputs))
     dirty.add("@fixed")
-    directory = index.Directory(repository, key, payload)
     old_records = directory.get(index.BUSINESSES, dirty)
     old_members = directory.get(
         "open_members",
@@ -194,7 +213,7 @@ def prepare(reader, scope, read, state):
         scope,
         read,
         business_ids=dirty - {"@fixed"},
-        complete=payload["open_items"]["complete"],
+        complete=complete,
     )
     members = rows.project(captured, scope["company_id"], reader.identity, read)
     member_entries = brief.member_items(members, extra)
