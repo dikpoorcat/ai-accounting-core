@@ -1,6 +1,6 @@
 """Narrow directory SQL; payloads are read only after selecting page identities."""
 
-from ai_accounting_modular.contracts.public import canonical_json
+from ai_accounting_modular.contracts.public import QuerySelection, canonical_json
 
 from ._read_selection import business_kind, selected
 
@@ -256,6 +256,46 @@ class ReadRepository:
             categories=categories,
             direction=direction,
         )
+
+    def read_obligation_cutoff_candidates(self, previous, cutoff):
+        endpoints, args = [], [previous, cutoff, previous, cutoff, cutoff]
+        for name, month in (("before_heads", previous), ("after_heads", cutoff)):
+            table, where, parameters = self.read_result_scope(
+                {"period_from": month, "period_to": month}, (), QuerySelection("as_posted", month)
+            )
+            endpoints.append(
+                name
+                + " AS MATERIALIZED (SELECT r.result_id,r.business_id FROM "
+                + table
+                + " JOIN crossed_slots crossed ON crossed.business_id=r.business_id "
+                "AND crossed.result_slot=r.result_slot WHERE " + where + ")"
+            )
+            args.extend(parameters)
+        # A selected stock head can change only across a posting or an economic
+        # month boundary. Select both actual endpoints afterwards: withdrawals
+        # may have no children, and intermediate frozen heads are not stock.
+        sql = (
+            "WITH crossed_slots AS MATERIALIZED ("
+            "SELECT business_id,result_slot FROM adopted_result WHERE posting_period>? "
+            "AND posting_period<=? UNION SELECT business_id,result_slot FROM adopted_result "
+            "WHERE business_period>? AND business_period<=? AND posting_period<=?),"
+            + ",".join(endpoints)
+            + ",changed AS MATERIALIZED ("
+            "SELECT result_id,business_id FROM before_heads "
+            "WHERE result_id NOT IN (SELECT result_id FROM after_heads) "
+            "UNION ALL SELECT result_id,business_id FROM after_heads "
+            "WHERE result_id NOT IN (SELECT result_id FROM before_heads)) "
+            "SELECT changed.business_id AS business_id FROM changed "
+            "WHERE EXISTS(SELECT 1 FROM obligation d WHERE d.result_id=changed.result_id) "
+            "UNION SELECT s.source_business_id FROM changed "
+            "JOIN settlement s ON s.result_id=changed.result_id "
+            "UNION SELECT x.source_business_id FROM changed "
+            "JOIN obligation_reclassification x ON x.result_id=changed.result_id "
+            "UNION SELECT x.target_business_id FROM changed "
+            "JOIN obligation_reclassification x ON x.result_id=changed.result_id "
+            "ORDER BY business_id"
+        )
+        return tuple(row["business_id"] for row in self._session.fetchall(sql, tuple(args)))
 
     def has_adoptions_after(self, period):
         return bool(

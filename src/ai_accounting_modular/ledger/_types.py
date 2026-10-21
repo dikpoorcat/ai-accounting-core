@@ -139,6 +139,15 @@ class PositionSelection:
     filtered_totals: tuple[PositionTotal, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ObligationCutoffCandidates:
+    """Complete candidate businesses between saved cutoffs, not a retained change log."""
+
+    previous_cutoff_period: str
+    cutoff_period: str
+    business_ids: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class ObligationDirectoryQuery:
     """Compare selected open resources with current matches; None selects all businesses."""

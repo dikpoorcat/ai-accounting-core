@@ -12,6 +12,7 @@ from ._read_effective_vouchers import capture as capture_vouchers
 from ._read_origin_headers import checked_items, source_headers
 from ._read_positions import _amounts
 from ._types import (
+    ObligationCutoffCandidates,
     ObligationDirectory,
     ObligationDirectoryItem,
     ObligationDirectoryQuery,
@@ -19,6 +20,17 @@ from ._types import (
 from ._values import fail
 
 _RESOURCE_FIELDS = ("direction", "category", "business_period", "party_id")
+
+
+def cutoff_candidates(previous, cutoff, read):
+    """Compare formal stocks in this read; a caller's earlier base must still be current."""
+    for month in (previous, cutoff):
+        validate_contract("core.schema.json", "Month", month)
+    if not read.start_period <= previous < cutoff:
+        fail("invalid_input", "往来候选须从建账月起选择严格递增的两个截止月。")
+    ids = read.repository("ledger").read_obligation_cutoff_candidates(previous, cutoff)
+    checked_items("core.schema.json", "Id", list(ids))
+    return ObligationCutoffCandidates(previous, cutoff, ids)
 
 
 def _query(query):

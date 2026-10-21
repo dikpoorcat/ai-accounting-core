@@ -122,6 +122,9 @@ from ._types import (
     FinancialSummary as FinancialSummary,
 )
 from ._types import (
+    ObligationCutoffCandidates as ObligationCutoffCandidates,
+)
+from ._types import (
     ObligationDirectory as ObligationDirectory,
 )
 from ._types import (
@@ -271,6 +274,17 @@ class Ledger:
     ) -> ObligationDirectory:
         """Selected open resources and exact current matches, with optional frozen origins."""
         return _read_obligation_directory.capture(query, read_context)
+
+    def obligation_cutoff_candidates(
+        self,
+        previous_cutoff_period: str,
+        cutoff_period: str,
+        read_context: ReadContext,
+    ) -> ObligationCutoffCandidates:
+        """Candidate obligations affected between two actual as-posted stocks in this read."""
+        return _read_obligation_directory.cutoff_candidates(
+            previous_cutoff_period, cutoff_period, read_context
+        )
 
     def get_obligation_origins(
         self, locators: Sequence[ResultRef], read_context: ReadContext
