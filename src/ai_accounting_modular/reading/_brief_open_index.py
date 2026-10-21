@@ -11,7 +11,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_open_buckets as buckets
-from ._collections import IndexItem, PreparedModel, _decode, prepare_items
+from ._collections import IndexItem, PreparedItems, PreparedModel, _decode, prepare_items
 
 COMPONENT = "brief_open_items"
 DIRTY = "_open_pending"
@@ -66,12 +66,11 @@ def seal(payload, rows, epoch):
     return PreparedModel(canonical_json(payload), content_digest(payload), tuple(rows))
 
 
-def leaves(rows):
+def leaves(prepared: PreparedItems):
     """Mirror only index and content hashes, so later scans never fetch member bodies."""
     result = []
-    for row in rows:
+    for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
         collection, identity, order = row[:3]
-        digest = loads_json(row[-1])["digest"]
         result.append(
             (
                 DIGESTS,
@@ -91,16 +90,13 @@ def complete(summary, entries, epoch):
     prepared = prepare_items(entries, collections=COLLECTIONS)
     roots = {collection: {} for collection in COLLECTIONS}
     grouped = {}
-    for row in prepared.rows:
+    for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
         collection, identity, order = row[:3]
-        grouped.setdefault(buckets.key(collection, identity), {})[identity] = (
-            order,
-            loads_json(row[-1])["digest"],
-        )
+        grouped.setdefault(buckets.key(collection, identity), {})[identity] = order, digest
     for key, values in grouped.items():
         collection, bucket = key.rsplit(":", 1)
         roots[collection][bucket] = buckets.describe(values, displays=collection == VOUCHERS)
-    return seal(_summary(summary, roots), (*prepared.rows, *leaves(prepared.rows)), epoch)
+    return seal(_summary(summary, roots), (*prepared.rows, *leaves(prepared)), epoch)
 
 
 def decoded(row, epoch):
@@ -230,9 +226,9 @@ def patch(summary, entries, deletes, directory, state):
     values = {key: dict(directory.loaded[key]) for key in keys}
     for collection, identity in deletes:
         values[buckets.key(collection, identity)].pop(identity, None)
-    for row in prepared.rows:
+    for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
         collection, identity, order = row[:3]
-        values[buckets.key(collection, identity)][identity] = order, loads_json(row[-1])["digest"]
+        values[buckets.key(collection, identity)][identity] = order, digest
     roots = deepcopy(directory.roots)
     for key, selected in values.items():
         collection, bucket = key.rsplit(":", 1)
@@ -243,7 +239,7 @@ def patch(summary, entries, deletes, directory, state):
     removed = changed
     removed |= {(DIGESTS, leaf_id(*identity)) for identity in removed.copy()}
     return PreparedOpenPatch(
-        seal(_summary(summary, roots), (*prepared.rows, *leaves(prepared.rows)), directory.epoch),
+        seal(_summary(summary, roots), (*prepared.rows, *leaves(prepared)), directory.epoch),
         tuple(sorted(removed)),
         state["ready_head"],
         state["content_digest"],

@@ -29,8 +29,11 @@ class IndexItem:
 
 @dataclass(frozen=True)
 class PreparedItems:
+    """Canonical rows and immutable binding digests emitted together by prepare_items."""
+
     rows: tuple[tuple, ...]
     manifest: tuple[tuple[str, int, str], ...]
+    row_digests: tuple[str, ...]
 
     def with_summary(self, summary):
         if "_collections" in summary:
@@ -105,7 +108,7 @@ def prepare_items(items, *, collections=()):
         if not _text(key) or key in grouped:
             raise ContractError("invalid_input", "读取集合名称无效或重复。")
         grouped[key] = []
-    rows, identities = [], set()
+    rows, digests, identities = [], [], set()
     for item in items:
         if not isinstance(item, IndexItem) or not isinstance(item.value, dict):
             raise ContractError("invalid_input", "读取索引须提供明确项目和展示内容。")
@@ -128,11 +131,12 @@ def prepare_items(items, *, collections=()):
         digest = sha256(binding.encode("utf-8")).hexdigest()
         grouped.setdefault(item.collection, []).append((item.sort_key, item.item_id, digest))
         rows.append((*index.values(), f'{{"digest":"{digest}","value":{value_json}}}'))
+        digests.append(digest)
     manifest = tuple(
         (key, len(values), content_digest([list(value) for value in sorted(values)]))
         for key, values in sorted(grouped.items())
     )
-    return PreparedItems(tuple(rows), manifest)
+    return PreparedItems(tuple(rows), manifest, tuple(digests))
 
 
 def _filters(query):

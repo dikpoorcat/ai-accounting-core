@@ -85,8 +85,22 @@ def test_index_and_payload_keep_the_exact_canonical_binding_for_nested_unicode_v
     }
     digest = content_digest({"index": expected_index, "value": value})
     prepared = prepare_items([selected])
+    assert prepared.row_digests == (digest,)
     assert prepared.rows[0][-1] == canonical_json({"digest": digest, "value": value})
     assert prepared.manifest == (("entries", 1, content_digest([["顺序", "项目", digest]])),)
+
+
+def test_prepared_digest_metadata_keeps_factory_row_order_and_is_detached_from_mutable_values():
+    entries = [item(2, collection="z"), item(1, collection="a"), item(3, collection="z")]
+    prepared = prepare_items(entries)
+    assert tuple(row[0] for row in prepared.rows) == ("z", "a", "z")
+    expected = tuple(loads_json(row[-1])["digest"] for row in prepared.rows)
+    assert prepared.row_digests == expected
+    assert all(type(digest) is str for digest in prepared.row_digests)
+    for entry in entries:
+        entry.value.clear()
+    assert prepared.row_digests == expected
+    assert all(loads_json(row[-1])["value"] for row in prepared.rows)
 
 
 @pytest.mark.parametrize("bad", [1.0, float("nan"), (1,), "\ud800", object()])
