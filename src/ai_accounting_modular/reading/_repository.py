@@ -2,6 +2,7 @@
 
 from ai_accounting_modular.contracts.public import canonical_json, loads_json
 
+from . import _brief_activity_index as activity_index
 from . import _brief_open_index as open_index
 from ._collections import PreparedModel
 from ._financial_projection import PreparedFinancial
@@ -139,6 +140,60 @@ class ReadingRepository:
                 "AND collection_key=?",
                 (scope_key, open_index.COMPONENT, open_index.DIRTY),
             )
+        )
+
+    def activity_rows(self, scope_key):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key<>?",
+                (scope_key, activity_index.COMPONENT, activity_index.DIRTY),
+            )
+        )
+
+    def activity_pending_rows(self, scope_key):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key=?",
+                (scope_key, activity_index.COMPONENT, activity_index.DIRTY),
+            )
+        )
+
+    def activity_mark(self, scope_key, head, business_ids=(), *, full=False):
+        from ._collections import IndexItem, prepare_items
+
+        if full:
+            self._session.execute(
+                "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
+                (scope_key, activity_index.COMPONENT, activity_index.DIRTY),
+            )
+        previous = None if full else activity_index.pending(self, scope_key)
+        full = full or bool(previous and previous["full"])
+        values = (
+            []
+            if full
+            else sorted(set(business_ids) | set(previous["business_ids"] if previous else ()))
+        )
+        item = IndexItem(
+            activity_index.DIRTY, "current", "current", {"full": full, "business_ids": values}
+        )
+        rows = prepare_items((item,)).rows
+        self._session.executemany(
+            "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
+            "object_id,group_key,category,payload_json,component_key,head) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope_key,collection_key,item_id) "
+            "DO UPDATE SET payload_json=excluded.payload_json,head=excluded.head",
+            ((scope_key, *row, activity_index.COMPONENT, head) for row in rows),
+        )
+
+    def activity_advance_failed(self, scope_key, head):
+        self._session.execute(
+            "UPDATE read_scope_head SET wanted_head=MAX(wanted_head,?) WHERE scope_key=? "
+            "AND component_key=? AND state='failed'",
+            (head, scope_key, activity_index.COMPONENT),
         )
 
     def open_bucket_count(self, scope_key):

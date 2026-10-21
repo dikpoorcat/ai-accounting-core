@@ -11,7 +11,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from . import _dependencies, _financial_projection
+from . import _brief_activity_index, _dependencies, _financial_projection
 from ._collections import collection_items as _collection_items
 from ._collections import collection_page
 from ._context import last_period, period
@@ -29,7 +29,9 @@ COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES, BRIEF_ACTIVITY, BRIEF_OPEN_IT
 
 
 def version(component):
-    return 8 if component == FINANCIAL else FORMAT_VERSION
+    if component == FINANCIAL:
+        return 8
+    return _brief_activity_index.FORMAT_VERSION if component == BRIEF_ACTIVITY else FORMAT_VERSION
 
 
 def normalize(scope):
@@ -327,12 +329,15 @@ def retry(reader, scope, components):
                 continue
             state = repository.state(key(normalized), component)
             full = (
-                component == BRIEF_OPEN_ITEMS
+                component in {BRIEF_OPEN_ITEMS, BRIEF_ACTIVITY}
                 and state is not None
                 and (state["state"] == "failed" or state["format_version"] != version(component))
             )
             if full:
-                repository.open_mark(key(normalized), unit.head, full=True)
+                if component == BRIEF_ACTIVITY:
+                    repository.activity_mark(key(normalized), unit.head, full=True)
+                else:
+                    repository.open_mark(key(normalized), unit.head, full=True)
             repository.retry(key(normalized), component, format_version=version(component))
             if full:
                 repository.mark(key(normalized), component, unit.head)

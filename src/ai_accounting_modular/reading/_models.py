@@ -186,6 +186,10 @@ def _mark_target(reader, repository, state, selection, impact, unit):
         from . import _brief_open_update
 
         return _brief_open_update.mark(repository, state, scope, impact, unit.next_head), None
+    if component == _monthly.BRIEF_ACTIVITY:
+        from . import _brief_activity_update
+
+        return _brief_activity_update.mark(repository, state, scope, impact, unit.next_head), None
     if state["state"] != "ready":
         # First captures have no sparse inputs yet; keep their wanted point current.
         if state["state"] == "preparing":
@@ -310,6 +314,10 @@ def run_pending(reader, company_id, limit):
                         from . import _brief_open_update
 
                         model = _brief_open_update.prepare(reader, scope, read, state)
+                    elif component == _monthly.BRIEF_ACTIVITY:
+                        from . import _brief_activity_update
+
+                        model = _brief_activity_update.prepare(reader, scope, read, state)
                     else:
                         model = _monthly.capture(reader, component, scope, read)
                 elif selection["page"] == "quarterly_report" and component == FINANCIAL:

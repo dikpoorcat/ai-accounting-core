@@ -477,8 +477,12 @@ class Ledger:
         kinds: tuple[str, ...],
         page: PageQuery,
         read_context: ReadContext,
+        *,
+        business_ids=(),
     ) -> ReadPage[AdoptedValues]:
-        return _read_contents.query_adopted(scope, kinds, page, read_context, flow=True)
+        return _read_contents.query_adopted(
+            scope, kinds, page, read_context, flow=True, business_ids=business_ids
+        )
 
     def get_adopted_contents(
         self,

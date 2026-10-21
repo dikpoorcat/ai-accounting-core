@@ -1,11 +1,13 @@
 """Prepare scalar month activities and precise voucher descriptors without journal lines."""
 
+from collections import defaultdict
+
 from ai_accounting_modular.contracts.public import (
     ContractError,
     QuerySelection,
-    ReadInputs,
 )
 
+from . import _brief_activity_index as index
 from . import _brief_groups, _brief_vouchers, _brief_vouchers_display
 from ._brief_activity_amounts import EVENT_KINDS
 from ._brief_activity_parts import ActivityEvent, parts, rows, semantic
@@ -13,8 +15,26 @@ from ._brief_activity_sources import Contents, identities, pages
 from ._collections import IndexItem, prepare_items, prepare_model
 from ._dependencies import bind
 
-COMPONENT = "brief_activity"
-COLLECTIONS = ("activity", "activity_members", "brief_vouchers")
+COMPONENT = index.COMPONENT
+COLLECTIONS = index.COLLECTIONS
+
+
+class _RootContents:
+    """Share exact reads while attributing only this root's actual body use."""
+
+    def __init__(self, shared):
+        self.shared = shared
+        self.sources = []
+
+    def include(self, content):
+        self.sources.extend((content.source, *content.basis["source_results"]))
+        return content
+
+    def source(self, content, business_id, *, result_slot=None):
+        return self.include(self.shared.source(content, business_id, result_slot=result_slot))
+
+    def opening(self, content):
+        return self.shared.opening(content)
 
 
 def _obligations(reader, scope, read, contents):
@@ -125,11 +145,24 @@ def _events(directory, unjournaled, chosen, cache, prepared):
     return events
 
 
-def prepare(reader, scope, read):
-    directory = list(pages(reader.ledger.query_voucher_directory, scope, read))
+def _selected_pages(method, scope, read, business_ids):
+    batches = (
+        tuple(business_ids[start : start + 500] for start in range(0, len(business_ids), 500))
+        if business_ids
+        else ((),)
+    )
+    for batch in batches:
+        yield from pages(method, scope, read, business_ids=batch)
+
+
+def capture(reader, scope, read, *, business_ids=()):
+    """Build only explicitly selected roots through Ledger's public exact reads."""
+    directory = list(
+        _selected_pages(reader.ledger.query_voucher_directory, scope, read, business_ids)
+    )
     values = {
         item.reference["result_id"]: item
-        for item in pages(reader.ledger.query_adopted_values, scope, read)
+        for item in _selected_pages(reader.ledger.query_adopted_values, scope, read, business_ids)
     }
     refs, chosen = [], {}
     for entry in directory:
@@ -159,6 +192,9 @@ def prepare(reader, scope, read):
     cache = Contents(reader.ledger, read)
     cache.load(refs)
     bodies = {(ref["result_id"], ref["generation"]): cache.get(ref) for ref in refs}
+    views = defaultdict(lambda: _RootContents(cache))
+    for body in bodies.values():
+        views[body.reference["business_id"]].include(body)
     cache.sources(
         body
         for body in bodies.values()
@@ -177,7 +213,7 @@ def prepare(reader, scope, read):
         }
     )
     prepared = {
-        identity: parts(body, cache)
+        identity: parts(body, views[body.reference["business_id"]])
         for identity, body in bodies.items()
         if body.target["kind"] in EVENT_KINDS
     }
@@ -218,7 +254,7 @@ def prepare(reader, scope, read):
             party_ids=_brief_vouchers_display.party_ids(
                 content,
                 prepared.get((content.reference["result_id"], content.reference["generation"]), ()),
-                cache,
+                views[content.reference["business_id"]],
             ),
         )
         raw_vouchers.append(descriptor)
@@ -239,6 +275,48 @@ def prepare(reader, scope, read):
                 group_key=str(entry.number),
             )
         )
+    root_ids = {item.business_id for item in vouchers} | {
+        value.reference["business_id"] for value in unjournaled
+    }
+    root_sources, root_objects = defaultdict(list), defaultdict(set)
+    for value in values.values():
+        root_sources[value.reference["business_id"]].append(value.source)
+    for _, body in events:
+        for part in prepared[body.reference["result_id"], body.reference["generation"]]:
+            root_objects[body.reference["business_id"]].update(part.parties)
+    for voucher in vouchers:
+        for kind in ("parties", "assets"):
+            root_objects[voucher.business_id].update(voucher.value["display"][kind])
+    roots = []
+    for business_id in sorted(root_ids):
+        roots.append(
+            index.root_item(
+                business_id,
+                [*root_sources[business_id], *views[business_id].sources],
+                root_objects[business_id],
+            )
+        )
+    return members, vouchers, roots
+
+
+def _member_order(member):
+    row, scope = member["row"], member["scope"]
+    reference = scope["reference"]
+    return (
+        0 if row["voucher_version_id"] else 1,
+        row["voucher_number"],
+        reference["posting_period"],
+        reference["business_id"],
+        reference["result_slot"],
+        reference["result_id"],
+        0 if scope["voucher_role"] == "reversal" else 1,
+        scope["part"],
+    )
+
+
+def assemble(members, vouchers, roots):
+    # Keep the group's representative independent of which roots were refreshed.
+    members = sorted(members, key=_member_order)
     groups, category_counts = _brief_groups.indexes(members)
     model = prepare_model(
         {
@@ -248,21 +326,16 @@ def prepare(reader, scope, read):
             "activity_groups": category_counts,
             "review_businesses": _brief_groups.review_businesses(members),
         },
-        items=prepare_items([*groups, *vouchers], collections=COLLECTIONS),
-    )
-    display_ids = {
-        ident
-        for voucher in vouchers
-        for kind in ("parties", "assets")
-        for ident in voucher.value["display"][kind]
-    }
-    return bind(
-        model,
-        ReadInputs(
-            posted_results=True,
-            business_ids=tuple(
-                sorted({body.reference["business_id"] for body in cache.saved.values()})
+        items=prepare_items(
+            sorted(
+                [*groups, *vouchers, *roots],
+                key=lambda item: (item.collection, item.sort_key, item.item_id),
             ),
-            object_ids=tuple(sorted(set(objects) | display_ids)),
+            collections=COLLECTIONS,
         ),
     )
+    return bind(model, index.dependencies(roots))
+
+
+def prepare(reader, scope, read):
+    return assemble(*capture(reader, scope, read))

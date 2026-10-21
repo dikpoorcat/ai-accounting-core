@@ -160,7 +160,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `query_settlement_events(query, page, read, selection=...)` | 明确发生月份范围，可按原义务、原义务业务种类、消费业务、真实资金身份及处理分量筛选。source_business_kinds 按所选正式义务的原 kind 过滤，不取当前事实标签。返回 ResourceUse 和仅在实际付款时对应的 FundMovement。实际分配取 use 金额，不能用整笔混合付款冒充本项金额。 |
 | `query_business_settlements(query, page, read, selection=...)` | 必须有source_refs、consumer_business_ids或movement_ids中的至少一种已知身份；这些身份及期间界定完整计数和版本范围，components/source_business_kinds再在范围内筛选。复用同一实际清偿查询，无关业务变化不使本范围游标过期；需要发现身份及全公司统计时使用上一项宽查询。 |
 | `query_voucher_directory(scope, kinds, page, read, business_ids=..., roles=...)` | 按正式采用月份及凭证号提供窄目录，包含精确结果引用、凭证身份、摘要、角色及冲正关联。current 同样保留正式入账历史，不按当前目标丢掉必要原凭证。`get_vouchers(locators, read)` 只批量读取指定页的完整分录，定位含 voucher_id/result_id/generation。 |
-| `query_adopted_values(scope, kinds, page, read)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
+| `query_adopted_values(scope, kinds, page, read, business_ids=...)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；可按业务身份缩小读取范围，版本和游标绑定完整筛选。current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
 | `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。供人员名单等提取正式类型和身份；不是按采用月展开的发生额。 |
 | `get_adopted_sources(sources, read)`、`account_names(codes)` | 前者按最多500个精确ResultSourceRef核对身份、代次及内容摘要，只返回正式目录头；可定位消费者实际采用的较早冻结来源，不用当前头替代。后者无需数据库，返回受控科目的唯一中文名称，不由看板另抄科目表。 |
 | `period_closure(period, read)` | 只读取指定月份的关账状态、实际覆盖关账月、冻结范围和头摘要，不读取整套三表；完整冻结报告另由财务报告入口核验和提供。 |
