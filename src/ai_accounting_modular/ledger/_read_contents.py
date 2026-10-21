@@ -17,6 +17,7 @@ from ._read_support import after_key, bounded, cursor, scope_selection, version
 from ._types import (
     AdoptedContent,
     AdoptedDirectoryEntry,
+    AdoptedTarget,
     AdoptedValues,
     VoucherDirectoryEntry,
     VoucherLocator,
@@ -72,7 +73,16 @@ def get_adopted_contents(locators, read):
 
 
 def query_adopted(
-    scope, kinds, page, read, *, flow=False, business_ids=(), result_slots=(), economic_from=None
+    scope,
+    kinds,
+    page,
+    read,
+    *,
+    flow=False,
+    targets=False,
+    business_ids=(),
+    result_slots=(),
+    economic_from=None,
 ):
     selected = scope_selection(scope, read)
     kinds = bounded(kinds, "text")
@@ -85,7 +95,7 @@ def query_adopted(
         where += " AND r.business_period>=?"
         args = (*args, economic_from)
     identities = repo.read_identity_rows(table, where, args)
-    collection = "adopted_values" if flow else "adopted_directory"
+    collection = "adopted_values" if flow else "adopted_targets" if targets else "adopted_directory"
     identity = version(
         read,
         collection,
@@ -106,13 +116,20 @@ def query_adopted(
     rows = repo.read_result_page(table, where, args, after=after, limit=page.limit + 1, flow=flow)
     more, rows = len(rows) > page.limit, rows[: page.limit]
     items = []
-    if flow:
+    if flow or targets:
         ids = {row["result_id"] for row in rows}
-        if selected.view == "as_posted":
+        if flow and selected.view == "as_posted":
             ids.update(row["baseline_result_id"] for row in rows if row["baseline_result_id"])
         bodies = {row["result_id"]: row for row in repo.financial_results(ids)}
         for row in rows:
             target = _content(bodies[row["result_id"]], "target", "ResultTarget")
+            if targets:
+                items.append(
+                    AdoptedTarget(
+                        reference(row), stored_source_reference(row), row["business_kind"], target
+                    )
+                )
+                continue
             baseline = None
             baseline_ref = None
             if selected.view == "as_posted" and row["baseline_result_id"]:

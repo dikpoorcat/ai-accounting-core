@@ -47,7 +47,7 @@ Validator = validators.extend(Draft202012Validator, {"x-integer-minimum": intege
 SCHEMAS = {p.name: load(p) for p in sorted((ROOT / "contracts").glob("*.json"))}
 registry = Registry()
 for name, schema in SCHEMAS.items():
-    if name == "dashboard-response-v1.json":
+    if name == "dashboard-response-v2.json":
         for namespace, child in schema.items():
             registry = registry.with_resource("https://ai-accounting.local/design/dashboard/" + namespace, Resource.from_contents(child, default_specification=DRAFT202012))
         continue
@@ -94,7 +94,7 @@ def check_contracts():
     count = 0
     for name, schema in SCHEMAS.items():
         documents = [(name, schema, schema.get("$id", (ROOT / "contracts" / name).as_uri()))]
-        if name == "dashboard-response-v1.json":
+        if name == "dashboard-response-v2.json":
             documents = [(key, child, "https://ai-accounting.local/design/dashboard/" + key) for key, child in schema.items()]
         for label, child, base in documents:
             validators.validator_for(child).check_schema(child)
@@ -115,10 +115,10 @@ def check_contracts():
         assert not fen.is_valid(value), ("金额反例未拒绝", value)
     date = validator("core.schema.json", "Date")
     assert not date.is_valid("2026-02-30")
-    manifest = ROOT / "contracts/dashboard-response-v1.json"
+    manifest = ROOT / "contracts/dashboard-response-v2.json"
     # Git 在 Windows 检出时可转换为 CRLF；冻结合同内容，忽略行尾表示差异。
     frozen_bytes = manifest.read_bytes().replace(b"\r\n", b"\n")
-    assert hashlib.sha256(frozen_bytes).hexdigest() == "d391ad3ad7d7441847e83a85a0a733d87df7222f5ff2aaa63fd856781eac3b8e", "冻结看板合同被修改"
+    assert hashlib.sha256(frozen_bytes).hexdigest() == "e496cdb6b3de93ff73a81ab946ea86c0b040cf3aa057c7700b38619a7e26b10b", "冻结看板合同被修改"
 
 
 def check_examples():

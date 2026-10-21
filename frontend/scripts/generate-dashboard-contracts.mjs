@@ -11,10 +11,10 @@ import { compile } from "json-schema-to-typescript";
 
 const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const generatedDirectory = resolve(frontendRoot, "src/api/generated");
-const schemaPath = resolve(generatedDirectory, "dashboardResponseSchemas.json");
+const schemaPath = resolve(frontendRoot, "../docs/redesign/contracts/dashboard-response-v2.json");
 const check = process.argv.slice(2).includes("--check");
 
-// A Python response model is browser-visible only after it is intentionally listed here.
+// A response contract is browser-visible only after it is intentionally listed here.
 const contracts = [
   ["workflow", "Workflow"], ["period_readiness", "PeriodReadiness"],
   ["dashboard_context", "DashboardContext"], ["dashboard_brief", "DashboardBrief"],
@@ -110,8 +110,10 @@ async function generatedType(schema, name) {
 }
 
 async function buildOutputs(targetDirectory) {
-  const schemas = requireSchemaMap(JSON.parse(await readFile(schemaPath, "utf8")));
+  const source = (await readFile(schemaPath, "utf8")).replaceAll("\r\n", "\n");
+  const schemas = requireSchemaMap(JSON.parse(source));
   const outputs = {
+    "dashboardResponseSchemas.json": source,
     "dashboardResponses.d.ts": banner + "\n" + contracts.map(([, name]) => `export type { ${name}Response, ${name}Contract } from "./${moduleName(name)}";`).join("\n") + "\n",
     "dashboardValidators.js": banner + contracts.map(([, name]) => `export { validate${name}Response } from "./${moduleName(name)}.js";`).join("\n") + "\n",
     "dashboardValidators.d.ts": banner + contracts.map(([, name]) => `export { validate${name}Response } from "./${moduleName(name)}.js";`).join("\n") + "\n",

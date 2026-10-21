@@ -44,7 +44,7 @@ export async function requestGeneratedDashboard<T, TDelivery>(
   matchesDelivery: (url: URL, delivery: TDelivery) => boolean,
   responseValidator: DashboardResponseValidator<T>,
   matchesResponse: (url: URL, response: T) => boolean,
-  options: { signal?: AbortSignal; onPreparing?: () => void } = {},
+  options: { signal?: AbortSignal; onPreparing?: () => void; retry?: boolean } = {},
 ): Promise<T> {
   const target = withCurrentCompany(path);
   const url = new URL(target, window.location.origin);
@@ -52,9 +52,14 @@ export async function requestGeneratedDashboard<T, TDelivery>(
     throw new DashboardApiError(502, "DASHBOARD_SCHEMA_MISMATCH", "看板数据格式不匹配，请更新本地内核后重试。");
   }
 
+  let retry = options.retry === true;
   while (true) {
     options.signal?.throwIfAborted();
-    const payload = await requestLocalJson(target, { signal: options.signal });
+    const payload = await requestLocalJson(retry ? `${url.pathname}/retry` : target, {
+      signal: options.signal,
+      ...(retry ? { method: "POST", body: JSON.stringify(Object.fromEntries(url.searchParams)) } : {}),
+    });
+    retry = false;
     options.signal?.throwIfAborted();
     if (!deliveryValidator(payload) || !matchesDelivery(url, payload)) {
       throw new DashboardApiError(502, "DASHBOARD_SCHEMA_MISMATCH", "看板数据格式不匹配，请更新本地内核后重试。");

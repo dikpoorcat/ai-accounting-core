@@ -26,7 +26,7 @@ _SCHEMAS = (
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",
-    "dashboard-response-v1.json",
+    "dashboard-response-v2.json",
 )
 
 
@@ -164,7 +164,7 @@ def _bundle():
     for name in _SCHEMAS:
         document = loads_json(root.joinpath(name).read_bytes())
         documents[name] = document
-        if name == "dashboard-response-v1.json":
+        if name == "dashboard-response-v2.json":
             for namespace, schema in document.items():
                 uri = _BASE + "dashboard/" + namespace
                 registry = registry.with_resource(
@@ -186,7 +186,7 @@ def _selected_document(schema_name: str, definition: str | None):
     if schema_name not in documents:
         raise ContractError("invalid_contract", "未支持的合同名称")
     document = documents[schema_name]
-    if schema_name == "dashboard-response-v1.json":
+    if schema_name == "dashboard-response-v2.json":
         if definition is None or definition not in document:
             raise ContractError("invalid_contract", "必须指定有效的看板合同名称")
         return document[definition]
@@ -199,7 +199,7 @@ def schema_document(schema_name: str, definition: str | None = None) -> dict:
     """Copy an installed source schema, with its declared external references."""
     result = deepcopy(_selected_document(schema_name, definition))
     if definition is not None:
-        if schema_name != "dashboard-response-v1.json":
+        if schema_name != "dashboard-response-v2.json":
             result["$ref"] = "#/$defs/" + definition.replace("~", "~0").replace("/", "~1")
     return result
 
@@ -208,7 +208,7 @@ def schema_document(schema_name: str, definition: str | None = None) -> dict:
 def _validator(schema_name: str, definition: str):
     documents, registry = _bundle()
     _selected_document(schema_name, definition)
-    if schema_name == "dashboard-response-v1.json":
+    if schema_name == "dashboard-response-v2.json":
         uri = _BASE + "dashboard/" + definition
     else:
         uri = (

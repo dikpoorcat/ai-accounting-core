@@ -55,7 +55,7 @@ function matchesDeliveryRequest(url: URL, delivery: DashboardAssetsDeliveryRespo
       && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
 }
 
-export function fetchAssetsDashboard(period: string, signal?: AbortSignal, options: AssetsQuery = {}, onPreparing?: () => void) {
+export function fetchAssetsDashboard(period: string, signal?: AbortSignal, options: AssetsQuery = {}, onPreparing?: () => void, retry = false) {
   const query = new URLSearchParams({ period, preparation: "deferred" });
   pageQuery(query, options);
   if (options.asset_filter) query.set("asset_filter", options.asset_filter);
@@ -67,6 +67,6 @@ export function fetchAssetsDashboard(period: string, signal?: AbortSignal, optio
   }
   return requestGeneratedDashboard(
     path, "/api/dashboard/assets", validateDashboardAssetsDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
-    validateDashboardAssetsResponse, matchesRequest, { signal, onPreparing },
+    validateDashboardAssetsResponse, matchesRequest, { signal, onPreparing, retry },
   );
 }

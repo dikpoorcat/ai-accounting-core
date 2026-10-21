@@ -294,7 +294,7 @@ async function synchronizeQuarter(force = false) {
   }
 }
 
-async function preview(quarterKey: string, contextGate?: Promise<void>) {
+async function preview(quarterKey: string, contextGate?: Promise<void>, retryModel = false) {
   const generation = ++requestGeneration, selection = selectionKey();
   const companyId = route.query.company_id;
   previewController?.abort();
@@ -327,6 +327,7 @@ async function preview(quarterKey: string, contextGate?: Promise<void>) {
         if (!isCurrent(generation, selection) || previewController !== controller) return;
         preparing.value = true; report.value = null; statementsExpanded.value = false; activeStatementKey.value = "";
       },
+      retryModel,
     );
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || previewController !== controller) return;
@@ -375,7 +376,7 @@ async function refresh() {
           || !fresh.quarters.some((item) => item.key === quarter))
           throw new Error("当前公司或期间已变化，请重新选择。");
       });
-      await preview(quarter, contextGate);
+      await preview(quarter, contextGate, true);
     } else {
       await refreshContext();
       if (!isCurrent(generation, selection)) return;

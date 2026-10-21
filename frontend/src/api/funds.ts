@@ -69,14 +69,14 @@ function matchesDeliveryRequest(url: URL, delivery: DashboardFundsDeliveryRespon
       && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
 }
 
-export function requestDashboardFunds(path: string, options: { signal?: AbortSignal; onPreparing?: () => void } = {}): Promise<DashboardFundsResponse> {
+export function requestDashboardFunds(path: string, options: { signal?: AbortSignal; onPreparing?: () => void; retry?: boolean } = {}): Promise<DashboardFundsResponse> {
   return requestGeneratedDashboard(
     path, "/api/dashboard/funds", validateDashboardFundsDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
     validateDashboardFundsResponse, fundsMatchesRequest, options,
   );
 }
 
-export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}, onPreparing?: () => void) {
+export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}, onPreparing?: () => void, retry = false) {
   const { limit = 20, ...filters } = options;
   const query = new URLSearchParams({ limit: String(limit), ...(periodKey ? { period: periodKey } : {}), ...filters });
   query.set("preparation", "deferred");
@@ -84,7 +84,7 @@ export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, op
   if (filters.section || filters.expected_version) {
     return requestGeneratedJson(path, "/api/dashboard/funds", validateDashboardFundsResponse, fundsMatchesRequest, { signal });
   }
-  return requestDashboardFunds(path, { signal, onPreparing });
+  return requestDashboardFunds(path, { signal, onPreparing, retry });
 }
 
 // Keep selector labels across source navigation without adding cached rows to a page.

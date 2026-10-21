@@ -677,6 +677,11 @@
                 },
                 "project_id": {
                   "$ref": "#/$defs/Id"
+                },
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
                 }
               },
               "required": [
@@ -2727,6 +2732,11 @@
                 },
                 "project_id": {
                   "$ref": "#/$defs/Id"
+                },
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
                 }
               },
               "required": [
@@ -4198,6 +4208,11 @@
                 },
                 "project_id": {
                   "$ref": "#/$defs/Id"
+                },
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
                 }
               },
               "required": [

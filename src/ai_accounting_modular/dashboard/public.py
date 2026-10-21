@@ -8,10 +8,14 @@ from urllib.parse import quote, unquote
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.reading.public import SourceDownload
 
-from . import _reports, _requests
+from . import _monthly, _reports, _requests
 
 __all__ = ["Dashboard", "HttpResponse", "create_dashboard"]
 LOCAL_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
+_MONTH_PAGES = {
+    "/api/dashboard/funds": ("funds", 9),
+    "/api/dashboard/assets": ("assets", 10),
+}
 
 
 @dataclass(frozen=True)
@@ -31,7 +35,7 @@ def _json(body, status=200):
 
 def _validate(key, value):
     try:
-        return validate_contract("dashboard-response-v1.json", key, value)
+        return validate_contract("dashboard-response-v2.json", key, value)
     except ContractError as error:
         raise ContractError(
             "response_contract_mismatch", "看板响应与已确定的格式不一致。"
@@ -64,6 +68,7 @@ def _error(error, *, report=False):
         "report_download_invalid",
         "conflict",
         "report_export_unavailable",
+        "needs_information",
     }:
         status = 409
     elif code in {"busy", "temporary_failure"}:
@@ -135,6 +140,14 @@ class Dashboard:
 
     def post(self, path, body):
         try:
+            retry_pages = {route + "/retry": page for route, (page, _) in _MONTH_PAGES.items()} | {
+                "/api/dashboard/quarterly-report/retry": "quarterly_report"
+            }
+            if path in retry_pages:
+                page_key = retry_pages[path]
+                scope, query = _requests.retry(page_key, body)
+                self.reading.retry(page_key, scope, query)
+                return _json(self._get_json(path[: -len("/retry")], body))
             if path != "/api/local/report-export":
                 raise ContractError("not_found", "此写入入口不存在。")
             scope = _requests.report_export(body)
@@ -143,7 +156,7 @@ class Dashboard:
             )
             return _json(_validate("report_export_receipt", receipt))
         except ContractError as error:
-            return _error(error, report=True)
+            return _error(error, report=path.startswith("/api/local/report-export"))
 
     def _get_json(self, path, parameters):
         if path.startswith("/api/local/report-export/") and path.endswith("/status"):
@@ -182,6 +195,23 @@ class Dashboard:
             else:
                 outer["reason"] = delivery.reason
             return _validate("dashboard_quarterly_report_delivery", outer)
+        if path in _MONTH_PAGES:
+            page_key, schema_version = _MONTH_PAGES[path]
+            scope, query, bare = _requests.monthly(page_key, parameters)
+            delivery = self.reading.page(page_key, scope, query)
+            response = (
+                _validate(
+                    "dashboard_" + page_key, _monthly.response(delivery, schema_version, self.now())
+                )
+                if delivery.state == "ready" or bare
+                else None
+            )
+            if bare:
+                return response
+            return _validate(
+                "dashboard_" + page_key + "_delivery",
+                _monthly.envelope(scope.company_id, delivery, response),
+            )
         if path == "/api/review/materials":
             query = _requests.materials(parameters)
             return self.reading.detail(

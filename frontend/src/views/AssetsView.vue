@@ -163,7 +163,7 @@ async function synchronizePeriod(force = false) {
   }
 }
 
-async function loadAssets(period: string, contextGate?: Promise<void>) {
+async function loadAssets(period: string, contextGate?: Promise<void>, retryModel = false) {
   const generation = ++requestGeneration, selection = selectionKey();
   activeController?.abort();
   clearPageRequests();
@@ -181,7 +181,7 @@ async function loadAssets(period: string, contextGate?: Promise<void>) {
     }, () => {
       if (!isCurrent(generation, selection) || activeController !== controller) return;
       preparing.value = true; response.value = null; clearPageRequests();
-    });
+    }, retryModel);
     const result = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (isCurrent(generation, selection) && activeController === controller) { prepareDashboardCollections(result.data); response.value = result; preparing.value = false; updateNotice.value = ""; loading.value = false; }
     await nextTick();
@@ -232,7 +232,7 @@ async function refreshCurrent(keepContent: boolean) {
         if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === period))
           throw new Error("当前公司或期间已变化，请重新选择。");
       });
-      await loadAssets(period, contextGate);
+      await loadAssets(period, contextGate, keepContent);
     } else {
       await refreshContext();
       if (isCurrent(generation, selection)) await synchronizePeriod(true);

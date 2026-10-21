@@ -6,11 +6,13 @@
 
 职责依照 [整体架构](02-architecture.md)：`reading` 通过公开入口批量取得并整理业务结果，`dashboard` 适配 HTTP 格式、范围和错误；领域与账务模块不依赖页面字段、前端类型或看板缓存。共同类型以 [接口合同](03-contracts.md) 为准，本文规定现有页面的外部兼容要求。
 
+当前已接通公司期间、资金、资产、季度报表及来源查阅的进程内和HTTP适配。简报、员工和展开详情按下述合同实现；本机服务运行入口与后台自动调度尚未接通。资金账户是否停用、是否发生归属调整没有正式依据时保留未知；银行原文缺失就留空，不能拿业务用途替代原文。资产编号采用可选当前档案，缺省为空，不要求补齐。
+
 ## 1. 唯一响应合同
 
-[dashboard-response-v1.json](contracts/dashboard-response-v1.json) 是现有前端响应 Schema 的冻结副本，内容来自 `frontend/src/api/generated/dashboardResponseSchemas.json`，没有增加说明字段。按 UTF-8、LF 行尾计算的 SHA-256 为 `d391ad3ad7d7441847e83a85a0a733d87df7222f5ff2aaa63fd856781eac3b8e`；Windows 检出的 CRLF 先规范为 LF，不改变合同正文。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
+[dashboard-response-v2.json](contracts/dashboard-response-v2.json) 是前后端共同采用的响应真源，保留现有字段和页面用法。资产取得及启用时间允许真实月份或日期，未明确实际日就保留月份；现有页面已支持这两种精度。按 UTF-8、LF 行尾计算的 SHA-256 为 `e496cdb6b3de93ff73a81ab946ea86c0b040cf3aa057c7700b38619a7e26b10b`；Windows 检出的 CRLF 先规范为 LF。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
 
-本文下表列出的响应以该快照为字段、必填项、枚举、空值、金额格式及 `additionalProperties` 的唯一真源。v1是本适配合同的首次交付基线，不替代新数据库合同或把旧业务接口重新命名。冻结文件不随旧代码生成结果自动覆盖；确需变更时发布新的合同文件并同步消费者。不能凭字段名称另写一份近似响应，不能为通过校验伪造零值或旧处理状态。快照还包含其他旧命令，保存它们不表示新体系实现这些入口，尤其不恢复旧审批、重放和审计机制。
+本文下表列出的响应以该合同为字段、必填项、枚举、空值、金额格式及 `additionalProperties` 的唯一真源。它不替代新数据库合同，也不随旧内核模型自动覆盖。前端生成器从此真源生成 `dashboardResponseSchemas.json`、TypeScript类型和Ajv校验，后端生成包内同份合同；不维护两套当前响应定义。允许资产月份没有改变原字段、内层版本常量或对已有日期的接受范围。确需变更时发布新合同并同步消费者。不能凭字段名称另写近似响应，不能为通过校验伪造零值或旧处理状态。合同还包含其他旧命令，保存它们不表示新体系实现这些入口，尤其不恢复旧审批、重放和审计机制。
 
 | HTTP GET 端点 | 响应 Schema 键 | 内层 schema_version |
 | --- | --- | --- |
@@ -69,7 +71,7 @@ HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.pu
 | HTTP 范围 | 公开入口及范围 |
 | --- | --- |
 | `context` | `page("context", ContextScope, {})`；通过storage.list_companies及company_metadata读取公开元数据，无公司时只读目录中的可选范围，不打开全部公司业务库。 |
-| `brief/funds/employees/assets` | `page(同名 page_key, LedgerScope, query)`；月页的 period_from=period_to=选中月份，view=as_posted。 |
+| `brief/funds/employees/assets` | `page(同名 page_key, MonthScope, query)`；MonthScope含company_id、可选period及expected_head。reading在同一读快照中选定实际默认月，再形成period_from=period_to、view=as_posted的内部LedgerScope；没有可查看月份就返回空页面，不补造月份。 |
 | `quarterly-report` | `page("quarterly_report", LedgerScope, {})`；期间范围为所选季度的三个自然月，view=as_posted。 |
 | `brief-group/business-status/close-review` | `detail("brief_group"/"business_status"/"close_review", LedgerScope, query)`；query仅含本节列明的定位、筛选或核对头。 |
 | 报表生成、状态、下载 | `export_report(scope, head, request_id)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)`；head由已取得的预览标识和epochs共同校验。 |
@@ -184,7 +186,7 @@ partial时export.available=false、preview_digest=null、epochs=null；不能创
 
 生成与发布均核对目标结果头。发布前来源又变化时丢弃过时产物并接续最新目标；无变化的组件继续复用。页面组合标识只说明一致读取范围，不等于每次重新计算整页或整个公司。
 
-首读缺少当前模型返回preparing；失败返回failed。续页的expected_version过期返回409，由客户端重读主范围。不重发记账命令来修复读取，不能把旧模型挂上新标识。冻结期使用当时正式结果及必要依据，后续冲正和真实付款按实际入账期间展示。
+首读缺少当前模型返回preparing；失败返回failed，普通GET不自动重启。老板主动刷新通过对应主页面路径加`/retry`的POST重新准备该页失败组件，正文采用同页查询的字符串参数，明确公司及月份或季度，不接受分页、游标或旧版本。响应仍用同页交付外壳；重复刷新不重启已就绪或正在生成的组件，随后只用GET等待结果。续页的expected_version过期返回409，由客户端重读主范围。不重发记账命令来修复读取，不能把旧模型挂上新标识。冻结期使用当时正式结果及必要依据，后续冲正和真实付款按实际入账期间展示。
 
 ## 7. 月度核对改为只读关账检查
 

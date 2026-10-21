@@ -131,7 +131,8 @@ test("a failed delivery returns a stable owner-facing message without exposing t
     schema_version: 6, company_id: "co-1", period: "2026-01", model_version: null,
     state: "failed", reason: "production_failed",
   };
-  const client = createClient(async () => failed);
+  const requests = [];
+  const client = createClient(async (path, options) => { requests.push({ path, options }); return failed; });
   await assert.rejects(
     client.requestGeneratedDashboard(
       "/api/dashboard/brief?period=2026-01", "/api/dashboard/brief", value => value?.state === "failed",
@@ -141,6 +142,39 @@ test("a failed delivery returns a stable owner-facing message without exposing t
     ),
     error => error.message === "看板暂时无法更新，请稍后重试。" && !error.message.includes("production_failed"),
   );
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.method, undefined);
+});
+
+test("an explicit refresh restarts the projection once and then polls with ordinary reads", async () => {
+  const response = samples.deferred_funds.response;
+  const ready = readyDelivery(response, response.selected_period.key, response.snapshot_version);
+  const requests = [];
+  const client = createClient(async (path, options) => {
+    requests.push({ path, options });
+    return requests.length === 1
+      ? { state: "preparing", retry_after_ms: 1, company_id: ready.company_id, period: ready.period }
+      : ready;
+  });
+  const path = `/api/dashboard/funds?company_id=${ready.company_id}&period=${ready.period}&limit=20&movement_account_selection=first`;
+  const result = await client.requestGeneratedDashboard(
+    path, "/api/dashboard/funds", () => true,
+    envelope => envelope.state === "ready"
+      ? { state: "ready", response: envelope.response, modelVersion: envelope.model_version }
+      : { state: "preparing", retryAfterMs: envelope.retry_after_ms },
+    (url, envelope) => envelope.company_id === url.searchParams.get("company_id") && envelope.period === url.searchParams.get("period"),
+    () => true, (url, value) => value.read_context.company_id === url.searchParams.get("company_id"),
+    { retry: true },
+  );
+  assert.equal(result, response);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].path, "/api/dashboard/funds/retry");
+  assert.equal(requests[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    company_id: ready.company_id, period: ready.period, limit: "20", movement_account_selection: "first",
+  });
+  assert.equal(requests[1].path, path);
+  assert.equal(requests[1].options.method, undefined);
 });
 
 test("aborting a preparing read cancels its retry timer before another request", async () => {

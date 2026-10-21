@@ -21,7 +21,7 @@ SCHEMAS = (
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",
-    "dashboard-response-v1.json",
+    "dashboard-response-v2.json",
 )
 BASE = "https://ai-accounting.local/design/"
 
@@ -215,7 +215,7 @@ def outputs():
         data = (SOURCE / name).read_bytes().replace(b"\r\n", b"\n")
         document = json.loads(data, object_pairs_hook=unique_object)
         generated[TARGET / "_schemas" / name] = data
-        if name == "dashboard-response-v1.json":
+        if name == "dashboard-response-v2.json":
             documents.update(
                 (BASE + "dashboard/" + namespace, schema) for namespace, schema in document.items()
             )

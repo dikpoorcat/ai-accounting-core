@@ -70,6 +70,9 @@ from ._types import (
     AdoptedDirectoryEntry as AdoptedDirectoryEntry,
 )
 from ._types import (
+    AdoptedTarget as AdoptedTarget,
+)
+from ._types import (
     AdoptedValues as AdoptedValues,
 )
 from ._types import (
@@ -256,6 +259,27 @@ class Ledger:
     ) -> ReadPage[AdoptedDirectoryEntry]:
         return _read_contents.query_adopted(
             scope, kinds, page, read_context, business_ids=business_ids, result_slots=result_slots
+        )
+
+    def query_adopted_targets(
+        self,
+        scope: LedgerScope,
+        kinds: tuple[str, ...],
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        business_ids=(),
+        result_slots=(),
+    ) -> ReadPage[AdoptedTarget]:
+        """Selected complete targets, without calculation bases or earlier versions."""
+        return _read_contents.query_adopted(
+            scope,
+            kinds,
+            page,
+            read_context,
+            targets=True,
+            business_ids=business_ids,
+            result_slots=result_slots,
         )
 
     def query_adopted_values(

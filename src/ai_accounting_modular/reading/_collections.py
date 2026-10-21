@@ -69,6 +69,20 @@ class CollectionFilter:
     item_id: str | None = None
 
 
+def wire_page(page):
+    return {
+        "items": list(page.items),
+        "page": {
+            "total_count": page.total_count,
+            "filtered_count": page.filtered_count,
+            "returned_count": len(page.items),
+            "has_more": page.next_cursor is not None,
+            "next_cursor": page.next_cursor,
+            "collection_version": page.version,
+        },
+    }
+
+
 _INDEX_FIELDS = (
     "collection",
     "item_id",

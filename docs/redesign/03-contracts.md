@@ -4,7 +4,7 @@
 
 接口采用一个业务办理入口、几个明确的读取/资料/文件入口。会计 AI 不负责计算内核内部标识、依次发布结果、刷新缓存或修复重复请求。MCP 与 CLI 共用同一个应用服务，不分别实现业务。
 
-机器可读真源为 [公共类型](contracts/core.schema.json)、[业务事实](contracts/business-facts.schema.json) 和 [既有看板响应](contracts/dashboard-response-v1.json)。JSON Schema 负责字段形状；本文及 [业务规则](05-business-rules.md) 负责跨字段、引用和核算约束。两类检查都通过才能办理，不能用 `json_valid` 或 Schema 校验代替完整业务校验。
+机器可读真源为 [公共类型](contracts/core.schema.json)、[业务事实](contracts/business-facts.schema.json) 和 [既有看板响应](contracts/dashboard-response-v2.json)。JSON Schema 负责字段形状；本文及 [业务规则](05-business-rules.md) 负责跨字段、引用和核算约束。两类检查都通过才能办理，不能用 `json_valid` 或 Schema 校验代替完整业务校验。
 
 ## 通用字段
 
@@ -40,7 +40,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 
 `create/replace/restore` 提交完整 `Fact`，不是字段补丁：`business_id, kind, period, evidence_ids, data`，可选 `effective_on`。kind 对应唯一严格 data 变体。`withdraw` 只提交 business_id 和 expected_seq。create 的 expected_seq=0，其余为当前正序号。业务 ID 在整理文档时由客户端库自动生成 UUID 并保存，AI 不手工拼接身份；响应丢失沿用它，不能再生成一个 ID 重试。
 
-`objects` 是真实人员、交易方、账户、项目、资产及产品的稳定身份。名称可以变，身份不能跟着变。对象建档并不自动产生业务凭证；人员在册关系和资产启用仍分别是业务事实。看板所需档案可先保存未知管理项，不能仅因缺身份证或手机号拒绝本已明确的会计金额。
+`objects` 是真实人员、交易方、账户、项目、资产及产品的稳定身份。名称可以变，身份不能跟着变。对象建档并不自动产生业务凭证；人员在册关系和资产启用仍分别是业务事实。资产档案的可选code保存企业已有编号，不要求编号唯一、不自动编造，也不改变核算身份或正式金额。看板所需档案可先保存未知管理项，不能仅因缺身份证或手机号拒绝本已明确的会计金额。
 
 同一原子单包含的相互引用允许指向本单前面或后面的业务，程序统一建图后按拓扑计算。整单成功或失败。一个大月包可包含多个明确独立的单元，但调用方必须逐单接收结果，不能把已处理部分称为整月完成。
 
@@ -122,13 +122,13 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | records.public | `prepare_sources(sources, read_context)`、`plan_change/apply_current`、`resolve_sources/source_status`、`lease_source`、当前说明/待办及期间分页、`capture_documents/prepare_documents/publish_documents`、`capture_backup_materials/lease_backup_inputs/discard_backup_capture`、`open_standard_bundle/copy_standard_bundle`、`verify_snapshot` | 唯一维护来源、说明、待办和最终文档。来源内容预核验在写事务外完成，活跃证明绑定公司、位置及完整输入，并在采用和提交前复核；下载租约另提供固定字节。期间查询不把局部页当完整替换集合。备份捕获绑定同一数据库快照并保护原件和分片；离线核验把完整当前事实、对象、待办、说明及来源索引与已发布文档精确对应，同时检查未使用及冻结依据的已登记原件。完整资料可以脱离源库核验和复制。 |
 | storage.public | `read_unit/write_unit/preview_unit/maintenance_unit`、`list_companies/company_metadata`、`create_company_database`、`open_database_unit`、`publish_company_directory`、`company_structure_contract`、结构核验及一致数据库副本 | 在线和离线共用工作单元、模块仓储及实际结构核验，不开放跨公司任意 SQL。离线明确数据库和资料根，不创建虚假目录或负责人。试算复用完整核算及事务末检查，正常结束也回滚；新目标发布须原子且不覆盖已存在位置。数据库复制不承接完整包和文档编排。 |
 | files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)`、`discard_unaccepted_capture(company_id, capture_id)` | 仅备份/报表当前任务及验证，严格 FilePlan 为 BackupPlan 或 ReportExportPlan。具体内容和版本检查由注入的生产者端口负责；文件核验在事务外，最终维护事务内轻量复核有效性后按头和代次写回。未接纳捕获通过独立CaptureContext回收；当前任务任意状态或实际租约仍引用时保留，清理失败明确报错。files 不反向导入 application/reading。 |
-| reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`export_report(scope, head, request_id, *, epochs)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页；文件计划防重及验证。context 使用仅含可选 company_id 的 ContextScope，其余使用 LedgerScope。 |
+| reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`retry(page_key, scope, query?)`、`export_report(scope, head, request_id, *, epochs)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页；文件计划防重及验证。context使用ContextScope；月页使用MonthScope(company_id, period?, expected_head?)；季度和业务详情使用LedgerScope，来源审查使用ContextScope。主动重试须明确月份，只重启该页面失败的派生组件，不改正式账务。 |
 
-reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过storage建立一次只读上下文；HTTP只解析参数，不自行另开连接。页面context可以按目录默认选择一家公司，尚无公司时只返回目录；不打开其他公司业务库。AI的accounting_context未指定公司时只列可选公司，不代替AI选定工作范围。来源审查detail使用ContextScope，不编造业务月份。
+reading.page/detail通过storage建立一次只读上下文；HTTP只解析参数，不自行另开连接。月页省略月份时，在该上下文内按真实账务及工作月份选择默认月，不先另读一次context；空账套没有虚构的月份或金额。页面context可以按目录默认选择一家公司，尚无公司时只返回目录；不打开其他公司业务库。AI的accounting_context未指定公司时只列可选公司，不代替AI选定工作范围。来源审查detail使用ContextScope，不编造业务月份。
 
 入口内所有跨模块子查询显式使用同一 `ReadContext`：company_id、database_id、start_period、head、view/as_of，以及同一快照内的模块仓储。start_period 是公司已有建账边界，不表示此前余额或发生额为零。`repository(owner)` 只供各模块取得自身装配的仓储；上下文不公开连接、任意 SQL 或 commit。模块不得另开连接，避免一页混合两次提交。`UnitOfWork` 额外提供 next_head 和事务末检查登记，由 storage 统一结束事务；各数据 owner 的 apply_current/adopt/mark_targets 加入同一工作单元，不由应用层越界写私表。各 owner 专属计划和查询类型放在自身 public，公开线协议不携带这些进程内能力。
 
-`LedgerScope.expected_head` 是同公司、同范围、同读取口径的 `FinancialSnapshot.selection_digest`，比较时不把 expected_head 自身计入摘要。它核对实际报表选择，不使用 global_seq；无关文件任务和范围外业务不能让相同报表失效。应用比较采用变化时使用`ledger.get_result_refs(business_ids, read_context)`批量取得窄引用，不为读取ID、代次及期间加载全部采用正文和凭证分录。
+expected_head核对同公司、同范围、同读取口径的实际结果，不使用global_seq，也不把它自身计入摘要。FinancialSnapshot使用selection_digest，正式目录和活动使用各自version，月页使用所需组件内容与月份状态的组合版本；无关文件任务和范围外业务不能让相同结果失效。应用比较采用变化时使用`ledger.get_result_refs(business_ids, read_context)`批量取得窄引用，不为读取ID、代次及期间加载全部采用正文和凭证分录。
 
 报表的scope显式选择current/as_posted，可在同一ReadContext中分别读取；其他未单独指定口径的查询沿上下文默认值。选择口径不另开事务，不复制存储上下文或连接。
 
@@ -147,6 +147,7 @@ reading.page/detail 是读取用例入口，按 ContextScope/LedgerScope 通过s
 | `query_settlement_events(query, page, read, selection=...)` | 明确发生月份范围，可按原义务、原义务业务种类、消费业务、真实资金身份及处理分量筛选。source_business_kinds 按所选正式义务的原 kind 过滤，不取当前事实标签。返回 ResourceUse 和仅在实际付款时对应的 FundMovement。实际分配取 use 金额，不能用整笔混合付款冒充本项金额。 |
 | `query_voucher_directory(scope, kinds, page, read, business_ids=..., roles=...)` | 按正式采用月份及凭证号提供窄目录，包含精确结果引用、凭证身份、摘要、角色及冲正关联。current 同样保留正式入账历史，不按当前目标丢掉必要原凭证。`get_vouchers(locators, read)` 只批量读取指定页的完整分录，定位含 voucher_id/result_id/generation。 |
 | `query_adopted_values(scope, kinds, page, read)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
+| `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。供人员名单等提取正式类型和身份；不是按采用月展开的发生额。 |
 | `query_adopted_directory(scope, kinds, page, read, business_ids=..., result_slots=...)` | 返回月末所选正式结果的窄目录，包含无凭证结果和退休结果。`get_adopted_contents(locators, read)` 按最多500个精确 ResultRef 返回 source/target/basis，不附凭证或全部资源。 |
 | `fund_movements(account_id, from, to, read, selection=...)` | 账户为 None 时明确取全公司。按真实发生月份、实际日及稳定 movement_id 返回真实资金定义；正式冲正、替代凭证不制造第二次资金。 |
 

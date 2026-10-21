@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
+from . import _monthly
 from ._collections import prepare_model
 from ._types import ModelDelivery, ReadingImpact
 
@@ -131,11 +132,18 @@ def mark_targets(impact, unit):
     touched = []
     for state in repository.scopes():
         selection = loads_json(state["scope_key"])
-        if selection["page"] != "quarterly_report" or state["component_key"] != FINANCIAL:
+        if selection["page"] not in {"quarterly_report", "monthly"}:
             continue
         scope = selection["scope"]
         if scope["company_id"] != unit.company_id:
             raise ContractError("storage_corrupt", "读取目标包含其他公司范围。")
+        if selection["page"] == "monthly":
+            if _monthly.affected(scope, state["component_key"], impact):
+                repository.mark(state["scope_key"], state["component_key"], unit.next_head)
+                touched.append(state["scope_key"])
+            continue
+        if state["component_key"] != FINANCIAL:
+            raise ContractError("storage_corrupt", "季度读取目标包含未装配组件。")
         # Earlier postings can affect ending stock and accumulated profit. A
         # future posting cannot affect this as-posted report.
         if any(r.period_from <= scope["period_to"] for r in impact.posted_ranges):
@@ -157,15 +165,22 @@ def run_pending(reader, company_id, limit):
             target["wanted_head"],
         )
         try:
-            scope = loads_json(scope_key)["scope"]
+            selection = loads_json(scope_key)
+            scope = selection["scope"]
             with reader.storage.read_unit(company_id) as read:
                 state = read.repository("reading").state(scope_key, component)
-                if state is None or state["wanted_head"] != wanted:
+                if state is None or state["wanted_head"] != wanted or state["state"] != "preparing":
                     continue
-                snapshot = reader.ledger.financial_snapshot(scope, read)
-                validate_contract("reporting.schema.json", "FinancialSnapshot", snapshot)
-                payload = {"snapshot": semantic(snapshot)}
-                model = prepare_model(payload)
+                if state["format_version"] != FORMAT_VERSION:
+                    raise ContractError("storage_corrupt", "读取目标的内容格式尚未装配。")
+                if selection["page"] == "monthly":
+                    model = _monthly.capture(reader, component, scope, read)
+                elif selection["page"] == "quarterly_report" and component == FINANCIAL:
+                    snapshot = reader.ledger.financial_snapshot(scope, read)
+                    validate_contract("reporting.schema.json", "FinancialSnapshot", snapshot)
+                    model = prepare_model({"snapshot": semantic(snapshot)})
+                else:
+                    raise ContractError("storage_corrupt", "读取目标的范围或组件尚未装配。")
             with reader.storage.maintenance_unit(company_id) as unit:
                 published = unit.repository("reading").publish(
                     scope_key, component, wanted, FORMAT_VERSION, model

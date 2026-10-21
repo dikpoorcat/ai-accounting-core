@@ -412,7 +412,7 @@ async function revealBankDetails() {
   section?.querySelector<HTMLElement>("[data-section-focus]")?.focus({ preventScroll: true });
 }
 
-async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
+async function loadFunds(periodKey: string, contextGate?: Promise<void>, retryModel = false) {
   resetBatchDetails();
   const generation = ++requestGeneration;
   cancelPages();
@@ -434,7 +434,7 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>) {
       preparing.value = true; funds.value = null; snapshotVersion.value = "";
       responsePeriod.value = ""; selectedPeriodLabel.value = "";
       cancelPages();
-    });
+    }, retryModel);
     const response = contextGate ? (await Promise.all([request, contextGate]))[0] : await request;
     if (!isCurrent(generation, selection) || activeRequest !== controller) return;
     const selected = response.data?.selected_movement_account;
@@ -578,10 +578,10 @@ async function refreshCurrent(keepContent: boolean) {
         if (fresh.current_company?.company_id !== company || !fresh.periods.some((item) => item.key === requested))
           throw new Error("当前公司或期间已变化，请重新选择。");
       });
-      await loadFunds(requested, contextGate);
+      await loadFunds(requested, contextGate, keepContent);
     } else {
       await refreshContext();
-      if (isCurrent(generation, selection) && period && !activeRequest) await loadFunds(period);
+      if (isCurrent(generation, selection) && period && !activeRequest) await loadFunds(period, undefined, keepContent);
     }
   } catch (caught) {
     if (isCurrent(generation, selection)) {

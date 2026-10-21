@@ -47,7 +47,7 @@ def test_real_expense_payment_three_tables_match_all_214_formal_cells(tmp_path):
                 assert row["values"][old] == expected
                 count += 1
     assert count == 214
-    validate_contract("dashboard-response-v1.json", "dashboard_quarterly_report", response)
+    validate_contract("dashboard-response-v2.json", "dashboard_quarterly_report", response)
     assert response["export"] == {
         "available": False,
         "file_name": "2026年第1季度财务报表.xlsx",
@@ -214,7 +214,7 @@ def test_production_failure_is_stable_and_explicit_retry_rebuilds(tmp_path, monk
     assert "response" not in failed
     assert book.reading.run_pending(book.company) == ()
     monkeypatch.setattr(book.ledger, "financial_snapshot", original)
-    book.reading.retry(scope(book.company))
+    book.reading.retry("quarterly_report", scope(book.company))
     assert book.preview()[1]["state"] == "preparing"
     assert book.reading.run_pending(book.company)
     assert book.preview()[1]["state"] == "ready"
@@ -278,6 +278,6 @@ def test_corrupt_read_component_fails_without_affecting_formal_books(tmp_path):
             ]["amount_fen"]
             == "-10000"
         )
-    book.reading.retry(scope(book.company))
+    book.reading.retry("quarterly_report", scope(book.company))
     book.reading.run_pending(book.company)
     assert book.preview()[1]["model_version"] == before["model_version"]

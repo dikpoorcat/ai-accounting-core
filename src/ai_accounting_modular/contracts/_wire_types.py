@@ -10940,6 +10940,7 @@ class ObjectVariant8Data(TypedDict):
     asset_type: Literal['fixed', 'intangible']
     category: str
     project_id: NotRequired[Id]
+    code: NotRequired[str]
 
 class DocumentObjectVariant1Data(TypedDict):
     identity_document: NotRequired[str]
@@ -10988,6 +10989,7 @@ class DocumentObjectVariant8Data(TypedDict):
     asset_type: Literal['fixed', 'intangible']
     category: str
     project_id: NotRequired[Id]
+    code: NotRequired[str]
 
 class CurrentObjectVariant1Data(TypedDict):
     identity_document: NotRequired[str]
@@ -11036,6 +11038,7 @@ class CurrentObjectVariant8Data(TypedDict):
     asset_type: Literal['fixed', 'intangible']
     category: str
     project_id: NotRequired[Id]
+    code: NotRequired[str]
 
 class TargetAssetsActivationValuesAssetsItem(TypedDict):
     asset_id: Id

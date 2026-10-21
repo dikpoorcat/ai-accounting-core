@@ -20,6 +20,17 @@ def period(value, closed_through=None):
     }
 
 
+def last_period(reader, read):
+    # A configured start month alone is not evidence of established books.
+    latest = reader.ledger.latest_period(read)
+    if latest is None:
+        return None
+    details = reader.businesses.context(
+        {"company_id": read.company_id, "note_scopes": [], "issue_scopes": []}, read
+    )
+    return details["company_identity"].get("working_period_to", latest)
+
+
 def context(reader, scope):
     validate_contract("core.schema.json", "ContextScope", scope)
     companies = reader.storage.list_companies()
@@ -53,14 +64,9 @@ def context(reader, scope):
             "status": "active",
         }
         result["current_company"] = current
-        # A configured start month alone is not evidence of established books.
-        latest = reader.ledger.latest_period(read)
-        if latest is None:
+        last = last_period(reader, read)
+        if last is None:
             return result
-        details = reader.businesses.context(
-            {"company_id": selected, "note_scopes": [], "issue_scopes": []}, read
-        )
-        last = details["company_identity"].get("working_period_to", latest)
         closed = reader.ledger.closed_through(read)
         values = [
             str(YearMonth.from_ordinal(index))

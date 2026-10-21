@@ -189,7 +189,7 @@ def test_exact_identifiers_and_digests_and_no_unknown_fields():
 def test_installed_frozen_dashboard_money_keyword_is_enforced():
     # The existing dashboard uses a distinct x-fen-int64 keyword. Select a real
     # scalar definition from its installed contract, including nested variants.
-    document = schema_document("dashboard-response-v1.json", "dashboard_brief")
+    document = schema_document("dashboard-response-v2.json", "dashboard_brief")
     node = next(
         child
         for child in walk(document)

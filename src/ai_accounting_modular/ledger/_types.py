@@ -157,6 +157,14 @@ class AdoptedDirectoryEntry:
 
 
 @dataclass(frozen=True)
+class AdoptedTarget:
+    reference: ResultRef
+    source: ResultSourceRef
+    business_kind: str
+    target: ResultTarget
+
+
+@dataclass(frozen=True)
 class AdoptedValues:
     reference: ResultRef
     source: ResultSourceRef

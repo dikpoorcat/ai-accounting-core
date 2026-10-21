@@ -46,6 +46,8 @@ class _Modules:
     ledger: ledger.Ledger
     records: records.Records
     money: money.Money
+    investment: financing.Financing
+    assets: assets.Assets
     domains: tuple
     repositories: tuple
     verifier: application.BackupVerifier
@@ -86,13 +88,14 @@ def _modules():
     materials = records.create_records(lambda read: company_metadata(read).company_root)
     funds = money.create_money(ledger=bookkeeping, identity=identities)
     asset_accounting = assets.create_assets(ledger=bookkeeping, identity=identities)
+    investments = financing.create_investment(ledger=bookkeeping, identity=identities)
     domains = (
         operations.create_operations(),
         people.create_people(),
         asset_accounting,
         taxes.create_taxes(),
         financing.create_financing(),
-        financing.create_investment(ledger=bookkeeping, identity=identities),
+        investments,
         funds,
         opening.create_opening(asset_accounting=asset_accounting),
         reporting.create_reporting(),
@@ -104,7 +107,17 @@ def _modules():
         domains=domains,
         repositories=repositories,
     )
-    return _Modules(identities, bookkeeping, materials, funds, domains, repositories, verifier)
+    return _Modules(
+        identity=identities,
+        ledger=bookkeeping,
+        records=materials,
+        money=funds,
+        investment=investments,
+        assets=asset_accounting,
+        domains=domains,
+        repositories=repositories,
+        verifier=verifier,
+    )
 
 
 def create_offline_application() -> application.Application:
@@ -140,6 +153,10 @@ def create_kernel(
         records=modules.records,
         businesses=app,
         files=file_tasks,
+        identity=modules.identity,
+        money=modules.money,
+        investment=modules.investment,
+        assets=modules.assets,
     )
     return Kernel(
         storage,

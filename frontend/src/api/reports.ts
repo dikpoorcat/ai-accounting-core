@@ -40,11 +40,11 @@ function matchesDeliveryRequest(url: URL, delivery: DashboardQuarterlyReportDeli
       && `${delivery.response.period.year}-Q${delivery.response.period.quarter}` === delivery.period);
 }
 
-export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal, onPreparing?: () => void) {
+export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal, onPreparing?: () => void, retry = false) {
   const query = new URLSearchParams({ company_id: companyId, year: String(year), quarter: String(quarter), preparation: "deferred" });
   return requestGeneratedDashboard(
     `/api/dashboard/quarterly-report?${query}`, "/api/dashboard/quarterly-report", validateDashboardQuarterlyReportDeliveryResponse,
-    inspectDelivery, matchesDeliveryRequest, validateDashboardQuarterlyReportResponse, matchesRequest, { signal, onPreparing },
+    inspectDelivery, matchesDeliveryRequest, validateDashboardQuarterlyReportResponse, matchesRequest, { signal, onPreparing, retry },
   );
 }
 

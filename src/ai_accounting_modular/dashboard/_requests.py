@@ -3,6 +3,7 @@
 import re
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from ai_accounting_modular.reading.public import MonthScope
 
 
 def parameters(values, allowed, required=()):
@@ -49,6 +50,66 @@ def quarterly(values):
         "period_to": f"{year:04d}-{quarter * 3:02d}",
         "view": "as_posted",
     }
+
+
+def monthly(page_key, values):
+    common = {
+        "company_id",
+        "period",
+        "limit",
+        "section",
+        "cursor",
+        "expected_version",
+        "preparation",
+    }
+    extras = {
+        "funds": {
+            "movement_account_type",
+            "movement_account_id",
+            "statement_account_id",
+            "movement_account_selection",
+        },
+        "assets": {"asset_filter", "asset_id", "project_id"},
+    }
+    if page_key not in extras:
+        raise ContractError("invalid_command", "此月页尚未接入。")
+    allowed = common | extras[page_key]
+    selected = parameters(values, allowed, ("company_id",))
+    if selected.get("preparation", "deferred") != "deferred":
+        raise ContractError("invalid_command", "本入口只提供当前月度读取。")
+    try:
+        scope = MonthScope(
+            selected["company_id"], selected.get("period"), selected.get("expected_version")
+        )
+    except ContractError as error:
+        raise ContractError("invalid_command", "月份、公司或结果版本无效。") from error
+    query = {
+        name: value
+        for name, value in selected.items()
+        if name
+        not in {
+            "company_id",
+            "period",
+            "expected_version",
+            "preparation",
+        }
+    }
+    if "limit" in query:
+        query["limit"] = integer(query["limit"], 1, 500)
+    return scope, query, "section" in selected or "expected_version" in selected
+
+
+def retry(page_key, body):
+    if not isinstance(body, dict) or any(
+        key in body for key in ("section", "cursor", "expected_version")
+    ):
+        raise ContractError("invalid_command", "重试须明确主页面范围，不能重试分页。")
+    if page_key == "quarterly_report":
+        return quarterly(body), {}
+    scope, query, _ = monthly(page_key, body)
+    if scope.period is None:
+        raise ContractError("invalid_command", "月页重试须明确月份。")
+    return scope, query
 
 
 def materials(values, *, source_id=None):

@@ -1,0 +1,270 @@
+"""Month pages share complete components and one read snapshot for their collections."""
+
+from dataclasses import dataclass, fields
+
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    canonical_json,
+    content_digest,
+    loads_json,
+    validate_contract,
+)
+
+from ._collections import collection_page, prepare_model
+from ._context import last_period, period
+from ._types import ModelDelivery, MonthScope
+
+FORMAT_VERSION = 1
+FINANCIAL = "financial"
+FUNDS = "funds"
+ASSETS = "assets"
+COMPONENTS = (FINANCIAL, FUNDS, ASSETS)
+
+
+def normalize(scope):
+    validate_contract("core.schema.json", "LedgerScope", scope)
+    month = scope["period_to"]
+    if (
+        scope["view"] != "as_posted"
+        or scope["period_from"] != month
+        or scope.get("as_of", month) != month
+        or "object_ids" in scope
+    ):
+        raise ContractError("invalid_input", "月页须指定整家公司、一个月份及该月正式采用口径。")
+    return {name: value for name, value in scope.items() if name != "expected_head"} | {
+        "as_of": month
+    }
+
+
+def key(scope):
+    return canonical_json({"page": "monthly", "scope": scope})
+
+
+@dataclass(frozen=True)
+class MonthSnapshot:
+    scope_key: str
+    scope: dict
+    version: str
+    components: dict
+    selected_period: dict
+    company_id: str
+    database_id: str
+
+
+class _CorruptComponent(Exception):
+    def __init__(self, component):
+        self.component = component
+
+
+def collection(snapshot, component, name, query, page, read):
+    if component not in snapshot.components:
+        raise ContractError("invalid_input", "页面没有选择这个读取组件。")
+    try:
+        return collection_page(snapshot.scope_key, component, name, query, page, read)
+    except ContractError as error:
+        if error.code == "storage_corrupt":
+            raise _CorruptComponent(component) from error
+        raise
+
+
+def _load(repository, scope_key, component, state):
+    if state["format_version"] != FORMAT_VERSION:
+        raise _CorruptComponent(component)
+    payload = repository.payload(scope_key, component)
+    try:
+        if (
+            payload is None
+            or payload["head"] != state["ready_head"]
+            or state["ready_head"] != state["wanted_head"]
+        ):
+            raise ValueError
+        value = loads_json(payload["payload_json"])
+        if not isinstance(value, dict) or content_digest(value) != state["content_digest"]:
+            raise ValueError
+        return value
+    except (ContractError, KeyError, TypeError, ValueError) as error:
+        raise _CorruptComponent(component) from error
+
+
+def deliver(reader, scope, components, build):
+    """Build a page only after all its own components are ready in the same read."""
+    if isinstance(scope, MonthScope):
+        company_id, expected = scope.company_id, scope.expected_head
+        normalized = (
+            normalize(
+                {
+                    "company_id": company_id,
+                    "period_from": scope.period,
+                    "period_to": scope.period,
+                    "view": "as_posted",
+                }
+            )
+            if scope.period is not None
+            else None
+        )
+    else:
+        normalized = normalize(scope)
+        company_id, expected = scope["company_id"], scope.get("expected_head")
+    components = tuple(components)
+    if (
+        not components
+        or len(set(components)) != len(components)
+        or any(name not in COMPONENTS for name in components)
+    ):
+        raise ContractError("invalid_input", "月页须选择已装配且不重复的组件。")
+    missing, corrupt = (), None
+    with reader.storage.read_unit(company_id) as read:
+        if normalized is None:
+            month = last_period(reader, read)
+            if month is None:
+                if expected is not None:
+                    raise ContractError(
+                        "snapshot_changed", "当前没有同版的可查看月份，请重新读取。"
+                    )
+                return ModelDelivery(
+                    "ready",
+                    {"company_id": company_id},
+                    payload={
+                        "selected_period": None,
+                        "snapshot_version": None,
+                        "data": None,
+                        "company_id": read.company_id,
+                        "database_id": read.database_id,
+                    },
+                )
+            normalized = normalize(
+                {
+                    "company_id": read.company_id,
+                    "period_from": month,
+                    "period_to": month,
+                    "view": "as_posted",
+                }
+            )
+        scope_key = key(normalized)
+        if normalized["period_to"] < read.start_period:
+            raise ContractError("invalid_input", "不能查看建账前缺少逐月正式资料的月份。")
+        repository = read.repository("reading")
+        states = {name: repository.state(scope_key, name) for name in components}
+        missing = tuple(name for name, state in states.items() if state is None)
+        failed = next(
+            (
+                state
+                for state in states.values()
+                if state is not None and state["state"] == "failed"
+            ),
+            None,
+        )
+        if failed is not None:
+            result = ModelDelivery(
+                "failed",
+                normalized,
+                reason="corrupt"
+                if failed["error_code"] == "storage_corrupt"
+                else "production_failed",
+            )
+        elif missing or any(state["state"] != "ready" for state in states.values()):
+            result = ModelDelivery("preparing", normalized)
+        else:
+            try:
+                values = {
+                    name: _load(repository, scope_key, name, state)
+                    for name, state in states.items()
+                }
+                selected = period(normalized["period_to"], reader.ledger.closed_through(read))
+                version = content_digest(
+                    {
+                        "company_id": read.company_id,
+                        "database_id": read.database_id,
+                        "scope": normalized,
+                        "period_status": selected["status"],
+                        "components": {
+                            name: state["content_digest"] for name, state in sorted(states.items())
+                        },
+                    }
+                )
+                if expected is not None and expected != version:
+                    raise ContractError("snapshot_changed", "所选页面已变化，请重新读取首页。")
+                snapshot = MonthSnapshot(
+                    scope_key,
+                    normalized,
+                    version,
+                    values,
+                    selected,
+                    read.company_id,
+                    read.database_id,
+                )
+                payload = build(snapshot, read) | {
+                    "company_id": read.company_id,
+                    "database_id": read.database_id,
+                }
+                result = ModelDelivery("ready", normalized, version, payload)
+            except _CorruptComponent as error:
+                corrupt = error.component
+                result = ModelDelivery("failed", normalized, reason="corrupt")
+    if missing or corrupt is not None:
+        with reader.storage.maintenance_unit(company_id) as unit:
+            repository = unit.repository("reading")
+            for component in missing:
+                repository.register(scope_key, component, unit.head, FORMAT_VERSION)
+            if corrupt is not None:
+                state = states[corrupt]
+                repository.fail(
+                    scope_key,
+                    corrupt,
+                    state["wanted_head"],
+                    "storage_corrupt",
+                    expected_state=state["state"],
+                )
+    if expected is not None and result.state != "ready":
+        raise ContractError("snapshot_changed", "所选页面尚无同版就绪内容，请重新读取首页。")
+    return result
+
+
+def capture(reader, component, scope, read):
+    normalized = normalize(scope)
+    if component == FINANCIAL:
+        formal = reader.ledger.financial_summary(normalized, read)
+        # The owner's version binds all its formal inputs. The page needs its
+        # amounts and issues, not a copy of every historical source reference.
+        summary = {
+            field.name: getattr(formal, field.name)
+            for field in fields(formal)
+            if field.name != "sources"
+        }
+        summary["issues"] = list(formal.issues)
+        return prepare_model({"financial": summary})
+    if component == FUNDS:
+        from ._funds import prepare
+
+        return prepare(reader, normalized, read)
+    if component == ASSETS:
+        from ._assets import prepare
+
+        return prepare(reader, normalized, read)
+    raise ContractError("storage_corrupt", "月度读取组件尚未装配。")
+
+
+def affected(scope, component, impact):
+    if component not in COMPONENTS:
+        raise ContractError("storage_corrupt", "月度读取目标包含未装配组件。")
+    if component == FUNDS and (
+        impact.changes["object_ids"]
+        or (
+            "money" in impact.changes["families"]
+            and scope["period_to"] in impact.changes["periods"]
+        )
+    ):
+        return True
+    if component == ASSETS and impact.changes["object_ids"]:
+        return True
+    return any(value.period_from <= scope["period_to"] for value in impact.posted_ranges)
+
+
+def retry(reader, scope, components):
+    normalized = normalize(scope)
+    if not components or any(component not in COMPONENTS for component in components):
+        raise ContractError("invalid_input", "月页重试须选择已装配的组件。")
+    with reader.storage.maintenance_unit(scope["company_id"]) as unit:
+        repository = unit.repository("reading")
+        for component in components:
+            repository.retry(key(normalized), component)

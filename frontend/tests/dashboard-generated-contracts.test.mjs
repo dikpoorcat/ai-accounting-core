@@ -213,6 +213,57 @@ test("personnel date validators preserve month and day precision and reject malf
   }
 });
 
+test("asset acquisition and activation preserve month precision in pages and delivery envelopes", () => {
+  const sample = Object.values(samples).find(item => item.command === "dashboard_assets"
+    && findField(item.response, key => key === "in_service_date"));
+  assert(sample);
+  const original = findField(sample.response, key => key === "in_service_date").owner;
+  function response(kind) {
+    const result = structuredClone(samples.assets.response);
+    const card = structuredClone(original);
+    Object.assign(card, { asset_type: kind, category: kind, status: "active" });
+    delete card.in_service_date;
+    delete card.available_for_use_date;
+    delete card.disposal;
+    delete card.retirement;
+    card[kind === "fixed" ? "in_service_date" : "available_for_use_date"] = "2026-01";
+    card[kind === "fixed" ? "disposal" : "retirement"] = null;
+    result.data.collections.assets = {
+      items: [card],
+      page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null },
+    };
+    return result;
+  }
+  for (const kind of ["fixed", "intangible"]) {
+    for (const key of ["acquisition_date", kind === "fixed" ? "in_service_date" : "available_for_use_date"]) {
+      for (const value of ["2026-01", "2026-01-15", null]) {
+        const changed = response(kind);
+        changed.data.collections.assets.items[0][key] = value;
+        assert.equal(validators.validateDashboardAssetsResponse(changed), true, JSON.stringify(validators.validateDashboardAssetsResponse.errors));
+        const envelope = {
+          schema_version: 6, company_id: changed.read_context.company_id,
+          period: changed.selected_period.key, model_version: changed.snapshot_version,
+          state: "ready", response: changed,
+        };
+        assert.equal(validators.validateDashboardAssetsDeliveryResponse(envelope), true, JSON.stringify(validators.validateDashboardAssetsDeliveryResponse.errors));
+      }
+      for (const value of ["2026-00", "2026-13", "2026-1", "2026-01-00", "", 202601]) {
+        const changed = response(kind);
+        changed.data.collections.assets.items[0][key] = value;
+        assert.equal(validators.validateDashboardAssetsResponse(changed), false, `${kind}.${key}: ${value}`);
+      }
+    }
+  }
+  const exit = response("fixed");
+  Object.assign(exit.data.collections.assets.items[0], {
+    status: "disposed", disposal: {
+      date: "2026-01", kind: "sale", book_value_fen: "0", gross_proceeds_fen: "0",
+      gain_fen: "0", loss_fen: "0", party: "合成购买方",
+    },
+  });
+  assert.equal(validators.validateDashboardAssetsResponse(exit), false, "actual disposal still requires its real day");
+});
+
 test("owner employee responses reject provenance and conflict diagnostics", () => {
   const original = samples.employees_corrected_roster.response;
   const validate = validators.validateDashboardEmployeesResponse;

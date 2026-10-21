@@ -31,6 +31,22 @@ class BusinessReader(Protocol):
 
 
 @dataclass(frozen=True)
+class MonthScope:
+    """An omitted month selects the company's actual default inside the read snapshot."""
+
+    company_id: str
+    period: str | None = None
+    expected_head: str | None = None
+
+    def __post_init__(self):
+        validate_contract("core.schema.json", "Id", self.company_id)
+        if self.period is not None:
+            validate_contract("core.schema.json", "Month", self.period)
+        if self.expected_head is not None:
+            validate_contract("core.schema.json", "Digest", self.expected_head)
+
+
+@dataclass(frozen=True)
 class PeriodRange:
     period_from: str
     period_to: str
