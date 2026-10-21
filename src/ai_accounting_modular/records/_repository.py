@@ -45,6 +45,54 @@ class RecordsRepository:
             for row in self._session.fetchall("SELECT * FROM source ORDER BY source_id")
         )
 
+    @staticmethod
+    def _source_scope(first, last):
+        clauses, values = [], []
+        if first is not None:
+            clauses.append("archive_month>=?")
+            values.append(first)
+        if last is not None:
+            clauses.append("archive_month<=?")
+            values.append(last)
+        return clauses, values
+
+    def source_query_metadata(self, first, last):
+        clauses, values = self._source_scope(first, last)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return tuple(
+            tuple(row)
+            for row in self._session.fetchall(
+                "SELECT source_id,kind,archive_month,relative_path,original_name,"
+                "media_type,byte_size,sha256 "
+                "FROM source" + where + " ORDER BY archive_month IS NULL,archive_month,source_id",
+                values,
+            )
+        )
+
+    def source_query_ids(self, first, last, after, limit):
+        clauses, values = self._source_scope(first, last)
+        if after is not None:
+            month, source_id = after
+            if month is None:
+                clauses.append("(archive_month IS NULL AND source_id>?)")
+                values.append(source_id)
+            else:
+                clauses.append(
+                    "(archive_month IS NULL OR archive_month>? "
+                    "OR (archive_month=? AND source_id>?))"
+                )
+                values.extend((month, month, source_id))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return tuple(
+            row["source_id"]
+            for row in self._session.fetchall(
+                "SELECT source_id FROM source"
+                + where
+                + " ORDER BY archive_month IS NULL,archive_month,source_id LIMIT ?",
+                (*values, limit),
+            )
+        )
+
     def save_source(self, source):
         self._session.execute(
             "INSERT INTO source(source_id,kind,archive_month,relative_path,original_name,"

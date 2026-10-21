@@ -13,6 +13,10 @@ from weakref import WeakSet
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadContext,
+    Source,
+    SourceImport,
+    SourcesRequest,
+    SourcesResult,
     UnitOfWork,
     canonical_json,
     content_digest,
@@ -21,7 +25,17 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _backup, _changes, _documents, _periods, _prepared_sources, _snapshot, _sources
+from . import (
+    _backup,
+    _changes,
+    _documents,
+    _periods,
+    _prepared_sources,
+    _snapshot,
+    _source_imports,
+    _source_queries,
+    _sources,
+)
 from ._repository import RecordsRepository
 from ._standard import copy_standard_bundle, open_standard_bundle
 from ._types import (
@@ -107,8 +121,20 @@ class Records:
                 source_import["source_id"]
             )
         return _sources.prepare_source(
-            source_import, self._root(read_context), existing, repository.find_source_content
+            source_import,
+            self._root(read_context),
+            existing,
+            repository.find_source_content,
+            company_id=read_context.company_id,
         )
+
+    def prepare_source_imports(
+        self, imports: Sequence[SourceImport], read_context: ReadContext
+    ) -> tuple[Source, ...]:
+        return _source_imports.prepare(self, imports, read_context)
+
+    def sources(self, request: SourcesRequest, read_context: ReadContext) -> SourcesResult:
+        return _source_queries.query(self, request, read_context)
 
     def plan_change(self, change: RecordsChange, context: RecordsContext) -> RecordsPlan:
         return _changes.plan_change(change, context, self._root(context.read_context))

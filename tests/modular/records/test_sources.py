@@ -73,7 +73,7 @@ def test_file_import_is_company_scoped_and_lease_is_fixed_verified_bytes(records
             },
             read,
         )
-    assert source["relative_path"] == f"originals/2026-01/{source['source_id']}--资料.txt"
+    assert source["relative_path"] == f"originals/2026-01/{source['source_id']}/资料.txt"
     _store_source(storage, company, records, source)
     path = company.company_root / source["relative_path"]
     with storage.read_unit(company.company_id) as read:

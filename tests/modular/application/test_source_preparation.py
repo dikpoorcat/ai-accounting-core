@@ -13,7 +13,7 @@ def file_request(app, company):
     with app.storage.read_unit(company) as read:
         root = app.storage.company_metadata(read).company_root
     source_id, raw = str(uuid4()), b"actual approved source bytes"
-    relative = f"originals/2026-01/{source_id}--original.bin"
+    relative = f"originals/2026-01/{source_id}/original.bin"
     path = root / relative
     path.parent.mkdir(parents=True)
     path.write_bytes(raw)

@@ -17,6 +17,8 @@ from ai_accounting_modular.contracts.public import (
     loads_json,
 )
 
+SOURCE_BLOCK_CHARS = 20000
+
 
 @dataclass(frozen=True)
 class SourceStatus:

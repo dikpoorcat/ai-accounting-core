@@ -4,7 +4,6 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     canonical_json,
     loads_json,
-    validate_contract,
 )
 
 from . import _sources
@@ -16,7 +15,7 @@ def values(sources):
     result = tuple(loads_json(canonical_json(source)) for source in sources)
     seen = set()
     for source in result:
-        validate_contract("core.schema.json", "Source", source)
+        _sources.validate_source(source)
         if source["source_id"] in seen:
             raise ContractError("invalid_input", "同一来源身份不能在一单中重复出现。")
         seen.add(source["source_id"])

@@ -352,7 +352,9 @@ def test_original_streams_are_bounded_and_opened_one_at_a_time(records_case, tmp
     )
     second_raw = b"second original"
     second.update(sha256=hashlib.sha256(second_raw).hexdigest(), byte_size=len(second_raw))
-    (path.parent.parent / second["relative_path"]).write_bytes(second_raw)
+    second_path = path.parent.parent / second["relative_path"]
+    second_path.parent.mkdir(parents=True, exist_ok=True)
+    second_path.write_bytes(second_raw)
     rewrite(path, lambda _, parts: parts["sources"]["sources"].append(second))
     original_open, active, maximum = Path.open, 0, 0
 
@@ -380,7 +382,7 @@ def test_original_streams_are_bounded_and_opened_one_at_a_time(records_case, tmp
 
     def guarded(file, mode="r", *args, **kwargs):
         stream = original_open(file, mode, *args, **kwargs)
-        if mode == "rb" and file.name.endswith("--" + source["original_name"]):
+        if mode == "rb" and file.name == source["original_name"]:
             return Bounded(stream)
         return stream
 

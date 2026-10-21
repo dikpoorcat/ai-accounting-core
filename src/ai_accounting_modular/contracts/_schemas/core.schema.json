@@ -4641,6 +4641,21 @@
         }
       ]
     },
+    "SourceStatus": {
+      "type": "object",
+      "properties": {
+        "source_id": { "$ref": "#/$defs/Id" },
+        "state": { "enum": ["present", "missing_file", "content_mismatch", "not_found"] },
+        "observed_size": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": ["source_id", "state", "observed_size"],
+      "additionalProperties": false
+    },
     "SourceInspection": {
       "type": "object",
       "properties": {
@@ -4685,6 +4700,11 @@
         },
         "unsupported_media": {
           "type": "boolean"
+        },
+        "unsupported_sections": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "uniqueItems": true
         }
       },
       "required": [
@@ -4724,6 +4744,12 @@
         },
         "inspection": {
           "$ref": "#/$defs/SourceInspection"
+        },
+        "source_statuses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SourceStatus" },
+          "minItems": 0,
+          "maxItems": 500
         }
       },
       "required": [

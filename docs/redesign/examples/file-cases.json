@@ -60,7 +60,7 @@
             "byte_size": 2048
           },
           {
-            "path": "originals/2026-01/92000000-0000-4000-8000-000000000008--合成费用说明.txt",
+            "path": "originals/2026-01/92000000-0000-4000-8000-000000000008/合成费用说明.txt",
             "kind": "original",
             "sha256": "fbbc190455c064c302ed3c4fcc7314819d1bb0efb2992025358c248d28dccc1c",
             "byte_size": 42
@@ -104,8 +104,8 @@
         },
         {
           "source_root": "company",
-          "relative_path": "originals/2026-01/92000000-0000-4000-8000-000000000008--合成费用说明.txt",
-          "archive_path": "originals/2026-01/92000000-0000-4000-8000-000000000008--合成费用说明.txt",
+          "relative_path": "originals/2026-01/92000000-0000-4000-8000-000000000008/合成费用说明.txt",
+          "archive_path": "originals/2026-01/92000000-0000-4000-8000-000000000008/合成费用说明.txt",
           "sha256": "fbbc190455c064c302ed3c4fcc7314819d1bb0efb2992025358c248d28dccc1c",
           "byte_size": 42
         },

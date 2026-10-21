@@ -449,6 +449,11 @@ class DocumentsResult(TypedDict):
     errors: list[DocumentsResultErrorsItem]
     manifest_path: NotRequired[str]
 
+class SourceStatus(TypedDict):
+    source_id: Id
+    state: Literal['present', 'missing_file', 'content_mismatch', 'not_found']
+    observed_size: int | None
+
 class SourceInspection(TypedDict):
     source_id: Id
     sha256: Digest
@@ -456,6 +461,7 @@ class SourceInspection(TypedDict):
     blocks: list[SourceInspectionBlocksItem]
     page: Page
     unsupported_media: bool
+    unsupported_sections: NotRequired[list[str]]
 
 class SourcesResult(TypedDict):
     company_id: Id
@@ -463,6 +469,7 @@ class SourcesResult(TypedDict):
     missing_source_ids: list[Id]
     page: NotRequired[Page]
     inspection: NotRequired[SourceInspection]
+    source_statuses: NotRequired[list[SourceStatus]]
 
 class CapturedFile(TypedDict):
     source_root: Literal['company', 'capture']
@@ -6040,7 +6047,7 @@ class DashboardBriefDelivery__FundsOverview(TypedDict):
     internal_transfer_fen: str
 
 class DashboardBriefDelivery__LongTermAssets(TypedDict):
-    net_fen: str
+    net_fen: str | None
     fixed_active_count: int
     intangible_active_count: int
 
@@ -6072,7 +6079,7 @@ class DashboardBriefDelivery__OwnerTask(TypedDict):
     key: str
     title: str
     object: str
-    period: str
+    period: str | None
     amount_fen: str | None
     amount_status: Literal['known', 'unknown', 'not_applicable']
     deadline: str | None
@@ -7988,7 +7995,7 @@ class DashboardBrief__FundsOverview(TypedDict):
     internal_transfer_fen: str
 
 class DashboardBrief__LongTermAssets(TypedDict):
-    net_fen: str
+    net_fen: str | None
     fixed_active_count: int
     intangible_active_count: int
 
@@ -8020,7 +8027,7 @@ class DashboardBrief__OwnerTask(TypedDict):
     key: str
     title: str
     object: str
-    period: str
+    period: str | None
     amount_fen: str | None
     amount_status: Literal['known', 'unknown', 'not_applicable']
     deadline: str | None
@@ -11133,6 +11140,7 @@ __all__ = [
     'ParticipantStates',
     'JobsRequest',
     'DocumentsResult',
+    'SourceStatus',
     'SourceInspection',
     'SourcesResult',
     'CapturedFile',

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import mimetypes
@@ -9,9 +10,9 @@ import os
 import stat
 import tempfile
 from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import BinaryIO
-from uuid import uuid4
+from uuid import UUID, uuid5
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
@@ -84,7 +85,7 @@ def controlled_path(root: Path, relative: str, *, parents: bool = False) -> Path
             info = current.lstat()
         except FileNotFoundError:
             if parents and current != root / relative:
-                current.mkdir()
+                current.mkdir(exist_ok=True)
                 info = current.lstat()
             else:
                 continue
@@ -97,7 +98,7 @@ def controlled_path(root: Path, relative: str, *, parents: bool = False) -> Path
     return root / relative
 
 
-def atomic_write(root: Path, relative: str, data: bytes | BinaryIO) -> None:
+def atomic_write(root: Path, relative: str, data: bytes | BinaryIO, *, replace=True) -> None:
     path = controlled_path(root, relative, parents=True)
     temporary = None
     try:
@@ -113,7 +114,14 @@ def atomic_write(root: Path, relative: str, data: bytes | BinaryIO) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         controlled_path(root, relative)
-        os.replace(temporary, path)
+        if replace:
+            os.replace(temporary, path)
+        else:
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                pass  # The caller verifies the existing immutable target against its source.
+            temporary.unlink()
         temporary = None
         if os.name != "nt":
             descriptor = os.open(path.parent, os.O_RDONLY)
@@ -167,15 +175,39 @@ def checked_stream(root: Path, source):
         raise
 
 
-class SourceLease:
+class SourceLease(io.BufferedIOBase):
     """Read-only bytes detached from mutable host paths; usable only while open."""
 
     def __init__(self, source, stream):
+        super().__init__()
         self.source = source
         self._stream = stream
 
     def read(self, size: int = -1) -> bytes:
         return self._stream.read(size)
+
+    def read1(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        return self._stream.seek(offset, whence)
+
+    def tell(self):
+        return self._stream.tell()
+
+    def fileno(self):
+        return self._stream.fileno()
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def close(self):
+        if not self.closed:
+            self._stream.close()
+            super().close()
 
     def iter_chunks(self, chunk_size: int = CHUNK_SIZE):
         if type(chunk_size) is not int or not 1 <= chunk_size <= 8 * CHUNK_SIZE:
@@ -194,27 +226,84 @@ class SourceLease:
 @contextmanager
 def lease_source(root, source):
     with checked_stream(root, source) as stream:
-        yield SourceLease(source, stream)
+        with SourceLease(source, stream) as lease:
+            yield lease
 
 
-def check_source(root, source):
+def _file_name(name):
+    if not name or len(name) > 255:
+        raise ContractError("invalid_input", "原件名称超过合同长度。")
+    if (
+        name in {".", ".."}
+        or any(character in name for character in "/\\:\x00")
+        or (
+            os.name == "nt"
+            and (
+                PureWindowsPath(name).is_reserved()
+                or name.endswith((".", " "))
+                or any(ord(character) < 32 or character in '<>"|?*' for character in name)
+            )
+        )
+    ):
+        raise ContractError(
+            "invalid_path", f"原件名称 {name!r} 必须是当前文件系统支持的单一文件名。"
+        )
+
+
+def _file_path(source):
+    name = source["original_name"]
+    _file_name(name)
+    return (
+        "originals/"
+        + source.get("archive_month", "unassigned")
+        + "/"
+        + source["source_id"]
+        + "/"
+        + name
+    )
+
+
+def validate_source(source):
     validate_contract("core.schema.json", "Source", source)
     if source["kind"] == "owner_statement" and source_text(source["text"]) != source["text"]:
         raise ContractError("invalid_input", "老板说明使用规范LF换行，内容改变须使用新来源身份。")
     if source["kind"] == "file":
-        prefix = "originals/" + source.get("archive_month", "unassigned") + "/"
-        expected = prefix + source["source_id"] + "--" + source["original_name"]
+        expected = _file_path(source)
         if source["relative_path"] != expected:
             raise ContractError("invalid_path", "原件必须采用公司归档月份下的稳定来源文件名。")
+
+
+def check_source(root, source):
+    validate_source(source)
+    if source["kind"] == "file":
         _check_file(root, source)
     else:
         with checked_stream(root, source):
             pass
 
 
-def prepare_source(source_import, root, existing=None, find_existing=None):
+def prepare_source(source_import, root, existing=None, find_existing=None, *, company_id):
     validate_contract("core.schema.json", "SourceImport", source_import)
-    source_id = source_import.get("source_id", str(uuid4()))
+    try:
+        return _prepare_source(source_import, root, existing, find_existing, company_id)
+    except OSError as error:
+        code = (
+            "invalid_path"
+            if error.errno in {errno.EINVAL, errno.ENAMETOOLONG}
+            or getattr(error, "winerror", None) in {123, 206}
+            else "source_unavailable"
+        )
+        relative = source_import.get("relative_path", "老板说明")
+        raise ContractError(
+            code,
+            f"无法整理原件 {relative!r}；请检查文件名、资料位置与文件系统是否支持读取和归档。",
+        ) from error
+
+
+def _prepare_source(source_import, root, existing, find_existing, company_id):
+    if existing is not None and existing["kind"] != source_import["kind"]:
+        raise ContractError("conflict", "来源身份不能换成另一种内容。")
+    source_id = source_import.get("source_id")
     if source_import["kind"] == "owner_statement":
         text = source_text(source_import["text"])
         source = {
@@ -227,12 +316,11 @@ def prepare_source(source_import, root, existing=None, find_existing=None):
         relative = source_import["relative_path"]
         if not relative.startswith("originals/"):
             raise ContractError("invalid_path", "待整理原件须先放入当前公司originals目录。")
+        _file_name(PurePosixPath(relative).name)
         path = controlled_path(root, relative)
         if not path.exists() and existing is not None:
             check_source(root, existing)
             source = dict(existing)
-            if source.get("kind") != "file":
-                raise ContractError("conflict", "来源身份不能换成另一种内容。")
         else:
             if not path.is_file():
                 raise ContractError("source_missing", "待登记原件不存在。")
@@ -240,8 +328,6 @@ def prepare_source(source_import, root, existing=None, find_existing=None):
             if size > 2147483647:
                 raise ContractError("invalid_input", "单份原件超过2 GiB，不能导入。")
             name = existing.get("original_name") if existing else path.name
-            if not name or len(name) > 255:
-                raise ContractError("invalid_input", "原件名称超过合同长度。")
             digest = hashlib.sha256()
             with path.open("rb") as stream:
                 while chunk := stream.read(CHUNK_SIZE):
@@ -251,7 +337,9 @@ def prepare_source(source_import, root, existing=None, find_existing=None):
                 "kind": "file",
                 "relative_path": relative,
                 "original_name": name,
-                "media_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+                "media_type": existing["media_type"]
+                if existing is not None
+                else mimetypes.guess_type(name)[0] or "application/octet-stream",
                 "byte_size": size,
                 "sha256": digest.hexdigest(),
             }
@@ -267,6 +355,10 @@ def prepare_source(source_import, root, existing=None, find_existing=None):
             source["source_id"] = source_id
             if source["kind"] == "file":
                 source["original_name"] = existing["original_name"]
+                source["media_type"] = existing["media_type"]
+    if source_id is None:
+        source_id = str(uuid5(UUID(company_id), source["kind"] + ":" + source["sha256"]))
+        source["source_id"] = source_id
     if existing is not None and (existing["kind"], existing["sha256"]) != (
         source["kind"],
         source["sha256"],
@@ -277,14 +369,7 @@ def prepare_source(source_import, root, existing=None, find_existing=None):
     elif existing is not None and "archive_month" in existing:
         source["archive_month"] = existing["archive_month"]
     if source["kind"] == "file":
-        target = (
-            "originals/"
-            + source.get("archive_month", "unassigned")
-            + "/"
-            + source_id
-            + "--"
-            + source["original_name"]
-        )
+        target = _file_path(source)
         if target != source["relative_path"]:
             target_path = controlled_path(root, target, parents=True)
             if target_path.exists():
@@ -292,7 +377,7 @@ def prepare_source(source_import, root, existing=None, find_existing=None):
                 source["relative_path"] = target
                 return source
             with checked_stream(root, source) as stream:
-                atomic_write(root, target, stream)
+                atomic_write(root, target, stream, replace=False)
             source["relative_path"] = target
     check_source(root, source)
     return source

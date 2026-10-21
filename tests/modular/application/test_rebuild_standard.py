@@ -301,7 +301,7 @@ def test_full_file_source_preserves_human_name_and_explicit_media_type(
     with app.storage.read_unit(company) as read:
         root = app.storage.company_metadata(read).company_root
     source_id, name, raw = str(uuid4()), "原件名称.abc", b"one verified original"
-    relative = f"originals/2026-01/{source_id}--{name}"
+    relative = f"originals/2026-01/{source_id}/{name}"
     path = root / relative
     path.parent.mkdir(parents=True)
     path.write_bytes(raw)

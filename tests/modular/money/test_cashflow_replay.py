@@ -253,7 +253,7 @@ def test_final_zero_wage_documents_replay_paid_and_refunded_money_without_old_da
     bank, employee = _object("bank_account"), _object("person")
     source_id = str(uuid4())
     raw = "合成最终确认：应发工资0分，已付100000分，已由原收款人全额退回。".encode()
-    relative = f"originals/2026-01/{source_id}--工资核对.txt"
+    relative = f"originals/2026-01/{source_id}/工资核对.txt"
     path = tmp_path / "original/company" / relative
     path.parent.mkdir(parents=True)
     path.write_bytes(raw)
