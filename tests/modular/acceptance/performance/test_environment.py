@@ -39,7 +39,7 @@ def test_qualification_records_start_and_rejects_code_changes(monkeypatch, capsy
     assert calls == ["before", "measurement", "after"]
     assert report["environment"] == initial
     assert report["source_unchanged"] is not changed
-    assert report["code_after"] == finished()
+    assert report["code_after"] == {"source_sha256": "after" if changed else "before"}
     assert report["result"]["status"] == "passed"
 
 
