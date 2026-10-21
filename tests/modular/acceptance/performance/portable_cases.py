@@ -6,15 +6,17 @@ import stat
 from dataclasses import dataclass
 from hashlib import file_digest
 from pathlib import Path
+from time import perf_counter_ns
 
 from argon2 import PasswordHasher
 
 from ai_accounting_modular.host.public import create_kernel, create_offline_application
 from ai_accounting_modular.storage.public import OwnerProfile, create_catalog
 
-from .._support import COMPANY, DATABASE
-from .dataset import PASSWORD, open_dataset
+from .._support import COMPANY, DATABASE, ready
+from .dataset import PASSWORD, count_businesses, open_dataset
 from .ledger_variant import install_ledger_implementation
+from .projections import PAGES, parameters
 from .workload import identity
 
 
@@ -75,6 +77,7 @@ def _register(sample_root, manifest, mode):
 class _Baseline:
     company_root: Path
     files: tuple[tuple[str, int, str], ...]
+    cold_reading: dict | None = None
 
 
 def _paths(root):
@@ -108,11 +111,51 @@ def _snapshot(root):
     return tuple(files)
 
 
-def prepare_baseline(package_path, root, manifest, mode):
+def _prior_ready(root, manifest, mode):
+    """Report the restored history's cold build; never open the pending new month."""
+    period = manifest["period_to"]
+    pointer = root / "company/standard/current.json"
+    with pointer.open("rb") as stream:
+        documents = file_digest(stream, "sha256").hexdigest()
+    with open_dataset(root, mode) as (kernel, _):
+        with kernel.storage.read_unit(COMPANY) as read:
+            assert read.repository("reading").scopes() == ()
+            head = read.head
+        pending = manifest.get("pending_period")
+        if pending:
+            assert pending > period and count_businesses(kernel, pending) == 0
+        queries = {page: parameters(COMPANY, period, page) for page in PAGES}
+        start = perf_counter_ns()
+        pages = {page: ready(kernel, page, query) for page, query in queries.items()}
+        elapsed = (perf_counter_ns() - start) / 1_000_000
+        with kernel.storage.read_unit(COMPANY) as read:
+            assert read.head == head
+        if pending:
+            assert count_businesses(kernel, pending) == 0
+    with pointer.open("rb") as stream:
+        assert file_digest(stream, "sha256").hexdigest() == documents
+    return {
+        "state": "ready",
+        "measurement": "restored_history_cold_reading",
+        "period": period,
+        "elapsed_ms": elapsed,
+        "page_queries": queries,
+        "page_versions": {
+            page: value["read_context"]["read_version"] for page, value in pages.items()
+        },
+        "formal_head": head,
+        "standard_pointer_sha256": documents,
+        "pending_period": pending,
+        "pending_month_businesses": 0 if pending else None,
+    }
+
+
+def prepare_baseline(package_path, root, manifest, mode, *, prior_ready=False):
     """Restore and verify once, then freeze the actual closed, relocated company bytes."""
     root = Path(root).resolve()
     root.mkdir(parents=False, exist_ok=False)
     restore(package_path, root, manifest, mode)
+    cold = _prior_ready(root, manifest, mode) if prior_ready else None
     # Read-only verification may leave WAL/SHM behind. A closed writable unit
     # lets SQLite finish its own checkpoint; no table or formal head is changed.
     with install_ledger_implementation(mode):
@@ -123,7 +166,7 @@ def prepare_baseline(package_path, root, manifest, mode):
         finally:
             kernel.close()
     company = root / "company"
-    return _Baseline(company, _snapshot(company))
+    return _Baseline(company, _snapshot(company), cold)
 
 
 def clone_baseline(baseline, sample_root, manifest, mode):

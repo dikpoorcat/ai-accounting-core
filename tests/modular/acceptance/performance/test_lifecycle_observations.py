@@ -68,7 +68,9 @@ def test_failed_scenario_retains_observed_time_but_cannot_be_a_successful_sample
     }
     monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
     monkeypatch.setattr(scenarios, "package", lambda *args: None)
-    monkeypatch.setattr(scenarios, "prepare_baseline", lambda *args: None)
+    monkeypatch.setattr(
+        scenarios, "prepare_baseline", lambda *args, **kw: SimpleNamespace(cold_reading={})
+    )
     monkeypatch.setattr(scenarios, "clone_baseline", lambda *args: None)
     monkeypatch.setattr(
         scenarios, "open_dataset", lambda *args, **kwargs: nullcontext((None, None))
@@ -111,10 +113,10 @@ def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samp
         "ending_bank_fen": 1000,
     }
     prepared, copied, committed = [], [], []
-    sentinel = object()
+    sentinel = SimpleNamespace(cold_reading={"elapsed_ms": 123, "period": "2026-11"})
 
-    def baseline(*args):
-        prepared.append(args)
+    def baseline(*args, **kwargs):
+        prepared.append((args, kwargs))
         return sentinel
 
     def clone(base, sample, *args):
@@ -140,6 +142,8 @@ def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samp
         tmp_path / "source", tmp_path / "report", "original", "month_archive_and_ready"
     )
     assert len(prepared) == 1
+    assert prepared[0][1] == {"prior_ready": True}
+    assert result["cold_reading"] == sentinel.cold_reading
     assert len(set(copied)) == len(committed) == 33
     assert [item["kind"] for item in result["attempts"]] == ["warmup"] * 3 + ["sample"] * 30
     assert result["warmups"] == 3 and result["sample_count"] == 30
@@ -147,6 +151,30 @@ def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samp
     assert result["summary"]["budget"] == scenarios.BUDGETS["month_archive_and_ready"]
     assert "one verified isolated restore and closed baseline" in result["setup_excluded"]
     assert json.loads((tmp_path / "report/lifecycle-progress.json").read_text("utf-8")) == result
+
+
+@pytest.mark.parametrize("failure", [ValueError("cold build failed"), KeyboardInterrupt()])
+def test_cold_baseline_failure_is_reported_without_fabricating_formal_samples(
+    tmp_path, monkeypatch, failure
+):
+    manifest = {"months": 1, "period_to": "2026-01"}
+    monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
+    monkeypatch.setattr(scenarios, "package", lambda *args: None)
+
+    def failed(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(scenarios, "prepare_baseline", failed)
+    with pytest.raises(type(failure)):
+        scenarios.run(
+            tmp_path / "source", tmp_path / "report", "original", "commit_to_ready", probe=True
+        )
+    saved = json.loads((tmp_path / "report/lifecycle-progress.json").read_text("utf-8"))
+    assert saved["status"] == ("failed" if isinstance(failure, Exception) else "interrupted")
+    assert saved["attempts"] == [] and "summary" not in saved
+    assert saved["cold_reading"]["state"] == "unavailable"
+    assert saved["cold_reading"]["elapsed_ms"] is None
+    assert saved["cold_reading"]["error_type"] == type(failure).__name__
 
 
 def test_interruption_preserves_finished_attempt_and_marks_current_attempt_incomplete(
@@ -160,7 +188,7 @@ def test_interruption_preserves_finished_attempt_and_marks_current_attempt_incom
         "ending_bank_fen": 1000,
     }
     for name in ("package", "prepare_baseline", "clone_baseline", "plan_month"):
-        monkeypatch.setattr(scenarios, name, lambda *args, **kw: None)
+        monkeypatch.setattr(scenarios, name, lambda *args, **kw: SimpleNamespace(cold_reading={}))
     monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
     monkeypatch.setattr(scenarios, "open_dataset", lambda *args, **kw: nullcontext((None, None)))
     calls = []

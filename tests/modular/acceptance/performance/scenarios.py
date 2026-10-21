@@ -9,12 +9,11 @@ from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import CONTRACT
 
-from .._support import COMPANY, ready
+from .._support import COMPANY
 from .dataset import describe, open_dataset
 from .lifecycle import submission, whole_month
 from .measurements import BUDGETS, SAMPLES, WARMUPS, summarize
 from .portable_cases import clone_baseline, package, prepare_baseline
-from .projections import PAGES, parameters
 from .workload import BUSINESSES_PER_MONTH, CONTRACTORS, EMPLOYEES, PEOPLE, SCALES, plan_month
 
 
@@ -54,6 +53,10 @@ def run(root, output_root, mode, scenario, *, probe=False):
         "warmups": warmups,
         "sample_count": repeats,
         "endpoint": "formal commit success to current documents and five page models ready",
+        "baseline": (
+            "existing history ready; the pending monthly scope is not preopened; "
+            "its natural quarter may already be among the prior period's ready scopes"
+        ),
         "setup_excluded": [
             "verified backup",
             "one verified isolated restore and closed baseline",
@@ -69,7 +72,22 @@ def run(root, output_root, mode, scenario, *, probe=False):
         workspace = Path(workspace).resolve()
         assert workspace.is_relative_to(destination)
         backup = package(root, workspace / "baseline.zip", mode)
-        baseline = prepare_baseline(backup, workspace / "baseline", manifest, mode)
+        try:
+            baseline = prepare_baseline(
+                backup, workspace / "baseline", manifest, mode, prior_ready=True
+            )
+        except BaseException as error:
+            report["status"] = "failed" if isinstance(error, Exception) else "interrupted"
+            report["cold_reading"] = {
+                "state": "unavailable",
+                "elapsed_ms": None,
+                "error_type": type(error).__name__,
+                "message": str(error),
+            }
+            _checkpoint(destination, report)
+            raise
+        report["cold_reading"] = baseline.cold_reading
+        _checkpoint(destination, report)
         for iteration in range(warmups + repeats):
             kind = "warmup" if iteration < warmups else "sample"
             record = {
@@ -118,8 +136,6 @@ def run(root, output_root, mode, scenario, *, probe=False):
                                     }
                                 ],
                             }
-                            for page in PAGES:
-                                ready(kernel, page, parameters(COMPANY, period, page))
                         record["setup_ms"] = (perf_counter_ns() - setup_start) / 1_000_000
                         record["phase"] = "commit_and_finish"
                         _checkpoint(destination, report)

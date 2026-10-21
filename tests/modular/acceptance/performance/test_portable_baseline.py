@@ -1,5 +1,6 @@
 """Small real fixtures prove byte-checked isolation; these are not timing results."""
 
+import json
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -13,6 +14,7 @@ from ai_accounting_modular.contracts.public import CONTRACT
 from .._support import COMPANY, DATABASE
 from . import portable_cases as portable
 from .dataset import build, open_dataset
+from .projections import PAGES
 
 
 def test_unreadable_subdirectory_cannot_silently_disappear_from_the_file_set(tmp_path, monkeypatch):
@@ -42,6 +44,50 @@ def baseline(tmp_path_factory):
         frozen = portable.prepare_baseline(backup, root / "baseline", manifest, "original")
     assert restored.call_count == 1
     return frozen, manifest
+
+
+@pytest.mark.parametrize("mode", ["original", "aggregate_join"])
+def test_prior_ready_baseline_reports_cold_history_without_preopening_the_new_month(
+    baseline, tmp_path, mode
+):
+    frozen, manifest = baseline
+    source = tmp_path / "source"
+    source.mkdir()
+    portable.clone_baseline(frozen, source, manifest, mode)
+    manifest = manifest | {"pending_period": "2026-02", "intended_scale_months": 2}
+    backup = portable.package(source, tmp_path / "ready-source.zip", mode)
+    actual = portable.prepare_baseline(
+        backup, tmp_path / "history", manifest, mode, prior_ready=True
+    )
+    cold = actual.cold_reading
+    assert cold["measurement"] == "restored_history_cold_reading"
+    assert cold["period"] == "2026-01" and cold["pending_period"] == "2026-02"
+    assert cold["pending_month_businesses"] == 0 and cold["elapsed_ms"] >= 0
+    assert set(cold["page_versions"]) == set(PAGES)
+    assert all(len(value) == 64 for value in cold["page_versions"].values())
+    assert cold["page_queries"]["quarterly-report"] == {
+        "company_id": COMPANY,
+        "year": 2026,
+        "quarter": 1,
+    }
+    assert all(
+        query["period"] == "2026-01"
+        for page, query in cold["page_queries"].items()
+        if page != "quarterly-report"
+    )
+    sample = tmp_path / "sample"
+    sample.mkdir()
+    portable.clone_baseline(actual, sample, manifest, mode)
+    with open_dataset(sample, mode) as (kernel, _):
+        with kernel.storage.read_unit(COMPANY) as read:
+            assert read.head == cold["formal_head"]
+            scopes = read.repository("reading").scopes()
+            assert scopes and all(state["state"] == "ready" for state in scopes)
+            monthly = [json.loads(state["scope_key"]) for state in scopes]
+            assert {
+                item["scope"]["period_to"] for item in monthly if item.get("page") == "monthly"
+            } == {"2026-01"}
+    assert portable._snapshot(actual.company_root) == actual.files
 
 
 @pytest.mark.parametrize("mode", ["original", "aggregate_join"])
