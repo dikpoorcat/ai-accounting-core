@@ -70,7 +70,8 @@ for (const [action, name, suffix, amountParent, amountField] of deliveryCases) {
       const wrong = structuredClone(wire);
       if (action === "brief") wrong.response.data.long_term_assets.net_fen = null;
       else wrong.response.data.fixed_asset_net_fen = null;
-      assert.throws(() => check(wrong), "required computed amount must not become unknown");
+      if (action === "brief") assert.equal(check(wrong).data.long_term_assets.net_fen, null, "unknown opening must stay unknown");
+      else assert.throws(() => check(wrong), "required computed amount must not become unknown");
     }
     for (const value of [null, "0", "-123", "9007199254740993", "9223372036854775807", "-9223372036854775808"]) {
       const changed = structuredClone(wire); amountParent(changed.response)[amountField] = value;

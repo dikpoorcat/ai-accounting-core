@@ -167,11 +167,14 @@ def run_pending(reader, company_id, limit):
         try:
             selection = loads_json(scope_key)
             scope = selection["scope"]
+            format_version = (
+                _monthly.FORMAT_VERSION if selection["page"] == "monthly" else FORMAT_VERSION
+            )
             with reader.storage.read_unit(company_id) as read:
                 state = read.repository("reading").state(scope_key, component)
                 if state is None or state["wanted_head"] != wanted or state["state"] != "preparing":
                     continue
-                if state["format_version"] != FORMAT_VERSION:
+                if state["format_version"] != format_version:
                     raise ContractError("storage_corrupt", "读取目标的内容格式尚未装配。")
                 if selection["page"] == "monthly":
                     model = _monthly.capture(reader, component, scope, read)
@@ -183,7 +186,7 @@ def run_pending(reader, company_id, limit):
                     raise ContractError("storage_corrupt", "读取目标的范围或组件尚未装配。")
             with reader.storage.maintenance_unit(company_id) as unit:
                 published = unit.repository("reading").publish(
-                    scope_key, component, wanted, FORMAT_VERSION, model
+                    scope_key, component, wanted, format_version, model
                 )
             if published:
                 completed.append(scope_key)

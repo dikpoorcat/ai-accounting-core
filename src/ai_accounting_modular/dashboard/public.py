@@ -13,6 +13,7 @@ from . import _monthly, _reports, _requests
 __all__ = ["Dashboard", "HttpResponse", "create_dashboard"]
 LOCAL_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 _MONTH_PAGES = {
+    "/api/dashboard/brief": ("brief", 19),
     "/api/dashboard/funds": ("funds", 9),
     "/api/dashboard/assets": ("assets", 10),
     "/api/dashboard/employees": ("employees", 13),
@@ -202,7 +203,9 @@ class Dashboard:
             delivery = self.reading.page(page_key, scope, query)
             response = (
                 _validate(
-                    "dashboard_" + page_key, _monthly.response(delivery, schema_version, self.now())
+                    "dashboard_" + page_key,
+                    _monthly.response(delivery, schema_version, self.now())
+                    | ({"scope": query.get("section", "overview")} if page_key == "brief" else {}),
                 )
                 if delivery.state == "ready" or bare
                 else None
@@ -212,6 +215,21 @@ class Dashboard:
             return _validate(
                 "dashboard_" + page_key + "_delivery",
                 _monthly.envelope(scope.company_id, delivery, response),
+            )
+        if path == "/api/dashboard/brief-group":
+            scope, query = _requests.brief_group(parameters)
+            delivery = self.reading.detail("brief_group", scope, query)
+            return _validate("dashboard_brief_group", _monthly.response(delivery, 3, self.now()))
+        if path == "/api/dashboard/business-status":
+            scope, query = _requests.business_status(parameters)
+            delivery = self.reading.detail("business_status", scope, query)
+            return _validate(
+                "dashboard_business_status", _monthly.response(delivery, 10, self.now())
+            )
+        if path == "/api/dashboard/close-review":
+            scope, query = _requests.close_review(parameters)
+            return _validate(
+                "dashboard_close_review", self.reading.detail("close_review", scope, query)
             )
         if path == "/api/review/materials":
             query = _requests.materials(parameters)

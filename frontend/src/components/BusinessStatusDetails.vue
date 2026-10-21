@@ -15,6 +15,7 @@ import type { PersonalLaborItem } from "../api/employees";
 
 interface BriefStatusContext {
   obligationKey: string; categoryKey: string;
+  voucherVersionId?: string;
   contributionComponent?: BriefOpenItem["contribution_component"];
   cutoffPeriod: string; currentCutoffPeriod: string; status: string;
   direction: "receivable" | "payable"; party: string; description?: string;
@@ -254,6 +255,7 @@ function activityState(item: Obligation, checking: boolean) {
   if (item.settlement_status === "withdrawn") return "业务已撤回";
   if (item.settlement_status === "reversed") return "原业务已更正";
   if (checking || item.direction === "unknown" || item.category_key === "unknown" || item.remaining_fen === null) return "AI 会计核对中";
+  if (item.settlement_status === "current") return fen(item.remaining_fen) === 0n ? "当前无应补" : "当前应补";
   if (fen(item.remaining_fen) < 0n || item.settlement_status === "over_settled") return "存在超额结算";
   if (item.settlement_status === "settled" && fen(item.remaining_fen) === 0n) return item.category_key === "supplier_advances" ? "已处理完毕" : "已结清";
   if (item.settlement_status === "partial") return item.category_key === "supplier_advances" ? "部分冲抵或退回" : item.direction === "receivable" ? "部分收回" : "部分支付";
@@ -310,6 +312,7 @@ function progressState(status: string | null | undefined, remaining: string | nu
   if (status === "withdrawn") return "业务已撤回";
   if (status === "reversed") return "原业务已更正";
   if (checking || remaining === null || remaining === undefined || !status) return "AI 会计核对中";
+  if (status === "current") return fen(remaining) === 0n ? "当前无应补" : "当前应补";
   if (status === "settled" && fen(remaining) === 0n) return isAdvance.value ? "已处理完毕" : "已结清";
   if (status === "over_settled" || fen(remaining) < 0n) return "存在超额结算";
   if (status === "partial") return isAdvance.value ? "部分冲抵或退回" : props.briefContext?.direction === "receivable" ? "部分收回" : "部分支付";
@@ -320,6 +323,7 @@ function progressTone(status: string | null | undefined, remaining: string | nul
   if (status && ["withdrawn", "reversed"].includes(status)) return "withdrawn";
   if (checking || status === "checking" || remaining == null || status === "over_settled" || fen(remaining) < 0n) return "attention";
   if (status === "settled" && fen(remaining) === 0n) return "settled";
+  if (status === "current") return fen(remaining) === 0n ? "settled" : "pending";
   if (status === "open" || status === "partial") return "pending";
   return "withdrawn";
 }
@@ -334,8 +338,10 @@ function movementPurpose(name: string) {
 }
 function detailScope() {
   const item = props.activityContext;
-  return isActivity.value && item?.detail_scope_key
-    ? { detail_scope_key: item.detail_scope_key, voucher_version_id: item.voucher_version_id } : {};
+  if (isActivity.value && item?.detail_scope_key) return { detail_scope_key: item.detail_scope_key, voucher_version_id: item.voucher_version_id };
+  if (isOpenItem.value && props.briefContext) return { detail_scope_key: `open:${props.briefContext.obligationKey}`, voucher_version_id: props.briefContext.voucherVersionId ?? "" };
+  if (isVoucher.value && props.voucherContext) return { detail_scope_key: `voucher:${props.voucherContext.voucher_version_id}`, voucher_version_id: props.voucherContext.voucher_version_id };
+  return {};
 }
 function selection() { return JSON.stringify([route.query.company_id, props.subjectId, props.period, props.snapshotVersion, props.refreshGeneration, props.settlementView, props.briefContext?.obligationKey, props.activityContext?.key, detailScope(), props.fundsContext?.id, props.fundsContext?.account_id, props.voucherContext?.voucher_version_id]); }
 function cacheKey() { return JSON.stringify([route.query.company_id, props.period, props.snapshotVersion, props.subjectId, props.settlementView ?? "current", detailScope()]); }
@@ -346,7 +352,7 @@ function rememberRead() {
 }
 function restoreRead() {
   const cached = isVoucher.value && props.snapshotVersion ? props.detailCache?.get(cacheKey()) : undefined;
-  if (!cached || cached.snapshotVersion !== props.snapshotVersion) return false;
+  if (!cached) return false;
   data.value = cached.data; responseVersion.value = cached.snapshotVersion; moreError.value = cached.moreError ?? "";
   return true;
 }
@@ -361,12 +367,12 @@ function invalidate() {
 }
 function changed() { if (isVoucher.value) props.detailCache?.clear(); invalidate(); notice.value = "业务资料已变化，请刷新页面后重新查看。"; emit("changed"); }
 async function load() {
-  if (loading.value) return;
+  if (loading.value || (isActivity.value && !props.activityContext?.detail_scope_key)) return;
   const version = ++generation, key = selection(), request = new AbortController();
   controller = request; loading.value = true; error.value = "";
   const valid = () => mounted && generation === version && selection() === key && controller === request;
   try {
-    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { expected_version: props.snapshotVersion, settlement_view: props.settlementView ?? "current", ...detailScope(), limit: 20 });
+    const result = await fetchBusinessStatus(props.period, props.subjectId, request.signal, { settlement_view: props.settlementView ?? "current", ...detailScope(), limit: 20 });
     if (!valid()) return;
     data.value = result.data; responseVersion.value = result.snapshot_version; notice.value = "";
     rememberRead();
@@ -375,7 +381,8 @@ async function load() {
 }
 async function loadMore() {
   const page = collection.value?.page;
-  if (!page?.has_more || !page.next_cursor || moreLoading.value || !data.value) return;
+  if (!page?.has_more || !page.next_cursor || moreLoading.value || !data.value
+    || (isActivity.value && !props.activityContext?.detail_scope_key)) return;
   const version = generation, key = selection(), request = new AbortController();
   pageController = request; moreLoading.value = true; moreError.value = "";
   const valid = () => mounted && generation === version && selection() === key && pageController === request;

@@ -25,18 +25,21 @@ function renderer(onElement) {
   return { root, host, nodes };
 }
 
-async function mount(server, name, { eager = false, section = "activity", withoutMemo = false } = {}) {
+async function mount(server, name, { eager = false, section = "activity", withoutMemo = false, realBriefApi = false } = {}) {
   const env = { states: {}, details: [], detailCalls: [], pageCalls: [], moneyCalls: [], events: [], unmounted: 0 };
   const initial = structuredClone(samples.cash_funds.response);
   env.route = Vue.reactive({ query: { company_id: initial.read_context.company_id, period: initial.selected_period.key }, hash: "" });
   const modules = {
     vue: { ...Vue, onMounted() {} },
     "vue-router": { useRoute: () => env.route, useRouter: () => ({ replace: async () => {}, push: async () => {} }) },
-    useDashboardContext: { useDashboardContext: () => ({ context: Vue.ref({ current_company: { company_id: env.route.query.company_id }, periods: [{ key: env.route.query.period }] }), loading: Vue.ref(false), error: Vue.ref(""), load: async () => {}, refresh: async () => {} }) },
+    useDashboardContext: { useDashboardContext: () => {
+      const context = { current_company: { company_id: env.route.query.company_id }, periods: [{ key: env.route.query.period }] };
+      return { context: Vue.ref(context), loading: Vue.ref(false), error: Vue.ref(""), load: async () => {}, refresh: async () => realBriefApi ? context : undefined };
+    } },
     useDashboardSections: { useDashboardSections: () => ({ activeSection: Vue.ref("bank-details"), focusSection() {}, focusSelectedPanel() {}, positionSection() {}, lockSectionSync() {} }) },
   };
   const paths = { BriefView: "views/BriefView.vue", FundsView: "views/FundsView.vue", BriefGroupMembers: "components/brief/BriefGroupMembers.vue", BusinessStatusDetails: "components/BusinessStatusDetails.vue", BriefActivityWorkbench: "components/brief/BriefActivityWorkbench.vue" };
-  const annotations = { BriefView: "{ response, vouchersReady, loadAllVouchers, loadMore, activeSection, pausePages, paginationScope, sectionLoading, sectionErrors, invalidateRequests, refreshCurrent, voucherPreviewIndex }", FundsView: "{ funds, snapshotVersion, selectedPeriod, selectedDetailView, selectedAccount, selectedBankAccount, activeSection, expandedMovementId, openedMovementIds, invalidateRequests, loadMore, loadFunds }", BriefGroupMembers: "{ data, props, selected, openedDetails, expandedPart, contributions, toggle, togglePart, loadMore }", BusinessStatusDetails: "{ data, props, loadMore }", BriefActivityWorkbench: "{ mode, voucherDisplayMode, selectedVoucher, progressVoucher, selectVoucher, changeVoucherPage, selectVoucherMode, toggleVoucherDisplayMode, retryVouchers, closeProgress }" };
+  const annotations = { BriefView: "{ response, error, loadData, vouchersReady, loadAllVouchers, loadMore, activeSection, pausePages, paginationScope, sectionLoading, sectionErrors, invalidateRequests, refreshCurrent, voucherPreviewIndex }", FundsView: "{ funds, snapshotVersion, selectedPeriod, selectedDetailView, selectedAccount, selectedBankAccount, activeSection, expandedMovementId, openedMovementIds, invalidateRequests, loadMore, loadFunds }", BriefGroupMembers: "{ data, props, selected, openedDetails, expandedPart, contributions, toggle, togglePart, loadMore }", BusinessStatusDetails: "{ data, props, loadMore }", BriefActivityWorkbench: "{ mode, voucherDisplayMode, selectedVoucher, progressVoucher, selectVoucher, changeVoucherPage, selectVoucherMode, toggleVoucherDisplayMode, retryVouchers, closeProgress }" };
   const cache = {};
   async function component(componentName) {
     if (cache[componentName]) return cache[componentName];
@@ -65,6 +68,7 @@ async function mount(server, name, { eager = false, section = "activity", withou
           }
         }
         for (const method of ["fetchDeferredBrief", "fetchFundsDashboard", "fetchBriefGroup", "fetchBusinessStatus"]) if (method in bindings[location]) {
+          if (realBriefApi && method === "fetchDeferredBrief") continue;
           bindings[location][method] = (...args) => {
             if (method === "fetchDeferredBrief") env.events.push({ type: "fetch", cursor: args[4]?.cursor, loaded: env.states.BriefView?.response.value?.data?.collections.vouchers?.items.length });
             return new Promise((resolve, reject) => (method === "fetchBusinessStatus" ? env.detailCalls : env.pageCalls).push({ args, resolve, reject }));
@@ -213,13 +217,80 @@ test("real voucher all dispatches the known continuation before new DOM and reta
     }
   } finally { await server.close(); Object.assign(globalThis, saved); }
 });
-const member = (section, index) => ({ ...movement(index), key: `member-${index}`, id: `member-${index}`, group_key: "group-a", title: "付款", description: `记录 ${index}`, recognition: { period: "2026-01", label: "按月确认" }, state: "已入账", status: "open", outstanding_fen: "100", contribution_group_key: null });
+const member = (section, index) => ({ ...movement(index), key: `member-${index}`, id: `member-${index}`, detail_scope_key: section === "activity" ? `member-${index}` : null, voucher_version_id: `voucher-${index}`, group_key: "group-a", title: "付款", description: `记录 ${index}`, recognition: { period: "2026-01", label: "按月确认" }, state: "已入账", status: "open", outstanding_fen: "100", contribution_group_key: null });
 function detailResponse(version, more = false) {
   const result = structuredClone(samples.business_status.response); result.snapshot_version = version;
   result.data.collections.settlement_events.page.has_more = more;
   result.data.collections.settlement_events.page.next_cursor = more ? "detail-next" : null;
   return result;
 }
+
+test("B29P reserve expense without a progress scope has no entry or hidden detail, while its net wage part stays scoped", async () => {
+  const saved = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element };
+  globalThis.window = { location: { origin: "http://offline.invalid" }, addEventListener() {}, removeEventListener() {} };
+  globalThis.document = { addEventListener() {}, removeEventListener() {}, querySelector() { return null; }, getElementById() { return null; } };
+  globalThis.Element = class {};
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  const h = await mount(server, "BriefGroupMembers");
+  try {
+    h.props.expanded = true; await flush();
+    // Actual B29P meanings: one gross bank payment 1000000 = net wages 830000 + reserve 170000.
+    const reserve = { ...member("activity", 0), subject_id: "gross-payment", voucher_version_id: "gross-voucher", amount_fen: "170000", title: "支付备用金费用", description: "支付备用金费用", detail_scope_key: null };
+    const wages = { ...member("activity", 1), subject_id: "gross-payment", voucher_version_id: "gross-voucher", group_key: "wage-group", amount_fen: "830000", title: "支付工资", description: "支付工资" };
+    h.pageCalls[0].resolve({ data: { section: "activity", group_key: h.props.groupKey, collections: { members: { items: [reserve], page: { has_more: false, next_cursor: null } }, vouchers: { items: [] } } } });
+    await flush();
+    const text = node => node.text + node.children.map(text).join("");
+    assert.equal(h.nodes().filter(node => node.tag === "button" && text(node) === "业务进展").length, 0);
+    h.state.toggle(reserve.key); await flush();
+    assert.equal(h.details.length, 0, "a stale selection cannot even mount unscoped reserve progress");
+    assert.equal(h.detailCalls.length, 0);
+    h.props.groupKey = "wage-group"; await flush();
+    h.pageCalls[1].resolve({ data: { section: "activity", group_key: h.props.groupKey, collections: { members: { items: [wages], page: { has_more: false, next_cursor: null } }, vouchers: { items: [] } } } });
+    await flush();
+    const entries = h.nodes().filter(node => node.tag === "button" && text(node) === "业务进展");
+    assert.equal(entries.length, 1, "the separate 830000 net-wage group keeps its exact scope");
+    entries[0].props.onClick(); await flush();
+    assert.equal(h.details.length, 1); assert.equal(h.detailCalls.length, 1);
+    assert.equal(h.detailCalls[0].args[3].detail_scope_key, wages.detail_scope_key);
+    assert.equal(h.detailCalls[0].args[3].voucher_version_id, wages.voucher_version_id);
+    h.detailCalls[0].resolve(detailResponse("net-progress")); await flush();
+  } finally { h.close(); await server.close(); Object.assign(globalThis, saved); }
+});
+
+test("the rendered brief error retry uses one explicit retry POST and read-only GET polling", async () => {
+  const saved = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element, fetch: globalThis.fetch };
+  const response = structuredClone(samples.deferred_brief.response);
+  const company = response.read_context.company_id, period = response.selected_period.key;
+  globalThis.window = { location: { origin: "http://offline.invalid", search: `?company_id=${company}` }, addEventListener() {}, removeEventListener() {} };
+  globalThis.document = { addEventListener() {}, removeEventListener() {}, querySelector() { return null; }, getElementById() { return null; } };
+  globalThis.Element = class {};
+  const calls = [], base = { schema_version: 6, company_id: company, period, model_version: null };
+  globalThis.fetch = async (target, options = {}) => {
+    const url = new URL(target, window.location.origin), method = options.method ?? "GET";
+    calls.push({ path: url.pathname, method, body: options.body });
+    const payload = calls.length === 1 ? { ...base, state: "failed", reason: "corrupt" }
+      : calls.length === 2 ? { ...base, state: "preparing", retry_after_ms: 100 }
+      : { ...base, state: "ready", model_version: response.snapshot_version, response };
+    return new Response(JSON.stringify(payload));
+  };
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  const h = await mount(server, "BriefView", { realBriefApi: true });
+  try {
+    await h.state.loadData(period); await flush();
+    assert(h.state.error.value, "the real generated delivery parser must surface failed state");
+    const text = node => node.text + node.children.map(text).join("");
+    const button = h.nodes().find(node => node.tag === "button" && text(node) === "重新加载");
+    assert(button, "retry comes from the rendered error panel");
+    await button.props.onClick(); await flush();
+    assert.deepEqual(calls.map(({ path, method }) => [method, path]), [
+      ["GET", "/api/dashboard/brief"], ["POST", "/api/dashboard/brief/retry"], ["GET", "/api/dashboard/brief"],
+    ]);
+    assert.deepEqual(JSON.parse(calls[1].body), { company_id: company, period, limit: "20" });
+    assert.equal(h.state.error.value, "");
+    assert.equal(h.state.response.value.snapshot_version, response.snapshot_version);
+    assert.equal(h.detailCalls.length, 0);
+  } finally { h.close(); await server.close(); Object.assign(globalThis, saved); }
+});
 
 test("real hidden business detail instances grow only with explicit opens and preserve lifecycle", async t => {
   const saved = { window: globalThis.window, document: globalThis.document, Element: globalThis.Element };

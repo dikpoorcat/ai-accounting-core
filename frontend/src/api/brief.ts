@@ -62,7 +62,7 @@ function matchesDeliveryRequest(url: URL, delivery: DashboardBriefDeliveryRespon
       && (delivery.period === null || delivery.response.selected_period?.key === delivery.period));
 }
 
-export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}, onPreparing?: () => void) {
+export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}, onPreparing?: () => void, retry = false) {
   const query = new URLSearchParams({ company_id: companyId, ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
   pageQuery(query, { ...options, limit: options.limit ?? 20 });
   if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
@@ -73,6 +73,6 @@ export function fetchDeferredBrief(companyId: string, period: string | null, sig
   }
   return requestGeneratedDashboard(
     path, "/api/dashboard/brief", validateDashboardBriefDeliveryResponse, inspectDelivery, matchesDeliveryRequest,
-    validateDashboardBriefResponse, matchesRequest, { signal, onPreparing },
+    validateDashboardBriefResponse, matchesRequest, { signal, onPreparing, retry },
   );
 }

@@ -145,9 +145,11 @@ class ReadingRepository:
             (code, scope_key, component, wanted_head, expected_state),
         )
 
-    def retry(self, scope_key, component):
+    def retry(self, scope_key, component, *, format_version=None):
         self._session.execute(
-            "UPDATE read_scope_head SET state='preparing',error_code=NULL "
-            "WHERE scope_key=? AND component_key=? AND state='failed'",
-            (scope_key, component),
+            "UPDATE read_scope_head SET state='preparing',error_code=NULL,"
+            "format_version=COALESCE(?,format_version) "
+            "WHERE scope_key=? AND component_key=? AND "
+            "(state='failed' OR (? IS NOT NULL AND format_version<>?))",
+            (format_version, scope_key, component, format_version, format_version),
         )

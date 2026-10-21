@@ -9,7 +9,7 @@ const loading = ref(false), error = ref("");
 let controller: AbortController | null = null, generation = 0, mounted = true;
 const review = computed(() => response.value?.state === "prepared" ? response.value.owner_review : null);
 const statusCopy = computed(() => ({
-  prepared: ["请核对本月业务", "请核对以下金额和业务。如无问题，请告知 AI 会计，由它继续请求密码确认。"],
+  prepared: ["请核对本月业务", "请核对以下金额和业务。发现差异时，请告知 AI 会计继续核查。"],
   closed: ["本次核对已结束", "本月已关账，请刷新经营简报。"],
   covered: ["本次核对已结束", "本月已由后续关账覆盖，请刷新经营简报。"],
   unprepared: ["本次核对不可用", "请刷新经营简报后重新查看。"],

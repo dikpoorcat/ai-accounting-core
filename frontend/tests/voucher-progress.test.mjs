@@ -151,10 +151,10 @@ test("voucher progress adds business facts without repeating the voucher", async
 });
 
 let sequence = 0;
-async function harness(cache = new Map(), voucherContext = voucher()) {
+async function harness(cache = new Map(), voucherContext = voucher(), overrides = {}) {
   const key = `voucherProgressHarness${++sequence}`, calls = [], cleanup = [], events = [];
   const route = Vue.reactive({ query: { company_id: "company-a" } });
-  const props = Vue.reactive({ subjectId: "salary-business", period: "2026-09", snapshotVersion: "v1", settlementView: "historical", presentation: "voucher", voucherContext, detailCache: cache, expanded: false, hideSummary: true });
+  const props = Vue.reactive({ subjectId: "salary-business", period: "2026-09", snapshotVersion: "v1", settlementView: "historical", presentation: "voucher", voucherContext, detailCache: cache, expanded: false, hideSummary: true, ...overrides });
   globalThis[key] = { Vue, props, route, cleanup, events, appendDashboardCollection, fetch: (...args) => new Promise((resolve, reject) => calls.push({ args, resolve, reject })) };
   const source = readFileSync(new URL("../src/components/BusinessStatusDetails.vue", import.meta.url), "utf8").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/import[\s\S]*?from "[^"]+";/g, "").replaceAll("AUTOMATIC_DASHBOARD_PAGE_LIMIT", String(AUTOMATIC_DASHBOARD_PAGE_LIMIT));
   const prefix = `const environment = globalThis.${key}; const { ref, computed, watch } = environment.Vue;
@@ -173,6 +173,38 @@ const result = (id = "first", next = "next") => {
   return { snapshot_version: "v1", data };
 };
 const tick = async () => { await Promise.resolve(); await Vue.nextTick(); };
+
+test("unscoped reserve activity cannot fall back to gross payroll progress, even through direct loads", async () => {
+  const reserve = { key: "reserve-part", subject_id: "gross-payment", title: "支付备用金费用", amount_fen: "170000", detail_scope_key: null, voucher_version_id: "gross-voucher" };
+  const view = await harness(new Map(), voucher(), { presentation: "brief", subjectId: reserve.subject_id, activityContext: reserve, expanded: true });
+  try {
+    await tick(); assert.equal(view.calls.length, 0, "expansion cannot read unrelated net wages 830000");
+    await view.load(); assert.equal(view.calls.length, 0);
+    view.data.value = result().data;
+    await view.loadMore(); assert.equal(view.calls.length, 0, "even an old queued continuation needs an exact activity scope");
+  } finally { view.unmount(); }
+});
+
+test("scoped activities and independent funds or labor keep their intended scope and own progress version", async () => {
+  for (const overrides of [
+    { presentation: "brief", activityContext: { key: "net-part", detail_scope_key: "net-part", voucher_version_id: "", amount_fen: "830000" } },
+    { presentation: "funds", fundsContext: { id: "actual-movement", account_id: "bank-a" } },
+    { presentation: "labor", laborContext: { source_id: "salary-business", person_id: "actual-person" } },
+  ]) {
+    const view = await harness(new Map(), voucher(), { ...overrides, snapshotVersion: "parent-month", expanded: true });
+    try {
+      await tick(); assert.equal(view.calls.length, 1);
+      const first = view.calls[0].args[3];
+      assert.equal(first.expected_version, undefined, "a parent month version is not a progress version");
+      assert.equal(first.detail_scope_key, overrides.activityContext?.detail_scope_key);
+      if (overrides.activityContext) assert.equal(first.voucher_version_id, "", "a true no-voucher activity keeps its precise empty token");
+      view.calls[0].resolve({ ...result(), snapshot_version: "own-progress" }); await tick();
+      const more = view.loadMore(); assert.equal(view.calls.length, 2);
+      assert.equal(view.calls[1].args[3].expected_version, "own-progress");
+      view.calls[1].resolve({ ...result("last", null), snapshot_version: "own-progress" }); await more;
+    } finally { view.unmount(); }
+  }
+});
 
 test("expanded progress reads 20 then 500 then its tail in the same voucher scope", async () => {
   const view = await harness(), ids = Array.from({ length: 525 }, (_, index) => `payment-${index}`);
@@ -203,7 +235,7 @@ test("voucher progress requests only on expansion and rejects late first respons
   try {
     assert.equal(view.calls.length, 0);
     view.props.expanded = true; await tick(); assert.equal(view.calls.length, 1);
-    assert.equal(view.calls[0].args[3].expected_version, "v1"); assert.equal(view.calls[0].args[3].settlement_view, "historical"); assert.equal(view.calls[0].args[3].limit, 20);
+    assert.equal(view.calls[0].args[3].expected_version, undefined); assert.equal(view.calls[0].args[3].settlement_view, "historical"); assert.equal(view.calls[0].args[3].limit, 20);
     view.props.expanded = false; await tick(); assert.equal(view.calls[0].args[2].aborted, true);
     view.calls[0].resolve(result()); await tick(); assert.equal(view.data.value, null); assert.equal(view.cache.size, 0);
     view.props.expanded = true; await tick(); assert.equal(view.calls.length, 2);
@@ -225,11 +257,25 @@ test("successful cached pages survive close and unmount while cancelled pages ne
     assert.equal(view.data.value.collections.settlement_events.items, items); assert.deepEqual(items.map(item => item.id), ["first", "second"]);
     const failed = view.loadMore(); view.calls[3].reject(new Error("续页暂不可用")); await failed;
     assert.match(view.moreError.value, /续页暂不可用/); view.unmount(); assert.equal(cache.size, 1);
-    view = await harness(cache, voucher({ voucher_version_id: "another-voucher-same-business" })); view.props.expanded = true; await tick(); assert.equal(view.calls.length, 0);
+    view = await harness(cache); view.props.expanded = true; await tick(); assert.equal(view.calls.length, 0);
     assert.deepEqual(view.data.value.collections.settlement_events.items.map(item => item.id), ["first", "second"]);
     assert.match(view.moreError.value, /续页暂不可用/);
     const continued = view.loadMore(); assert.equal(view.calls[0].args[3].cursor, "third"); view.calls[0].resolve(result("third", null)); await continued;
     assert.deepEqual(view.data.value.collections.settlement_events.items.map(item => item.id), ["first", "second", "third"]);
+  } finally { view.unmount(); }
+});
+
+test("cached progress cannot cross to a different voucher of the same business", async () => {
+  const cache = new Map(); let view = await harness(cache);
+  try {
+    view.props.expanded = true; await tick(); view.calls[0].resolve(result()); await tick();
+    view.unmount();
+    view = await harness(cache, voucher({ voucher_version_id: "another-voucher-same-business" }));
+    view.props.expanded = true; await tick();
+    assert.equal(view.calls.length, 1);
+    assert.equal(view.calls[0].args[3].detail_scope_key, "voucher:another-voucher-same-business");
+    assert.equal(view.calls[0].args[3].expected_version, undefined);
+    assert.equal(view.data.value, null);
   } finally { view.unmount(); }
 });
 

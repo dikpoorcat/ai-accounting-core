@@ -138,3 +138,20 @@ def summary(activity, employees, labor_workers, *, checking):
             "capitalized_labor_fen": format_fen(values.amounts.capitalized_labor_fen),
         },
     }
+
+
+def brief(activity):
+    labor = [
+        entry
+        for entry in activity.entries
+        if entry.remuneration_type == "labor" and entry.project_id is None
+    ]
+    return {
+        "has_activity": bool(activity.entries),
+        "employee_has_activity": any(
+            entry.remuneration_type != "labor" for entry in activity.entries
+        ),
+        "labor_has_activity": bool(labor),
+        "labor_gross_fen": format_fen(total(entry.amounts.gross_fen for entry in labor)),
+        "labor_tax_states": sorted({entry.tax_state for entry in labor}),
+    }

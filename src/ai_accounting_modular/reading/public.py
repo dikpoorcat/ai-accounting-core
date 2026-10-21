@@ -64,6 +64,16 @@ class Reading:
         self.people = people
 
     def page(self, page_key, scope, query):
+        if page_key == "brief":
+            from . import _brief
+
+            query = _month_queries.brief(query, scope)
+            return _monthly.deliver(
+                self,
+                scope,
+                _brief.COMPONENTS,
+                lambda snapshot, read: _brief.build(self, snapshot, read, query),
+            )
         if page_key == "employees":
             from ._employees import build
 
@@ -103,6 +113,32 @@ class Reading:
         raise ContractError("unsupported_business", "此看板页面尚未接入新读取模型。")
 
     def detail(self, detail_key, scope, query):
+        if detail_key == "close_review":
+            from ._close_review import detail
+
+            if not isinstance(scope, MonthScope) or scope.period is None:
+                raise ContractError("invalid_input", "月度核对须明确公司和月份。")
+            if scope.expected_head is not None:
+                raise ContractError("invalid_input", "月度核对仅接受核对内容自身的标识。")
+            if not isinstance(query, dict) or set(query) - {"preview_digest"}:
+                raise ContractError("invalid_input", "月度核对只接受核对内容标识。")
+            if "preview_digest" in query:
+                validate_contract("core.schema.json", "Digest", query["preview_digest"])
+            return detail(self, scope, query)
+        if detail_key == "business_status":
+            from ._business_status import detail
+
+            return detail(self, scope, query)
+        if detail_key == "brief_group":
+            from . import _brief
+
+            query = _month_queries.brief_group(query, scope)
+            return _monthly.deliver(
+                self,
+                scope,
+                _brief.COMPONENTS,
+                lambda snapshot, read: _brief.group(self, snapshot, read, query),
+            )
         if detail_key != "review_materials":
             raise ContractError("unsupported_business", "此只读详情尚未接入。")
         validate_contract("core.schema.json", "ContextScope", scope)
@@ -144,6 +180,11 @@ class Reading:
             if page_key == "funds":
                 _month_queries.funds(query, scope)
                 components = (_monthly.FUNDS,)
+            elif page_key == "brief":
+                from . import _brief
+
+                _month_queries.brief(query, scope)
+                components = _brief.COMPONENTS
             elif page_key == "assets":
                 _month_queries.assets(query, scope)
                 components = (_monthly.ASSETS,)

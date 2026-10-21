@@ -227,7 +227,7 @@ def test_unavailable_component_format_fails_instead_of_preparing_forever(case):
     assert page(case).state == "preparing"
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         unit.repository("reading")._session.execute(
-            "UPDATE read_scope_head SET format_version=2 WHERE scope_key=?",
+            "UPDATE read_scope_head SET format_version=999 WHERE scope_key=?",
             (_monthly.key(_monthly.normalize(scope(case))),),
         )
     assert case.kernel.reading.run_pending(case.company) == ()

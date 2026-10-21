@@ -80,7 +80,7 @@ function toggle(key: string) {
 }
 function togglePart(key: string) { expandedPart.value = expandedPart.value === key ? "" : key; selected.value = ""; preview.value = ""; }
 function openContext(item: BriefOpenItem) {
-  return { obligationKey: item.id, categoryKey: item.category_key, cutoffPeriod: props.openSummary?.cutoff_period ?? props.period,
+  return { obligationKey: item.id, voucherVersionId: item.voucher_version_id ?? "", categoryKey: item.category_key, cutoffPeriod: props.openSummary?.cutoff_period ?? props.period,
     contributionComponent: item.contribution_component,
     currentCutoffPeriod: props.openSummary?.current_cutoff_period ?? props.period, status: item.status, direction: props.direction ?? "payable",
     party: item.party, description: item.description, sourceAmountFen: item.source_amount_fen, paidFen: item.paid_fen,
@@ -137,9 +137,9 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
       <li v-for="item in activityMembers" :key="item.key" :class="{ highlighted: item.key === focusedActivity?.key }">
         <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description || item.title }}<small v-if="item.party" class="member-purpose">{{ item.party }}</small></span><span class="member-state">{{ item.state }}</span><b>{{ amount(item.amount_fen) }}</b>
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.key" @preview="value => preview = value ? item.key : preview === item.key ? '' : preview" @open="$emit('requestVoucher', $event)" />
-          <button v-if="item.subject_id" type="button" :aria-expanded="selected === item.key" @click="toggle(item.key)">业务进展</button>
+          <button v-if="item.subject_id && item.detail_scope_key" type="button" :aria-expanded="selected === item.key" @click="toggle(item.key)">业务进展</button>
         </div>
-        <BusinessStatusDetails v-if="item.subject_id && openedDetails.has(item.key)" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
+        <BusinessStatusDetails v-if="item.subject_id && item.detail_scope_key && openedDetails.has(item.key)" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
       </li>
       <li v-for="item in ungroupedOpenMembers" :key="item.id">
         <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description }}<small v-if="item.purpose && !item.contribution_component" class="member-purpose">{{ item.purpose }}</small></span><span class="member-state">{{ businessStateLabel(item.status) }}</span><b>{{ amount(item.outstanding_fen) }}</b>

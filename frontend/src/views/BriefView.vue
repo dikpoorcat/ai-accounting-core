@@ -81,7 +81,7 @@ function invalidateRequests(keepContent = false) {
   if (!keepContent) { response.value = null }
   showMonthlyReview.value = false; loading.value = keepContent; preparing.value = false;
 }
-async function loadData(period: string | null, contextGate?: Promise<void>) {
+async function loadData(period: string | null, contextGate?: Promise<void>, retryModel = false) {
   refreshGeneration.value++;
   const generation = ++requestGeneration, selection = selectionKey(), companyId = route.query.company_id;
   const retainedVouchers = contextGate && response.value ? {
@@ -107,7 +107,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>) {
       if (!isCurrent(generation, selection) || controller !== request) return;
       preparing.value = true; response.value = null; vouchersReady.value = false;
       voucherPreviewIndex.value = shallowReactive(new Map());
-    });
+    }, retryModel);
     const result = contextGate ? (await Promise.all([mainRequest, contextGate]))[0] : await mainRequest;
     if (!isCurrent(generation, selection) || controller !== request) return;
     if (result.scope !== "overview") throw new Error("经营简报范围不一致，请重新读取。");
@@ -276,25 +276,26 @@ function openVoucher(voucherVersionId: string) {
   response.value = { ...current, data: { ...current.data, focused_voucher: voucher } };
   focusedVoucherSelection.value += 1;
 }
-function refresh() { return refreshCurrent(true); }
+function refresh() { return refreshCurrent(true, true); }
 function refreshChanged() {
   updateNotice.value = "资料已更新，正在重新读取。";
   return refreshCurrent(false);
 }
-async function refreshCurrent(keepContent: boolean) {
+async function refreshCurrent(keepContent: boolean, retryModel = false) {
   invalidateRequests(keepContent);
   loading.value = true;
   const generation = requestGeneration, selection = selectionKey();
   try {
-    const company = route.query.company_id, period = queryPeriod();
+    const company = route.query.company_id, period = queryPeriod() ?? context.value?.default_period ?? null;
     if (typeof company === "string" && period && context.value?.current_company?.company_id === company && context.value.periods.some(item => item.key === period)) {
       const contextGate = refreshContext().then(fresh => {
         if (fresh.current_company?.company_id !== company || !fresh.periods.some(item => item.key === period)) throw new Error("当前公司或期间已变化，请重新选择。");
       });
-      await loadData(period, contextGate);
+      await loadData(period, contextGate, retryModel);
     } else {
-      await refreshContext();
-      if (isCurrent(generation, selection)) await loadData(queryPeriod());
+      const fresh = await refreshContext();
+      const nextPeriod = queryPeriod() ?? fresh.default_period;
+      if (isCurrent(generation, selection)) await loadData(nextPeriod, undefined, retryModel && nextPeriod !== null);
     }
   } catch (caught) { if (isCurrent(generation, selection)) { response.value = null; vouchersReady.value = false; preparing.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); } }
 }
@@ -325,7 +326,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
     <DashboardModuleHeader :title="briefTitle" :options="periodOptions" :selected="selectedPeriod" :period-status="data?.month_state" :loading="loading" select-label="查看月份" @change="changePeriod" @refresh="refresh">
       <template #navigation><DashboardSectionNav v-if="data" v-show="!loading" :items="sectionLinks" :active="activeSection" label="经营简报区段" @select="focusSection" /></template>
     </DashboardModuleHeader>
-    <div v-if="error" class="state-panel error" role="alert"><h2>经营简报加载失败</h2><p>{{ error }}</p><button type="button" @click="loadData(queryPeriod())">重新加载</button></div>
+    <div v-if="error" class="state-panel error" role="alert"><h2>经营简报加载失败</h2><p>{{ error }}</p><button type="button" @click="refresh">重新加载</button></div>
     <div v-else-if="loading" class="state-panel" role="status">{{ preparing ? "经营简报正在更新，请稍候…" : "正在读取经营简报…" }}</div>
     <div v-else-if="!data" class="state-panel"><h2>还没有可查看的月份</h2><p>录入公司业务后，即可按月份查看经营情况。</p></div>
     <div v-if="data" v-show="!loading && !error" class="brief-content" :data-month-state="data.month_state" :data-owner-review-required="needsMonthlyReview">
@@ -366,7 +367,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <h2 id="tasks-title">老板待办</h2>
         <article v-for="task in data.owner_tasks" :key="task.key" data-section-focus tabindex="-1">
           <strong>{{ task.title }} · {{ task.object }}</strong>
-          <p>{{ task.period }}<template v-if="task.amount_status === 'known'"> · {{ formatFen(task.amount_fen) }}</template><template v-else-if="task.amount_status === 'unknown'"> · 金额待确认</template><template v-if="task.deadline"> · 截止 {{ task.deadline }}</template></p>
+          <p>{{ task.period ?? '未明确所属月' }}<template v-if="task.amount_status === 'known'"> · {{ formatFen(task.amount_fen) }}</template><template v-else-if="task.amount_status === 'unknown'"> · 金额待确认</template><template v-if="task.deadline"> · 截止 {{ task.deadline }}</template></p>
           <p>{{ task.impact }}</p><p class="next-step">{{ task.next_step }}</p>
           <BusinessStatusDetails v-if="task.subject_id" :subject-id="task.subject_id" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
         </article>

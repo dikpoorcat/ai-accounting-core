@@ -4685,10 +4685,17 @@
         "additionalProperties": false,
         "properties": {
           "net_fen": {
-            "pattern": "^(0|-?[1-9][0-9]*)$",
-            "title": "Net Fen",
-            "type": "string",
-            "x-fen-int64": true
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Fen"
           },
           "fixed_active_count": {
             "minimum": 0,
@@ -4886,9 +4893,16 @@
             "type": "string"
           },
           "period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Period",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period"
           },
           "amount_fen": {
             "anyOf": [
@@ -18127,10 +18141,17 @@
         "additionalProperties": false,
         "properties": {
           "net_fen": {
-            "pattern": "^(0|-?[1-9][0-9]*)$",
-            "title": "Net Fen",
-            "type": "string",
-            "x-fen-int64": true
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Fen"
           },
           "fixed_active_count": {
             "minimum": 0,
@@ -18328,9 +18349,16 @@
             "type": "string"
           },
           "period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Period",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period"
           },
           "amount_fen": {
             "anyOf": [

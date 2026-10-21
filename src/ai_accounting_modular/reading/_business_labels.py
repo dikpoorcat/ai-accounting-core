@@ -14,6 +14,52 @@ class BusinessLabel:
     title: str
 
 
+def business_matter(content: AdoptedContent, resource: ResourceDefinition | None = None) -> dict:
+    """A typed product, project or contract identity; never a display-name grouping rule."""
+    kind, data = content.target["kind"], content.basis.get("input", {})
+    values = content.target.get("values", {})
+    if kind in {"investment.money_fund_purchase", "investment.money_fund_redemption"}:
+        return {"fund_id": values["fund_id"]}
+    if kind.startswith("investment.cooperation_") and "contract_id" in values:
+        return {"contract_id": values["contract_id"]}
+    if kind == "financing.loan_drawdown":
+        return {"contract_id": values["contract_id"]}
+    if kind == "financing.interest_period":
+        contracts = {
+            item["contract_id"]
+            for item in content.basis["adopted_quantities"]
+            if item["type"] == "loan_terms"
+        }
+        return {"contract_id": next(iter(contracts))} if len(contracts) == 1 else {}
+    if kind in {"assets.project_cost", "assets.project_release"}:
+        return {"project_id": values["project_id"]}
+    if kind == "assets.disposal":
+        return {"asset_id": values["asset_id"]}
+    if kind == "assets.acquisition":
+        return {"acquisition_id": content.reference["business_id"]}
+    if kind.startswith("operations.") and "cooperation_id" in data:
+        return {"contract_id": data["cooperation_id"]}
+    if kind in {"operations.advance_fulfillment", "operations.advance_refund"}:
+        return {"advance_id": data["advance_id"]}
+    if kind == "operations.sale_return":
+        return {"sale_id": data["sale_id"]}
+    if kind == "operations.expense_recovery":
+        return {"expense_id": data["expense_id"]}
+    if kind == "operations.pass_through_return":
+        return {"pass_through_id": data["pass_through_id"]}
+    if kind == "operations.overpayment":
+        return {
+            "source_business_id": data["source"]["business_id"],
+            "source_slot": data["source"]["slot"],
+        }
+    if kind == "opening.package" and resource is not None:
+        return {
+            "opening_business_id": resource.reference["business_id"],
+            "opening_slot": resource.reference["slot"],
+        }
+    return {}
+
+
 _KINDS = {
     "operations.service_sale": ("service_sale", "服务业务款"),
     "operations.sale_return": ("sale_return", "销售退款"),
@@ -23,6 +69,7 @@ _KINDS = {
     "operations.advance_refund": ("advance_refund", "预收预付款退回"),
     "operations.pass_through": ("pass_through", "代收代付款"),
     "operations.pass_through_return": ("pass_through_return", "代收代付款返还"),
+    "operations.tax_release": ("tax_release", "确认本月已到税点税额"),
     "financing.loan_contract": ("loan_contract", "借款合同"),
     "financing.loan_drawdown": ("loan_drawdown", "借款到账"),
     "financing.interest_period": ("interest", "借款利息"),
@@ -36,9 +83,12 @@ _KINDS = {
     "investment.cooperation_distribution": ("cooperation_distribution", "合作投资分回"),
     "investment.cooperation_exit": ("cooperation_exit", "合作投资退出"),
     "assets.acquisition": ("asset_acquisition", "资产购置"),
+    "assets.activation": ("asset_activation", "资产启用"),
     "assets.project_cost": ("project_cost", "项目成本"),
     "assets.project_release": ("project_release", "项目成本转出"),
     "assets.disposal": ("asset_disposal", "资产处置"),
+    "assets.consumption": ("asset_consumption", "资产折旧与摊销"),
+    "investment.cooperation_position": ("cooperation_position", "合作投资位置调整"),
     "taxes.tax_credit": ("tax_credit", "税费退抵款"),
 }
 _RESOURCE = {
@@ -67,7 +117,7 @@ def business_label(
     content: AdoptedContent, resource: ResourceDefinition | None = None
 ) -> BusinessLabel:
     """A resource may refine a multi-purpose source, such as wages containing social dues."""
-    kind, data = content.target["kind"], content.basis["input"]
+    kind, data = content.target["kind"], content.basis.get("input", {})
     category = resource.value["category"] if resource is not None else None
     if category in _RESOURCE:
         return BusinessLabel(*_RESOURCE[category])
@@ -78,7 +128,15 @@ def business_label(
                 if resource.value["direction"] == "receivable"
                 else BusinessLabel("overreceipt_refund", "多收款退回")
             )
-        return BusinessLabel("excess_settlement", "超额收付款处理")
+        return BusinessLabel(
+            *{
+                "overpayment_recovery": ("overpayment_recovery", "多付款追收"),
+                "overreceipt_refund": ("overreceipt_refund", "多收款退回"),
+            }.get(
+                content.target.get("values", {}).get("treatment"),
+                ("excess_settlement", "超额收付款处理"),
+            )
+        )
     if kind == "financing.owner_funding":
         return BusinessLabel(
             *{
@@ -102,6 +160,7 @@ def business_label(
         return BusinessLabel(
             *{
                 "personal_advance": ("personal_advance", "个人垫付款"),
+                "personal_payment": ("personal_advance", "个人垫付款"),
                 "acceptance": ("reimbursement", "费用报销"),
             }.get(data.get("type"), ("reimbursement", "垫付报销款"))
         )

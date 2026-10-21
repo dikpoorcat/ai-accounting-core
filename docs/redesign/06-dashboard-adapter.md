@@ -10,7 +10,7 @@
 
 ## 1. 唯一响应合同
 
-[dashboard-response-v2.json](contracts/dashboard-response-v2.json) 是前后端共同采用的响应真源，保留现有字段和页面用法。资产取得及启用时间允许真实月份或日期，未明确实际日就保留月份；现有页面已支持这两种精度。按 UTF-8、LF 行尾计算的 SHA-256 为 `e496cdb6b3de93ff73a81ab946ea86c0b040cf3aa057c7700b38619a7e26b10b`；Windows 检出的 CRLF 先规范为 LF。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
+[dashboard-response-v2.json](contracts/dashboard-response-v2.json) 是前后端共同采用的响应真源，保留现有字段和页面用法。资产取得及启用时间允许真实月份或日期，未明确实际日就保留月份；长期资产净值未知时为null，老板待办没有明确所属月时同样保持null，由页面说明待核对。按 UTF-8、LF 行尾计算的 SHA-256 为 `0e52bcf09c315e500cb0e8c055695d8369ff68d1bc16f85d42f81b501219aa53`；Windows 检出的 CRLF 先规范为 LF。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
 
 本文下表列出的响应以该合同为字段、必填项、枚举、空值、金额格式及 `additionalProperties` 的唯一真源。它不替代新数据库合同，也不随旧内核模型自动覆盖。前端生成器从此真源生成 `dashboardResponseSchemas.json`、TypeScript类型和Ajv校验，后端生成包内同份合同；不维护两套当前响应定义。允许资产月份没有改变原字段、内层版本常量或对已有日期的接受范围。确需变更时发布新合同并同步消费者。不能凭字段名称另写近似响应，不能为通过校验伪造零值或旧处理状态。合同还包含其他旧命令，保存它们不表示新体系实现这些入口，尤其不恢复旧审批、重放和审计机制。
 
@@ -76,7 +76,7 @@ HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.pu
 | `brief-group/business-status/close-review` | `detail("brief_group"/"business_status"/"close_review", LedgerScope, query)`；query仅含本节列明的定位、筛选或核对头。 |
 | 报表生成、状态、下载 | `export_report(scope, head, request_id)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)`；head由已取得的预览标识和epochs共同校验。 |
 
-`expected_version` 转成同范围的 expected_head；`preview_digest` 转成对应只读检查或报表计划头。业务进展中的 historical/current 只选择清偿的查询截止，不改变主月采用口径；同次响应需要当前后续信息时，在同一个 `ReadContext` 中明确读取两个视图。跨模块读取共用该上下文及只读事务，不能由每个提供者另开连接。没有指定月时先从context确定范围，再查询，不把缺省期当作当前自然月。
+`expected_version` 转成同范围的 expected_head；业务进展首读不套用父页面版本，续页沿进展自身返回版本；`preview_digest` 转成对应只读检查或报表计划头。业务进展中的 historical/current 只选择清偿的查询截止，不改变主月采用口径；同次响应需要当前后续信息时，在同一个 `ReadContext` 中明确读取两个视图。跨模块读取共用该上下文及只读事务，不能由每个提供者另开连接。没有指定月时先从context确定范围，再查询，不把缺省期当作当前自然月。
 
 ### 2.3 分页约定
 
@@ -205,7 +205,7 @@ partial时export.available=false、preview_digest=null、epochs=null；不能创
 | `owner_review.materials` | 当前已声明资料范围和接收情况；没有明确数量定义的资料不列项，不伪造expected/received。 |
 | `owner_review.followup_count` | 当前有实际影响的未解事项数量，同一事项去重；不计算“待批准人数”或文件生成次数。 |
 
-现有 `BriefView.vue:375`“确认后告知 AI 会计”继续解释为老板核对现实后的自愿反馈，不形成阻断。`CloseReviewPanel.vue:12`明确写有“由它继续请求密码确认”，与新方向冲突。接入交付时必须告知用户这一处最小文字修正，替换为“请核对以下金额和业务。发现差异时，请告知 AI 会计继续核查。”；其余标题、六项金额、列表、布局及样式保留。本轮仅规定设计，不修改前端源码。
+简报中的“确认后告知AI会计”表示老板核对现实后的自愿反馈，不形成阻断。核对面板说明为“请核对以下金额和业务。发现差异时，请告知AI会计继续核查。”，保留原有标题、六项金额、列表、布局及样式；不请求批准或密码。
 
 ## 8. 报表生成、状态和下载
 

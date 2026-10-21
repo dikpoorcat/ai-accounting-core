@@ -118,7 +118,7 @@ def check_contracts():
     manifest = ROOT / "contracts/dashboard-response-v2.json"
     # Git 在 Windows 检出时可转换为 CRLF；冻结合同内容，忽略行尾表示差异。
     frozen_bytes = manifest.read_bytes().replace(b"\r\n", b"\n")
-    assert hashlib.sha256(frozen_bytes).hexdigest() == "e496cdb6b3de93ff73a81ab946ea86c0b040cf3aa057c7700b38619a7e26b10b", "冻结看板合同被修改"
+    assert hashlib.sha256(frozen_bytes).hexdigest() == "0e52bcf09c315e500cb0e8c055695d8369ff68d1bc16f85d42f81b501219aa53", "冻结看板合同被修改"
 
 
 def check_examples():

@@ -6,11 +6,16 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 from ai_accounting_modular.reading.public import MonthScope
 
 
-def parameters(values, allowed, required=()):
+def parameters(values, allowed, required=(), *, empty=()):
     pairs = list(values.items()) if isinstance(values, dict) else list(values)
     result = {}
     for name, value in pairs:
-        if name not in allowed or name in result or not isinstance(value, str) or not value:
+        if (
+            name not in allowed
+            or name in result
+            or not isinstance(value, str)
+            or (not value and name not in empty)
+        ):
             raise ContractError("invalid_command", "请求含重复、空值或未支持的参数。")
         result[name] = value
     if any(name not in result for name in required):
@@ -71,6 +76,7 @@ def monthly(page_key, values):
         },
         "assets": {"asset_filter", "asset_id", "project_id"},
         "employees": {"employee_filter", "employee_id"},
+        "brief": {"activity_key", "activity_group", "voucher_version_id", "voucher_number"},
     }
     if page_key not in extras:
         raise ContractError("invalid_command", "此月页尚未接入。")
@@ -97,7 +103,77 @@ def monthly(page_key, values):
     }
     if "limit" in query:
         query["limit"] = integer(query["limit"], 1, 500)
+    if "voucher_number" in query:
+        query["voucher_number"] = integer(query["voucher_number"], 1, 9223372036854775807)
     return scope, query, "section" in selected or "expected_version" in selected
+
+
+def brief_group(values):
+    selected = parameters(
+        values,
+        {"company_id", "period", "section", "group_key", "limit", "cursor", "expected_version"},
+        ("company_id", "period", "section", "group_key", "expected_version"),
+    )
+    scope = MonthScope(selected["company_id"], selected["period"], selected["expected_version"])
+    query = {
+        key: value
+        for key, value in selected.items()
+        if key not in {"company_id", "period", "expected_version"}
+    }
+    if "limit" in query:
+        query["limit"] = integer(query["limit"], 1, 500)
+    return scope, query
+
+
+def business_status(values):
+    selected = parameters(
+        values,
+        {
+            "company_id",
+            "period",
+            "subject_id",
+            "settlement_view",
+            "section",
+            "limit",
+            "cursor",
+            "expected_version",
+            "detail_scope_key",
+            "voucher_version_id",
+        },
+        ("company_id", "period", "subject_id"),
+        empty=("voucher_version_id",),
+    )
+    for field in ("company_id", "subject_id"):
+        validate_contract("core.schema.json", "Id", selected[field])
+    validate_contract("core.schema.json", "Month", selected["period"])
+    if "expected_version" in selected:
+        validate_contract("core.schema.json", "Digest", selected["expected_version"])
+    scope = {
+        "company_id": selected["company_id"],
+        "period_from": selected["period"],
+        "period_to": selected["period"],
+        "view": "as_posted",
+        "as_of": selected["period"],
+    }
+    query = {key: value for key, value in selected.items() if key not in {"company_id", "period"}}
+    if "limit" in query:
+        query["limit"] = integer(query["limit"], 1, 500)
+    return scope, query
+
+
+def close_review(values):
+    selected = parameters(
+        values,
+        {"company_id", "period", "preview_digest"},
+        ("company_id", "period"),
+    )
+    scope = MonthScope(selected["company_id"], selected["period"])
+    query = {}
+    if "preview_digest" in selected:
+        query["preview_digest"] = validate_contract(
+            "core.schema.json", "Digest", selected["preview_digest"]
+        )
+    return scope, query
 
 
 def retry(page_key, body):

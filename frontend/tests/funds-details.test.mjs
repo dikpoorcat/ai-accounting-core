@@ -140,7 +140,7 @@ test("fund details bind movement/account identity and reject stale scope or snap
       assert.equal(view.calls.length, 0);
       view.props.expanded = true; await tick(); assert.equal(view.calls.length, 1);
       assert.equal(view.calls[0].args[0], "2026-09"); assert.equal(view.calls[0].args[1], "salary-business");
-      assert.equal(view.calls[0].args[3].expected_version, "v1"); assert.equal(view.calls[0].args[3].settlement_view, "historical");
+      assert.equal(view.calls[0].args[3].expected_version, undefined); assert.equal(view.calls[0].args[3].settlement_view, "historical");
       if (field === "company") view.route.query.company_id = "company-b";
       else if (["id", "account_id"].includes(field)) view.props.fundsContext[field] += "-changed";
       else view.props[field] += "-changed";

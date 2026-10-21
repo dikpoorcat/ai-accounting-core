@@ -120,7 +120,7 @@ test("inline business details read only on expansion and reject a late response 
     assert.equal(view.calls.length, 1);
     assert.equal(view.calls[0].args[0], "2026-09");
     assert.equal(view.calls[0].args[1], "business-a");
-    assert.deepEqual(view.calls[0].args[3], { expected_version: "business-v1", settlement_view: "historical", limit: 20 });
+    assert.deepEqual(view.calls[0].args[3], { settlement_view: "historical", limit: 20 });
     view.props[field] = `${view.props[field]}-changed`;
     assert.equal(view.calls[0].args[2].aborted, true);
     view.calls[0].resolve(statusResult());
@@ -205,7 +205,7 @@ test("owner business contract rejects retired event source and file collections"
 
 test("activity occurrence and snapshot changes abort stale requests without automatic reload", async () => {
   for (const field of ["company", "period", "snapshotVersion", "activityKey"]) {
-    const view = await harness("BusinessStatusDetails", "data, load, panelOpen, error", { presentation: "brief", expanded: true, activityContext: { key: "original-event" } });
+    const view = await harness("BusinessStatusDetails", "data, load, panelOpen, error", { presentation: "brief", expanded: true, activityContext: { key: "original-event", detail_scope_key: "original-part", voucher_version_id: "voucher-a" } });
     try {
       assert.equal(view.calls.length, 1);
       if (field === "company") view.route.query.company_id = "other-company";

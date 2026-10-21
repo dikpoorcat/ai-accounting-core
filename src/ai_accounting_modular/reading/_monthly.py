@@ -10,16 +10,20 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
+from ._collections import collection_items as _collection_items
 from ._collections import collection_page, prepare_model
 from ._context import last_period, period
 from ._types import ModelDelivery, MonthScope
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 FINANCIAL = "financial"
 FUNDS = "funds"
 ASSETS = "assets"
 EMPLOYEES = "employees"
-COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES)
+BRIEF_ACTIVITY = "brief_activity"
+BRIEF_OPEN_ITEMS = "brief_open_items"
+BRIEF_CONTEXT = "brief_context"
+COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES, BRIEF_ACTIVITY, BRIEF_OPEN_ITEMS, BRIEF_CONTEXT)
 
 
 def normalize(scope):
@@ -68,6 +72,17 @@ def collection(snapshot, component, name, query, page, read):
         raise
 
 
+def collection_items(snapshot, component, name, item_ids, read):
+    if component not in snapshot.components:
+        raise ContractError("invalid_input", "页面没有选择这个读取组件。")
+    try:
+        return _collection_items(snapshot.scope_key, component, name, item_ids, read)
+    except ContractError as error:
+        if error.code == "storage_corrupt":
+            raise _CorruptComponent(component) from error
+        raise
+
+
 def _load(repository, scope_key, component, state):
     if state["format_version"] != FORMAT_VERSION:
         raise _CorruptComponent(component)
@@ -85,6 +100,34 @@ def _load(repository, scope_key, component, state):
         return value
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise _CorruptComponent(component) from error
+
+
+def _ready_snapshot(reader, normalized, states, read):
+    if any(state is None or state["state"] != "ready" for state in states.values()):
+        return None
+    scope_key = key(normalized)
+    repository = read.repository("reading")
+    values = {name: _load(repository, scope_key, name, state) for name, state in states.items()}
+    selected = period(normalized["period_to"], reader.ledger.closed_through(read))
+    version = content_digest(
+        {
+            "company_id": read.company_id,
+            "database_id": read.database_id,
+            "scope": normalized,
+            "period_status": selected["status"],
+            "components": {name: state["content_digest"] for name, state in sorted(states.items())},
+        }
+    )
+    return MonthSnapshot(
+        scope_key, normalized, version, values, selected, read.company_id, read.database_id
+    )
+
+
+def ready_snapshot(reader, normalized, components, read):
+    """Load only already-ready components, without registration, repair or another read."""
+    repository, scope_key = read.repository("reading"), key(normalized)
+    states = {name: repository.state(scope_key, name) for name in components}
+    return _ready_snapshot(reader, normalized, states, read)
 
 
 def deliver(reader, scope, components, build):
@@ -167,38 +210,14 @@ def deliver(reader, scope, components, build):
             result = ModelDelivery("preparing", normalized)
         else:
             try:
-                values = {
-                    name: _load(repository, scope_key, name, state)
-                    for name, state in states.items()
-                }
-                selected = period(normalized["period_to"], reader.ledger.closed_through(read))
-                version = content_digest(
-                    {
-                        "company_id": read.company_id,
-                        "database_id": read.database_id,
-                        "scope": normalized,
-                        "period_status": selected["status"],
-                        "components": {
-                            name: state["content_digest"] for name, state in sorted(states.items())
-                        },
-                    }
-                )
-                if expected is not None and expected != version:
+                snapshot = _ready_snapshot(reader, normalized, states, read)
+                if expected is not None and expected != snapshot.version:
                     raise ContractError("snapshot_changed", "所选页面已变化，请重新读取首页。")
-                snapshot = MonthSnapshot(
-                    scope_key,
-                    normalized,
-                    version,
-                    values,
-                    selected,
-                    read.company_id,
-                    read.database_id,
-                )
                 payload = build(snapshot, read) | {
                     "company_id": read.company_id,
                     "database_id": read.database_id,
                 }
-                result = ModelDelivery("ready", normalized, version, payload)
+                result = ModelDelivery("ready", normalized, snapshot.version, payload)
             except _CorruptComponent as error:
                 corrupt = error.component
                 result = ModelDelivery("failed", normalized, reason="corrupt")
@@ -246,12 +265,26 @@ def capture(reader, component, scope, read):
         from ._employees import prepare
 
         return prepare(reader, normalized, read)
+    if component == BRIEF_ACTIVITY:
+        from ._brief_activity import prepare
+
+        return prepare(reader, normalized, read)
+    if component == BRIEF_OPEN_ITEMS:
+        from ._brief_open import prepare
+
+        return prepare(reader, normalized, read)
+    if component == BRIEF_CONTEXT:
+        from ._brief_context import prepare
+
+        return prepare(reader, normalized, read)
     raise ContractError("storage_corrupt", "月度读取组件尚未装配。")
 
 
 def affected(scope, component, impact):
     if component not in COMPONENTS:
         raise ContractError("storage_corrupt", "月度读取目标包含未装配组件。")
+    if component == BRIEF_CONTEXT:
+        return bool(impact.note_scopes or impact.issue_scopes or impact.source_ids)
     if component == FUNDS and (
         impact.changes["object_ids"]
         or (
@@ -266,6 +299,13 @@ def affected(scope, component, impact):
         impact.changes["object_ids"] or "people" in impact.changes["families"]
     ):
         return True
+    if component in (BRIEF_ACTIVITY, BRIEF_OPEN_ITEMS) and impact.changes["object_ids"]:
+        return True
+    if component == BRIEF_OPEN_ITEMS:
+        # Historical balances also show their actual subsequent settlement progress.
+        return bool(
+            impact.posted_ranges or impact.current_ranges or "people" in impact.changes["families"]
+        )
     return any(value.period_from <= scope["period_to"] for value in impact.posted_ranges)
 
 
@@ -276,4 +316,4 @@ def retry(reader, scope, components):
     with reader.storage.maintenance_unit(scope["company_id"]) as unit:
         repository = unit.repository("reading")
         for component in components:
-            repository.retry(key(normalized), component)
+            repository.retry(key(normalized), component, format_version=FORMAT_VERSION)

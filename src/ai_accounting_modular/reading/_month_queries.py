@@ -112,3 +112,62 @@ def employees(query, scope):
     if selected.get("section") == "labor_sources" and "employee_id" not in selected:
         raise ContractError("invalid_input", "劳务来源须明确所选人员身份。")
     return selected
+
+
+def brief(query, scope):
+    selected = _base(
+        query,
+        scope,
+        ("activity_key", "activity_group", "voucher_version_id", "voucher_number"),
+        ("activity", "open_items", "vouchers"),
+    )
+    focused = [
+        name
+        for name in ("activity_key", "voucher_version_id", "voucher_number")
+        if name in selected
+    ]
+    if len(focused) > 1 or focused and "section" in selected:
+        raise ContractError(
+            "invalid_input", "精确定位须单独用于简报首页，不能与其他定位或分区混用。"
+        )
+    for name in ("activity_key", "voucher_version_id"):
+        if name in selected and (
+            not isinstance(selected[name], str) or not 1 <= len(selected[name]) <= 1000
+        ):
+            raise ContractError("invalid_input", "简报定位身份无效。")
+    if "voucher_number" in selected and (
+        type(selected["voucher_number"]) is not int
+        or not 1 <= selected["voucher_number"] <= 9223372036854775807
+    ):
+        raise ContractError("invalid_input", "须提供明确的正整数凭证号。")
+    if "activity_group" in selected and (
+        not isinstance(selected["activity_group"], str)
+        or selected["activity_group"]
+        not in {
+            "business",
+            "cash",
+            "people",
+            "assets",
+            "tax",
+            "investment",
+            "correction",
+        }
+    ):
+        raise ContractError("invalid_input", "简报活动分类无效。")
+    if "activity_group" in selected and selected.get("section", "activity") != "activity":
+        raise ContractError("invalid_input", "活动分类仅用于本月发生集合。")
+    return selected
+
+
+def brief_group(query, scope):
+    selected = _base(query, scope, ("group_key",), ("activity", "open_items"))
+    group = selected.get("group_key")
+    expected = scope.expected_head if isinstance(scope, MonthScope) else scope.get("expected_head")
+    if (
+        "section" not in selected
+        or not isinstance(group, str)
+        or not 1 <= len(group) <= 1000
+        or expected is None
+    ):
+        raise ContractError("invalid_input", "展开业务组须提供分类、完整组身份及原简报版本。")
+    return selected

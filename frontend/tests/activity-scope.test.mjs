@@ -77,9 +77,10 @@ test("scoped detail initial and subsequent reads carry exact member scope, vouch
   const view = await harness("BusinessStatusDetails", { subjectId: "payment", period: "2026-09", snapshotVersion: "snapshot", settlementView: "historical", presentation: "brief", expanded: false, activityContext: { ...member }, refreshGeneration: 0 }, "data, loadMore");
   try {
     assert.equal(view.calls.length, 0); view.props.expanded = true; await tick();
-    for (const request of [view.calls[0]]) assert.deepEqual(request.args[3], { expected_version: "snapshot", settlement_view: "historical", detail_scope_key: "part-key", voucher_version_id: "voucher-a", limit: 20 });
-    view.calls[0].resolve(statusResult()); await tick();
-    const pending = view.loadMore(); assert.equal(view.calls[1].args[3].detail_scope_key, "part-key"); assert.equal(view.calls[1].args[3].voucher_version_id, "voucher-a");
+    for (const request of [view.calls[0]]) assert.deepEqual(request.args[3], { settlement_view: "historical", detail_scope_key: "part-key", voucher_version_id: "voucher-a", limit: 20 });
+    const first = statusResult(); first.snapshot_version = "progress-version";
+    view.calls[0].resolve(first); await tick();
+    const pending = view.loadMore(); assert.equal(view.calls[1].args[3].expected_version, "progress-version", "continuation uses the progress version, not its parent page version"); assert.equal(view.calls[1].args[3].detail_scope_key, "part-key"); assert.equal(view.calls[1].args[3].voucher_version_id, "voucher-a");
     view.props.expanded = false; await tick(); assert.equal(view.calls[1].args[2].aborted, true);
     view.calls[1].resolve(statusResult()); await pending; assert.equal(view.data.value.collections.settlement_events.items.length, 1);
   } finally { view.unmount(); }

@@ -41,7 +41,7 @@ export async function fetchBusinessStatus(period: string, subjectId: string, sig
   pageQuery(query, options);
   if (options.settlement_view) query.set("settlement_view", options.settlement_view);
   if (options.detail_scope_key) query.set("detail_scope_key", options.detail_scope_key);
-  if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
+  if (options.voucher_version_id !== undefined) query.set("voucher_version_id", options.voucher_version_id);
   const target = withCurrentCompany(`/api/dashboard/business-status?${query}`);
   const { validateDashboardBusinessStatusResponse } = await import("./generated/dashboardBusinessStatus.js");
   signal?.throwIfAborted();

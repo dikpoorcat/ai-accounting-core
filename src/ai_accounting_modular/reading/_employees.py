@@ -109,7 +109,9 @@ def prepare(reader, scope, read):
         workers,
         checking=any(relations[person_id].issues for person_id in selected_ids),
     )
-    saved.update(_owner_version=activity.version, _categories=categories)
+    saved.update(
+        _owner_version=activity.version, _categories=categories, _workforce=amounts.brief(activity)
+    )
     return prepare_model(saved, items=prepare_items(entries, collections=_COLLECTIONS))
 
 

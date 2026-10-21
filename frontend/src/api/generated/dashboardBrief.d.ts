@@ -173,7 +173,7 @@ export namespace DashboardBriefContract {
   export type TotalFen2 = string | null;
   export type GrossRemunerationFen = string | null;
   export type WithholdingNote = string;
-  export type NetFen = string;
+  export type NetFen = string | null;
   export type FixedActiveCount = number;
   export type IntangibleActiveCount = number;
   export type TotalFen3 = string | null;
@@ -210,7 +210,7 @@ export namespace DashboardBriefContract {
   export type Key6 = string;
   export type Title3 = string;
   export type Object = string;
-  export type Period1 = string;
+  export type Period1 = string | null;
   export type AmountFen6 = string | null;
   export type AmountStatus = "known" | "unknown" | "not_applicable";
   export type Deadline = string | null;
