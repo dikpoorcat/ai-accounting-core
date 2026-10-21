@@ -90,6 +90,9 @@ from ._types import (
     CostPositionQuery as CostPositionQuery,
 )
 from ._types import (
+    FinancialBalances as FinancialBalances,
+)
+from ._types import (
     FinancialSummary as FinancialSummary,
 )
 from ._types import (
@@ -330,6 +333,12 @@ class Ledger:
     def financial_summary_inputs(self, names):
         """Public dependencies of the selected explicit balance fields."""
         return _financial_reads.summary_inputs(names)
+
+    def financial_balances(
+        self, scope: LedgerScope, names: Sequence[str], read_context: ReadContext
+    ) -> FinancialBalances:
+        """Only named controlled balance fields, with their necessary formal sources."""
+        return _financial_reads.financial_balances(scope, names, read_context)
 
     def account_balances(
         self,

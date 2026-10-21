@@ -177,22 +177,37 @@ def test_shared_balance_issues_are_preserved_once_and_unused_issues_are_removed(
 ):
     app, company = assembled
     with app.storage.read_unit(company) as read:
-        original = app.ledger.financial_summary(scope(company, "2026-01"), read)
+        names = (
+            "fixed_cost",
+            "fixed_accumulated",
+            "fixed_net",
+            "intangible_cost",
+            "intangible_accumulated",
+            "intangible_net",
+            "long_term_cost",
+            "long_term_accumulated",
+            "long_term_net",
+        )
+        original = app.ledger.financial_balances(scope(company, "2026-01"), names, read)
     source_indexes = [
-        *original.fixed_cost["issue_indexes"],
-        *original.fixed_accumulated["issue_indexes"],
+        *original.values["fixed_cost"]["issue_indexes"],
+        *original.values["fixed_accumulated"]["issue_indexes"],
     ]
     combined = replace_dataclass(
-        original, fixed_net={"state": "unestablished", "issue_indexes": source_indexes}
+        original,
+        values={
+            **original.values,
+            "fixed_net": {"state": "unestablished", "issue_indexes": source_indexes},
+        },
     )
-    monkeypatch.setattr(app.ledger, "financial_summary", lambda *_: combined)
+    monkeypatch.setattr(app.ledger, "financial_balances", lambda *_: combined)
     result = activity(app, company, "2026-01")
     assert result.ledger.fixed_net == {"state": "unestablished", "issue_indexes": [0, 1]}
     assert result.ledger.intangible_cost == {"state": "unestablished", "issue_indexes": [2]}
     assert len(result.ledger.issues) == 8
     assert "/fixed_net" not in {issue["field"] for issue in result.ledger.issues}
     assert result.ledger.issues[:2] == tuple(original.issues[index] for index in source_indexes)
-    assert combined.fixed_net["issue_indexes"] == source_indexes
+    assert combined.values["fixed_net"]["issue_indexes"] == source_indexes
 
 
 def test_batch_obligations_are_not_allocated_to_cards_by_their_cost(assembled):

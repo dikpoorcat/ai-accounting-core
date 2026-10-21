@@ -42,14 +42,57 @@ def _resource_keys(business, slot, business_ids, references):
     return "(" + " OR ".join(clauses) + ")" if clauses else "1", tuple(args)
 
 
+def _balance_keys(keys):
+    return canonical_json(
+        [{"account_code": key.account_code, "object_id": key.object_id} for key in keys]
+    )
+
+
+_BALANCE_MATCH = (
+    "l.account_code=json_extract(wanted.value,'$.account_code') "
+    "AND (json_extract(wanted.value,'$.object_id') IS NULL "
+    "OR l.object_id=json_extract(wanted.value,'$.object_id'))"
+)
+
+
 class ReadRepository:
-    def read_first_recorded(self, keys, *, as_of=None):
-        where = " WHERE (l.debit_fen<>0 OR l.credit_fen<>0)"
-        args = [
-            canonical_json(
-                [{"account_code": key.account_code, "object_id": key.object_id} for key in keys]
+    def read_balance_heads(self, keys, cutoff, *, view):
+        predicate, args = selected("r", cutoff if view == "as_posted" else None)
+        # Search every historical journal: a later correction can introduce an
+        # account into an earlier business month, or inherit a frozen journal.
+        sql = (
+            "WITH candidates AS (SELECT DISTINCT old.business_id,old.result_slot "
+            "FROM json_each(?) wanted JOIN voucher_line l ON " + _BALANCE_MATCH + " "
+            "JOIN voucher v ON v.voucher_id=l.voucher_id "
+            "JOIN adopted_result old ON old.result_id=v.result_id) "
+            f"SELECT {HEAD_FIELDS} FROM candidates c JOIN adopted_result r "
+            "ON r.business_id=c.business_id AND r.result_slot=c.result_slot "
+            f"WHERE {predicate} AND {business_kind()} "
+            "NOT IN ('opening.package','reports.continuation')"
+        )
+        parameters = [_balance_keys(keys), *args]
+        if view == "current":
+            sql += " AND r.business_period<=?"
+            parameters.append(cutoff)
+        return [dict(row) for row in self._session.fetchall(sql, tuple(parameters))]
+
+    def read_balance_lines(self, keys, voucher_ids):
+        sql = (
+            "SELECT DISTINCT l.* FROM json_each(?) wanted JOIN voucher_line l ON "
+            + _BALANCE_MATCH
+            + " WHERE l.voucher_id IN (SELECT value FROM json_each(?)) "
+            "ORDER BY l.voucher_id,l.line_no"
+        )
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                sql, (_balance_keys(keys), canonical_json(sorted(voucher_ids)))
             )
         ]
+
+    def read_first_recorded(self, keys, *, as_of=None):
+        where = " WHERE (l.debit_fen<>0 OR l.credit_fen<>0)"
+        args = [_balance_keys(keys)]
         if as_of is not None:
             where += " AND v.period<=?"
             args.append(as_of)
@@ -57,10 +100,7 @@ class ReadRepository:
             "WITH ranked AS (SELECT CAST(wanted.key AS INTEGER) query_index,v.result_id,"
             "v.period AS first_period,ROW_NUMBER() OVER(PARTITION BY wanted.key "
             "ORDER BY v.period,v.number,v.voucher_id) position "
-            "FROM json_each(?) wanted JOIN voucher_line l "
-            "ON l.account_code=json_extract(wanted.value,'$.account_code') "
-            "AND (json_extract(wanted.value,'$.object_id') IS NULL "
-            "OR l.object_id=json_extract(wanted.value,'$.object_id')) "
+            "FROM json_each(?) wanted JOIN voucher_line l ON " + _BALANCE_MATCH + " "
             "JOIN voucher v ON v.voucher_id=l.voucher_id" + where + ") "
             f"SELECT m.query_index,m.first_period,{HEAD_FIELDS} FROM ranked m "
             "JOIN adopted_result r ON r.result_id=m.result_id WHERE m.position=1"
@@ -280,9 +320,7 @@ class ReadRepository:
         )
         return [
             dict(row)
-            for row in self._session.fetchall(
-                sql, (*args, cutoff, *source_args, *source_key_args)
-            )
+            for row in self._session.fetchall(sql, (*args, cutoff, *source_args, *source_key_args))
         ]
 
     def read_result_scope(

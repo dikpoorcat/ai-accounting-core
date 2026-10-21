@@ -12,6 +12,7 @@ from ai_accounting_modular.contracts.public import (
 
 from . import _financial
 from ._balance_cube import balance_cube, previous
+from ._balance_selection import BalanceSelection
 from ._balances import sum_amounts
 from ._closing import closed_report
 from ._financial_cells import Issues, add, known
@@ -19,7 +20,7 @@ from ._financial_positions import positions
 from ._financial_profit import profit
 from ._financial_selection import Selection
 from ._read_support import json_value
-from ._types import AccountBalance, AccountBalanceKey, FinancialSummary
+from ._types import AccountBalance, AccountBalanceKey, FinancialBalances, FinancialSummary
 from ._values import fail
 
 _ACCOUNT_FIELDS = (
@@ -38,13 +39,22 @@ _ACCOUNT_FIELDS = (
 )
 
 
-def summary_inputs(names):
-    known = {name: codes for name, codes, _ in _ACCOUNT_FIELDS}
-    if any(name not in known for name in names):
+def _fields(names):
+    if isinstance(names, str | bytes) or not isinstance(names, Sequence):
+        fail("invalid_input", "财务余额须指定明确字段名称。")
+    known = {name for name, _, _ in _ACCOUNT_FIELDS}
+    if any(not isinstance(name, str) or name not in known for name in names):
         fail("invalid_input", "所选财务余额字段没有明确的科目读取声明。")
+    if len(set(names)) != len(names):
+        fail("invalid_input", "财务余额字段不能重复。")
+    return {name: (codes, sign) for name, codes, sign in _ACCOUNT_FIELDS if name in names}
+
+
+def summary_inputs(names):
+    fields = _fields(names)
     return ReadInputs(
         result_kinds=("opening.package",),
-        account_codes=tuple(sorted({code for name in names for code in known[name]})),
+        account_codes=tuple(sorted({code for codes, _ in fields.values() for code in codes})),
     )
 
 
@@ -123,6 +133,40 @@ def financial_summary(scope, read):
     )
 
 
+def financial_balances(scope, names, read):
+    fields = _fields(names)
+    normalized = _financial.normalize(scope, read)
+    last = normalized["period_to"]
+    issues = Issues()
+    keys = tuple(
+        AccountBalanceKey(code)
+        for code in sorted({code for codes, _ in fields.values() for code in codes})
+    )
+    selector = BalanceSelection(
+        read.repository("ledger"), normalized["view"], last, read.start_period, issues, keys
+    )
+    values = {
+        name: _amount(selector, last, codes, sign=sign, field="/" + name)
+        for name, (codes, sign) in fields.items()
+    }
+    sources = _sources(selector)
+    version = content_digest(
+        json_value(
+            {
+                "company_id": read.company_id,
+                "database_id": read.database_id,
+                "scope": normalized,
+                "values": values,
+                "issues": issues.values,
+                "sources": sources,
+            }
+        )
+    )
+    if scope.get("expected_head", version) != version:
+        fail("snapshot_changed", "所选财务余额已经变化，请重新读取。")
+    return FinancialBalances(version, normalized, values, tuple(issues.values), sources)
+
+
 def account_balances(keys, period, read, selection=None):
     if isinstance(keys, str | bytes) or not isinstance(keys, Sequence) or len(keys) > 500:
         fail("invalid_input", "一次最多查询500项明确科目和对象余额。")
@@ -142,12 +186,13 @@ def account_balances(keys, period, read, selection=None):
         read.repository("ledger")
         return ()
     issues = Issues()
-    selector = Selection(
+    selector = BalanceSelection(
         read.repository("ledger"),
         selected.view,
         selected.as_of or period,
         read.start_period,
         issues,
+        tuple(keys),
     )
     before = previous(period)
     result = []

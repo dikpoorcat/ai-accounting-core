@@ -34,7 +34,7 @@ _LEDGER_FIELDS = (
 
 
 def _ledger_amounts(financial):
-    cells = {key: deepcopy(getattr(financial, key)) for key in _LEDGER_FIELDS}
+    cells = {key: deepcopy(financial.values[key]) for key in _LEDGER_FIELDS}
     referenced = dict.fromkeys(
         index
         for cell in cells.values()
@@ -150,7 +150,7 @@ def asset_activity(owner, scope, read):
     flow = flow_state(snapshot)
     selected_cards, projects = cards(snapshot, flow), _projects(snapshot)
     fixed, intangible = (_summary(kind, selected_cards, flow) for kind in ("fixed", "intangible"))
-    ledger = _ledger_amounts(owner._ledger.financial_summary(snapshot.scope, read))
+    ledger = _ledger_amounts(owner._ledger.financial_balances(snapshot.scope, _LEDGER_FIELDS, read))
     payload = {
         "scope": snapshot.scope,
         "cards": selected_cards,

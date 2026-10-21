@@ -3,6 +3,8 @@
 from copy import deepcopy
 from uuid import uuid4
 
+import pytest
+
 from ai_accounting_modular.contracts.public import PageQuery
 from ai_accounting_modular.domains.assets.public import ProjectCostQuery, create_assets
 from tests.modular.application._working_case import case as case
@@ -74,10 +76,13 @@ def test_closed_cost_adjustment_changes_stock_without_inventing_a_new_card(case)
         assert read.view == "current" and read.as_of is None
 
 
-def test_ordinary_expense_keeps_the_entire_asset_activity_equal(case):
+def test_ordinary_expense_keeps_the_entire_asset_activity_equal(case, monkeypatch):
     case.seed(expense=False)
     _asset(case, activate=True)
     before = activity(case.app, case.company, "2026-01")
+    monkeypatch.setattr(
+        case.app.ledger, "financial_summary", lambda *args: pytest.fail("资产余额不应读取完整三表")
+    )
     save(case.app, case.request(case.expense("700")))
     after = activity(case.app, case.company, "2026-01")
     assert before == after

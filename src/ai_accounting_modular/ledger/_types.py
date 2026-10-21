@@ -49,6 +49,15 @@ class FinancialSummary:
 
 
 @dataclass(frozen=True)
+class FinancialBalances:
+    version: str
+    scope: LedgerScope
+    values: dict[str, AmountCell]
+    issues: tuple[FactIssue, ...]
+    sources: tuple[ResultSourceRef, ...]
+
+
+@dataclass(frozen=True)
 class AccountBalanceKey:
     account_code: str
     object_id: str | None = None

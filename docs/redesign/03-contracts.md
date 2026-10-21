@@ -145,7 +145,8 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | 端口 | 输入与返回 |
 | --- | --- |
 | `financial_summary(scope, read)` | FinancialSummary 含版本、范围、全部损益收入/费用/净利润、资产/负债（含流动与非流动）/权益/资本/留存利润、银行/现金/平台，以及固定和无形资产各自原价/累计/净值及长期资产合计；每项为 AmountCell，附具体问题及采用来源。共用三表选择与余额，不以主营收入或税前利润替代完整结果。 |
-| `account_balances(keys, period, read, selection=...)` | 最多500个 AccountBalanceKey(account_code, object_id?)；对象省略表示该科目全部对象。返回每项有据月初/月末余额、首个正式记账月、问题及来源。current 使用最终有效事实；as_posted 的 as_of 必须等于所查月份，月初沿用上月正式余额。1101 与基金身份按同一口径读取成本，不从购买事实累计反推。 |
+| `financial_balances(scope, names, read)` | FinancialBalances 只返回所选受控余额字段的 values、问题、必要来源、范围及版本。可选银行／现金／平台，以及固定资产、无形资产和长期资产的原价／累计／净值；字段与 `financial_summary_inputs(names)` 共用唯一科目声明。资产模块一次取9个资产余额，不读取完整损益和三表。 |
+| `account_balances(keys, period, read, selection=...)` | 最多500个 AccountBalanceKey(account_code, object_id?)；对象省略表示该科目全部对象。返回每项有据月初/月末余额、首个正式记账月、问题及必要来源。current 使用最终有效事实；as_posted 的 as_of 必须等于所查月份，月初沿用上月正式余额。1101 与基金身份按同一口径读取成本，不从购买事实累计反推。余额读取按实际账户行定位业务，再选择正式有效凭证；完整核验期初，保留无凭证采用的凭证继承和相抵为零的实际贡献。 |
 | `query_obligation_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别/方向及 include_settled。纳入以前月份截至该月的完整义务及清偿，返回 PositionPage。 |
 | `query_cost_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别及 include_consumed。已耗尽来源仍有正式身份，不因剩余为零从完整目录消失；页面可以明确筛掉。 |
 | `get_obligation_positions(cutoff_period, read, business_ids=(), references=(), selection=...)`、`get_cost_positions(...)` | 按各最多500个已知业务身份或BusinessRef资源键，完整返回其正式资源和截至该月的实际使用量；不计算全公司统计、不分页，缺失保持空而不是补零。SQL在聚合前限定来源键，仍按current/as_posted选择实际采用；调用方核对返回的精确来源。 |
