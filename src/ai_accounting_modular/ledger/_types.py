@@ -150,6 +150,7 @@ class ObligationDirectoryQuery:
     categories: tuple[str, ...] = ()
     direction: Literal["receivable", "payable"] | None = None
     selected_view: Literal["as_posted", "current"] = "as_posted"
+    include_vouchers: bool = False
 
 
 @dataclass(frozen=True)
@@ -175,13 +176,16 @@ class ObligationDirectoryItem:
 class ObligationDirectory:
     """Complete selected open items; current contains only their exact resource matches.
 
-    Current matches can be settled. No pagination, ordering or whole-scope totals are promised.
+    Current matches can be settled. Optional selected_vouchers contains exactly selected source
+    IDs, each mapped to its effective journal or None. Historical journal owners do not add
+    obligation sources or origins. No pagination, ordering or whole-scope totals are promised.
     """
 
     selected: tuple[ObligationDirectoryItem, ...]
     current: tuple[ObligationDirectoryItem, ...]
     sources: tuple[ObligationDirectorySource, ...]
     origins: dict[str, AdoptedOriginProjection | AdoptedContent] | None
+    selected_vouchers: dict[str, VoucherDirectoryEntry | None] | None = None
 
 
 @dataclass(frozen=True)

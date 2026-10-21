@@ -279,9 +279,8 @@ class ReadRepository:
             ]
             tokens.extend(token("basis", "$.input." + field) for field in fields)
             cases.append(f"WHEN '{kind}' THEN json_array(" + ",".join(tokens) + ")")
-        fields = HEAD_FIELDS.replace("r.target_state,", "")
         sql = (
-            f"SELECT {fields},json_extract(r.target_json,'$.kind') AS business_kind,"
+            f"SELECT {HEAD_FIELDS},json_extract(r.target_json,'$.kind') AS business_kind,"
             "CASE json_extract(r.target_json,'$.kind') "
             + " ".join(cases)
             + " END AS projection_json FROM adopted_result r "
@@ -412,7 +411,6 @@ class ReadRepository:
                 "basis_digest",
                 "target_digest",
             )
-            if not directory or key != "target_state"
         )
         sql += head + ",r.business_period AS owner_business_period "
         sql += f"FROM {table} d JOIN adopted_result r ON r.result_id=d.result_id " + joins

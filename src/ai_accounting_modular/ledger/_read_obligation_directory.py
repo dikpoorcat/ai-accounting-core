@@ -8,6 +8,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract_items,
 )
 
+from ._read_effective_vouchers import capture as capture_vouchers
 from ._read_origin_headers import checked_items, source_headers
 from ._read_positions import _amounts
 from ._types import (
@@ -32,6 +33,8 @@ def _query(query):
         fail("invalid_input", "轻往来目录须选择当时入账或当前采用口径。")
     if type(query.include_origins) is not bool:
         fail("invalid_input", "轻往来目录须明确是否读取来源字段。")
+    if type(query.include_vouchers) is not bool:
+        fail("invalid_input", "轻往来目录须明确是否读取有效凭证。")
     if query.business_ids is not None:
         if not isinstance(query.business_ids, tuple):
             fail("invalid_input", "业务范围须为明确的身份元组，None表示全部业务。")
@@ -93,7 +96,13 @@ def _positions(repo, query):
 def capture(query, read):
     _query(query)
     if query.business_ids == ():
-        return ObligationDirectory((), (), (), {} if query.include_origins else None)
+        return ObligationDirectory(
+            (),
+            (),
+            (),
+            {} if query.include_origins else None,
+            {} if query.include_vouchers else None,
+        )
     try:
         selected, current, same = _positions(read.repository("ledger"), query)
     except OperationalError as error:
@@ -143,4 +152,12 @@ def capture(query, read):
         from ._read_origins import capture as capture_origins
 
         origins = capture_origins(sources, headers, read)
-    return ObligationDirectory(selected_items, current_items, sources, origins)
+    vouchers = None
+    if query.include_vouchers:
+        vouchers = capture_vouchers(
+            read.repository("ledger"),
+            tuple(dict.fromkeys(item.source["result_id"] for item in selected_items)),
+            headers,
+            {entry.reference["result_id"]: entry.reference for entry in sources},
+        )
+    return ObligationDirectory(selected_items, current_items, sources, origins, vouchers)

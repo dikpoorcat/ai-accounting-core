@@ -12,8 +12,8 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from ._formal_output import target_vouchers
 from ._planning import stored_source_reference
+from ._read_effective_vouchers import capture as capture_vouchers
 from ._read_support import after_key, bounded, cursor, scope_selection, version
 from ._types import (
     AdoptedContent,
@@ -80,26 +80,8 @@ def get_effective_voucher_directory(locators, read):
     heads = {row["result_id"]: row for row in repo.read_heads(ids)}
     for locator in locators:
         _locate(locator, heads.get(locator["result_id"]))
-    selected = target_vouchers(repo, heads.values(), headers_only=True)
-    owner_ids = {voucher["result_id"] for voucher in selected.values() if voucher is not None}
-    heads.update((row["result_id"], row) for row in repo.read_heads(owner_ids - heads.keys()))
-    result = []
-    for locator in locators:
-        voucher = selected[locator["result_id"]]
-        result.append(
-            None
-            if voucher is None
-            else VoucherDirectoryEntry(
-                voucher["voucher_id"],
-                voucher["period"],
-                voucher["number"],
-                voucher["role"],
-                voucher["summary"],
-                reference(heads[voucher["result_id"]]),
-                voucher["reverses_voucher_id"],
-            )
-        )
-    return tuple(result)
+    selected = capture_vouchers(repo, ids, heads, {})
+    return tuple(selected[identity] for identity in ids)
 
 
 def get_adopted_sources(sources, read):

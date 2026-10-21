@@ -8,6 +8,7 @@ from ai_accounting_modular.ledger.public import (
     AdoptedOriginProjection,
     ObligationDirectoryItem,
     ObligationDirectoryQuery,
+    VoucherDirectoryEntry,
 )
 
 from ._brief_activity_sources import same_reference
@@ -50,6 +51,7 @@ class OpenSnapshot:
     current_cutoff: str
     complete: bool
     withdrawn: set[tuple[str, str]]
+    selected_vouchers: dict[str, VoucherDirectoryEntry | None]
 
 
 def _withdrawn(reader, scope, references, cutoff, read):
@@ -93,12 +95,18 @@ def capture(reader, scope, read, *, business_ids=None, complete=None):
             include_origins=True,
             business_ids=None if business_ids is None else tuple(sorted(set(business_ids))),
             selected_view="as_posted",
+            include_vouchers=True,
         ),
         read,
     )
     selected = directory.selected
     current = {ref_key(item.reference): item for item in directory.current}
     contents = directory.origins
+    selected_vouchers = directory.selected_vouchers
+    if selected_vouchers is None or set(selected_vouchers) != {
+        item.source["result_id"] for item in selected
+    }:
+        raise ContractError("storage_corrupt", "往来目录缺少选中来源的完整有效凭证定位。")
     if contents is None or any(
         (origin := contents.get(source.reference["result_id"])) is None
         or source.source != origin.source
@@ -123,4 +131,5 @@ def capture(reader, scope, read, *, business_ids=None, complete=None):
             current_cutoff,
             read,
         ),
+        selected_vouchers,
     )

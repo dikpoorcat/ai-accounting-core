@@ -40,6 +40,7 @@ def bind_displays(reader, members, captured, read):
         [rows.reference(member) for member in members],
         read,
         known_origins=captured.contents.values(),
+        known_vouchers=captured.selected_vouchers,
     )
 
 

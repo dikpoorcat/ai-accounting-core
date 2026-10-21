@@ -14,6 +14,7 @@ _HEAD_FIELDS = (
     "business_period",
     "posting_period",
     "state",
+    "target_state",
     "baseline_result_id",
     "calculation_key",
     "calculation_revision",
