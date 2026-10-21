@@ -13,30 +13,15 @@ from ai_accounting_modular.contracts.public import (
 from . import _financial
 from ._balance_cube import balance_cube, previous
 from ._balance_selection import BalanceSelection
-from ._balances import sum_amounts
 from ._closing import closed_report
-from ._financial_cells import Issues, add, known
-from ._financial_positions import positions
-from ._financial_profit import profit
+from ._financial_calculation import ACCOUNT_FIELDS as _ACCOUNT_FIELDS
+from ._financial_calculation import amount as _amount
+from ._financial_calculation import summary_values
+from ._financial_cells import Issues
 from ._financial_selection import Selection
 from ._read_support import json_value
 from ._types import AccountBalance, AccountBalanceKey, FinancialBalances, FinancialSummary
 from ._values import fail
-
-_ACCOUNT_FIELDS = (
-    ("bank", ("1002",), 1),
-    ("cash", ("1001",), 1),
-    ("payment_platform", ("1012",), 1),
-    ("fixed_cost", ("1601",), 1),
-    ("fixed_accumulated", ("1602",), -1),
-    ("fixed_net", ("1601", "1602"), 1),
-    ("intangible_cost", ("1701",), 1),
-    ("intangible_accumulated", ("1702",), -1),
-    ("intangible_net", ("1701", "1702"), 1),
-    ("long_term_cost", ("1601", "1701", "1604", "189901", "4301"), 1),
-    ("long_term_accumulated", ("1602", "1702"), -1),
-    ("long_term_net", ("1601", "1602", "1701", "1702", "1604", "189901", "4301"), 1),
-)
 
 
 def _fields(names):
@@ -67,55 +52,19 @@ def _sources(selection):
     )
 
 
-def _amount(selection, cutoff, codes, *, object_id=None, sign=1, field):
-    cube = balance_cube(selection, cutoff)
-    if cube is None:
-        return selection.issues.unknown(
-            field, "正式期初及指定月末余额", "缺少该比较时点的正式期初，不能把余额推定为零。"
-        )
-    return known(
-        sign
-        * sum_amounts(
-            amount
-            for (code, _, obj), amount in cube.items()
-            if code in codes and (object_id is None or obj == object_id)
-        )
-    )
-
-
 def financial_summary(scope, read):
     normalized = _financial.normalize(scope, read)
     repo = read.repository("ledger")
-    first, last = normalized["period_from"], normalized["period_to"]
+    last = normalized["period_to"]
     issues = Issues()
     selection = Selection(repo, normalized["view"], last, read.start_period, issues)
-    if normalized["view"] == "as_posted" and repo.is_closed(last, start_period=read.start_period):
-        saved = closed_report(normalized, read)
-        ending = {int(key): row["ending"] for key, row in saved["balance_sheet"].items()}
-        current = {int(key): row["current"] for key, row in saved["profit_statement"].items()}
-        issues.values = list(saved["issues"])
-    else:
-        ending = positions(selection, last, "ending")
-        current = profit(selection, first, last, "current")
-    values = {
-        "revenue": add(*(current[n] for n in (1, 20, 22))),
-        "expense": add(*(current[n] for n in (2, 3, 11, 14, 18, 24, 31))),
-        "net_profit": current[32],
-        **{
-            name: ending[number]
-            for name, number in (
-                ("assets", 30),
-                ("liabilities", 47),
-                ("current_liabilities", 41),
-                ("non_current_liabilities", 46),
-                ("equity", 52),
-                ("capital", 48),
-                ("retained_profit", 51),
-            )
-        },
-    }
-    for name, codes, sign in _ACCOUNT_FIELDS:
-        values[name] = _amount(selection, last, codes, sign=sign, field="/" + name)
+    saved = (
+        closed_report(normalized, read)
+        if normalized["view"] == "as_posted"
+        and repo.is_closed(last, start_period=read.start_period)
+        else None
+    )
+    values = summary_values(normalized, selection, saved=saved)
     sources = _sources(selection)
     identity = {
         "company_id": read.company_id,
