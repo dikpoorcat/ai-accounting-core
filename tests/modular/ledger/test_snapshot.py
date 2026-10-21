@@ -56,7 +56,9 @@ def _tamper(storage, statement, parameters=()):
 def test_empty_snapshot_and_immutable_summary(store):
     ledger = create_ledger()
     summary = _snapshot(store, ledger)
-    assert summary == LedgerSnapshot(0, 0, (), ())
+    assert summary == LedgerSnapshot(0, 0, (), (), None)
+    with store.read_unit(COMPANY) as read:
+        assert not ledger.has_formal_results(read)
     with pytest.raises(FrozenInstanceError):
         summary.result_count = 3
 
@@ -69,8 +71,10 @@ def test_valid_open_ledger_sources_are_the_complete_deduplicated_basis_locations
         {"source_id": SOURCE, "location": "原件第二行"},
     ]
     save(store, ledger, [change])
+    with store.read_unit(COMPANY) as read:
+        assert ledger.has_formal_results(read)
     assert _snapshot(store, ledger) == LedgerSnapshot(
-        1, 1, (SOURCE,), (AdoptedBusinessVersion(BUSINESS, 1, 1, ("main",)),)
+        1, 1, (SOURCE,), (AdoptedBusinessVersion(BUSINESS, 1, 1, ("main",)),), "2026-01"
     )
 
 
@@ -112,6 +116,7 @@ def test_formal_only_frozen_baseline_inherits_original_journal_before_later_reve
                 key=lambda version: version.business_id,
             )
         ),
+        "2026-03",
     )
 
 

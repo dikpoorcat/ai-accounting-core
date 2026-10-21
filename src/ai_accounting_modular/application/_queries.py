@@ -26,14 +26,6 @@ def months(first, last):
     return [str(YearMonth.from_ordinal(value)) for value in range(start, end + 1)]
 
 
-def work_period(application, read):
-    return max(
-        read.start_period,
-        read.repository("application").working_period_to() or read.start_period,
-        application.ledger.latest_period(read) or read.start_period,
-    )
-
-
 def _read(application, company, read_context):
     if read_context is None:
         return application.storage.read_unit(company)
@@ -67,12 +59,13 @@ def context(application, request, read_context=None):
         )
     with _read(application, company, read_context) as read:
         metadata = application.storage.company_metadata(read)
-        closed = application.ledger.closed_through(read)
+        scope = application.work_scope(read)
+        closed = scope.closed_through
         following = (
             YearMonth(closed).ordinal + 1 if closed else YearMonth(read.start_period).ordinal
         )
         first_open = str(YearMonth.from_ordinal(following)) if following < 9999 * 12 else None
-        working = work_period(application, read)
+        working = scope.working_period_to
         defaults = ["company", *(["period:" + first_open] if first_open else [])]
         note_scopes = request.get("note_scopes", defaults)
         issue_scopes = list(dict.fromkeys(request.get("issue_scopes", defaults)))

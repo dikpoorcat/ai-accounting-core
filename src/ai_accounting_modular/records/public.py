@@ -398,7 +398,7 @@ class Records:
     def verify_snapshot(
         self, company_identity, facts, objects, read_context: ReadContext, *, required_source_ids=()
     ) -> RecordsSnapshot:
-        """Offline full verification; never regenerate or repair the saved documents."""
+        """Prove saved documents; FactAnalysis inputs reuse their exact strict analysis."""
         root = self._root(read_context)
         with _publication(root).lock:
             return _snapshot.verify(

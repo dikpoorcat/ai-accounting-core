@@ -3,7 +3,12 @@
 from copy import deepcopy
 from dataclasses import dataclass
 
-from ai_accounting_modular.contracts.public import ContractError, loads_json, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    analyze_fact,
+    loads_json,
+    validate_contract,
+)
 
 from . import _documents
 from ._changes import fact_digest
@@ -30,10 +35,20 @@ class SnapshotVerifier:
 
     def verify(self, read):
         heads = read.repository("application").snapshot_heads()
-        facts = self._facts(heads, read)
+        analyses = self._facts(heads, read)
+        facts = tuple(analysis.fact for analysis in analyses)
         self._relations(facts, heads, read)
         objects = _documents.export_objects(self, read)
         formal = self.ledger.verify_snapshot(read)
+        company_identity = _documents.company_identity(read)
+        working = company_identity["working_period_to"]
+        if working < max(
+            formal.period_to or read.start_period,
+            max((fact["period"] for fact in facts), default=read.start_period),
+        ):
+            raise ContractError(
+                "storage_corrupt", "保存的工作末月未覆盖真实事实、正式采用或关账范围。"
+            )
         indexed = {head["business_id"]: head for head in heads}
         actual_slots = {
             item.business_id: item.active_result_slots for item in formal.business_versions
@@ -63,8 +78,8 @@ class SnapshotVerifier:
             ):
                 raise ContractError("storage_corrupt", "正式采用的事实版本与当前业务版本不一致。")
         return self.records.verify_snapshot(
-            _documents.company_identity(read),
-            facts,
+            company_identity,
+            analyses,
             objects,
             read,
             required_source_ids=formal.source_ids,
@@ -121,14 +136,20 @@ class SnapshotVerifier:
                         "storage_corrupt", "领域正文有遗漏、重复或不属于本模块的记录。"
                     )
                 for fact in exported:
-                    validate_contract("business-facts.schema.json", "Fact", fact)
+                    analysis = analyze_fact(fact)
+                    fact = analysis.fact
                     head = batch[fact["business_id"]]
+                    digest = (
+                        analysis.digest
+                        if fact["evidence_ids"] == sorted(fact["evidence_ids"])
+                        else fact_digest(fact)
+                    )
                     if (
                         head["family"] != fact["kind"].split(".", 1)[0]
                         or head["kind"] != fact["kind"]
                         or head["period"] != fact["period"]
-                        or head["current_digest"] != fact_digest(fact)
+                        or head["current_digest"] != digest
                     ):
                         raise ContractError("storage_corrupt", "领域正文与完整当前业务索引不一致。")
-                    facts.append(fact)
+                    facts.append(analysis)
         return facts

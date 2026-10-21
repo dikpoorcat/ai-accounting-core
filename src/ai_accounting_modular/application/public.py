@@ -14,6 +14,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     FinancialSnapshot,
     JobsRequest,
+    ReadContext,
     ReportRequest,
     SourcesRequest,
     SourcesResult,
@@ -42,12 +43,14 @@ from ._backup_verify import BackupVerifier, VerifiedBackup, create_backup_verifi
 from ._context import DomainRegistry
 from ._repository import ApplicationRepository
 from ._submission import ExecutionOutcome, Submission
+from ._work_scope import WorkScope, work_scope
 
 __all__ = [
     "Application",
     "BackupVerifier",
     "ExecutionOutcome",
     "VerifiedBackup",
+    "WorkScope",
     "backup_scope_head",
     "create_application",
     "create_backup_producer",
@@ -99,6 +102,9 @@ class Application:
 
     def context(self, request, read_context=None):
         return _queries.context(self, request, read_context)
+
+    def work_scope(self, read_context: ReadContext) -> WorkScope:
+        return work_scope(self, read_context)
 
     def accounting_find(self, request):
         return _queries.find(self, request)

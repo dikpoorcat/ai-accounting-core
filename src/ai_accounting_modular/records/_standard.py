@@ -50,7 +50,7 @@ def _unique(items, field, meaning):
         seen.add(key)
 
 
-def _validate_parts(manifest, parts):
+def _validate_parts(manifest, parts, known_facts=None):
     if not _documents.FIXED_KEYS <= {part["key"] for part in parts}:
         _bad("完整标准文档必须包含对象、来源、待办和说明四个固定片。")
     collections = {name: [] for name in ("facts", "objects", "sources", "issues", "notes")}
@@ -68,6 +68,12 @@ def _validate_parts(manifest, parts):
         if expected_field is None or expected_field not in part:
             _bad("标准分片的内容类型与归属不一致。")
         if part["key"].startswith("facts:"):
+            if known_facts is not None and (
+                not part["facts"]
+                or [fact["business_id"] for fact in part["facts"]]
+                != sorted(fact["business_id"] for fact in part["facts"])
+            ):
+                _bad("当前事实分片必须非空并按完整业务身份顺序保存。")
             for fact in part["facts"]:
                 expected = "facts:" + fact["kind"].split(".")[0] + ":" + fact["period"]
                 if expected != part["key"]:
@@ -84,7 +90,17 @@ def _validate_parts(manifest, parts):
         _unique(collections[name], field, meaning)
     required = set()
     for fact in collections["facts"]:
-        required.update(fact_source_ids(fact))
+        if known_facts is None:
+            required.update(fact_source_ids(fact))
+        else:
+            proof = known_facts.get(fact["business_id"])
+            if proof is None or canonical_json(fact) != proof[0]:
+                _bad("标准业务文档没有精确对应完整的当前事实。")
+            required.update(proof[1])
+    if known_facts is not None and {fact["business_id"] for fact in collections["facts"]} != set(
+        known_facts
+    ):
+        _bad("标准业务文档遗漏了数据库中的当前事实。")
     for name in ("objects", "notes"):
         for item in collections[name]:
             required.update(item.get("evidence_ids", ()))
@@ -120,6 +136,10 @@ def _validate_parts(manifest, parts):
 
 
 def open_standard_bundle(manifest_path: Path | str) -> StandardBundle:
+    return _read_standard_bundle(manifest_path)[0]
+
+
+def _read_standard_bundle(manifest_path, *, known_facts=None):
     path = Path(manifest_path).absolute()
     if path.name != "current.json" or path.parent.name != "standard":
         raise ContractError("invalid_path", "请明确选择公司standard/current.json完整清单。")
@@ -134,12 +154,13 @@ def open_standard_bundle(manifest_path: Path | str) -> StandardBundle:
         if (item.sha256, item.byte_size) != (shard["sha256"], shard["byte_size"]):
             _bad("标准分片的原字节与清单摘要或大小不一致。")
         part = loads_json(raw_part)
+        # A matching database proof saves source analysis, never this strict wire check.
         validate_contract("core.schema.json", "StandardPart", part)
         if part["key"] != shard["key"]:
             _bad("标准分片的归属与清单不一致。")
         parts.append(part)
         files.append(item)
-    sources = _validate_parts(manifest, parts)
+    sources = _validate_parts(manifest, parts, known_facts)
     for source in sources:
         _sources.check_source(root, source)
         if source["kind"] == "file":
@@ -157,7 +178,7 @@ def open_standard_bundle(manifest_path: Path | str) -> StandardBundle:
     paths = [item.relative_path.casefold() for item in files]
     if len(paths) != len(set(paths)):
         _bad("标准资料含有重复或大小写冲突的文件位置。")
-    return StandardBundle(
+    bundle = StandardBundle(
         path,
         root,
         files[0].sha256,
@@ -165,6 +186,7 @@ def open_standard_bundle(manifest_path: Path | str) -> StandardBundle:
         canonical_json(manifest),
         tuple(canonical_json(part) for part in sorted(parts, key=lambda item: item["key"])),
     )
+    return bundle, tuple(sorted(parts, key=lambda item: item["key"]))
 
 
 def _copy_file(bundle, target, item):

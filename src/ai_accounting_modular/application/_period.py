@@ -9,8 +9,9 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from . import _documents, _execution, _queries, _reading
+from . import _documents, _execution, _reading
 from ._submission import Submission
+from ._work_scope import working_period
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ def _snapshot(application, period, read):
                 "当前标准业务文档尚未归档完整，请接续文档后关账。",
             )
         )
-    working = _queries.work_period(application, read)
+    working = working_period(read)
     inputs = (
         read.repository("application").horizon_inputs(working, period) if period > working else []
     )

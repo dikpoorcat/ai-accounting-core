@@ -9,13 +9,22 @@ from ai_accounting_modular.contracts.public import (
     BusinessGet,
     BusinessGetResult,
     BusinessQuery,
-    ContextRequest,
-    ContextResult,
     ContractError,
     ReadContext,
     validate_contract,
 )
 from ai_accounting_modular.ledger.public import FormalChange
+
+
+class WorkScopeView(Protocol):
+    @property
+    def working_period_to(self) -> str: ...
+
+    @property
+    def has_formal_results(self) -> bool: ...
+
+    @property
+    def closed_through(self) -> str | None: ...
 
 
 class BusinessReader(Protocol):
@@ -27,7 +36,7 @@ class BusinessReader(Protocol):
         self, query: BusinessQuery, read_context: ReadContext
     ) -> BusinessFindResult: ...
 
-    def context(self, request: ContextRequest, read_context: ReadContext) -> ContextResult: ...
+    def work_scope(self, read_context: ReadContext) -> WorkScopeView: ...
 
 
 @dataclass(frozen=True)

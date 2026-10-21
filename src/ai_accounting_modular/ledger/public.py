@@ -458,6 +458,10 @@ class Ledger:
         """Latest economic month already represented by formal results."""
         return read_context.repository("ledger").latest_period()
 
+    def has_formal_results(self, read_context: ReadContext) -> bool:
+        """Any adopted result counts, including zero, voucherless and retired results."""
+        return read_context.repository("ledger").has_formal_results()
+
     def begin_candidate(
         self,
         responsibilities,

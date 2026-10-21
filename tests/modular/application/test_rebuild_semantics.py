@@ -65,6 +65,9 @@ def test_closed_correction_becomes_one_final_fact_and_one_original_voucher(case,
     with unit(target, owners=app.repositories) as read:
         assert app.ledger.closed_through(read) is None
         assert read.repository("application").working_period_to() == "2026-03"
+        work = app.work_scope(read)
+        assert work.has_formal_results and work.working_period_to == "2026-03"
+        assert work.closed_through is None
         results = app.ledger.get_results([original_business], read)
         vouchers = app.ledger.query_vouchers(LedgerQuery((original_business,)), read).items
         assert len(vouchers) == 1

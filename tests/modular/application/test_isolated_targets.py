@@ -127,6 +127,9 @@ def test_real_backup_task_restore_preserves_formal_identities_and_copies_only_ma
     with read_target(offline, target) as read:
         assert offline.ledger.get_results([fact["business_id"]], read) == original
         assert offline.ledger.closed_through(read) == "2026-01"
+        work = offline.work_scope(read)
+        assert work.has_formal_results
+        assert work.working_period_to == work.closed_through == "2026-01"
         assert read.repository("files").current() == ()
     assert not list(target.parent.glob(".accounting-build-*"))
 

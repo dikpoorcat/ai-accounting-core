@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import chain
 
 from ai_accounting_modular.contracts.public import (
     MAX_FEN,
@@ -30,10 +31,13 @@ class AdoptedBusinessVersion:
 
 @dataclass(frozen=True)
 class LedgerSnapshot:
+    """Local proof summary; period_to covers economic, adoption and closed months."""
+
     result_count: int
     voucher_count: int
     source_ids: tuple[str, ...]
     business_versions: tuple[AdoptedBusinessVersion, ...]
+    period_to: str | None
 
 
 def _key(row):
@@ -239,7 +243,21 @@ def _verify(context, repo):
         if loads_json(closed["basis_json"]) != basis:
             fail("storage_corrupt", "关账原始冻结采用摘要与保存的正式结果不一致。")
     return LedgerSnapshot(
-        len(heads), len(records["voucher"]), source_ids, _business_versions(heads, slots)
+        len(heads),
+        len(records["voucher"]),
+        source_ids,
+        _business_versions(heads, slots),
+        max(
+            chain(
+                (
+                    row[key]
+                    for row in heads.values()
+                    for key in ("business_period", "posting_period")
+                ),
+                cutoffs,
+            ),
+            default=None,
+        ),
     )
 
 

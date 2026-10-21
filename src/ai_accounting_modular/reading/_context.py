@@ -22,13 +22,8 @@ def period(value, closed_through=None):
 
 def last_period(reader, read):
     # A configured start month alone is not evidence of established books.
-    latest = reader.ledger.latest_period(read)
-    if latest is None:
-        return None
-    details = reader.businesses.context(
-        {"company_id": read.company_id, "note_scopes": [], "issue_scopes": []}, read
-    )
-    return details["company_identity"].get("working_period_to", latest)
+    scope = reader.businesses.work_scope(read)
+    return scope.working_period_to if scope.has_formal_results else None
 
 
 def context(reader, scope):
@@ -64,10 +59,10 @@ def context(reader, scope):
             "status": "active",
         }
         result["current_company"] = current
-        last = last_period(reader, read)
-        if last is None:
+        work = reader.businesses.work_scope(read)
+        if not work.has_formal_results:
             return result
-        closed = reader.ledger.closed_through(read)
+        last, closed = work.working_period_to, work.closed_through
         values = [
             str(YearMonth.from_ordinal(index))
             for index in range(YearMonth(read.start_period).ordinal, YearMonth(last).ordinal + 1)

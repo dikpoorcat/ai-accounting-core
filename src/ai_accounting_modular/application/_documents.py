@@ -3,6 +3,8 @@
 from ai_accounting_modular.contracts.public import ContractError, schema_document
 from ai_accounting_modular.storage.public import company_metadata
 
+from ._work_scope import working_period
+
 
 def export_objects(application, read):
     objects = []
@@ -31,10 +33,7 @@ def company_identity(read):
         "accounting_standard": metadata.accounting_standard,
         "currency": metadata.currency,
         "start_period": metadata.start_period,
-        "working_period_to": max(
-            metadata.start_period,
-            read.repository("application").working_period_to() or metadata.start_period,
-        ),
+        "working_period_to": working_period(read),
     }
 
 

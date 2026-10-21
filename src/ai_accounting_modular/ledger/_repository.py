@@ -84,6 +84,9 @@ class LedgerRepository(ReadRepository):
     def latest_period(self):
         return self._session.fetchone("SELECT MAX(business_period) FROM adopted_result")[0]
 
+    def has_formal_results(self):
+        return bool(self._session.fetchone("SELECT EXISTS(SELECT 1 FROM adopted_result)")[0])
+
     def latest_adoption_period(self):
         return self._session.fetchone("SELECT MAX(posting_period) FROM adopted_result")[0]
 
