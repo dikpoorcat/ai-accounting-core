@@ -111,7 +111,7 @@ def run(root, output_root, mode, scenario, *, probe=False):
                                 opening_bank=manifest["ending_bank_fen"],
                             )
                         else:
-                            # The same one-line unpaid expense is amended from the
+                            # The same one-line expense is amended from the
                             # same restored baseline in every sample, never a no-op.
                             source = manifest["months_data"][-1]["expense_id"]
                             current = kernel.application.accounting_get(
