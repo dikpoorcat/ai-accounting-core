@@ -102,12 +102,8 @@ def _flow(ledger, scope, read, contents):
     return entries
 
 
-def _recovery_parents(ledger, month, read, selection, contents, events):
-    query = ObligationPositionQuery(
-        month, categories=("other",), direction="receivable", include_settled=False
-    )
-    unpaid = ledger.capture_obligation_positions(query, read, selection=selection).items
-    claims = {item.definition.reference["business_id"] for item in unpaid}
+def _recovery_parents(ledger, month, read, selection, contents, events, unpaid_claims):
+    claims = {item.definition.reference["business_id"] for item in unpaid_claims}
     # Unpaid claims survive quiet months; monthly sources/targets also retain just-settled claims.
     claims.update(event.use.value["source"]["business_id"] for event in events)
     claims.update(
@@ -138,7 +134,7 @@ def _recovery_parents(ledger, month, read, selection, contents, events):
     return parents
 
 
-def _events(ledger, month, read, selection, contents):
+def _events(ledger, month, read, selection, contents, unpaid_claims):
     query = SettlementEventQuery(
         month,
         month,
@@ -147,7 +143,7 @@ def _events(ledger, month, read, selection, contents):
     events = _all(
         lambda page: ledger.query_settlement_events(query, page, read, selection=selection)
     )
-    parents = _recovery_parents(ledger, month, read, selection, contents, events)
+    parents = _recovery_parents(ledger, month, read, selection, contents, events, unpaid_claims)
     refs = [event.use.value["source"] for event in events]
     contents.select(ref["business_id"] for ref in refs)
     result = []
@@ -172,14 +168,8 @@ def _events(ledger, month, read, selection, contents):
     return result, parents
 
 
-def _positions(ledger, month, read, selection, contents, entries, events, parents):
-    query = ObligationPositionQuery(
-        month,
-        categories=_UNPAID_CATEGORIES,
-        include_settled=False,
-    )
-    unpaid = ledger.capture_obligation_positions(query, read, selection=selection).items
-    ids = {item.definition.reference["business_id"] for item in unpaid}
+def _positions(ledger, month, read, selection, contents, entries, events, parents, unpaid_payroll):
+    ids = {item.definition.reference["business_id"] for item in unpaid_payroll}
     ids.update(entry.effective["business_id"] for entry in entries)
     ids.update(event.event.use.value["source"]["business_id"] for event in events)
     ids.update(business_id for business_id, _ in parents)
@@ -230,8 +220,26 @@ def remuneration_activity(ledger, scope, read):
         normalized["as_of"] = selection.as_of
     contents = Contents(ledger, read, selection)
     entries = _flow(ledger, normalized, read, contents)
-    events, parents = _events(ledger, month, read, selection, contents)
-    positions = _positions(ledger, month, read, selection, contents, entries, events, parents)
+    unpaid = ledger.capture_obligation_positions(
+        ObligationPositionQuery(
+            month, categories=(*_UNPAID_CATEGORIES, "other"), include_settled=False
+        ),
+        read,
+        selection=selection,
+    ).items
+    claims = tuple(
+        item
+        for item in unpaid
+        if item.definition.value["category"] == "other"
+        and item.definition.value["direction"] == "receivable"
+    )
+    payroll = tuple(
+        item for item in unpaid if item.definition.value["category"] in _UNPAID_CATEGORIES
+    )
+    events, parents = _events(ledger, month, read, selection, contents, claims)
+    positions = _positions(
+        ledger, month, read, selection, contents, entries, events, parents, payroll
+    )
     known, issues = outstanding_basis(ledger, month, read, selection)
     roster = contents.roster(normalized)
     persons = people(entries, positions, events, roster, known=known)

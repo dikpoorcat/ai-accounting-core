@@ -5,7 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, QuerySelection
+from ai_accounting_modular.domains.people import _read_remuneration
 from ai_accounting_modular.domains.people.public import create_people
 from ai_accounting_modular.ledger.opening.public import opening_payroll_references
 from ai_accounting_modular.ledger.public import ObligationPositionQuery
@@ -137,9 +138,8 @@ def test_complete_position_ranges_are_captured_once_with_the_actual_selection(
     assert result.summary.amounts.gross_salary_fen == int(wage["data"]["gross_fen"])
     assert result.summary.outstanding_employee_net_fen == result.summary.amounts.net_salary_fen
     assert calls == [
-        (("other",), view, "2026-01" if view == "as_posted" else None, 0),
         (
-            ("net_pay", "social", "housing", "withholding"),
+            ("net_pay", "social", "housing", "withholding", "other"),
             view,
             "2026-01" if view == "as_posted" else None,
             1,
@@ -509,6 +509,52 @@ def test_actual_overpaid_wage_recovery_keeps_direction_and_formal_parent_without
     assert [person.person_id for person in settled.persons] == [PERSON]
     assert not settled.persons[0].has_payroll_activity
     assert settled.summary.outstanding_remuneration_fen == 0
+
+
+@pytest.mark.parametrize("view", ["as_posted", "current"])
+def test_union_positions_pass_the_exact_previous_public_subsets_to_each_payroll_step(
+    case, monkeypatch, view
+):
+    paid_wage_recovery(case)
+    selection = QuerySelection(view, "2026-02" if view == "as_posted" else None)
+    with case.kernel.storage.read_unit(case.company) as read:
+        claims = case.kernel.ledger.capture_obligation_positions(
+            ObligationPositionQuery(
+                "2026-02", categories=("other",), direction="receivable", include_settled=False
+            ),
+            read,
+            selection=selection,
+        ).items
+        payroll = case.kernel.ledger.capture_obligation_positions(
+            ObligationPositionQuery(
+                "2026-02",
+                categories=("net_pay", "social", "housing", "withholding"),
+                include_settled=False,
+            ),
+            read,
+            selection=selection,
+        ).items
+    assert claims
+    recover, position = _read_remuneration._recovery_parents, _read_remuneration._positions
+    seen = []
+
+    def recover_exact(ledger, month, read, selected, contents, events, unpaid):
+        assert unpaid == claims
+        seen.append("recovery")
+        return recover(ledger, month, read, selected, contents, events, unpaid)
+
+    def positions_exact(ledger, month, read, selected, contents, entries, events, parents, unpaid):
+        assert unpaid == payroll
+        seen.append("payroll")
+        return position(ledger, month, read, selected, contents, entries, events, parents, unpaid)
+
+    monkeypatch.setattr(_read_remuneration, "_recovery_parents", recover_exact)
+    monkeypatch.setattr(_read_remuneration, "_positions", positions_exact)
+    result = activity(case, "2026-02", view=view)
+    assert seen == ["recovery", "payroll"]
+    assert any(
+        item.recovery and item.position.amounts.remaining_fen == 20000 for item in result.positions
+    )
 
 
 def test_nonpayroll_overpayment_is_not_classified_as_a_payroll_recovery(case):
