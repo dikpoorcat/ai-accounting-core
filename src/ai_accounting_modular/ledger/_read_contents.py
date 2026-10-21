@@ -72,6 +72,24 @@ def get_adopted_contents(locators, read):
     return tuple(result)
 
 
+def get_adopted_sources(sources, read):
+    sources = bounded(sources, "ResultSourceRef", schema="business-facts.schema.json")
+    ids = [source["result_id"] for source in sources]
+    if len(set(ids)) != len(ids):
+        fail("invalid_input", "一次不能重复定位同一正式来源。")
+    rows = {row["result_id"]: row for row in read.repository("ledger").read_heads(ids)}
+    result = []
+    for source in sources:
+        row = rows.get(source["result_id"])
+        if row is None:
+            fail("not_found", "指定正式来源不存在。")
+        actual = stored_source_reference(row)
+        if source != actual:
+            fail("snapshot_changed", "正式来源的身份、代次或内容依据不一致。")
+        result.append(AdoptedDirectoryEntry(reference(row), actual, row["business_kind"]))
+    return tuple(result)
+
+
 def query_adopted(
     scope,
     kinds,

@@ -22,6 +22,7 @@ from ai_accounting_modular.contracts.public import (
     ReadContext,
     ReadPage,
     ResultRef,
+    ResultSourceRef,
     UnitOfWork,
     Voucher,
     query_selection,
@@ -31,6 +32,7 @@ from ai_accounting_modular.contracts.public import canonical_json as canonical
 from ai_accounting_modular.contracts.public import content_digest as digest
 
 from . import (
+    _accounts,
     _aggregation,
     _financial,
     _financial_reads,
@@ -234,6 +236,10 @@ class Ledger:
     ) -> PositionPage:
         return _read_positions.query_positions(query, page, read_context, selection, kind="cost")
 
+    def account_names(self, codes: Sequence[str]) -> dict[str, str]:
+        """Display labels for controlled subjects; this does not open a database."""
+        return _accounts.names(codes)
+
     def financial_summary(self, scope: LedgerScope, read_context: ReadContext) -> FinancialSummary:
         return _financial_reads.financial_summary(scope, read_context)
 
@@ -297,6 +303,14 @@ class Ledger:
         read_context: ReadContext,
     ) -> tuple[AdoptedContent, ...]:
         return _read_contents.get_adopted_contents(locators, read_context)
+
+    def get_adopted_sources(
+        self,
+        sources: Sequence[ResultSourceRef],
+        read_context: ReadContext,
+    ) -> tuple[AdoptedDirectoryEntry, ...]:
+        """Locate exact retained sources, including a consumer's earlier frozen basis."""
+        return _read_contents.get_adopted_sources(sources, read_context)
 
     def query_voucher_directory(
         self,

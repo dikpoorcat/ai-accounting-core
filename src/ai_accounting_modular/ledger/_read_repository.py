@@ -59,7 +59,8 @@ class ReadRepository:
         return [
             dict(row)
             for row in self._session.fetchall(
-                f"SELECT {HEAD_FIELDS} FROM adopted_result r WHERE r.result_id IN "
+                f"SELECT {HEAD_FIELDS},{business_kind()} AS business_kind "
+                "FROM adopted_result r WHERE r.result_id IN "
                 "(SELECT value FROM json_each(?))",
                 (canonical_json(list(result_ids)),),
             )

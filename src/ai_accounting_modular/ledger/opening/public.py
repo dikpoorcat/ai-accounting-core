@@ -24,6 +24,8 @@ from ._common import base_plan, fail, total
 from ._facts import dependencies, validate_fact, validate_roles
 from ._members import CALCULATORS, asset_balances
 from ._origin import is_zero_origin as is_zero_origin
+from ._payroll_read import OpeningPayrollReference as OpeningPayrollReference
+from ._payroll_read import opening_payroll_references as opening_payroll_references
 from ._repository import OpeningRepository
 
 

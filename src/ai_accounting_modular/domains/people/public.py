@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
     DirectRelation,
     EvaluationContext,
     Fact,
+    LedgerScope,
     PostingPlan,
     ReadContext,
     UnitOfWork,
@@ -19,6 +20,20 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 
 from ._common import problem
 from ._contributions import actual, check_actual, check_policy, employment, policy
+from ._read_remuneration import remuneration_activity
+from ._read_types import (
+    PersonRemuneration,
+    RemunerationActivity,
+    RemunerationAmounts,
+    RemunerationBreakdown,
+    RemunerationEntry,
+    RemunerationNetSettlement,
+    RemunerationPosition,
+    RemunerationRosterPerson,
+    RemunerationSettlement,
+    RemunerationSource,
+    RemunerationSummary,
+)
 from ._relationships import (
     PersonRelationship,
     RelationshipSegment,
@@ -41,6 +56,17 @@ __all__ = [
     "People",
     "PersonRelationship",
     "RelationshipSegment",
+    "PersonRemuneration",
+    "RemunerationActivity",
+    "RemunerationAmounts",
+    "RemunerationBreakdown",
+    "RemunerationEntry",
+    "RemunerationNetSettlement",
+    "RemunerationPosition",
+    "RemunerationRosterPerson",
+    "RemunerationSettlement",
+    "RemunerationSource",
+    "RemunerationSummary",
     "create_people",
     "repository_factory",
 ]
@@ -157,6 +183,14 @@ def _validate(fact):
 
 class People:
     supported_kinds = _KINDS
+
+    def __init__(self, *, ledger=None):
+        self._ledger = ledger
+
+    def remuneration_activity(
+        self, scope: LedgerScope, read_context: ReadContext
+    ) -> RemunerationActivity:
+        return remuneration_activity(self._ledger, scope, read_context)
 
     def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         edges = []
@@ -298,5 +332,5 @@ class People:
         return read_context.repository("domains.people").query(query)
 
 
-def create_people() -> People:
-    return People()
+def create_people(*, ledger=None) -> People:
+    return People(ledger=ledger)

@@ -148,6 +148,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `query_voucher_directory(scope, kinds, page, read, business_ids=..., roles=...)` | 按正式采用月份及凭证号提供窄目录，包含精确结果引用、凭证身份、摘要、角色及冲正关联。current 同样保留正式入账历史，不按当前目标丢掉必要原凭证。`get_vouchers(locators, read)` 只批量读取指定页的完整分录，定位含 voucher_id/result_id/generation。 |
 | `query_adopted_values(scope, kinds, page, read)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
 | `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。供人员名单等提取正式类型和身份；不是按采用月展开的发生额。 |
+| `get_adopted_sources(sources, read)`、`account_names(codes)` | 前者按最多500个精确ResultSourceRef核对身份、代次及内容摘要，只返回正式目录头；可定位消费者实际采用的较早冻结来源，不用当前头替代。后者无需数据库，返回受控科目的唯一中文名称，不由看板另抄科目表。 |
 | `query_adopted_directory(scope, kinds, page, read, business_ids=..., result_slots=...)` | 返回月末所选正式结果的窄目录，包含无凭证结果和退休结果。`get_adopted_contents(locators, read)` 按最多500个精确 ResultRef 返回 source/target/basis，不附凭证或全部资源。 |
 | `fund_movements(account_id, from, to, read, selection=...)` | 账户为 None 时明确取全公司。按真实发生月份、实际日及稳定 movement_id 返回真实资金定义；正式冲正、替代凭证不制造第二次资金。 |
 
@@ -168,6 +169,10 @@ PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 tota
 这些入口生成完整月度组件，reading 从已形成的组件筛选、计数和分页；续页不重新枚举历史业务。生成完整金额时须读完实际相关的窄分页，不能用首20项代表全月。基金按原义务种类筛真实清偿，金额取分配额；合作投资沿正式资金和凭证展示，不混入货币基金专用字段。
 
 `people.relationships(person_ids, period, read)`一次读取最多500个明确人员的当前正确关系时间线和月内成员状态。没有关系事实时返回未知；每项含可空业务身份、版本、保持月或日精度的关系段、月末状态、确定与可能状态、员工及劳务成员、来源和具体精度问题。relationship_start 只标明确确认的关系起点，不把首次记录或恢复上班自动当入职。不附事件修订版本，不借缴费参数推断在职，也不由关系资料重新计算工资。
+
+`people.remuneration_activity(scope, read)`一次返回完整月度工资、奖金、劳务和资本化劳务，含正式发生额、月末义务、真实清偿及必要来源。闭期更正旧负项和新正项各用自己的依据；仅补同额证明不再造薪酬活动，等额改变费用或项目归属仍保留。工资及劳务累计未付缺少必要期初时分别返回null及实际问题，本月已知计提和付款照常返回。超付追偿单独保留，不重复清偿原工资。
+
+roster按截至所选月的正式Target保留人员和员工／劳务类别，即使本月没有活动、过去工资已付清也不漏人；通用person档案不自动成为员工。sources只含本月发生、未付或本月清偿实际引用的精确薪酬来源，不加载全部历史Basis。`opening_payroll_references`由期初模块解释正式期初成员的本人、收款人、工资月及组成，不从收款人反猜员工，也不凭期初欠款补造税前工资。
 
 ### 资产的完整读取
 

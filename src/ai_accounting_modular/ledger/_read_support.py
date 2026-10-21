@@ -15,7 +15,7 @@ from ai_accounting_modular.contracts.public import (
 from ._values import fail
 
 
-def bounded(values, definition="Id"):
+def bounded(values, definition="Id", *, schema="core.schema.json"):
     if not isinstance(values, tuple | list) or len(values) > 500:
         fail("invalid_input", "查询条件必须是最多500项的有界列表。")
     for value in values:
@@ -23,7 +23,7 @@ def bounded(values, definition="Id"):
             if not isinstance(value, str) or not value:
                 fail("invalid_input", "查询类别须为非空字符串。")
         else:
-            validate_contract("core.schema.json", definition, value)
+            validate_contract(schema, definition, value)
     if len({canonical_json(value) for value in values}) != len(values):
         fail("invalid_input", "查询条件不能重复。")
     return tuple(values)
