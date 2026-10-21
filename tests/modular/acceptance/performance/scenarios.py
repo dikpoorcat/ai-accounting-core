@@ -1,5 +1,6 @@
 """Independent repeated real lifecycle samples from one verified synthetic backup."""
 
+import json
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,9 +13,15 @@ from .._support import COMPANY, ready
 from .dataset import describe, open_dataset
 from .lifecycle import submission, whole_month
 from .measurements import BUDGETS, SAMPLES, WARMUPS, summarize
-from .portable_cases import package, restore
+from .portable_cases import clone_baseline, package, prepare_baseline
 from .projections import PAGES, parameters
 from .workload import BUSINESSES_PER_MONTH, CONTRACTORS, EMPLOYEES, PEOPLE, SCALES, plan_month
+
+
+def _checkpoint(destination, report):
+    temporary = destination / "lifecycle-progress.tmp"
+    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination / "lifecycle-progress.json")
 
 
 def run(root, output_root, mode, scenario, *, probe=False):
@@ -34,23 +41,50 @@ def run(root, output_root, mode, scenario, *, probe=False):
     destination.mkdir(parents=False, exist_ok=False)
     warmups, repeats = (1, 1) if probe else (WARMUPS, SAMPLES)
     attempts = []
+    report = {
+        "format": "modular-c14-lifecycle/1",
+        "status": "running",
+        "official": not probe,
+        "measurement": scenario,
+        "scale_months": intended,
+        "employees": EMPLOYEES,
+        "contractors": CONTRACTORS,
+        "total_people": PEOPLE,
+        "mode": mode,
+        "warmups": warmups,
+        "sample_count": repeats,
+        "endpoint": "formal commit success to current documents and five page models ready",
+        "setup_excluded": [
+            "verified backup",
+            "one verified isolated restore and closed baseline",
+            "per-sample byte copy, complete source/target SHA256 and new catalog registration",
+            "fixture planning",
+            "prior ready baseline",
+        ],
+        "month_publication_boundary": "defer prepare_documents; final Apply resumes all facts",
+        "attempts": attempts,
+    }
+    _checkpoint(destination, report)
     with TemporaryDirectory(prefix="portable-", dir=destination) as workspace:
         workspace = Path(workspace).resolve()
         assert workspace.is_relative_to(destination)
         backup = package(root, workspace / "baseline.zip", mode)
+        baseline = prepare_baseline(backup, workspace / "baseline", manifest, mode)
         for iteration in range(warmups + repeats):
             kind = "warmup" if iteration < warmups else "sample"
             record = {
                 "kind": kind,
                 "iteration": iteration + 1,
-                "phase": "restore",
+                "phase": "byte_checked_clone",
+                "status": "running",
                 "elapsed_ms": None,
             }
             attempts.append(record)
+            _checkpoint(destination, report)
             try:
                 setup_start = perf_counter_ns()
                 with TemporaryDirectory(prefix="sample-", dir=workspace) as sample:
-                    restore(backup, sample, manifest, mode)
+                    clone_baseline(baseline, sample, manifest, mode)
                     with open_dataset(sample, mode, clock_period=period) as (kernel, _):
                         if scenario == "month_archive_and_ready":
                             planned = plan_month(
@@ -88,6 +122,7 @@ def run(root, output_root, mode, scenario, *, probe=False):
                                 ready(kernel, page, parameters(COMPANY, period, page))
                         record["setup_ms"] = (perf_counter_ns() - setup_start) / 1_000_000
                         record["phase"] = "commit_and_finish"
+                        _checkpoint(destination, report)
                         result = (
                             whole_month(kernel, planned, observation=record)
                             if scenario == "month_archive_and_ready"
@@ -101,34 +136,19 @@ def run(root, output_root, mode, scenario, *, probe=False):
                         )
             except Exception as error:
                 record.update(status="failed", error_type=type(error).__name__, message=str(error))
+            finally:
+                _checkpoint(destination, report)
     samples = [
         record["elapsed_ms"] if record["status"] == "complete" else None
         for record in attempts
         if record["kind"] == "sample"
     ]
     summary = summarize(samples, BUDGETS[scenario], expected=repeats)
-    return {
-        "format": "modular-c14-lifecycle/1",
-        "status": summary["status"]
+    report.update(
+        status=summary["status"]
         if all(record["status"] == "complete" for record in attempts)
         else "failed",
-        "official": not probe,
-        "measurement": scenario,
-        "scale_months": intended,
-        "employees": EMPLOYEES,
-        "contractors": CONTRACTORS,
-        "total_people": PEOPLE,
-        "mode": mode,
-        "warmups": warmups,
-        "sample_count": repeats,
-        "endpoint": "formal commit success to current documents and five page models ready",
-        "setup_excluded": [
-            "verified backup",
-            "isolated restore",
-            "fixture planning",
-            "prior ready baseline",
-        ],
-        "month_publication_boundary": "defer prepare_documents; final Apply resumes all facts",
-        "summary": summary,
-        "attempts": attempts,
-    }
+        summary=summary,
+    )
+    _checkpoint(destination, report)
+    return report

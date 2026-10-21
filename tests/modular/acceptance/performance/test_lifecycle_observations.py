@@ -1,5 +1,6 @@
 """Instrumentation failures retain the already observed endpoint, never qualify it."""
 
+import json
 from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 
@@ -67,7 +68,8 @@ def test_failed_scenario_retains_observed_time_but_cannot_be_a_successful_sample
     }
     monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
     monkeypatch.setattr(scenarios, "package", lambda *args: None)
-    monkeypatch.setattr(scenarios, "restore", lambda *args: None)
+    monkeypatch.setattr(scenarios, "prepare_baseline", lambda *args: None)
+    monkeypatch.setattr(scenarios, "clone_baseline", lambda *args: None)
     monkeypatch.setattr(
         scenarios, "open_dataset", lambda *args, **kwargs: nullcontext((None, None))
     )
@@ -89,3 +91,111 @@ def test_failed_scenario_retains_observed_time_but_cannot_be_a_successful_sample
     assert result["summary"]["samples"] == [None]
     assert [item["elapsed_ms"] for item in result["attempts"]] == [10001, 10001]
     assert all(item["status"] == "failed" for item in result["attempts"])
+    assert (
+        json.loads((tmp_path / "observations/lifecycle-progress.json").read_text("utf-8")) == result
+    )
+
+
+def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samples(
+    tmp_path, monkeypatch
+):
+    """A pure orchestration oracle, not measured accounting or qualification evidence."""
+    manifest = {
+        "intended_scale_months": 12,
+        "pending_period": "2026-12",
+        "months": 11,
+        "people": 55,
+        "employees": 50,
+        "contractors": 5,
+        "businesses_per_month": 1000,
+        "ending_bank_fen": 1000,
+    }
+    prepared, copied, committed = [], [], []
+    sentinel = object()
+
+    def baseline(*args):
+        prepared.append(args)
+        return sentinel
+
+    def clone(base, sample, *args):
+        assert base is sentinel
+        copied.append(sample)
+
+    def execute(*args, observation):
+        saved = json.loads((tmp_path / "report/lifecycle-progress.json").read_text("utf-8"))
+        assert saved["status"] == saved["attempts"][-1]["status"] == "running"
+        assert saved["attempts"][-1]["phase"] == "commit_and_finish"
+        assert all(item["status"] == "complete" for item in saved["attempts"][:-1])
+        committed.append(observation)
+        return {"elapsed_ms": 1}
+
+    monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
+    monkeypatch.setattr(scenarios, "package", lambda *args: None)
+    monkeypatch.setattr(scenarios, "prepare_baseline", baseline)
+    monkeypatch.setattr(scenarios, "clone_baseline", clone)
+    monkeypatch.setattr(scenarios, "open_dataset", lambda *args, **kw: nullcontext((None, None)))
+    monkeypatch.setattr(scenarios, "plan_month", lambda *args, **kw: None)
+    monkeypatch.setattr(scenarios, "whole_month", execute)
+    result = scenarios.run(
+        tmp_path / "source", tmp_path / "report", "original", "month_archive_and_ready"
+    )
+    assert len(prepared) == 1
+    assert len(set(copied)) == len(committed) == 33
+    assert [item["kind"] for item in result["attempts"]] == ["warmup"] * 3 + ["sample"] * 30
+    assert result["warmups"] == 3 and result["sample_count"] == 30
+    assert result["summary"]["samples"] == [1] * 30
+    assert result["summary"]["budget"] == scenarios.BUDGETS["month_archive_and_ready"]
+    assert "one verified isolated restore and closed baseline" in result["setup_excluded"]
+    assert json.loads((tmp_path / "report/lifecycle-progress.json").read_text("utf-8")) == result
+
+
+def test_interruption_preserves_finished_attempt_and_marks_current_attempt_incomplete(
+    tmp_path, monkeypatch
+):
+    manifest = {
+        "intended_scale_months": 2,
+        "pending_period": "2026-02",
+        "months": 1,
+        "businesses_per_month": 240,
+        "ending_bank_fen": 1000,
+    }
+    for name in ("package", "prepare_baseline", "clone_baseline", "plan_month"):
+        monkeypatch.setattr(scenarios, name, lambda *args, **kw: None)
+    monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
+    monkeypatch.setattr(scenarios, "open_dataset", lambda *args, **kw: nullcontext((None, None)))
+    calls = []
+
+    def interrupted(*args, observation):
+        calls.append(observation)
+        if len(calls) == 1:
+            return {"elapsed_ms": 7}
+        observation["elapsed_ms"] = 11
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(scenarios, "whole_month", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        scenarios.run(
+            tmp_path / "source",
+            tmp_path / "interrupted",
+            "original",
+            "month_archive_and_ready",
+            probe=True,
+        )
+    saved = json.loads((tmp_path / "interrupted/lifecycle-progress.json").read_text("utf-8"))
+    assert saved["status"] == "running" and "summary" not in saved
+    assert [item["status"] for item in saved["attempts"]] == ["complete", "running"]
+    assert [item["elapsed_ms"] for item in saved["attempts"]] == [7, 11]
+
+
+def test_failed_atomic_checkpoint_keeps_the_previous_complete_json(tmp_path, monkeypatch):
+    scenarios._checkpoint(tmp_path, {"attempts": [{"status": "complete", "elapsed_ms": 7}]})
+    original = (tmp_path / "lifecycle-progress.json").read_bytes()
+
+    def failed_replace(*args):
+        raise OSError("interrupted atomic replacement")
+
+    monkeypatch.setattr(type(tmp_path), "replace", failed_replace)
+    with pytest.raises(OSError, match="atomic replacement"):
+        scenarios._checkpoint(tmp_path, {"attempts": [{"status": "running", "elapsed_ms": None}]})
+    assert (tmp_path / "lifecycle-progress.json").read_bytes() == original
+    assert json.loads(original)["attempts"][0]["elapsed_ms"] == 7
