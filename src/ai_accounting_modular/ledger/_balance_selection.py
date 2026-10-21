@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from ai_accounting_modular.contracts.public import format_fen
 
+from ._financial_order import target_key
 from ._financial_selection import Selection
 from ._formal_output import target_vouchers
 
@@ -16,7 +17,7 @@ class BalanceSelection(Selection):
     def stock(self, cutoff):
         if cutoff not in self._stocks:
             heads = self.repo.read_balance_heads(self.keys, cutoff, view=self.view)
-            selected = {head["result_id"]: head for head in heads}
+            selected = {head["result_id"]: head for head in sorted(heads, key=target_key)}
             self.heads.update(selected)
             self._stocks[cutoff] = selected
         return self._stocks[cutoff]
@@ -36,7 +37,11 @@ class BalanceSelection(Selection):
                     }
                 )
             for head_id, voucher in journals.items():
-                self._lines[head_id] = grouped[voucher["voucher_id"]] if voucher else []
+                self._lines[head_id] = (
+                    sorted(grouped[voucher["voucher_id"]], key=lambda row: row["line_no"])
+                    if voucher
+                    else []
+                )
         for head in heads:
             if self._lines[head["result_id"]]:
                 self.source(head)

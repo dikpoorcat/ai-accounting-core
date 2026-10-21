@@ -134,7 +134,7 @@ reading.page/detail通过storage建立一次只读上下文；HTTP只解析参�
 
 expected_head核对同公司、同范围、同读取口径的实际结果，不使用global_seq，也不把它自身计入摘要。FinancialSnapshot使用selection_digest，正式目录和活动使用各自version，月页使用所需组件内容与月份状态的组合版本；无关文件任务和范围外业务不能让相同结果失效。应用比较采用变化时使用`ledger.get_result_refs(business_ids, read_context)`批量取得窄引用，不为读取ID、代次及期间加载全部采用正文和凭证分录。
 
-报表的scope显式选择current/as_posted，可在同一ReadContext中分别读取；其他未单独指定口径的查询沿上下文默认值。选择口径不另开事务，不复制存储上下文或连接。
+报表的scope显式选择current/as_posted，可在同一ReadContext中分别读取；其他未单独指定口径的查询沿上下文默认值。选择口径不另开事务，不复制存储上下文或连接。ledger按业务月、业务ID和结果槽遍历完整目标及存量，正式和候选税前利润共用此顺序；as_posted发生流按采用月、业务ID、结果槽、代次和结果ID确定正采用，再按首次引用次序加入基线扣减，净系数为零的来源不重复累计。分录沿line_no，余额按科目、可空交易方和对象归集，财务资源沿各自身份；不能用SQL返回顺序或投影存放顺序改变逐步整数分核验和未知项含义，已保存的冻结报告不因此重算。
 
 普通公开查询使用 QuerySelection 明确 current 或 as_posted/as_of，省略时沿同一 ReadContext 默认值；已经接收 LedgerScope 的入口不再叠第二份选择。正式采用截止与 ResourceCutoff 的经济月份、必要实际日分别表达，不能用一个日期代替。PageQuery 只携带每页数量、游标及预期版本；ReadPage 返回完整数量、筛选后完整数量、本页项目和后续游标。筛选、计数与汇总在分页前完成，版本绑定真实查询范围，不用无关全局提交号代替。
 

@@ -12,6 +12,7 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.ledger.opening.public import is_zero_origin
 
 from ._balances import sum_amounts
+from ._financial_order import target_key
 from ._formal_output import target_vouchers
 from ._profit import has_unmapped_line, pretax_basis_digest, pretax_values, profit_rows
 from ._publications import month_range
@@ -118,7 +119,7 @@ def pre_tax(repo, plans, period_from, period_to, start_period):
         fail("invalid_input", "税前利润取数范围必须在同一年内。")
     validate_contract("core.schema.json", "Month", start_period)
     # Include the cutover basis only when this request actually crosses it.
-    heads = repo.period_heads(period_from, period_to)
+    heads = sorted(repo.period_heads(period_from, period_to), key=target_key)
     persisted = [head for head in heads if head["result_id"] not in repo.heads]
     journals = target_vouchers(repo.base, persisted)
     totals = [0, 0, 0]

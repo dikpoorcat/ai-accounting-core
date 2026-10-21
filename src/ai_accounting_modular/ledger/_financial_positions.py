@@ -12,6 +12,7 @@ from ai_accounting_modular.ledger.reporting.public import balance_totals
 from ._balance_cube import balance_cube, previous
 from ._balances import obligation_remaining, sum_amounts
 from ._financial_cells import known, zeros
+from ._financial_order import dimension_key
 from ._journal_amounts import journal_amount
 from ._profit import is_profit_account
 
@@ -183,13 +184,15 @@ def positions(selection, cutoff, column):
         }
     heads = list(selection.stock(cutoff).values()) if cutoff >= selection.start else []
     grouped = defaultdict(int)
-    for (code, party, _), amount in cube.items():
+    for code, party, obj in sorted(cube, key=dimension_key):
+        amount = cube[code, party, obj]
         grouped[code, party] = sum_amounts((grouped[code, party], amount))
     resource_heads = [*heads, selection.opening]
     resources = _resource_positions(selection, resource_heads)
     totals = defaultdict(int)
     unknown = set()
-    for (code, party), amount in grouped.items():
+    for code, party in sorted(grouped, key=dimension_key):
+        amount = grouped[code, party]
         if code in _DIRECT:
             line, sign = _DIRECT[code]
             totals[line] = sum_amounts((totals[line], sign * amount))
@@ -230,7 +233,7 @@ def positions(selection, cutoff, column):
         result[40], result[42] = (known(amount) for amount in loans)
     else:
         unknown.update((40, 42))
-    for line in unknown:
+    for line in sorted(unknown):
         result[line] = selection.issues.unknown(
             f"/balance_sheet/{line}/{column}",
             "余额的明确归属或采用条款",
@@ -238,7 +241,7 @@ def positions(selection, cutoff, column):
         )
     result.update(balance_totals(result))
     # An unknown unmapped balance must not be overwritten by a known subtotal.
-    for line in unknown & {30, 53}:
+    for line in sorted(unknown & {30, 53}):
         result[line] = selection.issues.unknown(
             f"/balance_sheet/{line}/{column}",
             "未映射非零余额",

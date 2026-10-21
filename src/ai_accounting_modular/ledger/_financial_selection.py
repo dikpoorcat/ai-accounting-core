@@ -9,6 +9,7 @@ from ai_accounting_modular.ledger.opening.public import is_zero_origin
 
 from ._balances import sum_amounts
 from ._financial_cells import known, zeros
+from ._financial_order import CHILD_KEYS, head_key, target_key
 from ._formal_output import target_vouchers
 from ._planning import stored_source_reference
 from ._profit import profit_rows
@@ -144,7 +145,7 @@ class Selection:
             heads = self.repo.financial_heads(cutoff, view=self.view, metadata_only=True)
             selected = {
                 h["result_id"]: h
-                for h in heads
+                for h in sorted(heads, key=target_key)
                 if self.boundary_kind(h) not in ("opening.package", "reports.continuation")
             }
             self.heads.update(selected)
@@ -157,7 +158,9 @@ class Selection:
             if self.view == "current":
                 heads = [h for h in self.stock(last).values() if first <= h["business_period"]]
             else:
-                heads = self.repo.adoptions_between(first, last, metadata_only=True)
+                heads = sorted(
+                    self.repo.adoptions_between(first, last, metadata_only=True), key=head_key
+                )
             heads = [
                 h
                 for h in heads
@@ -188,7 +191,11 @@ class Selection:
             for row in self.repo.financial_lines(ids) if ids else ():
                 grouped[row["voucher_id"]].append(row)
             for head_id, voucher in journals.items():
-                self._lines[head_id] = grouped[voucher["voucher_id"]] if voucher else []
+                self._lines[head_id] = (
+                    sorted(grouped[voucher["voucher_id"]], key=lambda row: row["line_no"])
+                    if voucher
+                    else []
+                )
         for head in heads:
             if self._lines[head["result_id"]]:
                 self.source(head)
@@ -201,6 +208,9 @@ class Selection:
             cache.update((key, []) for key in missing)
             for row in self.repo.children(table, missing):
                 cache[row["result_id"]].append(row)
+            field = CHILD_KEYS[table]
+            for result_id in missing:
+                cache[result_id].sort(key=lambda row: row[field])
         return {head["result_id"]: cache[head["result_id"]] for head in heads}
 
     def report_details(self, heads):
