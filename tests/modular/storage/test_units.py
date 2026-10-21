@@ -3,12 +3,51 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from uuid import uuid4
 
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, ReadContext, UnitOfWork
 from ai_accounting_modular.storage.public import CompanySpec, Storage
+
+
+@pytest.mark.parametrize("mode", ["write", "preview", "maintenance"])
+def test_writable_page_cache_preserves_durability_and_is_connection_local(storage_case, mode):
+    storage, company = storage_case
+    with closing(sqlite3.connect(":memory:")) as native:
+        default_cache = native.execute("PRAGMA cache_size").fetchone()[0]
+    with getattr(storage, f"{mode}_unit")(company.company_id) as unit:
+        connection = unit._connection
+        assert connection.execute("PRAGMA cache_size").fetchone()[0] == -32768
+        assert connection.execute("PRAGMA cache_spill").fetchone()[0] > 0
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert connection.execute("PRAGMA read_uncommitted").fetchone()[0] == 0
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("PRAGMA cache_size")
+    with storage.read_unit(company.company_id) as read:
+        assert read._connection.execute("PRAGMA cache_size").fetchone()[0] == default_cache
+        assert read._connection.execute("PRAGMA query_only").fetchone()[0] == 1
+        with pytest.raises(ContractError):
+            read.repository("identity").add()
+    # A fresh native connection also sees its own default, never a persisted setting.
+    with closing(sqlite3.connect(company.database_path)) as native:
+        assert native.execute("PRAGMA cache_size").fetchone()[0] == default_cache
+
+
+def test_catalog_writers_share_the_same_local_page_cache_policy(storage_case):
+    storage, _ = storage_case
+    with storage._catalog(writable=False) as catalog:
+        original = catalog.execute("PRAGMA cache_size").fetchone()[0]
+        assert catalog.execute("PRAGMA query_only").fetchone()[0] == 1
+    with storage._catalog(writable=True) as catalog:
+        assert catalog.execute("PRAGMA cache_size").fetchone()[0] == -32768
+        assert catalog.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert catalog.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    with storage._catalog(writable=False) as catalog:
+        assert catalog.execute("PRAGMA cache_size").fetchone()[0] == original
 
 
 def test_single_company_transaction_and_repository_lifetime(storage_case):

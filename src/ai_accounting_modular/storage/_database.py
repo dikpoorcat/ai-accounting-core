@@ -149,6 +149,8 @@ def _connect(path: Path, *, writable: bool) -> sqlite3.Connection:
             raise ContractError("storage_corrupt", "数据库没有采用本体系规定的 WAL 模式")
         if writable:
             connection.execute("PRAGMA synchronous=FULL")
+            # KiB, allocated on demand for this connection's write working set.
+            connection.execute("PRAGMA cache_size=-32768")
         else:
             connection.execute("PRAGMA query_only=ON")
         return connection
