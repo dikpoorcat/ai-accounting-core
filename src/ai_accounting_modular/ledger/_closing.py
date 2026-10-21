@@ -37,6 +37,15 @@ class LedgerPeriodCheck:
         return not self.blocking_issues
 
 
+@dataclass(frozen=True)
+class PeriodClosure:
+    period: str
+    state: Literal["open", "closed"]
+    closing_period: str | None = None
+    period_from: str | None = None
+    head: str | None = None
+
+
 def _first(previous, start):
     if previous is None:
         return start
@@ -80,17 +89,21 @@ def _head(basis, previous, report):
     )
 
 
-def _record(repo, row, context):
+def _header(repo, row, context, basis, report):
     if (
         row["basis_schema"] != "reporting.schema.json#/$defs/CloseBasis"
         or row["report_schema"] != "reporting.schema.json#/$defs/FinancialSnapshot"
     ):
         fail("storage_corrupt", "关账资料的明确合同标识不符。")
     try:
-        basis, report = loads_json(row["basis_json"]), loads_json(row["report_json"])
+        validate_contract("core.schema.json", "Month", row["period"])
         validate_contract("reporting.schema.json", "CloseBasis", basis)
-        validate_contract("reporting.schema.json", "FinancialSnapshot", report)
-        validate_contract("core.schema.json", "Digest", row["result_head"])
+        for value in (
+            row["result_head"],
+            row["report_digest"],
+            report["selection"]["selection_digest"],
+        ):
+            validate_contract("core.schema.json", "Digest", value)
     except ContractError as error:
         raise ContractError("storage_corrupt", "保存的关账依据或三表不符合正式合同。") from error
     period = row["period"]
@@ -100,15 +113,45 @@ def _record(repo, row, context):
         basis["company_id"] != context.company_id
         or basis["database_id"] != context.database_id
         or basis["period"] != period
-        or content_digest(report) != row["report_digest"]
         or _head(basis, previous, report) != row["result_head"]
         or report["company_id"] != context.company_id
         or report["database_id"] != context.database_id
         or report["scope"] != {**_scope(context, period), "as_of": period}
-        or any(check["status"] == "fail" for check in report["checks"])
+        or report["mapping_version"] != _financial.MAPPING_V1
     ):
         fail("storage_corrupt", "保存的关账三表、冻结范围或摘要不一致。")
+    return first
+
+
+def _record(repo, row, context):
+    try:
+        basis, report = loads_json(row["basis_json"]), loads_json(row["report_json"])
+        validate_contract("reporting.schema.json", "FinancialSnapshot", report)
+    except ContractError as error:
+        raise ContractError("storage_corrupt", "保存的关账三表不符合正式合同。") from error
+    first = _header(repo, row, context, basis, report)
+    if content_digest(report) != row["report_digest"] or any(
+        check["status"] == "fail" for check in report["checks"]
+    ):
+        fail("storage_corrupt", "保存的关账三表或完整摘要不一致。")
     return first, report
+
+
+def period_closure(period, context):
+    validate_contract("core.schema.json", "Month", period)
+    if period < context.start_period:
+        fail("invalid_input", "不能将建账起点以前的月份作为账期范围。")
+    repo = context.repository("ledger")
+    row = repo.close_header(period)
+    if row is None:
+        return PeriodClosure(period, "open")
+    try:
+        basis = loads_json(row["basis_json"])
+        metadata = loads_json(row["report_metadata_json"])
+    except ContractError as error:
+        raise ContractError("storage_corrupt", "保存的关账头格式不合法。") from error
+    first = _header(repo, row, context, basis, metadata)
+    return PeriodClosure(period, "closed", row["period"], first, row["result_head"])
 
 
 def closed_report(scope, context):

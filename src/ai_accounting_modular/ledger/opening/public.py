@@ -23,6 +23,7 @@ from ._asset_accounting import AssetAccounting
 from ._common import base_plan, fail, total
 from ._facts import dependencies, validate_fact, validate_roles
 from ._members import CALCULATORS, asset_balances
+from ._obligation_read import OpeningLoanReference as OpeningLoanReference
 from ._obligation_read import OpeningOrdinaryReference as OpeningOrdinaryReference
 from ._obligation_read import OpeningTaxReference as OpeningTaxReference
 from ._obligation_read import opening_obligation_references as opening_obligation_references

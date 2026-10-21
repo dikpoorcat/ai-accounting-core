@@ -8,6 +8,7 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.ledger.opening.public import (
+    OpeningLoanReference,
     OpeningOrdinaryReference,
     OpeningTaxReference,
     opening_obligation_references,
@@ -153,14 +154,25 @@ def test_loan_members_have_no_invented_unsuffixed_metadata_or_zero_resource(
     saved = app.accounting_apply(request(company, contract, package))
     assert saved.get("completion") == "complete", saved
     content = adopted(app, company, package["business_id"])
-    assert opening_obligation_references(content) == ()
+    references = opening_obligation_references(content)
+    assert all(isinstance(item, OpeningLoanReference) for item in references)
+    assert {item.contract_id for item in references} == {contract["business_id"]}
+    assert [item.component for item in references] == [
+        component
+        for component, amount in (("principal", principal), ("interest", interest))
+        if amount != "0"
+    ]
     with app.storage.read_unit(company) as read:
+        definitions = app.ledger.resource_definitions(
+            [item.source for item in references], "obligation", read
+        )
         actual = app.ledger.query_obligation_positions(
             ObligationPositionQuery("2026-07", business_ids=(package["business_id"],)),
             PageQuery(),
             read,
         ).page.items
     assert [item.definition.value["category"] for item in actual] == categories
+    assert [item.reference for item in definitions] == [item.source for item in references]
 
 
 @pytest.mark.parametrize("damage", ("source", "period", "count", "duplicate", "slot"))

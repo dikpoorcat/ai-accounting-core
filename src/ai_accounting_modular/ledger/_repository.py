@@ -325,6 +325,20 @@ class LedgerRepository(ReadRepository):
         row = self._session.fetchone("SELECT * FROM period_close WHERE " + predicate, (period,))
         return dict(row) if row else None
 
+    def close_header(self, period):
+        row = self._session.fetchone(
+            "SELECT period,result_head,basis_schema,basis_json,report_schema,report_digest,"
+            "json_object('company_id',json_extract(report_json,'$.company_id'),"
+            "'database_id',json_extract(report_json,'$.database_id'),"
+            "'scope',json_extract(report_json,'$.scope'),"
+            "'mapping_version',json_extract(report_json,'$.mapping_version'),"
+            "'selection',json_object('selection_digest',"
+            "json_extract(report_json,'$.selection.selection_digest'))) AS report_metadata_json "
+            "FROM period_close WHERE period>=? ORDER BY period LIMIT 1",
+            (period,),
+        )
+        return dict(row) if row else None
+
     def previous_close(self, period):
         return self._session.fetchone(
             "SELECT MAX(period) FROM period_close WHERE period<?", (period,)

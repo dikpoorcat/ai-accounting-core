@@ -149,6 +149,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `query_adopted_values(scope, kinds, page, read)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
 | `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。供人员名单等提取正式类型和身份；不是按采用月展开的发生额。 |
 | `get_adopted_sources(sources, read)`、`account_names(codes)` | 前者按最多500个精确ResultSourceRef核对身份、代次及内容摘要，只返回正式目录头；可定位消费者实际采用的较早冻结来源，不用当前头替代。后者无需数据库，返回受控科目的唯一中文名称，不由看板另抄科目表。 |
+| `period_closure(period, read)` | 只读取指定月份的关账状态、实际覆盖关账月、冻结范围和头摘要，不读取整套三表；完整冻结报告另由财务报告入口核验和提供。 |
 | `get_effective_voucher_directory(refs, read)` | 按最多500个精确ResultRef定位完整目标实际采用的凭证头；无新增凭证的正式采用沿必要基线继承，撤去或无替代冲正停止继承。每项返回实际凭证所属ResultRef及凭证头，或明确null；不取历史Basis、分录或凭证增量。冷生成可只存引用，展开实际页时再读取完整凭证。 |
 | `query_adopted_directory(scope, kinds, page, read, business_ids=..., result_slots=...)` | 返回月末所选正式结果的窄目录，包含无凭证结果和退休结果。`get_adopted_contents(locators, read)` 按最多500个精确 ResultRef 返回 source/target/basis，不附凭证或全部资源。 |
 | `fund_movements(account_id, from, to, read, selection=...)` | 账户为 None 时明确取全公司。按真实发生月份、实际日及稳定 movement_id 返回真实资金定义；正式冲正、替代凭证不制造第二次资金。 |
@@ -174,7 +175,7 @@ PositionPage 同时包含有界 ReadPage、完整范围 totals 和筛选后 tota
 
 `people.remuneration_activity(scope, read)`一次返回完整月度工资、奖金、劳务和资本化劳务，含正式发生额、月末义务、真实清偿及必要来源。闭期更正旧负项和新正项各用自己的依据；仅补同额证明不再造薪酬活动，等额改变费用或项目归属仍保留。工资及劳务累计未付缺少必要期初时分别返回null及实际问题，本月已知计提和付款照常返回。超付追偿单独保留，不重复清偿原工资。
 
-roster按截至所选月的正式Target保留人员和员工／劳务类别，即使本月没有活动、过去工资已付清也不漏人；通用person档案不自动成为员工。sources只含本月发生、未付或本月清偿实际引用的精确薪酬来源，不加载全部历史Basis。期初模块统一核对精确正式正文及成员目录：`opening_payroll_references`解释本人、收款人、工资月及组成，不从收款人反猜员工，也不凭期初欠款补造税前工资；`opening_obligation_references`解释普通往来的原业务说明及税费原税月，返回实际公开资源引用，不为借款等复合成员猜造资源槽。
+roster按截至所选月的正式Target保留人员和员工／劳务类别，即使本月没有活动、过去工资已付清也不漏人；通用person档案不自动成为员工。sources只含本月发生、未付或本月清偿实际引用的精确薪酬来源，不加载全部历史Basis。期初模块统一核对精确正式正文及成员目录：`opening_payroll_references`解释本人、收款人、工资月及组成，不从收款人反猜员工，也不凭期初欠款补造税前工资；`opening_obligation_references`解释普通往来的原业务说明及税费原税月，借款成员分别解释合同、出借人及实际非零的本金／利息资源。所有入口返回真实公开资源引用，不猜造复合成员槽。
 
 ### 资产的完整读取
 
@@ -240,7 +241,7 @@ ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时�
 
 ```text
 <公司资料根>/<统一社会信用代码>/
-  originals/YYYY-MM/<source_id>--<原文件名>
+  originals/YYYY-MM/<source_id>/<原文件名>
   standard/current.json
   standard/parts/<family>--<YYYY-MM>--<内容摘要>.json
   standard/README.md

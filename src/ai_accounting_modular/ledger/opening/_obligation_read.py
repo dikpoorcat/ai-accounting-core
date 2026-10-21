@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from ai_accounting_modular.contracts.public import BusinessRef
+from ai_accounting_modular.contracts.public import BusinessRef, parse_fen
 
+from ._members import slot
 from ._read_members import member_reference, validated_members
 
 if TYPE_CHECKING:
@@ -28,10 +29,18 @@ class OpeningTaxReference:
     balance_kind: Literal["payable", "refundable"]
 
 
+@dataclass(frozen=True)
+class OpeningLoanReference:
+    source: BusinessRef
+    contract_id: str
+    lender_id: str
+    component: Literal["principal", "interest"]
+
+
 def opening_obligation_references(
     content: AdoptedContent,
-) -> tuple[OpeningOrdinaryReference | OpeningTaxReference, ...]:
-    """These positive, single-slot members need no amount calculation or inferred identity."""
+) -> tuple[OpeningOrdinaryReference | OpeningTaxReference | OpeningLoanReference, ...]:
+    """Return actual obligation slots and declared identities, never a guessed aggregate slot."""
     business_id, members = validated_members(content)
     result = []
     for member in members:
@@ -53,4 +62,18 @@ def opening_obligation_references(
                     data["balance_kind"],
                 )
             )
+        elif data["type"] == "loan":
+            for component, field in (
+                ("principal", "principal_fen"),
+                ("interest", "accrued_interest_fen"),
+            ):
+                if parse_fen(data[field]):
+                    result.append(
+                        OpeningLoanReference(
+                            {"business_id": business_id, "slot": slot(member, component)},
+                            data["contract_id"],
+                            data["lender_id"],
+                            component,
+                        )
+                    )
     return tuple(result)

@@ -44,7 +44,14 @@ from ._adoption import adopt as _adopt
 from ._balances import balance_wire, obligation_balances
 from ._candidate import CandidateLedger
 from ._cashflow import contributions as _cashflow_contributions
-from ._closing import LedgerPeriodCheck, check_period, close_period, closed_report
+from ._closing import (
+    LedgerPeriodCheck,
+    PeriodClosure,
+    check_period,
+    close_period,
+    closed_report,
+    period_closure,
+)
 from ._financial_cells import Issues
 from ._financial_selection import Selection
 from ._planning import PreparedResult, bind_plan, stored_source_reference
@@ -363,6 +370,9 @@ class Ledger:
 
     def closed_through(self, read_context: ReadContext):
         return read_context.repository("ledger").closed_through()
+
+    def period_closure(self, period, read_context: ReadContext) -> PeriodClosure:
+        return period_closure(period, read_context)
 
     def query_cashflow_contributions(
         self, query: LedgerQuery, read_context: ReadContext, *, selection=None
