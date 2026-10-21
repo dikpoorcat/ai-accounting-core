@@ -29,6 +29,19 @@ def frontend_identity():
     return _tree_digest(WORKSPACE / "frontend/src")
 
 
+def code_identity():
+    """Identify the implementation and measurement code, including declared dependencies."""
+    return {
+        "source_sha256": _tree_digest(WORKSPACE / "src/ai_accounting_modular"),
+        "frontend_source_sha256": frontend_identity(),
+        "measurement_sha256": _tree_digest(Path(__file__).parent),
+        "dependencies_sha256": {
+            name: sha256((WORKSPACE / name).read_bytes()).hexdigest()
+            for name in ("pyproject.toml", "uv.lock")
+        },
+    }
+
+
 def capture():
     result = {
         "system": platform.platform(),
@@ -36,8 +49,7 @@ def capture():
         "python": sys.version,
         "sqlite": sqlite3.sqlite_version,
         "machine": platform.machine(),
-        "source_sha256": _tree_digest(WORKSPACE / "src/ai_accounting_modular"),
-        "frontend_source_sha256": frontend_identity(),
+        **code_identity(),
     }
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=WORKSPACE, capture_output=True, text=True, check=False

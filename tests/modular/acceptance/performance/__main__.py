@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .dataset import build
 from .environment import capture as environment
+from .environment import code_identity
 from .ledger_variant import MODES
 from .workload import CONTRACTORS, EMPLOYEES, INITIAL_BANK, PEOPLE, SCALES, plan_month
 
@@ -61,6 +62,7 @@ def main():
     )
     lifecycle.add_argument("--probe", action="store_true")
     args = parser.parse_args()
+    started_environment = environment()
     if args.action == "plan":
         balance, rows = INITIAL_BANK, []
         for index in range(args.months):
@@ -113,9 +115,22 @@ def main():
         from .scenarios import run
 
         result = run(args.root, args.output_root, args.mode, args.scenario, probe=args.probe)
+    finished_code = code_identity()
+    unchanged = all(started_environment[key] == value for key, value in finished_code.items())
     print(
-        json.dumps({"environment": environment(), "result": result}, ensure_ascii=False, indent=2)
+        json.dumps(
+            {
+                "environment": started_environment,
+                "code_after": finished_code,
+                "source_unchanged": unchanged,
+                "result": result,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
     )
+    if not unchanged and args.action in {"verify", "browser", "lifecycle"}:
+        raise SystemExit("实现或测量代码在运行期间变化，本次结果不能作为验收依据。")
     if "status" in result and result["status"] != "passed":
         raise SystemExit(1)
 
