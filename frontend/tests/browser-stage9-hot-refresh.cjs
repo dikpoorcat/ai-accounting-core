@@ -54,6 +54,96 @@ const refreshRoots = {
   brief: ".brief-content", funds: ".funds-result", employees: ".employee-result",
   assets: ".asset-result", reports: ".report-dashboard",
 };
+
+// A retry is the same typed page read carried in a real POST body. Normalize
+// only its scope for existing contract checks; retain the actual path/method
+// in diagnostics and never manufacture an extra GET to satisfy an observer.
+function dashboardReadTarget(value, method = "GET", body = undefined) {
+  const target = new URL(value);
+  if (!/^\/api\/dashboard\/(brief|funds|employees|assets|quarterly-report)\/retry$/.test(target.pathname)) return target;
+  if (method !== "POST" || target.search) throw new Error("retry observation requires its actual POST body");
+  const query = typeof body === "string" ? JSON.parse(body) : body;
+  if (!query || typeof query !== "object" || Array.isArray(query)
+    || !Object.hasOwn(query, "company_id") || ["section", "cursor", "expected_version"].some(key => Object.hasOwn(query, key)))
+    throw new Error("retry observation has no unambiguous main page scope");
+  for (const [key, value] of Object.entries(query)) {
+    if (!["string", "number", "boolean"].includes(typeof value)) throw new Error("retry scope must contain scalar values");
+    target.searchParams.set(key, String(value));
+  }
+  target.pathname = target.pathname.slice(0, -6);
+  return target;
+}
+function dashboardRequestTarget(request) {
+  const method = typeof request.method === "function" ? request.method() : "GET";
+  return dashboardReadTarget(request.url(), method, method === "POST" ? request.postDataJSON() : undefined);
+}
+function dashboardResponseTarget(reply) {
+  return typeof reply.request === "function" ? dashboardRequestTarget(reply.request()) : new URL(reply.url());
+}
+function observedDashboardResource(entry, reads = []) {
+  const matched = reads.filter(read => read.wire_url === entry.name && read.start <= entry.startTime).at(-1);
+  if (matched) return { target: new URL(matched.url), state: matched.state, status: matched.status };
+  const target = new URL(entry.name);
+  return target.pathname.endsWith("/retry") ? null : { target, state: "native", status: null };
+}
+function createStaticResourceObserver(origin) {
+  const failures = [], pending = new Set(), navigationAborts = new WeakSet();
+  const required = request => new URL(request.url()).origin === origin
+    && ["script", "stylesheet"].includes(request.resourceType());
+  const record = (request, detail) => ({ path: new URL(request.url()).pathname,
+    url: diagnosticUrl(request.url()), required: required(request), ...detail });
+  return {
+    failures,
+    start(request) { if (required(request)) pending.add(request); },
+    finished(request) { pending.delete(request); },
+    // Only unfinished old-document resources can be superseded by our navigation.
+    navigating() { for (const request of pending) navigationAborts.add(request); },
+    response(response) {
+      const request = response.request(), target = new URL(response.url());
+      if (target.pathname.startsWith("/api/") && !required(request)) return;
+      if (response.status() >= 400 || request.resourceType() === "stylesheet"
+        && response.headers()["content-type"]?.split(";", 1)[0] !== "text/css")
+        failures.push(record(request, { status: response.status(), content_type: response.headers()["content-type"] ?? null }));
+    },
+    failed(request) {
+      if (new URL(request.url()).pathname.startsWith("/api/") && !required(request)) return;
+      const error = request.failure()?.errorText ?? "network_failed";
+      failures.push(record(request, { error: sanitize(error),
+        navigation_cancelled: error === "net::ERR_ABORTED" && navigationAborts.has(request) }));
+      pending.delete(request);
+    },
+    assertComplete() {
+      assert.deepEqual(failures.filter(item => item.required && !item.navigation_cancelled), [],
+        "required same-origin script or stylesheet failed");
+    },
+  };
+}
+const installDashboardReadObserver = new Function(`
+  const target = ${dashboardReadTarget.toString()};
+  const original = window.fetch;
+  window.__stage9DashboardReads = [];
+  window.fetch = function(input, options = {}) {
+    const absolute = new URL(typeof input === 'string' ? input : input.url, location.href).href;
+    let read;
+    if (/^\\/api\\/dashboard\\/(brief|funds|employees|assets|quarterly-report)(\\/retry)?$/.test(new URL(absolute).pathname)) {
+      try {
+        const normalized = target(absolute, options.method ?? 'GET', options.body);
+        read = { wire_url: absolute, url: normalized.href, start: performance.now(), state: 'pending', status: null };
+        window.__stage9DashboardReads.push(read);
+      } catch { /* Let the real fetch and generated contract report an invalid request. */ }
+    }
+    return original.call(this, input, options).then(response => {
+      if (read) {
+        read.status = response.status;
+        const json = response.json;
+        response.json = function(...args) {
+          return json.apply(this, args).then(value => { read.state = value?.state ?? 'native'; return value; });
+        };
+      }
+      return response;
+    });
+  };
+`);
 function readRefreshProjection(document, rootSelector) {
   const root = document.querySelector(rootSelector);
   if (!root) return null;
@@ -86,6 +176,7 @@ function readRefreshProjection(document, rootSelector) {
 
 const observeHotRefresh = new Function("button", "selection", `
   const readProjection = ${readRefreshProjection.toString()};
+  const observedResource = ${observedDashboardResource.toString()};
 
   const briefReady = () => {
     const content = document.querySelector(".brief-content");
@@ -107,6 +198,7 @@ const observeHotRefresh = new Function("button", "selection", `
     // 150 entries, and previous iterations must never satisfy this click.
     performance.setResourceTimingBufferSize(1000);
     performance.clearResourceTimings();
+    window.__stage9DashboardReads = [];
     window.__stage9RefreshStart = started;
     window.__stage9RenderedAt = null;
     let completeFrames = 0;
@@ -123,7 +215,9 @@ const observeHotRefresh = new Function("button", "selection", `
     const observed = () => {
       const resources = performance.getEntriesByType("resource").filter(entry => entry.startTime >= started);
       const networkComplete = actions.every(action => resources.some(entry => {
-        const url = new URL(entry.name);
+        const actual = observedResource(entry, window.__stage9DashboardReads ?? []);
+        if (!actual || !['ready', 'native'].includes(actual.state) || actual.status !== null && actual.status !== 200) return false;
+        const url = actual.target;
         if (url.pathname !== \`/api/dashboard/\${action}\`
           || url.searchParams.get("company_id") !== selection.companyId
           || entry.responseEnd <= started) return false;
@@ -339,7 +433,8 @@ function verifyRetainedAuxiliaryComplete(reads) {
       const old = target.searchParams.has("cursor") ? chains.get(resource) : null;
       assert(!target.searchParams.has("cursor") || old, `${resource}: continuation has no verified first page`);
       if (old) assert.equal(target.searchParams.get("cursor"), old.next_cursor, `${resource}: continuation cursor is not the prior verified cursor`);
-      const chain = old ?? { ids: [], filtered_count: collection.page.filtered_count };
+      const chain = old ?? { ids: [], filtered_count: collection.page.filtered_count, version: payload.snapshot_version };
+      assert.equal(payload.snapshot_version, chain.version, `${resource}: detail version changed across pages`);
       assert.equal(collection.page.filtered_count, chain.filtered_count, `${resource}: continuation total changed`);
       for (const id of ids) { assert(!chain.ids.includes(id), `${resource}: duplicate continuation identity`); chain.ids.push(id); }
       chain.has_more = collection.page.has_more; chain.next_cursor = collection.page.next_cursor;
@@ -380,8 +475,9 @@ function verifiedFundsDetailCache(priorReads, currentMain, binding) {
     assert.equal(url.searchParams.get("period"), target.searchParams.get("period"));
     assert.equal(detail.read_context.company_id, target.searchParams.get("company_id"));
     assert.equal(detail.selected_period.key, target.searchParams.get("period"));
-    assert.equal(detail.snapshot_version, binding.snapshot);
-    assert.equal(url.searchParams.get("expected_version"), binding.snapshot);
+    assert(typeof detail.snapshot_version === "string" && detail.snapshot_version, "funds cache: detail has no own version");
+    if (url.searchParams.has("expected_version")) assert.equal(url.searchParams.get("expected_version"), detail.snapshot_version);
+    else assert(!url.searchParams.has("cursor"), "funds cache: continuation missing its own version");
     assert.equal(url.searchParams.get("subject_id"), binding.subject_id);
     assert.equal(detail.data.identity.subject_id, binding.subject_id);
     assert.equal(url.searchParams.get("settlement_view"), "historical");
@@ -402,15 +498,21 @@ function verifyRetainedCollectionIdentities(before, after, { closeActivityMember
 }
 function interactionScopeAllows(url, scope) {
   const action = url.pathname.replace("/api/dashboard/", "");
-  const auxiliary = scope.retained_refresh === true && ["brief-group", "business-status"].includes(action)
-    && (scope.action === "brief" || scope.action === "funds" && action === "business-status");
+  const auxiliary = scope.auxiliary_actions?.includes(action) === true
+    || scope.retained_refresh === true && ["brief-group", "business-status"].includes(action)
+      && (scope.action === "brief" || scope.action === "funds" && action === "business-status");
+  const independentDetail = auxiliary && action === "business-status";
+  const detailVersion = url.searchParams.get("expected_version");
   return url.searchParams.get("company_id") === scope.company_id
     && (action === "context" || (action === scope.action || auxiliary)
       && (action === "quarterly-report"
         ? `${url.searchParams.get("year")}-Q${url.searchParams.get("quarter")}` === scope.quarter
         : url.searchParams.get("period") === scope.period))
-    && (!auxiliary || url.searchParams.get("expected_version") === scope.snapshot)
-    && (!url.searchParams.has("expected_version") || url.searchParams.get("expected_version") === scope.snapshot);
+    && (!auxiliary || independentDetail || detailVersion === scope.snapshot)
+    && (independentDetail ? Boolean(url.searchParams.get("subject_id"))
+      && (detailVersion === null ? !url.searchParams.has("cursor")
+        : (scope.business_status_versions ?? [scope.snapshot]).includes(detailVersion))
+      : !url.searchParams.has("expected_version") || detailVersion === scope.snapshot);
 }
 function verifyRetainedRefreshState(before, after, label) {
   assert(before && before.rows.length && before.projection, `${label}: no real pre-refresh content`);
@@ -488,16 +590,29 @@ function interactionReadMultiset(reads) {
 
 function indexInteractionReads(fetches, resources, start) {
   const requests = new Map(), downloads = new Map();
+  const byWire = new Map(), positions = new Map();
   for (const item of fetches) {
     if (!(item.start >= start)) continue;
     const record = requests.get(item.url) ?? { count: 0, successful: 0 };
     record.count += 1;
     if (item.state === "response" && item.status === 200) record.successful += 1;
     requests.set(item.url, record);
+    if (item.wire_url) {
+      const values = byWire.get(item.wire_url) ?? [];
+      values.push(item); byWire.set(item.wire_url, values);
+    }
   }
   for (const item of resources) {
     if (!(item.startTime >= start && item.responseEnd > start)) continue;
-    const url = interactionReadUrl(item.name);
+    const candidates = byWire.get(item.name);
+    let observed;
+    if (candidates) {
+      let position = positions.get(item.name) ?? 0;
+      while (position + 1 < candidates.length && candidates[position + 1].start <= item.startTime) position++;
+      positions.set(item.name, position);
+      if (candidates[position].start <= item.startTime) observed = candidates[position];
+    }
+    const url = interactionReadUrl(observed?.url ?? item.name);
     const record = downloads.get(url) ?? { count: 0, end: start };
     record.count += 1; record.end = Math.max(record.end, item.responseEnd);
     downloads.set(url, record);
@@ -517,10 +632,7 @@ function interactionReadPlanReady(selection, fetches, resources, start, index = 
     if (!Number.isInteger(read.count) || read.count < 1 || seen.has(read.url)) return false;
     seen.add(read.url);
     const url = new URL(read.url);
-    if (selection.scope.retained_refresh === true ? !interactionScopeAllows(url, selection.scope) : url.searchParams.get("company_id") !== selection.scope.company_id
-      || url.pathname !== "/api/dashboard/context" && (url.pathname !== `/api/dashboard/${selection.scope.action}`
-        || url.searchParams.get("period") !== selection.scope.period)
-      || url.searchParams.has("expected_version") && url.searchParams.get("expected_version") !== selection.scope.snapshot) return false;
+    if (!interactionScopeAllows(url, selection.scope)) return false;
     const requests = index.requests.get(read.url), downloads = index.downloads.get(read.url);
     return requests?.count === read.count && requests.successful === read.count && downloads?.count === read.count;
   });
@@ -533,6 +645,7 @@ const observeInteraction = new Function("selection", `
   const projection = ${readRefreshProjection.toString()};
   const resultHasVisibleContent = ${resultHasVisibleContent.toString()};
   const interactionReadUrl = ${interactionReadUrl.toString()};
+  const dashboardReadTarget = ${dashboardReadTarget.toString()};
   const interactionScopeAllows = ${interactionScopeAllows.toString()};
   const indexInteractionReads = ${indexInteractionReads.toString()};
   const interactionReadPlanReady = ${interactionReadPlanReady.toString()};
@@ -543,9 +656,10 @@ const observeInteraction = new Function("selection", `
   const originalFetch = window.fetch;
   const monitoredFetch = function(input, ...args) {
     const state = window.__stage9Interaction;
-    const url = interactionReadUrl(new URL(typeof input === 'string' ? input : input.url, location.href).href);
+    const wireUrl = new URL(typeof input === 'string' ? input : input.url, location.href).href;
+    const url = interactionReadUrl(dashboardReadTarget(wireUrl, args[0]?.method ?? 'GET', args[0]?.body).href);
     const required = state?.started && active && selection.read_plan.required.some(read => read.url === url);
-    const read = required ? { url, start: performance.now(), state: 'pending', status: null } : null;
+    const read = required ? { url, wire_url: wireUrl, start: performance.now(), state: 'pending', status: null } : null;
     if (read) state.fetches.push(read);
     return originalFetch.call(this, input, ...args).then(response => {
       if (read) { read.status = response.status; read.state = 'response'; }
@@ -1018,9 +1132,10 @@ function obsoleteLocalCancellation(failure, action, snapshot, previousActions = 
   return null;
 }
 
-async function recordRefreshAttempt(attempts, metadata, operation, failureTiming) {
+async function recordRefreshAttempt(attempts, metadata, operation, failureTiming, checkpoint = null) {
   const attempt = { ...metadata, status: "preparing", phase: "prepare", elapsed_ms: null };
   attempts.push(attempt);
+  checkpoint?.(attempt);
   try {
     const elapsed = await operation(attempt);
     attempt.status = "complete";
@@ -1035,6 +1150,10 @@ async function recordRefreshAttempt(attempts, metadata, operation, failureTiming
     if (timing?.started && Number.isFinite(timing.elapsed_ms)) attempt.elapsed_ms = timing.elapsed_ms;
     attempt.error = { type: error?.name || "Error", message: sanitize(error?.message || error) };
     throw error;
+  } finally {
+    // Durable progress is written after the measured endpoint and validation.
+    // The initial preparing checkpoint is before any click/timer has begun.
+    checkpoint?.(attempt);
   }
 }
 
@@ -1056,13 +1175,14 @@ function verifyLocalRead(url, module, selected, snapshot, requestedSection = nul
 
 // Pure association/value extraction, also serialized into the final browser
 // evaluate. Resource timing is browser network work, not a source CPU profile.
-function captureRefreshResources(entries, selection, clickStart, renderAt, timeOrigin) {
+function captureRefreshResources(entries, selection, clickStart, renderAt, timeOrigin, reads = []) {
   const actions = ["context", selection.action];
   const resources = Object.fromEntries(actions.map(action => [action, []]));
   for (const entry of entries) {
     if (!(entry.startTime >= clickStart)) continue;
     let url;
-    try { url = new URL(entry.name); } catch { continue; }
+    try { url = observedDashboardResource(entry, reads)?.target; } catch { continue; }
+    if (!url) continue;
     const action = actions.find(item => url.pathname === `/api/dashboard/${item}`);
     if (!action || url.searchParams.get("company_id") !== selection.companyId) continue;
     if (action !== "context") {
@@ -1074,7 +1194,7 @@ function captureRefreshResources(entries, selection, clickStart, renderAt, timeO
     const query = { company_id: url.searchParams.get("company_id") };
     for (const key of action === "quarterly-report" ? ["year", "quarter"]
       : action === "context" ? [] : ["period"]) query[key] = url.searchParams.get(key);
-    const value = { action, path: url.pathname, query };
+    const value = { action, path: new URL(entry.name).pathname, query };
     for (const key of ["startTime", "fetchStart", "domainLookupStart", "domainLookupEnd",
       "connectStart", "secureConnectionStart", "connectEnd", "requestStart", "responseStart",
       "responseEnd", "duration", "transferSize", "encodedBodySize", "decodedBodySize",
@@ -1088,7 +1208,9 @@ function captureRefreshResources(entries, selection, clickStart, renderAt, timeO
     || !Number.isFinite(timeOrigin)) diagnostics.push("invalid_measurement_timestamps");
   for (const action of actions) {
     if (resources[action].length === 0) diagnostics.push(`${action}:missing_resource`);
-    else if (resources[action].length > 1) diagnostics.push(`${action}:duplicate_resources`);
+    else if (resources[action].length > 1 && !(action !== 'context'
+      && resources[action][0].path === `/api/dashboard/${action}/retry`
+      && resources[action].slice(1).every(value => value.path === `/api/dashboard/${action}`))) diagnostics.push(`${action}:duplicate_resources`);
     for (const entry of resources[action]) {
       if (entry.responseEnd === null || entry.responseEnd <= clickStart
         || entry.responseEnd < entry.startTime || entry.responseEnd > renderAt
@@ -1097,7 +1219,7 @@ function captureRefreshResources(entries, selection, clickStart, renderAt, timeO
     }
   }
   const responseEnd = diagnostics.length === 0
-    ? Math.max(...actions.map(action => resources[action][0].responseEnd)) : null;
+    ? Math.max(...actions.flatMap(action => resources[action].map(value => value.responseEnd))) : null;
   return {
     timeOrigin, clickStart, renderAt, resources, diagnostics,
     render_tail_ms: responseEnd === null ? null : renderAt - responseEnd,
@@ -1108,15 +1230,16 @@ function captureRefreshResources(entries, selection, clickStart, renderAt, timeO
 // Constructed in Node, before measurements; browser execution uses no eval and
 // captures diagnostics only after the original completion timestamp is set.
 const captureRefreshMeasurement = new Function("selection", `
+  const observedDashboardResource = ${observedDashboardResource.toString()};
   const capture = ${captureRefreshResources.toString()};
   const clickStart = window.__stage9RefreshStart;
   const renderAt = window.__stage9RenderedAt;
   const measured = renderAt - clickStart;
   const resources = capture(performance.getEntriesByType("resource").map(entry => entry.toJSON()),
-    selection, clickStart, renderAt, performance.timeOrigin);
+    selection, clickStart, renderAt, performance.timeOrigin, window.__stage9DashboardReads ?? []);
   delete window.__stage9RefreshStart;
   delete window.__stage9RenderedAt;
-  return { measured, resources };
+  return { measured, resources, start_epoch_ms: performance.timeOrigin + clickStart, end_epoch_ms: performance.timeOrigin + renderAt };
 `);
 
 function verifyBriefState(data, selected = {}) {
@@ -1278,7 +1401,11 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
       verifyBriefState(payload.data, selected);
       assert(payload.data.financial_position && payload.data.workforce_cost, "brief: main financial/workforce summaries missing");
       verifyLongTermAssets(payload.data.long_term_assets);
-      assert.equal(vouchers, undefined, "brief: default refresh preloaded independent vouchers");
+      if (target.searchParams.has("voucher_version_id") || target.searchParams.has("voucher_number")) {
+        assert(payload.data.focused_voucher, "brief: explicit exact voucher missing");
+        assert.equal(vouchers?.items.length, 1, "brief: exact read preloaded unrelated vouchers");
+        assert.deepEqual(vouchers.items[0], payload.data.focused_voucher, "brief: exact collection differs from focused voucher");
+      } else assert.equal(vouchers, undefined, "brief: default refresh preloaded independent vouchers");
       assert.equal(activity.page.total_count, payload.data.group_count, "brief: activity group total lost");
       assert.equal(payload.data.collections.open_items.page.total_count, payload.data.open_items.group_count, "brief: open group total lost");
       if (requireVouchers) assert(payload.data.voucher_count > 0 && activity.page.total_count > 0, "brief: synthetic book returned no vouchers/business");
@@ -1295,7 +1422,7 @@ function verifyMainPayload(payload, key, selected, target, { requireVouchers = t
 // Independent S9 delivery observer. The original qualified harness is preserved.
 // Boundary follows the fixed service dispatch: only main roots without an exact
 // section/snapshot use Delivery; context and on-demand auxiliary reads are native.
-function verifyS9WirePayload(validators, target, wire, selected, quarter) {
+function verifyS9WirePayload(validators, target, wire, selected, quarter, allowPreparing = false) {
   const action = target.pathname.split('/').at(-1);
   const suffix = { context: 'Context', brief: 'Brief', funds: 'Funds', employees: 'Employees', assets: 'Assets',
     'quarterly-report': 'QuarterlyReport', 'brief-group': 'BriefGroup', 'business-status': 'BusinessStatus',
@@ -1312,9 +1439,10 @@ function verifyS9WirePayload(validators, target, wire, selected, quarter) {
   if (delivery) {
     const validator = validators[`validateDashboard${suffix}DeliveryResponse`];
     assert(validator && validator(wire), `S9 observer: generated delivery contract rejected ${target.pathname}`);
-    assert.equal(wire.state, 'ready', 'S9 observer: wire is not ready');
     assert.equal(wire.company_id, selected.id, 'S9 observer: wrong delivery company');
     assert.equal(wire.period, period, 'S9 observer: wrong delivery period');
+    if (allowPreparing && wire.state === 'preparing') return null;
+    assert.equal(wire.state, 'ready', 'S9 observer: wire is not ready');
     payload = wire.response;
     const version = report ? payload.read_context.read_version : payload.snapshot_version;
     assert(typeof wire.model_version === 'string' && wire.model_version.length, 'S9 observer: missing model version');
@@ -1338,6 +1466,11 @@ function recordS9ActualWire(file, reply, wire) {
 }
 
 async function run(config) {
+  if (config.progress_path) fs.writeFileSync(config.progress_path, "", { flag: "wx" });
+  const checkpoint = config.progress_path ? attempt => {
+    try { fs.appendFileSync(config.progress_path, JSON.stringify({ kind: "attempt", checkpoint_epoch_ms: Date.now(), attempt }) + "\n"); }
+    catch (error) { attempt.status = "failed"; attempt.error = { type: "ProgressWriteError", message: sanitize(error.message) }; throw error; }
+  } : null;
   const voucherTailDiagnostic = voucherTailDiagnosticSelection(config);
   const retainedRefreshOnly = retainedRefreshSelection(config);
   const generatedValidators = await import("../src/api/generated/dashboardValidators.js");
@@ -1360,8 +1493,10 @@ async function run(config) {
   assert(Number.isInteger(samples) && samples >= 1);
   const { chromium } = require(config.playwright_module);
   const browser = await chromium.launch({ channel: config.channel, headless: true });
+  const browserEnvironment = { node: process.version, browser: browser.version(), channel: config.channel, viewport: { width: 1440, height: 1000 }, reduced_motion: 'reduce' };
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   const page = await context.newPage();
+  await page.addInitScript(installDashboardReadObserver);
   if (voucherTailDiagnostic) await page.addInitScript(() => { window.__stage9VoucherTailDiagnosticEnabled = true; });
   const refreshProjections = new Map();
   const refreshAttempts = [];
@@ -1434,7 +1569,10 @@ async function run(config) {
   }, {
     selectedCompany: company.id, selectedPeriod: company.period, selectedQuarter: quarter,
   });
+  const staticResources = createStaticResourceObserver(new URL(config.origin).origin);
+  const resourceFailures = staticResources.failures;
   const pageErrors = [], apiFailures = [], closeReviewRequests = [], legacyJobsRequests = [];
+  const navigate = url => { staticResources.navigating(); return page.goto(url); };
   const requestDiagnostics = createRequestDiagnostics(), localActions = [], obsoleteCancellations = [], layoutPageReplies = [];
   const layoutVerifiedReads = [];
   let layoutMovementAccount = null;
@@ -1443,27 +1581,33 @@ async function run(config) {
   let currentLocalAction = null;
   const allowedCloseReviewRequests = new Set();
   page.on("request", request => {
+    staticResources.start(request);
     if (retainedRefreshOnly) retainedBodies.start(request, retainedGeneration, diagnosticUrl(page.url()));
-    if (new URL(request.url()).pathname.startsWith("/api/")) requestDiagnostics.start(request, currentLocalAction, page.url());
-    if (new URL(request.url()).pathname === "/api/dashboard/close-review") closeReviewRequests.push(request.url());
-    if (new URL(request.url()).pathname === "/api/local/jobs") legacyJobsRequests.push("/api/local/jobs");
+    if (dashboardRequestTarget(request).pathname.startsWith("/api/")) requestDiagnostics.start(request, currentLocalAction, page.url());
+    if (dashboardRequestTarget(request).pathname === "/api/dashboard/close-review") closeReviewRequests.push(request.url());
+    if (dashboardRequestTarget(request).pathname === "/api/local/jobs") legacyJobsRequests.push("/api/local/jobs");
   });
   const allowedNavigationAborts = new Set();
   page.on("pageerror", error => pageErrors.push(sanitize(error.message)));
   page.on("response", response => {
-    const target = new URL(response.url());
+    const target = dashboardResponseTarget(response);
+    staticResources.response(response);
     if (retainedRefreshOnly && retainedCaptureActive && target.pathname.startsWith("/api/dashboard/")) retainedBodies.capture(response);
     if ((config.layout_only || config.interaction_only) && target.pathname.startsWith("/api/dashboard/")
       && (target.searchParams.has("section") || target.searchParams.has("cursor")
-        || retainedRefreshOnly && ["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(target.pathname))) layoutPageReplies.push(response);
-    if (new URL(response.url()).pathname.startsWith("/api/") && response.status() >= 400) {
-      apiFailures.push({ path: new URL(response.url()).pathname, status: response.status(),
+        || ["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(target.pathname))) layoutPageReplies.push(response);
+    if (dashboardResponseTarget(response).pathname.startsWith("/api/") && response.status() >= 400) {
+      apiFailures.push({ path: dashboardResponseTarget(response).pathname, status: response.status(),
         url: diagnosticUrl(response.url()), request: requestDiagnostics.finish(response.request(), "http_error", currentLocalAction, page.url()) });
     }
   });
-  page.on("requestfinished", request => requestDiagnostics.finish(request, "finished", currentLocalAction, page.url()));
+  page.on("requestfinished", request => {
+    staticResources.finished(request);
+    requestDiagnostics.finish(request, "finished", currentLocalAction, page.url());
+  });
   page.on("requestfailed", request => {
-    const url = new URL(request.url());
+    const url = dashboardRequestTarget(request);
+    staticResources.failed(request);
     if (url.pathname.startsWith("/api/")) apiFailures.push({
       path: url.pathname, company_id: url.searchParams.get("company_id"),
       period: url.searchParams.get("period"),
@@ -1495,10 +1639,22 @@ async function run(config) {
     return url.searchParams.get("period") === company.period;
   }
   function response(action) {
-    return waitForLater(page.waitForResponse(reply => {
-      const url = new URL(reply.url());
-      return matchesAction(url, action);
+    return waitForLater(page.waitForResponse(async reply => {
+      const url = dashboardResponseTarget(reply);
+      return matchesAction(url, action) && await readyReceipt(reply);
     }));
+  }
+  async function readyReceipt(reply) {
+    const target = dashboardResponseTarget(reply);
+    if (!Object.hasOwn(mainContractNames, target.pathname.split('/').at(-1) === 'quarterly-report' ? 'reports' : target.pathname.split('/').at(-1))
+      || target.searchParams.has('section') || target.searchParams.has('expected_version')) return true;
+    const wire = await reply.json();
+    if (wire?.state !== 'preparing') return true;
+    assert.equal(reply.status(), 200, 'preparing delivery HTTP failure');
+    verifyS9WirePayload(generatedValidators, target, wire, company, quarter, true);
+    verifiedRequests.add(reply.request());
+    recordS9ActualWire(actualWirePath, reply, wire);
+    return false;
   }
   function assertNoBrowserFailures() {
     for (const failure of apiFailures) {
@@ -1514,11 +1670,12 @@ async function run(config) {
     assert.deepEqual(legacyJobsRequests, [], "default page requested the retired task list");
     assert.deepEqual(closeReviewRequests.filter(url => !allowedCloseReviewRequests.has(url)), [], "default page requested close-review");
     assert.deepEqual(pageErrors, [], "browser error");
+    staticResources.assertComplete();
     assert.deepEqual(apiFailures.filter(failure => !allowedNavigationAborts.has(failure) && !allowedLocalAborts.has(failure)), [], "API error");
   }
   async function verifyReply(reply, module, selected = company, { requireVouchers = true, allowEmployeeContinuation = false } = {}) {
     await waitForInteractionCandidate();
-    const target = new URL(reply.url());
+    const target = dashboardResponseTarget(reply);
     const cached = verifiedPayloads.get(reply.request());
     if (cached && (target.searchParams.has("section") || target.searchParams.has("cursor"))) {
       assert.equal(reply.status(), 200, `${module.key}: cached response failed`);
@@ -1558,8 +1715,10 @@ async function run(config) {
     if (target.pathname === "/api/dashboard/business-status") {
       assert.equal(payload.data?.identity?.subject_id, target.searchParams.get("subject_id"), "business detail: wrong subject");
       assert.equal(payload.selected_period?.key, selected.period, "business detail: wrong period");
-      assert.equal(payload.snapshot_version, target.searchParams.get("expected_version"), "business detail: wrong snapshot");
-      if (retainedRefreshOnly) {
+      assert(typeof payload.snapshot_version === "string" && payload.snapshot_version, "business detail: missing own snapshot");
+      if (target.searchParams.has("expected_version")) assert.equal(payload.snapshot_version, target.searchParams.get("expected_version"), "business detail: wrong snapshot");
+      else assert(!target.searchParams.has("cursor"), "business detail: continuation missing its own snapshot");
+      {
         assert.equal(payload.data.settlement_view, target.searchParams.get("settlement_view") ?? "current", "business detail: wrong settlement view");
         const key = target.searchParams.get("detail_scope_key"), voucher = target.searchParams.get("voucher_version_id");
         if (key === null) assert(payload.data.detail_scope === null && voucher === null, "business detail: unrelated detail sub-scope");
@@ -1644,13 +1803,19 @@ async function run(config) {
         `固定 ${assets.fixed_active_count} 项 · 无形 ${assets.intangible_active_count} 项`,
         "brief: active asset counts differ from full summary");
       assert.equal(await page.locator("#overview .kpi").count(), 4, "brief: overview cards missing");
-      assert.equal(await page.locator(".view-switch button[aria-pressed=true]").textContent(), "按业务", "brief: default view changed");
-      const selectedLabel = (await page.locator("#activity nav[aria-label='业务分类'] button[aria-pressed=true] strong").textContent())?.trim();
-      const selectedGroup = selectedLabel === "全部" ? null
-        : data.activity_groups.find(group => group.label === selectedLabel);
-      assert(selectedLabel === "全部" || selectedGroup, "brief: selected business group missing");
-      const expectedItems = data.collections.activity.items.filter(item => !selectedGroup || item.group === selectedGroup.key);
-      if (!retainedRefreshOnly) assert.equal(await page.locator("#activity .event-row").count(), expectedItems.length, "brief: selected business rows incomplete");
+      if (data.focused_voucher) {
+        assert.equal(await page.locator(".view-switch button[aria-pressed=true]").textContent(), "按凭证", "brief: exact voucher did not select voucher view");
+        assert.equal(await page.locator("#selected-voucher .voucher-reference strong").textContent(), `凭证 ${data.focused_voucher.number}`);
+        assert.equal(await page.locator(".voucher-card").count(), 1, "brief: exact voucher read unrelated vouchers");
+      } else {
+        assert.equal(await page.locator(".view-switch button[aria-pressed=true]").textContent(), "按业务", "brief: default view changed");
+        const selectedLabel = (await page.locator("#activity nav[aria-label='业务分类'] button[aria-pressed=true] strong").textContent())?.trim();
+        const selectedGroup = selectedLabel === "全部" ? null
+          : data.activity_groups.find(group => group.label === selectedLabel);
+        assert(selectedLabel === "全部" || selectedGroup, "brief: selected business group missing");
+        const expectedItems = data.collections.activity.items.filter(item => !selectedGroup || item.group === selectedGroup.key);
+        if (!retainedRefreshOnly) assert.equal(await page.locator("#activity .event-row").count(), expectedItems.length, "brief: selected business rows incomplete");
+      }
       assert.equal(await page.locator("#owner-tasks > article:not(.owner-review-request)").count(), data.owner_tasks.length, "brief: owner tasks incomplete");
     } else if (module.key === "funds") {
       if (!retainedRefreshOnly) {
@@ -1798,8 +1963,8 @@ async function run(config) {
     if (requireProjection) assert(refreshProjections.has(module.key),
       `${module.key}: formal refresh requires a validated default DOM projection`);
     const contextReply = waitForLater(response("context"));
-    const mainReply = options.requireRoot ? waitForLater(page.waitForResponse(reply => {
-      const url = new URL(reply.url()); return matchesAction(url, module.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor");
+    const mainReply = options.requireRoot ? waitForLater(page.waitForResponse(async reply => {
+      const url = dashboardResponseTarget(reply); return matchesAction(url, module.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor") && await readyReceipt(reply);
     })) : waitForLater(response(module.action));
     const refreshButton = page.locator(".module-header button.refresh");
     await refreshButton.evaluate(observeHotRefresh, { action: module.action, key: module.key, companyId: company.id,
@@ -1815,6 +1980,8 @@ async function run(config) {
     });
     if (resourceSamples) resourceSamples.push(measurement.resources);
     attempt.elapsed_ms = measurement.measured;
+    attempt.start_epoch_ms = measurement.start_epoch_ms;
+    attempt.end_epoch_ms = measurement.end_epoch_ms;
     attempt.phase = "validate";
     for (const pending of [contextReply, mainReply]) {
       const reply = await pending;
@@ -1832,20 +1999,20 @@ async function run(config) {
       ...timing,
       started: timing.started || Number.isFinite(refreshAttempts.at(-1)?.elapsed_ms),
       elapsed_ms: refreshAttempts.at(-1)?.elapsed_ms ?? timing.elapsed_ms,
-    })));
+    })), checkpoint);
   }
   async function measureCompanySwitch(target) {
-    await page.goto(address(modules[0]));
+    await navigate(address(modules[0]));
     await rendered(modules[0]);
     const actions = ["context", "brief"];
     const replies = [];
     const capture = reply => {
-      const url = new URL(reply.url());
+      const url = dashboardResponseTarget(reply);
       if (actions.some(action => url.pathname === `/api/dashboard/${action}`)
         && url.searchParams.get("company_id") === target.id) replies.push(reply);
     };
     const contextReply = waitForLater(page.waitForResponse(reply => {
-      const url = new URL(reply.url());
+      const url = dashboardResponseTarget(reply);
       return url.pathname === "/api/dashboard/context" && url.searchParams.get("company_id") === target.id;
     }));
     const failureStart = apiFailures.length;
@@ -1908,7 +2075,7 @@ async function run(config) {
     await page.waitForFunction(() => Number.isFinite(window.__stage9SwitchRenderedAt));
     const elapsed = await page.evaluate(() => window.__stage9SwitchRenderedAt - window.__stage9SwitchStart);
     const finalReply = action => replies.find(reply => {
-      const url = new URL(reply.url());
+      const url = dashboardResponseTarget(reply);
       return url.pathname === `/api/dashboard/${action}` && url.searchParams.get("period") === expectedPeriod;
     });
     const briefReply = finalReply("brief");
@@ -1941,12 +2108,12 @@ async function run(config) {
     ticket.searchParams.set("company_id", company.id);
     ticket.searchParams.set("period", company.period);
     const firstReplies = [response("context"), response("brief")];
-    await page.goto(ticket.href);
+    await navigate(ticket.href);
     const firstNavigation = await navigationRendered(modules[0]);
     let firstBriefPayload;
     for (const reply of await Promise.all(firstReplies)) {
       const payload = await verifyReply(reply, modules[0]);
-      if (new URL(reply.url()).pathname === "/api/dashboard/brief") firstBriefPayload = payload;
+      if (dashboardResponseTarget(reply).pathname === "/api/dashboard/brief") firstBriefPayload = payload;
     }
     assertNoBrowserFailures();
     if (config.no_jobs_panel) {
@@ -1962,7 +2129,7 @@ async function run(config) {
     Object.assign(partialNavigation, navigationBase);
     async function expandActivityGroup(row, snapshot, activate = () => row.locator(".event-copy").click()) {
       const replies = [];
-      const listener = reply => { if (new URL(reply.url()).pathname === "/api/dashboard/brief-group") replies.push(reply); };
+      const listener = reply => { if (dashboardResponseTarget(reply).pathname === "/api/dashboard/brief-group") replies.push(reply); };
       page.on("response", listener);
       try {
         const pending = response("brief-group");
@@ -1976,8 +2143,8 @@ async function run(config) {
         const groupKey = new URL(first.url()).searchParams.get("group_key");
         for (const reply of replies) {
           assert.equal(reply.status(), 200, "brief group: member continuation failed");
-          assert.equal(new URL(reply.url()).searchParams.get("group_key"), groupKey, "brief group: continuation changed selection");
-          payloads.push(verifyBriefGroup(await waitForStage9(() => reply.json(), "brief group: response JSON body"), new URL(reply.url()), company, snapshot));
+          assert.equal(dashboardResponseTarget(reply).searchParams.get("group_key"), groupKey, "brief group: continuation changed selection");
+          payloads.push(verifyBriefGroup(await waitForStage9(() => reply.json(), "brief group: response JSON body"), dashboardResponseTarget(reply), company, snapshot));
         }
         assert(payloads.length && payloads.at(-1).data.collections.members.page.has_more === false,
           "brief group: required member pages incomplete");
@@ -1989,7 +2156,7 @@ async function run(config) {
     if (config.activity_interactions) {
       const requests = [];
       page.on("request", request => {
-        const url = new URL(request.url());
+        const url = dashboardRequestTarget(request);
         if (url.pathname.startsWith("/api/dashboard/")) requests.push(url);
       });
       const businessRows = page.locator("#activity .event-row");
@@ -2037,12 +2204,12 @@ async function run(config) {
       assert.equal((await page.locator("#activity .voucher-card.is-open .voucher-reference strong").textContent()).trim(), `凭证 ${number}`);
       assert.deepEqual(requests, [], "activity: loaded voucher click fetched data");
       await expandActivityGroup(row, firstBriefPayload.snapshot_version, () => page.getByRole("button", { name: "按业务", exact: true }).click());
-      const businessReply = page.waitForResponse(reply => new URL(reply.url()).pathname === "/api/dashboard/business-status");
+      const businessReply = page.waitForResponse(reply => dashboardResponseTarget(reply).pathname === "/api/dashboard/business-status");
       await row.getByRole("button", { name: "业务进展", exact: true }).first().click();
       const reply = await businessReply;
       assert.equal(reply.status(), 200);
       const payload = await verifyReply(reply, modules.find(module => module.key === "brief"));
-      const target = new URL(reply.url());
+      const target = dashboardResponseTarget(reply);
       assert.equal(target.searchParams.get("company_id"), company.id);
       assert.equal(target.searchParams.get("period"), company.period);
       assert.equal(target.searchParams.get("expected_version"), firstBriefPayload.snapshot_version);
@@ -2084,8 +2251,9 @@ async function run(config) {
           assert.equal(await wait("alerts", () => page.locator("[role=alert]").count()), 0, `${module.key}: final required read failed`);
           while (layoutPageReplies.length) {
             const reply = layoutPageReplies.shift();
-            const pathname = new URL(reply.url()).pathname;
-            if (config.interaction_only && !retainedRefreshOnly && pathname !== `/api/dashboard/${module.action}`) continue;
+            const pathname = dashboardResponseTarget(reply).pathname;
+            if (config.interaction_only && !retainedRefreshOnly && pathname !== `/api/dashboard/${module.action}`
+              && !["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(pathname)) continue;
             const owner = modules.find(item => pathname === `/api/dashboard/${item.action}`) ?? module;
             const failure = apiFailures.find(item => item.request?.request_id === requestDiagnostics.get(reply.request())?.request_id);
             if (failure && allowedLocalAborts.has(failure)) {
@@ -2100,7 +2268,7 @@ async function run(config) {
             await wait("response validation", () => verifyReply(reply, owner));
           }
           const pending = requestDiagnostics.pending().filter(read => retainedRefreshOnly || !config.interaction_only
-            || ["/api/dashboard/context", `/api/dashboard/${module.action}`].includes(new URL(read.url).pathname));
+            || ["/api/dashboard/context", `/api/dashboard/${module.action}`, "/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(new URL(read.url).pathname));
           if (!pending.length) {
             if (retainedRefreshOnly && retainedCaptureActive) await verifyRetainedVisibleCollections(module);
             return;
@@ -2165,11 +2333,11 @@ async function run(config) {
           before, pending_before: requestDiagnostics.pending(), verified_reads: [], verified_cached_reads: [], status: "running" };
         localActions.push(diagnostic); currentLocalAction = actionId;
         const requestListener = request => {
-          const url = new URL(request.url());
+          const url = dashboardRequestTarget(request);
           if (url.pathname.startsWith("/api/dashboard/")) requests.push(url);
         };
         const replyListener = reply => {
-          if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) replies.push({ reply });
+          if (dashboardResponseTarget(reply).pathname === `/api/dashboard/${module.action}`) replies.push({ reply });
         };
         await wait("install observer", () => page.evaluate(() => {
           const header = document.querySelector(".module-header");
@@ -2231,7 +2399,7 @@ async function run(config) {
             verify: ({ reply }) => verifyReply(reply, module),
             onCurrent: async ({ reply }, payload) => {
               verifiedRequestRecord(requestDiagnostics, verifiedRequests, reply.request(), `${module.key}: local response`);
-              const url = new URL(reply.url());
+              const url = dashboardResponseTarget(reply);
               const readSection = url.searchParams.get("section");
               if (module.key === "funds" && readSection === "movements") {
                 assert.equal(payload.data?.selected_movement_account?.account_id, url.searchParams.get("movement_account_id"), "local account response: wrong selected account");
@@ -2374,11 +2542,11 @@ async function run(config) {
           const pending = [response("context"), response(module.action)];
           const destination = new URL(address(module));
           for (const [key, value] of Object.entries(query)) destination.searchParams.set(key, value);
-          await page.goto(destination.href);
+          await navigate(destination.href);
           let main;
           for (const reply of await Promise.all(pending)) {
             const payload = await verifyReply(reply, module);
-            if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) main = payload;
+            if (dashboardResponseTarget(reply).pathname === `/api/dashboard/${module.action}`) main = payload;
           }
           await rendered(module); await settleRequiredReads(module);
           return main;
@@ -2432,8 +2600,8 @@ async function run(config) {
         }
         async function retainedRefresh(spec) {
           spec.refreshEvidence = { status: "pending", verified_responses: [] };
-          const replies = [response("context"), waitForLater(page.waitForResponse(reply => {
-            const url = new URL(reply.url()); return matchesAction(url, spec.module.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor");
+          const replies = [response("context"), waitForLater(page.waitForResponse(async reply => {
+            const url = dashboardResponseTarget(reply); return matchesAction(url, spec.module.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor") && await readyReceipt(reply);
           }))];
           await page.locator('.module-header button.refresh').click();
           for (const reply of await Promise.all(replies)) {
@@ -2464,6 +2632,25 @@ async function run(config) {
           await settleRequiredReads(module);
           return payloads;
         }
+        async function detailChange(module, operation, visible) {
+          const replies = [], collect = reply => {
+            const target = dashboardResponseTarget(reply);
+            if ([`/api/dashboard/${module.action}`, "/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(target.pathname)) replies.push(reply);
+          };
+          page.on("response", collect);
+          try {
+            await operation(); await page.locator(visible).first().waitFor({ state: "visible" });
+            await settleRequiredReads(module);
+            const reads = [];
+            for (const reply of replies) {
+              const payload = verifiedPayloads.get(reply.request()) ?? await verifyReply(reply, module);
+              reads.push({ url: dashboardResponseTarget(reply).href, payload });
+            }
+            assert(reads.length, "first-open detail has no actual verified response");
+            verifyRetainedAuxiliaryComplete(reads);
+            return reads;
+          } finally { page.off("response", collect); }
+        }
         async function selectFilter(module, value) {
           const label = module.key === "employees" ? "筛选人员" : "筛选资产";
           if (await page.getByRole("button", { name: label, exact: true }).getAttribute("data-value") !== value)
@@ -2492,14 +2679,14 @@ async function run(config) {
             },
             perform: async function () {
               const field = module.key === "employees" ? "employee_id" : "asset_id", requests = [];
-              const collect = request => { if (new URL(request.url()).pathname.startsWith("/api/dashboard/")) requests.push(new URL(request.url())); };
-              const pending = [response("context"), waitForLater(page.waitForResponse(reply => new URL(reply.url()).pathname === `/api/dashboard/${module.action}` && new URL(reply.url()).searchParams.get(field) === identity))];
+              const collect = request => { if (dashboardRequestTarget(request).pathname.startsWith("/api/dashboard/")) requests.push(dashboardRequestTarget(request)); };
+              const pending = [response("context"), waitForLater(page.waitForResponse(reply => dashboardResponseTarget(reply).pathname === `/api/dashboard/${module.action}` && dashboardResponseTarget(reply).searchParams.get(field) === identity))];
               page.on("request", collect);
               try {
-                await page.goto(this.url);
+                await navigate(this.url);
                 for (const reply of await Promise.all(pending)) {
                   const payload = await verifyReply(reply, module);
-                  if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) verifyExactInteractionTarget(payload, new URL(reply.url()), company, module.key, identity);
+                  if (dashboardResponseTarget(reply).pathname === `/api/dashboard/${module.action}`) verifyExactInteractionTarget(payload, dashboardResponseTarget(reply), company, module.key, identity);
                 }
                 await rendered(module);
                 await page.locator(this.counts[0][0]).waitFor({ state: "visible" });
@@ -2528,6 +2715,48 @@ async function run(config) {
           }, perform: () => change(funds, () => page.locator(".fund-account-index > button").nth(index).click(), "movements"),
           verify: async () => assert.equal(await page.locator(".fund-account-index > button").nth(index).getAttribute("aria-current"), "true"),
         });
+        specs.push({ key: "brief_voucher_exact_target", module: brief, root: "#activity", navigation: true, requireNewResponse: true,
+          counts: [["#selected-voucher .voucher-inline-detail", 1]], position: { selector: "#selected-voucher", require_focus: false },
+          prepare: async function () {
+            await openModule(brief);
+            const payloads = await change(brief, () => page.getByRole("button", { name: "按凭证", exact: true }).click(), "vouchers");
+            this.voucher = payloads.find(payload => payload.data.collections.vouchers)?.data.collections.vouchers.items[0];
+            assert(this.voucher, "brief: no real voucher for exact navigation");
+            const target = new URL(address(brief)); target.searchParams.set("voucher", this.voucher.voucher_version_id); this.url = target.href;
+            return true;
+          }, perform: async function () {
+            const observed = [], collect = request => { if (dashboardRequestTarget(request).pathname.startsWith("/api/dashboard/")) observed.push(dashboardRequestTarget(request)); };
+            const pending = [response("context"), response("brief")];
+            page.on("request", collect);
+            try {
+              await navigate(this.url);
+              for (const reply of await Promise.all(pending)) {
+                const payload = await verifyReply(reply, brief);
+                if (dashboardResponseTarget(reply).pathname === "/api/dashboard/brief") {
+                  assert.equal(payload.data.focused_voucher?.voucher_version_id, this.voucher.voucher_version_id);
+                  assert.deepEqual(payload.data.focused_voucher, this.voucher);
+                }
+              }
+              await page.locator("#selected-voucher .voucher-inline-detail").waitFor({ state: "visible" });
+              await settleRequiredReads(brief);
+              for (const target of observed) {
+                assert.equal(target.searchParams.get("company_id"), company.id);
+                if (target.pathname === "/api/dashboard/context") continue;
+                assert.equal(target.pathname, "/api/dashboard/brief");
+                assert.equal(target.searchParams.get("voucher_version_id"), this.voucher.voucher_version_id);
+                assert(!target.searchParams.has("section") && !target.searchParams.has("cursor"), "exact voucher searched pages");
+              }
+            } finally { page.off("request", collect); }
+          }, verify: async function () {
+            const rows = await page.locator("#selected-voucher .voucher-inline-detail tbody tr").evaluateAll(nodes => nodes.map(node => ({
+              code: node.querySelector("td[data-label='科目'] small")?.textContent.trim(),
+              account: node.querySelector("td[data-label='科目'] strong")?.textContent.trim(),
+              debit: node.querySelector("td[data-label='借方']")?.textContent.trim(),
+              credit: node.querySelector("td[data-label='贷方']")?.textContent.trim(),
+            })));
+            verifyVisibleVoucherRows(rows, this.voucher);
+          },
+        });
         for (const section of ["activity", "open_items"]) {
           const root = section === "activity" ? "#activity" : "#open-items", buttons = section === "activity" ? `${root} .index button` : `${root} .open-index button`;
           let expectedCount;
@@ -2551,8 +2780,8 @@ async function run(config) {
             await rememberRetained(this); return true;
           }, perform: async function () {
             this.refreshEvidence = { status: "pending", verified_responses: [] };
-            const replies = [waitForLater(response("context")), waitForLater(page.waitForResponse(reply => {
-              const url = new URL(reply.url()); return matchesAction(url, employees.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor");
+            const replies = [waitForLater(response("context")), waitForLater(page.waitForResponse(async reply => {
+              const url = dashboardResponseTarget(reply); return matchesAction(url, employees.action) && !url.searchParams.has("section") && !url.searchParams.has("cursor") && await readyReceipt(reply);
             }))];
             await page.locator('.module-header button.refresh').click();
             for (const reply of await Promise.all(replies)) {
@@ -2583,6 +2812,146 @@ async function run(config) {
               assert.equal(await page.locator(".voucher-card").count(), this.counts[0][1]);
               if (all) assert.equal(new Set(await page.locator(".voucher-reference strong").allTextContents()).size, voucherCount, "all vouchers lost or duplicated identities");
               else assert((await page.locator(".voucher-pagination strong").textContent()).trim().startsWith("2 /"));
+            },
+          });
+        }
+        for (const section of ["activity", "open_items"]) {
+          const root = section === "activity" ? "#activity" : "#open-items";
+          const row = `${root} ${section === "activity" ? ".event-row" : ".open-event-row"}[role=button]`;
+          specs.push({ key: `brief_${section}_members_first_open`, module: brief, root, counts: [],
+            requireNewResponse: true, auxiliaryActions: ["brief-group"], trigger: `${row}:first-of-type`,
+            prepare: async function () {
+              const main = await openModule(brief);
+              await change(brief, () => page.getByRole("button", { name: "按业务", exact: true }).click());
+              const categories = section === "activity" ? main.data.activity_groups : main.data.open_items.categories.filter(item => item.count);
+              const size = item => section === "activity" ? item.event_count : item.count;
+              const buttons = page.locator(section === "activity" ? "#activity .index button" : "#open-items .open-index button");
+              let largestRow, selected;
+              // Category totals are public upper bounds. Inspect another category
+              // only while it can contain a larger group, entirely before timing.
+              for (const category of categories.map((item, index) => ({ bound: size(item), index })).toSorted((a, b) => b.bound - a.bound)) {
+                if (largestRow && category.bound <= largestRow.count) break;
+                await change(brief, () => buttons.nth(category.index).click()); selected = category.index;
+                const candidate = await page.locator(row).evaluateAll(nodes => nodes.map(node => ({
+                  count: Number(node.querySelector(".business-list-matter small").textContent.trim().split(" ")[0]),
+                  index: Array.from(node.parentElement.children).indexOf(node),
+                })).toSorted((a, b) => b.count - a.count)[0]);
+                if (candidate && (!largestRow || candidate.count > largestRow.count)) largestRow = { ...candidate, category: category.index };
+              }
+              assert(largestRow?.count > 20, `${section}: fixture must exercise real member continuation`);
+              if (selected !== largestRow.category) await change(brief, () => buttons.nth(largestRow.category).click());
+              this.memberCount = largestRow.count; this.trigger = `${row}:nth-child(${largestRow.index + 1})`;
+              return true;
+            }, perform: async function () {
+              this.reads = await detailChange(brief, () => page.locator(this.trigger).click(), `${root} .group-members .member-row`);
+            }, verify: async function () {
+              const members = retainedOrderedItems(this.reads, "/api/dashboard/brief-group", "members");
+              assert(members.length, `${section}: empty group members`);
+              assert.equal(members.length, this.memberCount, `${section}: opened another group or missed members`);
+              assert.equal(await page.locator(`${root} .group-members .member-row`).count(), members.length);
+              assert.equal(await page.locator(`${root} .business-detail-panel`).count(), 0, "group first-open preloaded member progress");
+            },
+          });
+        }
+        specs.push({ key: "brief_business_progress_first_open", module: brief, root: "#activity", counts: [["#activity .business-detail-panel", 1]],
+          requireNewResponse: true, auxiliaryActions: ["business-status"], trigger: "#activity .group-members .member-row > button",
+          prepare: async function () {
+            await openModule(brief);
+            await change(brief, () => page.getByRole("button", { name: "按业务", exact: true }).click());
+            await change(brief, () => page.locator("#activity .index button").first().click());
+            await detailChange(brief, () => page.locator('#activity .event-row[role=button]').first().click(), "#activity .group-members .member-row");
+            const target = page.locator("#activity .group-members").getByRole("button", { name: "业务进展", exact: true }).first();
+            assert(await target.count(), "progress: no actual member entry");
+            return true;
+          }, perform: async function () {
+            this.reads = await detailChange(brief, () => page.locator(this.trigger).first().click(), "#activity .business-detail-panel");
+          }, verify: async function () {
+            assert(this.reads.some(read => new URL(read.url).pathname === "/api/dashboard/business-status"));
+            assert.equal(await page.locator("#activity .business-detail-panel").count(), 1);
+          },
+        });
+        const laborCard = '[aria-label="个人劳务明细记录"] .employee-card';
+        specs.push({ key: "employees_labor_sources_first_open", module: employees, root: refreshRoots.employees, counts: [],
+          requireNewResponse: true, trigger: `${laborCard}:first-of-type > summary`,
+          prepare: async function () { await openModule(employees); assert(await page.locator(laborCard).count(), "labor: no actual contractor"); return true; },
+          perform: async function () {
+            this.reads = await detailChange(employees, () => page.locator(laborCard).first().locator(":scope > summary").click(), `${laborCard} .labor-source-record`);
+          }, verify: async function () {
+            const sources = retainedOrderedItems(this.reads, "/api/dashboard/employees", "labor_sources");
+            assert(sources.length, "labor: source detail empty");
+            assert.equal(await page.locator(`${laborCard} .labor-source-record`).count(), sources.length);
+            assert.equal(this.reads.at(-1).payload.data.collections.labor_sources.page.has_more, false);
+            for (const source of sources) {
+              const text = await page.locator(`[data-source-id=${JSON.stringify(source.source_id)}]`).textContent();
+              for (const field of ["gross_fen", "booked_tax_fen", "net_fen"]) assert(text.includes(formatFen(source[field])), `labor: ${field} missing`);
+            }
+          },
+        });
+        specs.push({ key: "employees_labor_payments_first_open", module: employees, root: refreshRoots.employees, counts: [[`${laborCard} .business-detail-panel`, 1]],
+          requireNewResponse: true, auxiliaryActions: ["business-status"], trigger: `${laborCard} .labor-source-payments > summary`,
+          prepare: async function () {
+            await openModule(employees);
+            await detailChange(employees, () => page.locator(laborCard).first().locator(":scope > summary").click(), `${laborCard} .labor-source-record`);
+            return true;
+          }, perform: async function () {
+            this.reads = await detailChange(employees, () => page.locator(`${laborCard} .labor-source-payments > summary`).first().click(), `${laborCard} .business-detail-panel`);
+          }, verify: async function () { assert(this.reads.some(read => new URL(read.url).pathname === "/api/dashboard/business-status")); },
+        });
+        specs.push({ key: "funds_bank_batch_first_open", module: funds, root: "#bank-details", counts: [], trigger: ".bank-batch-trigger",
+          prepare: async function () {
+            const main = await openModule(funds);
+            const payloads = await change(funds, () => page.locator("#fund-detail-tab-bank").click());
+            assert(await page.locator(".bank-batch-trigger").count(), "bank: no actual reconciled multi-person batch");
+            const rows = [main, ...payloads].filter(payload => payload.data.collections.statements).at(-1).data.collections.statements.items;
+            const largest = Math.max(...rows.map(item => item.batch_payment?.items.length ?? 0));
+            const index = rows.findIndex(item => item.batch_payment?.items.length === largest);
+            this.batch = rows[index]?.batch_payment;
+            assert(this.batch?.items.length > 1, "bank: rendered batch lacks exact response identity");
+            this.trigger = `.bank-activity-item:nth-child(${index + 1}) .bank-batch-trigger`;
+            assert(await page.locator(this.trigger).count(), "bank: response batch missing from rendered row");
+            this.counts = [[".bank-batch-detail .bank-batch-items > li", this.batch.items.length]]; return true;
+          }, perform: function () { return change(funds, () => page.locator(this.trigger).click()); },
+          verify: async function () {
+            const items = await page.locator(".bank-batch-detail .bank-batch-items > li").evaluateAll(nodes => nodes.map(node => [node.querySelector("strong").textContent.trim(), node.querySelector("b").textContent.trim()]));
+            assert.deepEqual(items, this.batch.items.map(item => [item.party, formatFen(item.amount_fen)]));
+            assert((await page.locator(".bank-batch-heading-meta").textContent()).includes(formatFen(this.batch.total_fen)));
+          },
+        });
+        const reports = modules.find(item => item.key === "reports");
+        for (let index = 0; index < 3; index++) for (const mode of ["statement", "template_on", "template_off"]) {
+          const template = mode === "template_on";
+          specs.push({ key: `reports_${index + 1}_${mode}`, module: reports, root: refreshRoots.reports, counts: [["#report-full", 1]],
+            trigger: mode === "statement" ? `#report-statement-button-${index}` : ".template-switch",
+            prepare: async function () {
+              const main = await openModule(reports); this.statement = main.statements[index]; assert(this.statement, "reports: required statement missing");
+              if (mode !== "statement") {
+                await change(reports, () => page.locator(`#report-statement-button-${index}`).click());
+                if (mode === "template_off") await change(reports, () => page.locator(".template-switch input").check());
+              }
+              return true;
+            }, perform: () => change(reports, () => mode === "statement" ? page.locator(`#report-statement-button-${index}`).click()
+              : template ? page.locator(".template-switch input").check() : page.locator(".template-switch input").uncheck()),
+            verify: async function () {
+              assert.equal(await page.locator(`#report-statement-button-${index}`).getAttribute("aria-selected"), "true");
+              assert.equal(await page.locator(".template-switch input").isChecked(), template);
+              const expectedRows = this.statement.rows.filter(row => template || row.has_amount || row.is_total || Object.values(row.values).includes(null));
+              const expected = expectedRows.map(row => this.statement.columns.map(column => {
+                const value = row.values[column.key];
+                if (value === null) return "—";
+                const formatted = formatFen(value);
+                return template ? formatted.replace("¥", "").replace("−", "-") : formatted;
+              }));
+              if (template) {
+                const actual = await page.locator(".tax-template-sheet .desktop-template-table td.line").evaluateAll(nodes => nodes
+                  .filter(node => /^\d+$/.test(node.textContent.trim()))
+                  .map(node => ({ line: Number(node.textContent.trim()), values: [node.nextElementSibling.textContent.trim(), node.nextElementSibling.nextElementSibling.textContent.trim()] })));
+                assert.equal(actual.length, expectedRows.length, "report: template omitted or duplicated lines");
+                assert.deepEqual(actual.toSorted((a, b) => a.line - b.line), expectedRows.map((row, offset) => ({ line: row.line, values: expected[offset] })).toSorted((a, b) => a.line - b.line), "report: full visible template amounts differ");
+              } else {
+                const actual = await page.locator("#report-full .table-wrap > table tbody tr").evaluateAll(nodes => nodes
+                  .map(node => Array.from(node.querySelectorAll("td.number")).map(cell => cell.textContent.trim())));
+                assert.deepEqual(actual, expected, "report: complete visible statement amounts differ");
+              }
             },
           });
         }
@@ -2679,9 +3048,9 @@ async function run(config) {
         }
         function requiredListener(spec, required) {
           return request => {
-            const pathname = new URL(request.url()).pathname;
+            const pathname = dashboardRequestTarget(request).pathname;
             if (pathname === `/api/dashboard/${spec.module.action}` || (spec.navigation || spec.refresh) && pathname === "/api/dashboard/context"
-              || retainedRefreshOnly && ["/api/dashboard/brief-group", "/api/dashboard/business-status"].includes(pathname)) required.add(request);
+              || (retainedRefreshOnly || spec.auxiliaryActions?.length) && (spec.auxiliaryActions ?? ["brief-group", "business-status"]).some(action => pathname === `/api/dashboard/${action}`)) required.add(request);
           };
         }
         function verifiedInteractionReads(spec, required) {
@@ -2690,12 +3059,12 @@ async function run(config) {
             const record = requestDiagnostics.get(request);
             if (apiFailures.some(failure => failure.request?.request_id === record?.request_id && allowedLocalAborts.has(failure))) continue;
             verifiedRequestRecord(requestDiagnostics, verifiedRequests, request, spec.key);
-            const target = new URL(request.url());
+            const target = dashboardRequestTarget(request);
             assert.equal(target.origin, new URL(config.origin).origin, `${spec.key}: required response origin changed`);
-            assert(retainedRefreshOnly ? interactionScopeAllows(target, { action: spec.module.action, company_id: company.id, period: company.period,
-              snapshot: refreshProjections.get(spec.module.key)?.snapshot, quarter, retained_refresh: true })
-              : matchesAction(target, target.pathname === "/api/dashboard/context" ? "context" : spec.module.action), `${spec.key}: required response scope changed`);
-            reads.push({ request_id: record.request_id, status: "verified", url: diagnosticUrl(request.url()) });
+            assert(interactionScopeAllows(target, { action: spec.module.action, company_id: company.id, period: company.period,
+              snapshot: refreshProjections.get(spec.module.key)?.snapshot, quarter, retained_refresh: retainedRefreshOnly,
+              auxiliary_actions: spec.auxiliaryActions, business_status_versions: [verifiedPayloads.get(request)?.snapshot_version] }), `${spec.key}: required response scope changed`);
+            reads.push({ request_id: record.request_id, status: "verified", url: diagnosticUrl(target.href) });
           }
           return reads;
         }
@@ -2761,7 +3130,10 @@ async function run(config) {
             ...(voucherTailDiagnostic ? { diagnostic_voucher_tail: true } : {}),
             position: spec.position ? { ...spec.position, expected: calibratedPosition } : undefined,
             cycle_id: spec.key, require_new_response: Boolean(spec.requireNewResponse), scope: { action: spec.module.action, company_id: company.id, period: company.period, snapshot: refreshProjections.get(spec.module.key)?.snapshot,
-              ...(retainedRefreshOnly ? { retained_refresh: true, quarter } : {}) } };
+              quarter, auxiliary_actions: spec.auxiliaryActions,
+              business_status_versions: [...new Set([...calibratedRequests].filter(request => dashboardRequestTarget(request).pathname === "/api/dashboard/business-status")
+                .map(request => verifiedPayloads.get(request)?.snapshot_version))],
+              ...(retainedRefreshOnly ? { retained_refresh: true } : {}) } };
           selection.read_plan = { cycle_id: selection.cycle_id, scope: { ...selection.scope }, required: interactionReadMultiset(calibratedReads),
             cache_verified: !selection.require_new_response && calibratedReads.length === 0 && localActions.at(-1)?.status === "passed" };
           assert(verifiedReadCycleReady(selection, { ...selection.read_plan, cycle_id: selection.cycle_id, status: "verified", pending: 0, failed: 0, required_reads: calibratedReads }), `${spec.key}: no verified network/cache calibration`);
@@ -2798,6 +3170,9 @@ async function run(config) {
               attempt.phase = "render";
               await page.waitForFunction(() => window.__stage9Interaction?.end !== null && window.__stage9Interaction?.end !== undefined || window.__stage9Interaction?.error);
               const state = await page.evaluate(() => window.__stage9Interaction);
+              const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+              attempt.start_epoch_ms = timeOrigin + state.start;
+              attempt.end_epoch_ms = timeOrigin + state.end;
               if (trace) { attempt.renderer_trace = await trace.finish(); trace = null; }
               if (state) assert(!state.error && Number.isFinite(state.end), state.error ?? "missing interaction endpoint");
               const milliseconds = state.end - state.start;
@@ -2847,13 +3222,14 @@ async function run(config) {
               const state = await page.evaluate(() => window.__stage9Interaction);
               if (spec.refresh) result.attempts.at(-1).refresh_evidence = spec.refreshEvidence;
               return { started: Boolean(state?.started), elapsed_ms: state?.end === null ? await page.evaluate(() => performance.now() - window.__stage9Interaction.start) : state?.end - state?.start };
-            }); } catch { /* Keep every attempted sample, including failed and slow ones. */ }
+            }, checkpoint); } catch { /* Keep every attempted sample, including failed and slow ones. */ }
           }
           const timings = result.attempts.filter(item => item.kind === "sample").map(item => item.elapsed_ms);
           const complete = result.attempts.every(item => item.status === "complete");
           Object.assign(result, { status: complete ? "measured" : "failed", samples: timings, ...stage9TimingSummary(timings, 600, complete) });
         }
-        const interactionReport = { status: Object.values(interactionResults).some(value => value.status === "failed") ? "failed" : Object.values(interactionResults).some(value => value.over_target_count) ? "over_target" : "passed", target_ms: 600, measurement_mode: "interaction_timing",
+        assertNoBrowserFailures();
+        const interactionReport = { browser_environment: browserEnvironment, resource_failures: resourceFailures, status: Object.values(interactionResults).some(value => value.status === "failed") ? "failed" : Object.values(interactionResults).some(value => value.over_target_count) ? "over_target" : "passed", target_ms: 600, measurement_mode: "interaction_timing",
           measurement_scope: retainedRefreshOnly ? "retained_refresh_state" : "existing_interaction", default_page_acceptance: false, warmups, sample_count: samples,
           interactions: interactionResults, interaction_attempts: interactionAttempts, local_actions: localActions, obsolete_cancellations: obsoleteCancellations,
           unverified: Object.entries(interactionResults).filter(([, value]) => value.status === "unverified").map(([key]) => key) };
@@ -2873,11 +3249,11 @@ async function run(config) {
           layoutVerifiedReads.length = 0;
           layoutMovementAccount = null;
           layoutAccounts.length = 0;
-          await page.goto(address(module));
+          await navigate(address(module));
           let mainPayload;
           for (const reply of await Promise.all(expected)) {
             const payload = await verifyReply(reply, module);
-            if (new URL(reply.url()).pathname === `/api/dashboard/${module.action}`) mainPayload = payload;
+            if (dashboardResponseTarget(reply).pathname === `/api/dashboard/${module.action}`) mainPayload = payload;
           }
           await rendered(module);
           await checkOwnerLayout(module, "default");
@@ -3031,14 +3407,14 @@ async function run(config) {
             const digest = mainPayload.data.owner_review_request.preview_digest;
             const pending = response("close-review");
             const markAllowed = request => {
-              const url = new URL(request.url());
+              const url = dashboardRequestTarget(request);
               if (matchesAction(url, "close-review") && url.searchParams.get("preview_digest") === digest) allowedCloseReviewRequests.add(request.url());
             };
             page.on("request", markAllowed);
             try {
               await page.getByRole("button", { name: "查看本次核对内容", exact: true }).click();
               const reply = await pending, review = await verifyReply(reply, module);
-              assert.equal(new URL(reply.url()).searchParams.get("preview_digest"), digest, "review: requested another preview");
+              assert.equal(dashboardResponseTarget(reply).searchParams.get("preview_digest"), digest, "review: requested another preview");
               assert.equal(review.preview_digest, digest, "review: displayed another preview");
               await page.locator(".close-review").waitFor();
               await checkOwnerLayout(module, "on_demand_review");
@@ -3106,7 +3482,7 @@ async function run(config) {
     for (const module of modules) {
       const expected = [response("context"), response(module.action)];
       result[module.key] = { samples: [] };
-      await page.goto(address(module));
+      await navigate(address(module));
       coldOpen[module.key] = (await navigationRendered(module)).elapsed_ms;
       partialNavigation.cold_open_ms = coldOpen;
       for (const reply of await Promise.all(expected)) await verifyReply(reply, module);
@@ -3138,12 +3514,13 @@ async function run(config) {
     const thresholdResults = stage9RefreshThresholdResults(result, samples);
     return {
       status: thresholdResults[refreshTargetMs].status, target_ms: refreshTargetMs, threshold_results: thresholdResults,
-      company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
+      browser_environment: browserEnvironment, resource_failures: resourceFailures, company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
       refresh_attempts: refreshAttempts,
       navigation: { ...navigationBase, cold_open_ms: coldOpen, company_switch: companySwitch },
     };
   } catch (error) {
     failureReport = {
+      browser_environment: browserEnvironment,
       status: "failed", message: sanitize(error?.message || error),
       ...(!config.interaction_only && !config.navigation_only && !config.layout_only
         ? { target_ms: refreshTargetMs, threshold_results: stage9RefreshThresholdResults(result, samples, false) } : {}),
@@ -3152,7 +3529,7 @@ async function run(config) {
       interactions: interactionResults, interaction_attempts: interactionAttempts,
       refresh_attempts: refreshAttempts,
       navigation: partialNavigation, warmups, sample_count: samples,
-      page_errors: pageErrors, api_failures: apiFailures,
+      page_errors: pageErrors, api_failures: apiFailures, resource_failures: resourceFailures,
       layouts: layoutChecks, layout_progress: layoutProgress,
       local_actions: localActions, pending_api_requests: requestDiagnostics.pending(),
       obsolete_cancellations: obsoleteCancellations,
@@ -3185,3 +3562,6 @@ Object.assign(module.exports, { createRetainedResponseBodies, verifyRetainedVisi
 Object.assign(module.exports, { voucherTailDiagnosticSelection });
 
 Object.assign(module.exports, { verifyS9WirePayload, recordS9ActualWire });
+
+Object.assign(module.exports, { dashboardReadTarget, dashboardRequestTarget, dashboardResponseTarget, observedDashboardResource, installDashboardReadObserver });
+Object.assign(module.exports, { createStaticResourceObserver });

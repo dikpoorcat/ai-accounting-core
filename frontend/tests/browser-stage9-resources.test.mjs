@@ -80,3 +80,17 @@ test("incomplete or inconsistent resource timestamps are diagnostic, never negat
   assert.ok(invalid.diagnostics.includes("invalid_measurement_timestamps"));
   assert.equal(invalid.render_tail_ms, null);
 });
+
+test('a real retry plus its preparing-to-ready GET keeps both actual resources and the final tail', () => {
+  const retry = resource('brief/retry', '', { name: 'https://private-host.invalid/api/dashboard/brief/retry', startTime: 110, responseEnd: 150 });
+  const get = resource('brief', '&period=2026-09', { startTime: 160, responseEnd: 200 });
+  const reads = [{ wire_url: retry.name, url: get.name, start: 109, state: 'preparing', status: 200 },
+    { wire_url: get.name, url: get.name, start: 159, state: 'ready', status: 200 }];
+  const result = captureRefreshResources([resource('context', ''), retry, get], selection, 100, 220, 1700000000000, reads);
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.render_tail_ms, 20);
+  assert.deepEqual(result.resources.brief.map(item => item.path), ['/api/dashboard/brief/retry', '/api/dashboard/brief']);
+  assert.equal(result.resources.brief.length, 2);
+  const unrelated = reads.map(item => ({ ...item, url: item.url.replace('company_id=synthetic', 'company_id=other') }));
+  assert.deepEqual(captureRefreshResources([resource('context', ''), retry, get], selection, 100, 220, 1700000000000, unrelated).resources.brief, []);
+});

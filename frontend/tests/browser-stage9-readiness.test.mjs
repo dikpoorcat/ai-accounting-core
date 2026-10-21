@@ -294,8 +294,8 @@ function retainedFundsCacheFixture() {
   const main = { contract_verified: true, url: "http://localhost/api/dashboard/funds?company_id=B&period=2026-01",
     payload: { snapshot_version: "snap-B", data: { selected_movement_account: account } } };
   const detail = { contract_verified: true,
-    url: "http://localhost/api/dashboard/business-status?company_id=B&period=2026-01&expected_version=snap-B&subject_id=subject-B&settlement_view=historical",
-    payload: { snapshot_version: "snap-B", read_context: { company_id: "B" }, selected_period: { key: "2026-01" },
+    url: "http://localhost/api/dashboard/business-status?company_id=B&period=2026-01&subject_id=subject-B&settlement_view=historical",
+    payload: { snapshot_version: "own-detail-version", read_context: { company_id: "B" }, selected_period: { key: "2026-01" },
       data: { identity: { subject_id: "subject-B" }, settlement_view: "historical", detail_scope: null,
         collections: { settlement_events: { items: [{ id: "settlement-B" }], page: { filtered_count: 1, has_more: false, next_cursor: null } } } } } };
   return { main, detail, binding };
@@ -364,10 +364,27 @@ test("retained read plan includes real auxiliary chain only under exact company 
   assert(!interactionScopeAllows(group, { ...scope, action: "employees" }));
   assert(!interactionScopeAllows(group, { ...scope, action: "funds" }));
   const detail = new URL(group); detail.pathname = "/api/dashboard/business-status";
+  detail.searchParams.set("subject_id", "real-subject");
   assert(interactionScopeAllows(detail, { ...scope, action: "funds" }));
   const reports = new URL("http://localhost/api/dashboard/quarterly-report?company_id=company-B&year=2026&quarter=1");
   assert(interactionScopeAllows(reports, { ...scope, action: "quarterly-report" }));
   reports.searchParams.set("quarter", "2"); assert(!interactionScopeAllows(reports, { ...scope, action: "quarterly-report" }));
+});
+
+test("business progress first-open uses its own verified version and continuation cannot borrow the parent version", () => {
+  const scope = { action: "employees", company_id: "company-B", period: "2026-01", snapshot: "parent-version",
+    auxiliary_actions: ["business-status"], business_status_versions: ["detail-version"] };
+  const first = new URL("http://localhost/api/dashboard/business-status?company_id=company-B&period=2026-01&subject_id=actual-source&settlement_view=historical");
+  assert(interactionScopeAllows(first, scope));
+  const next = new URL(first); next.searchParams.set("cursor", "actual-cursor");
+  assert(!interactionScopeAllows(next, scope), "continuation without its own expected version");
+  next.searchParams.set("expected_version", "detail-version"); assert(interactionScopeAllows(next, scope));
+  for (const [key, value] of [["company_id", "other"], ["period", "2026-02"], ["expected_version", "parent-version"]]) {
+    const wrong = new URL(next); wrong.searchParams.set(key, value); assert(!interactionScopeAllows(wrong, scope));
+  }
+  const unrelated = new URL(first); unrelated.pathname = "/api/dashboard/brief-group";
+  assert(!interactionScopeAllows(unrelated, scope));
+  assert(!interactionScopeAllows(first, { ...scope, auxiliary_actions: [] }));
 });
 
 test("retained auxiliary response cannot pass just a schema version and plausible scope", () => {
@@ -1145,6 +1162,17 @@ function observerFixture({ projection = true, brief = false, employees = false, 
     network(query = "") { resources = ["context", selected.action].map(action => ({
       name: `https://synthetic.invalid/api/dashboard/${action}?company_id=synthetic&period=2026-09${action === 'context' ? '' : query}`,
       startTime: 101, responseEnd: 110 })); },
+    retryNetwork(state = 'ready', thenGet = false) {
+      const target = `https://synthetic.invalid/api/dashboard/${selected.action}?company_id=synthetic&period=2026-09`;
+      const wire = `https://synthetic.invalid/api/dashboard/${selected.action}/retry`;
+      window.__stage9DashboardReads = [{ wire_url: wire, url: target, start: 101, state, status: 200 }];
+      resources = [{ name: 'https://synthetic.invalid/api/dashboard/context?company_id=synthetic', startTime: 101, responseEnd: 110 },
+        { name: wire, startTime: 102, responseEnd: 110 }];
+      if (thenGet) {
+        window.__stage9DashboardReads.push({ wire_url: target, url: target, start: 150, state: 'ready', status: 200 });
+        resources.push({ name: target, startTime: 151, responseEnd: 155 });
+      }
+    },
     frame(time) { now = time; assert(frames.length); frames.shift()(); } };
 }
 
@@ -1167,6 +1195,62 @@ test("expanded hot refresh requires a new full root response, not a continuation
   assert.equal(f.window.__stage9RenderedAt, null);
   f.network(); f.frame(160); f.frame(180);
   assert.equal(f.window.__stage9RenderedAt, 180);
+});
+
+test('a real ready POST retry can finish without any manufactured root GET', () => {
+  const f = observerFixture({ requireRoot: true });
+  f.busy(); f.ready(); f.retryNetwork();
+  f.frame(120); assert.equal(f.window.__stage9RenderedAt, null);
+  f.frame(140); assert.equal(f.window.__stage9RenderedAt, 140);
+});
+
+test('a preparing POST retry cannot finish until the actual ready GET and two frames', () => {
+  const f = observerFixture({ requireRoot: true });
+  f.busy(); f.ready(); f.retryNetwork('preparing');
+  f.frame(120); f.frame(140); assert.equal(f.window.__stage9RenderedAt, null);
+  f.retryNetwork('preparing', true);
+  f.frame(160); assert.equal(f.window.__stage9RenderedAt, null);
+  f.frame(180); assert.equal(f.window.__stage9RenderedAt, 180);
+});
+
+test('POST body scope uses the same frozen delivery and amount checks as GET', () => {
+  const { dashboardRequestTarget } = createRequire(import.meta.url)('./browser-stage9-hot-refresh.cjs');
+  const original = deliveryFixture('brief', 'brief');
+  const request = (body, method = 'POST') => ({ url: () => 'https://synthetic.invalid/api/dashboard/brief/retry', method: () => method, postDataJSON: () => body });
+  const body = { company_id: original.selected.id, period: original.selected.period, limit: '20' };
+  const target = dashboardRequestTarget(request(body));
+  assert.equal(verifyS9WirePayload(generatedValidators, target, original.wire, original.selected, '2026-Q1'), original.wire.response);
+  for (const changed of [{ ...body, company_id: 'another-company' }, { ...body, period: '2027-01' }])
+    assert.throws(() => verifyS9WirePayload(generatedValidators, dashboardRequestTarget(request(changed)), original.wire, original.selected, '2026-Q1'));
+  assert.throws(() => dashboardRequestTarget(request(body, 'GET')));
+  assert.throws(() => dashboardRequestTarget(request({ ...body, section: 'activity' })));
+  const preparing = { schema_version: 6, company_id: original.selected.id, period: original.selected.period, model_version: null, state: 'preparing', retry_after_ms: 100 };
+  assert.equal(verifyS9WirePayload(generatedValidators, target, preparing, original.selected, '2026-Q1', true), null);
+  assert.throws(() => verifyS9WirePayload(generatedValidators, target, { ...preparing, company_id: 'another-company' }, original.selected, '2026-Q1', true));
+  const wrong = structuredClone(original.wire); wrong.response.data.financial_position.assets_fen = '1.1';
+  assert.throws(() => verifyS9WirePayload(generatedValidators, target, wrong, original.selected, '2026-Q1'));
+});
+
+test('the browser retry observer forwards exactly one real fetch and consumes no duplicate JSON', async () => {
+  const { installDashboardReadObserver } = createRequire(import.meta.url)('./browser-stage9-hot-refresh.cjs');
+  const calls = [], wire = { state: 'ready' };
+  let jsonCalls = 0;
+  const window = { fetch: async (...args) => { calls.push(args); return { status: 200, json: async () => { jsonCalls++; return wire; } }; } };
+  const context = vm.createContext({ window, location: { href: 'https://synthetic.invalid/' }, URL, performance: { now: () => 100 } });
+  vm.runInContext(`(${installDashboardReadObserver.toString()})()`, context);
+  const options = { method: 'POST', body: JSON.stringify({ company_id: 'synthetic', period: '2026-09' }) };
+  const response = await window.fetch('/api/dashboard/brief/retry', options);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], ['/api/dashboard/brief/retry', options]);
+  assert.equal(jsonCalls, 0);
+  assert.equal(window.__stage9DashboardReads[0].state, 'pending');
+  assert.equal(await response.json(), wire);
+  assert.equal(jsonCalls, 1);
+  const observed = window.__stage9DashboardReads[0];
+  assert.equal(observed.state, 'ready');
+  assert.equal(observed.wire_url, 'https://synthetic.invalid/api/dashboard/brief/retry');
+  assert.equal(new URL(observed.url).searchParams.get('company_id'), 'synthetic');
+  assert.equal(new URL(observed.url).searchParams.get('period'), '2026-09');
 });
 
 function interactionFixture({ diagnostic = false, navigation = false, currentUrl = "https://synthetic.invalid/target", contents = false, readsVerified = true, requireNewResponse = true, position = null, fetchImplementation = async () => ({ status: 200 }) } = {}) {
