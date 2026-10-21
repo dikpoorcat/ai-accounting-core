@@ -132,7 +132,26 @@ def affected(directory, month, impact):
     return False
 
 
-def mark(repository, scope_key, impact, head, selected, directory, *, full=False):
+def _cooperation_affects_selected(impact, month, directory):
+    changes = [
+        change
+        for change in impact.formal_changes
+        if any(kind.startswith("investment.cooperation_") for kind in change.result_kinds)
+    ]
+    identities = {
+        identity
+        for change in changes
+        for identity in (change.business_id, *change.resource_business_ids)
+    }
+    known = directory.get(index.BUSINESSES, identities) if directory and identities else {}
+    return any(
+        any(period <= month for period in change.posted_periods)
+        or {change.business_id, *change.resource_business_ids} & known.keys()
+        for change in changes
+    )
+
+
+def mark(repository, scope_key, impact, head, selected, directory, *, month, full=False):
     objects = (
         directory.get(index.OBJECTS, {identity for identity, _ in impact.objects})
         if directory
@@ -151,9 +170,9 @@ def mark(repository, scope_key, impact, head, selected, directory, *, full=False
             for identity, kind, _ in impact.facts
         )
         or impact.closure_ranges
-        or impact.working_period_changed
+        or _cooperation_affects_selected(impact, month, directory)
         or any(
-            kind == "opening.package" or kind.startswith("investment.cooperation_")
+            kind == "opening.package"
             for change in impact.formal_changes
             for kind in change.result_kinds
         )

@@ -47,7 +47,16 @@ def mark(repository, state, scope, impact, head):
         exact = inputs.affected(directory, scope["period_to"], impact) if directory else True
         affected = exact or _monthly.affected(scope, index.COMPONENT, impact, selected)
         if affected:
-            inputs.mark(repository, key, impact, head, selected, directory, full=payload is None)
+            inputs.mark(
+                repository,
+                key,
+                impact,
+                head,
+                selected,
+                directory,
+                month=scope["period_to"],
+                full=payload is None,
+            )
         if affected or state["state"] == "preparing":
             repository.mark(key, index.COMPONENT, head)
         return affected
@@ -179,7 +188,7 @@ def prepare(reader, scope, read, state):
     captured = sources.capture(
         reader, scope, read, business_ids=dirty, complete=payload["open_items"]["complete"]
     )
-    if captured.current_cutoff != payload["open_items"]["current_cutoff_period"] or any(
+    if captured.current_cutoff < payload["open_items"]["current_cutoff_period"] or any(
         origin_fields(content)[0]["kind"] == "opening.package"
         or origin_fields(content)[0]["kind"].startswith("investment.cooperation_")
         for content in captured.contents.values()
