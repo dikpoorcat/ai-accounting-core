@@ -62,7 +62,7 @@ function validatorCompilationSchema(value) {
   return normalized;
 }
 
-function generatedValidator(schema, key, name) {
+function generatedValidator(schema, key, name, { registry = [], validatorName: explicitName } = {}) {
   const ajv = new Ajv2020({ allErrors: true, inlineRefs: false, discriminator: true, code: { esm: true, source: true }, strict: true, validateFormats: false });
   // Ajv does not accept Pydantic's OpenAPI discriminator mapping and requires object types.
   // Keep the exported schema and types intact; change only the validator compilation input.
@@ -86,9 +86,10 @@ function generatedValidator(schema, key, name) {
       }
     },
   });
+  for (const document of registry) ajv.addSchema(document);
   ajv.addSchema(validationSchema, key);
   const baseName = deliveryResponses.get(key);
-  const validatorName = baseName ? `validate${name}Envelope` : `validate${name}Response`;
+  const validatorName = explicitName ?? (baseName ? `validate${name}Envelope` : `validate${name}Response`);
   // Ajv emits this CommonJS runtime even with esm=true. Inline its own Unicode
   // helper so browser validators retain code-point length checks without require.
   const generated = standaloneCode(ajv, { [validatorName]: key }).replaceAll(
@@ -99,14 +100,42 @@ function generatedValidator(schema, key, name) {
   return `${banner}\nimport { validate${baseName}Response } from "./${moduleName(baseName)}.js";\n\n${generated}\n\nexport const validate${name}Response = Object.assign((value) => {\n  if (!${validatorName}(value)) {\n    validate${name}Response.errors = ${validatorName}.errors ?? null;\n    return false;\n  }\n  if (value.state !== "ready") {\n    validate${name}Response.errors = null;\n    return true;\n  }\n  const valid = validate${baseName}Response(value.response);\n  validate${name}Response.errors = valid ? null : validate${baseName}Response.errors ?? null;\n  return valid;\n}, { errors: null });\n`;
 }
 
-async function generatedType(schema, name) {
-  const responseName = `${name}Response`;
+async function generatedType(schema, name, { typeName = `${name}Response`, validatorName = `validate${name}Response`, ...options } = {}) {
+  const responseName = typeName;
   const generated = await compile(schema, responseName, {
     bannerComment: "", additionalProperties: false, enableConstEnums: false,
-    style: { singleQuote: false, semi: true, tabWidth: 2, trailingComma: "all" }, unknownAny: false,
+    style: { singleQuote: false, semi: true, tabWidth: 2, trailingComma: "all" }, unknownAny: false, ...options,
   });
   const indented = generated.trim().split("\n").map(line => line ? `  ${line}` : "").join("\n");
-  return `${banner}\nexport namespace ${name}Contract {\n${indented}\n}\n\nexport type ${responseName} = ${name}Contract.${responseName};\n\nimport type { DashboardResponseValidator } from "./dashboardValidatorTypes";\nexport const validate${name}Response: DashboardResponseValidator<${responseName}>;\n`;
+  return `${banner}\nexport namespace ${name}Contract {\n${indented}\n}\n\nexport type ${responseName} = ${name}Contract.${responseName};\n\nimport type { DashboardResponseValidator } from "./dashboardValidatorTypes";\nexport const ${validatorName}: DashboardResponseValidator<${responseName}>;\n`;
+}
+
+async function reviewOutputs() {
+  const directory = resolve(frontendRoot, "../docs/redesign/contracts");
+  const documents = new Map(await Promise.all(["core.schema.json", "review-materials.schema.json"].map(async file => [file, JSON.parse(await readFile(join(directory, file), "utf8"))])));
+  const source = documents.get("review-materials.schema.json");
+  // Review contracts reference named core definitions, never its ApplyRequest root.
+  const coreDefinitions = structuredClone(documents.get("core.schema.json"));
+  delete coreDefinitions.$ref;
+  coreDefinitions.$defs = Object.fromEntries(["Id", "Month", "Digest", "Page"].map(name => [name, coreDefinitions.$defs[name]]));
+  documents.set("core.schema.json", coreDefinitions);
+  const outputs = {};
+  for (const definition of ["ReviewMaterialsResponse", "ReviewMaterialsQuery", "SourceContentQuery", "SourceTextContent", "SourceFileReceipt"]) {
+    const name = definition === "ReviewMaterialsResponse" ? "ReviewMaterials" : definition;
+    const module = moduleName(name), validatorName = `validate${definition}`;
+    const schema = { ...source, $ref: `#/$defs/${definition}` };
+    outputs[`${module}.js`] = generatedValidator(schema, `review_${definition}`, name, {
+      registry: [coreDefinitions], validatorName,
+    });
+    outputs[`${module}.d.ts`] = await generatedType({ ...schema, title: definition }, name, {
+      typeName: definition, validatorName, cwd: directory,
+      $refOptions: { resolve: { file: false, http: false, installed: {
+        order: 1, canRead: file => documents.has(file.url.split("/").at(-1)),
+        read: file => structuredClone(documents.get(file.url.split("/").at(-1))),
+      } } },
+    });
+  }
+  return outputs;
 }
 
 async function buildOutputs(targetDirectory) {
@@ -124,6 +153,7 @@ async function buildOutputs(targetDirectory) {
     outputs[`${module}.d.ts`] = await generatedType(schemas[key], name);
     outputs[`${module}.js`] = generatedValidator(schemas[key], key, name);
   }
+  Object.assign(outputs, await reviewOutputs());
   await Promise.all(Object.entries(outputs).map(([name, content]) => writeFile(join(targetDirectory, name), content, "utf8")));
   return Object.keys(outputs);
 }

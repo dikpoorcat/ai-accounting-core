@@ -30,6 +30,7 @@ let activeContextLoad: number | null = null;
 localStorage.removeItem("finance-dashboard-org-id");
 const route = useRoute();
 const router = useRouter();
+const isMaterials = computed(() => route.name === "review-materials");
 const savedTheme = localStorage.getItem("finance-dashboard-theme");
 const theme = ref<Theme>(savedTheme === "dark" ? "dark" : "light");
 const {
@@ -102,11 +103,11 @@ async function applyContextSelection(loaded: DeepReadonly<DashboardContext>, val
 async function loadCompanyContext() {
   const generation = ++contextGeneration;
   const selection = JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]);
-  const valid = () => mounted && contextGeneration === generation && authenticated.value && JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]) === selection;
+  const valid = () => mounted && !isMaterials.value && contextGeneration === generation && authenticated.value && JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]) === selection;
   cancelContext();
   selectionSettled.value = false;
   contextError.value = "";
-  if (!authenticated.value) { activeContextLoad = null; return; }
+  if (!authenticated.value || isMaterials.value) { activeContextLoad = null; return; }
   activeContextLoad = generation;
   const requested = typeof route.query.company_id === "string" ? route.query.company_id : undefined;
   try {
@@ -136,9 +137,14 @@ function setAuthenticated(value: boolean) {
 }
 function sessionExpired() { setAuthenticated(false); }
 watch(
-  [authenticated, () => route.query.company_id, () => route.query.period, () => route.query.quarter],
-  ([isAuthenticated, companyId, period, quarter], [wasAuthenticated, previousCompany, previousPeriod, previousQuarter]) => {
-    if (isAuthenticated !== wasAuthenticated || companyId !== previousCompany) {
+  [authenticated, isMaterials, () => route.query.company_id, () => route.query.period, () => route.query.quarter],
+  ([isAuthenticated, independent, companyId, period, quarter], [wasAuthenticated, wasIndependent, previousCompany, previousPeriod, previousQuarter]) => {
+    if (independent) {
+      contextGeneration += 1; cancelContext(); activeContextLoad = null;
+      selectionSettled.value = false; contextError.value = "";
+      return;
+    }
+    if (wasIndependent || isAuthenticated !== wasAuthenticated || companyId !== previousCompany) {
       void loadCompanyContext();
       return;
     }
@@ -153,7 +159,7 @@ watch(
         const loaded = context.value;
         const generation = contextGeneration;
         const selection = JSON.stringify([companyId, period, quarter]);
-        const valid = () => mounted && authenticated.value && contextGeneration === generation && context.value === loaded
+        const valid = () => mounted && !isMaterials.value && authenticated.value && contextGeneration === generation && context.value === loaded
           && JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]) === selection;
         void applyContextSelection(loaded, valid).then(() => {
           if (mounted && authenticated.value && context.value === loaded && routeMatchesContext.value) selectionSettled.value = true;
@@ -168,17 +174,17 @@ watch(
 watch(context, async loaded => {
   // Initial company loads resolve selection in loadCompanyContext, including saved-company recovery.
   // An in-place page refresh reuses the loaded context and must not start another context fetch.
-  if (!loaded || activeContextLoad !== null || loaded.current_company?.company_id !== route.query.company_id) return;
+  if (isMaterials.value || !loaded || activeContextLoad !== null || loaded.current_company?.company_id !== route.query.company_id) return;
   const generation = contextGeneration;
   const selection = JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]);
-  const valid = () => mounted && authenticated.value && contextGeneration === generation && context.value === loaded
+  const valid = () => mounted && !isMaterials.value && authenticated.value && contextGeneration === generation && context.value === loaded
     && JSON.stringify([route.query.company_id, route.query.period, route.query.quarter]) === selection;
   try { await applyContextSelection(loaded, valid); }
   catch (caught) { if (valid()) contextError.value = caught instanceof Error ? caught.message : "公司期间读取失败，请重试。"; }
 });
 onMounted(async () => {
   window.addEventListener("finance-session-expired", sessionExpired);
-  if (route.query.org_id) await router.replace({ query: { ...route.query, org_id: undefined } });
+  if (!isMaterials.value && route.query.org_id) await router.replace({ query: { ...route.query, org_id: undefined } });
 });
 onBeforeUnmount(() => { mounted = false; contextGeneration += 1; cancelContext(); window.removeEventListener("finance-session-expired", sessionExpired); });
 
@@ -246,7 +252,14 @@ async function selectPeriod(periodKey: string) {
 
 <template>
   <a class="skip-link" href="#workspace-content">跳到主要内容</a>
-  <div class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+  <div v-if="isMaterials" class="materials-shell">
+    <header class="materials-toolbar"><RouterLink :to="{ path: '/', query: { company_id: route.query.company_id } }">返回看板</RouterLink><button class="dashboard-action" @click="showSecurity = true">负责人身份</button></header>
+    <main id="workspace-content" tabindex="-1">
+      <section v-if="!authenticated" class="login-notice" aria-label="登录提示"><h1>登录后查阅业务来源</h1><button class="dashboard-action" @click="showSecurity = true">负责人登录</button></section>
+      <RouterView v-else />
+    </main>
+  </div>
+  <div v-else class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <header id="workspace-sidebar" class="workspace-sidebar">
       <button
         class="sidebar-toggle"
@@ -423,4 +436,7 @@ async function selectPeriod(periodKey: string) {
 <style scoped>
 .login-notice { display: grid; min-height: 60vh; align-content: center; justify-items: center; gap: 18px; padding: 24px; text-align: center; }
 .login-notice h1 { margin: 0; font-size: 21px; }
+.materials-shell { min-height: 100dvh; }
+.materials-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.materials-toolbar a { color: var(--accent); text-decoration: none; }
 </style>
