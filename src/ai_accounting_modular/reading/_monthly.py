@@ -17,7 +17,7 @@ from ._collections import collection_page, prepare_model
 from ._context import last_period, period
 from ._types import ModelDelivery, MonthScope
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 5
 FINANCIAL = "financial"
 FUNDS = "funds"
 ASSETS = "assets"
@@ -100,7 +100,11 @@ def _load(repository, scope_key, component, state):
         if not isinstance(value, dict) or content_digest(value) != state["content_digest"]:
             raise ValueError
         _dependencies.inputs(value)
-        return {key: item for key, item in value.items() if key != "_inputs"}
+        if component == BRIEF_OPEN_ITEMS:
+            from . import _brief_open_index
+
+            _brief_open_index.validate(value)
+        return {key: item for key, item in value.items() if key not in {"_inputs", "_item_epoch"}}
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise _CorruptComponent(component) from error
 
@@ -118,7 +122,12 @@ def _ready_snapshot(reader, normalized, states, read):
             "database_id": read.database_id,
             "scope": normalized,
             "period_status": selected["status"],
-            "components": {name: state["content_digest"] for name, state in sorted(states.items())},
+            "components": {
+                name: values[name]["_semantic_digest"]
+                if name == BRIEF_OPEN_ITEMS
+                else state["content_digest"]
+                for name, state in sorted(states.items())
+            },
         }
     )
     return MonthSnapshot(
@@ -290,7 +299,7 @@ def affected(scope, component, impact, selected):
         raise ContractError("storage_corrupt", "月度读取目标包含未装配组件。")
     if component == BRIEF_CONTEXT:
         return bool("period:" + scope["period_to"] in impact.note_scopes or impact.issue_scopes)
-    if component == BRIEF_OPEN_ITEMS and impact.working_period_changed:
+    if component == BRIEF_OPEN_ITEMS and (impact.working_period_changed or impact.closure_ranges):
         return True
     if component == FINANCIAL and any(
         value.period_from <= scope["period_to"] for value in impact.closure_ranges
@@ -306,4 +315,14 @@ def retry(reader, scope, components):
     with reader.storage.maintenance_unit(scope["company_id"]) as unit:
         repository = unit.repository("reading")
         for component in components:
+            state = repository.state(key(normalized), component)
+            full = (
+                component == BRIEF_OPEN_ITEMS
+                and state is not None
+                and (state["state"] == "failed" or state["format_version"] != FORMAT_VERSION)
+            )
+            if full:
+                repository.open_mark(key(normalized), unit.head, full=True)
             repository.retry(key(normalized), component, format_version=FORMAT_VERSION)
+            if full:
+                repository.mark(key(normalized), component, unit.head)

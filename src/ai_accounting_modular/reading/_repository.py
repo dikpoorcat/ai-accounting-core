@@ -1,7 +1,8 @@
 """Only derived reading tables are visible to this repository."""
 
-from ai_accounting_modular.contracts.public import canonical_json
+from ai_accounting_modular.contracts.public import canonical_json, loads_json
 
+from . import _brief_open_index as open_index
 from ._collections import PreparedModel
 
 
@@ -64,6 +65,9 @@ class ReadingRepository:
         return row[0] if row else None
 
     def publish(self, scope_key, component, wanted_head, format_version, model):
+        patch = model if isinstance(model, open_index.PreparedOpenPatch) else None
+        if patch is not None:
+            model = patch.model
         if not isinstance(model, PreparedModel):
             raise TypeError("model must be prepared before publication")
         state = self.state(scope_key, component)
@@ -72,10 +76,35 @@ class ReadingRepository:
             format_version,
         ):
             return False
-        rows = tuple((scope_key, *row, component, wanted_head) for row in model.rows)
-        self._session.execute(
-            "DELETE FROM read_item WHERE scope_key=? AND component_key=?", (scope_key, component)
+        if patch is not None and (
+            component != open_index.COMPONENT
+            or state["ready_head"] != patch.base_ready
+            or state["content_digest"] != patch.base_digest
+        ):
+            return False
+        epoch = (
+            open_index.validate(loads_json(model.payload_json))
+            if component == open_index.COMPONENT
+            else wanted_head
         )
+        if patch is not None and epoch != patch.item_epoch:
+            return False
+        rows = tuple((scope_key, *row, component, epoch) for row in model.rows)
+        if patch is None:
+            self._session.execute(
+                "DELETE FROM read_item WHERE scope_key=? AND component_key=?",
+                (scope_key, component),
+            )
+        else:
+            self._session.executemany(
+                "DELETE FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key=? AND item_id=?",
+                ((scope_key, component, *identity) for identity in patch.deletes),
+            )
+            self._session.execute(
+                "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
+                (scope_key, component, open_index.DIRTY),
+            )
         if rows:
             self._session.executemany(
                 "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
@@ -95,6 +124,64 @@ class ReadingRepository:
             (wanted_head, model.content_digest, scope_key, component),
         )
         return True
+
+    def open_pending_rows(self, scope_key):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key=?",
+                (scope_key, open_index.COMPONENT, open_index.DIRTY),
+            )
+        )
+
+    def open_digest_buckets(self, scope_key, bucket_keys):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key=? AND group_key IN (SELECT value FROM json_each(?)) "
+                "ORDER BY group_key,sort_key,item_id",
+                (
+                    scope_key,
+                    open_index.COMPONENT,
+                    open_index.DIGESTS,
+                    canonical_json(list(bucket_keys)),
+                ),
+            )
+        )
+
+    def open_mark(self, scope_key, head, business_ids=(), *, full=False):
+        from ._collections import prepare_items
+
+        if full:
+            self._session.execute(
+                "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
+                (scope_key, open_index.COMPONENT, open_index.DIRTY),
+            )
+        values = (
+            [open_index.item(open_index.DIRTY, "*", {"full": True})]
+            if full
+            else [
+                open_index.item(open_index.DIRTY, identity, {"business_id": identity})
+                for identity in sorted(business_ids)
+            ]
+        )
+        rows = prepare_items(values).rows
+        self._session.executemany(
+            "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
+            "object_id,group_key,category,payload_json,component_key,head) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope_key,collection_key,item_id) "
+            "DO UPDATE SET payload_json=excluded.payload_json,head=excluded.head",
+            ((scope_key, *row, open_index.COMPONENT, head) for row in rows),
+        )
+
+    def open_advance_failed(self, scope_key, head):
+        self._session.execute(
+            "UPDATE read_scope_head SET wanted_head=MAX(wanted_head,?) WHERE scope_key=? "
+            "AND component_key=? AND state='failed'",
+            (head, scope_key, open_index.COMPONENT),
+        )
 
     def _item_scope(self, scope_key, component, collection, query=None):
         where = "scope_key=? AND component_key=? AND collection_key=?"

@@ -84,13 +84,26 @@ def _withdrawn(reader, scope, selected, current, contents, cutoff, read):
     return result
 
 
-def capture(reader, scope, read):
+def capture(reader, scope, read, *, business_ids=None, complete=None):
     month = scope["period_to"]
-    selected = reader.ledger.capture_obligation_positions(
-        ObligationPositionQuery(month, include_settled=False),
-        read,
-        selection=QuerySelection("as_posted", month),
-    ).items
+    if business_ids is None:
+        selected = reader.ledger.capture_obligation_positions(
+            ObligationPositionQuery(month, include_settled=False),
+            read,
+            selection=QuerySelection("as_posted", month),
+        ).items
+        complete = _complete(reader.ledger, scope, read)
+    else:
+        if type(complete) is not bool:
+            raise TypeError("a partial capture retains its verified base completeness")
+        selected = tuple(
+            item
+            for batch in batches(sorted(set(business_ids)))
+            for item in reader.ledger.get_obligation_positions(
+                month, read, business_ids=batch, selection=QuerySelection("as_posted", month)
+            )
+            if item.amounts.remaining_fen != 0
+        )
     current_cutoff = last_period(reader, read) or month
     current = {}
     for batch in batches(sorted({item.definition.reference["business_id"] for item in selected})):
@@ -119,6 +132,6 @@ def capture(reader, scope, read):
         current,
         contents,
         current_cutoff,
-        _complete(reader.ledger, scope, read),
+        complete,
         _withdrawn(reader, scope, selected, current, contents, current_cutoff, read),
     )

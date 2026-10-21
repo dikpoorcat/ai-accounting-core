@@ -8,12 +8,9 @@ import pytest
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    content_digest,
-    loads_json,
     validate_contract,
 )
 from ai_accounting_modular.reading import _brief_open, _monthly
-from ai_accounting_modular.reading._context import period
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_read_remuneration import bank_object
 
@@ -30,8 +27,6 @@ def publish(case, month="2026-01"):
     )
     with case.kernel.storage.read_unit(case.company) as read:
         model = _brief_open.prepare(case.kernel.reading, scope, read)
-        selected = period(month, case.kernel.ledger.closed_through(read))
-        database = read.database_id
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
         component = _monthly.BRIEF_OPEN_ITEMS
@@ -40,17 +35,8 @@ def publish(case, month="2026-01"):
         assert repository.publish(
             _monthly.key(scope), component, unit.head, _monthly.FORMAT_VERSION, model
         )
-    return _monthly.MonthSnapshot(
-        _monthly.key(scope),
-        scope,
-        content_digest(
-            {"open": model.content_digest, "scope": scope, "status": selected["status"]}
-        ),
-        {_monthly.BRIEF_OPEN_ITEMS: loads_json(model.payload_json)},
-        selected,
-        case.company,
-        database,
-    )
+    with case.kernel.storage.read_unit(case.company) as read:
+        return _monthly.ready_snapshot(case.kernel.reading, scope, (component,), read)
 
 
 def page(case, snapshot, **query):

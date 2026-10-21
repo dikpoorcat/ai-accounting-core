@@ -148,6 +148,12 @@ def mark_targets(impact, unit):
                 expected_state=state["state"],
             )
             continue
+        if selection["page"] == "monthly" and state["component_key"] == _monthly.BRIEF_OPEN_ITEMS:
+            from . import _brief_open_update
+
+            if _brief_open_update.mark(repository, state, scope, impact, unit.next_head):
+                touched.append(state["scope_key"])
+            continue
         if state["state"] != "ready":
             # A first capture has no declared rows yet. Keep its wanted point
             # current so an older in-flight capture cannot publish stale inputs.
@@ -208,7 +214,12 @@ def run_pending(reader, company_id, limit):
                 if state["format_version"] != format_version:
                     raise ContractError("storage_corrupt", "读取目标的内容格式尚未装配。")
                 if selection["page"] == "monthly":
-                    model = _monthly.capture(reader, component, scope, read)
+                    if component == _monthly.BRIEF_OPEN_ITEMS:
+                        from . import _brief_open_update
+
+                        model = _brief_open_update.prepare(reader, scope, read, state)
+                    else:
+                        model = _monthly.capture(reader, component, scope, read)
                 elif selection["page"] == "quarterly_report" and component == FINANCIAL:
                     snapshot = reader.ledger.financial_snapshot(scope, read)
                     validate_contract("reporting.schema.json", "FinancialSnapshot", snapshot)

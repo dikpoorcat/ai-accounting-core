@@ -5,14 +5,47 @@ from collections import Counter
 from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
 
 from . import _brief_open_groups as groups
+from . import _brief_open_index as index
+from . import _brief_open_inputs as inputs
 from . import _brief_open_positions as positions
 from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_vouchers, _monthly
-from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_model, wire_page
-from ._dependencies import bind
+from ._collections import CollectionFilter, IndexItem, wire_page
+from ._funds_items import key
 
 _COMPONENT = "brief_open_items"
+
+
+def member_item(member, *, position_order=None):
+    order = (
+        key(
+            "0",
+            member["payroll_period"] or member["source_period"],
+            member["contribution_component"] or member["description"],
+            member["id"],
+        )
+        if "position" not in member["_detail_scope"]
+        else key("1", f"{position_order:020d}")
+    )
+    return IndexItem(
+        "open_members",
+        member["id"],
+        order,
+        member,
+        business_id=member["subject_id"],
+        group_key=member["group_key"],
+        category=member["category_key"],
+    )
+
+
+def describe(reader, members, captured, read):
+    return _brief_vouchers.descriptors_for_references(
+        reader,
+        [member["_detail_scope"]["reference"] for member in members],
+        read,
+        known_contents=captured.contents.values(),
+    )
 
 
 def prepare(reader, scope, read):
@@ -40,83 +73,69 @@ def prepare(reader, scope, read):
                 current_scope, read, contract_ids=batch
             ).positions
         )
-    members.extend(
-        positions.project(
-            selected_positions,
-            current_positions,
-            company_id=scope["company_id"],
-            cutoff_period=scope["period_to"],
-            identity=reader.identity,
-            read=read,
-        )
+    extra = positions.project(
+        selected_positions,
+        current_positions,
+        company_id=scope["company_id"],
+        cutoff_period=scope["period_to"],
+        identity=reader.identity,
+        read=read,
     )
-    summary, entries = groups.prepare(
+    ordinary_count = len(members)
+    members.extend(extra)
+    summary, entries, folds, categories = groups.prepare(
         members, scope["period_to"], captured.current_cutoff, complete=captured.complete
     )
-    entries.extend(
-        IndexItem(
-            "open_members",
-            member["id"],
-            f"{index:020d}",
-            {key: value for key, value in member.items() if key != "_matter_title"},
-            business_id=member["subject_id"],
-            group_key=member["group_key"],
-            category=member["category_key"],
-        )
-        for index, member in enumerate(members)
+    member_entries = [member_item(member) for member in members[:ordinary_count]]
+    member_entries.extend(
+        member_item(member, position_order=position) for position, member in enumerate(extra)
     )
-    descriptors = _brief_vouchers.descriptors_for_references(
-        reader,
-        [member["_detail_scope"]["reference"] for member in members],
-        read,
-        known_contents=captured.contents.values(),
-    )
-    display_ids = {
-        ident
-        for descriptor in descriptors
-        if descriptor is not None
-        for kind in ("parties", "assets")
-        for ident in descriptor["display"][kind]
-    }
-    display_ids.update(
-        item.definition.value["party_id"]
-        for item in (*captured.selected, *captured.current.values())
-        if item.definition.value.get("party_id")
-    )
-    display_ids.update(
-        obligation[key]
-        for member in members
-        for obligation in member["_detail_scope"]["obligations"]
-        for key in ("person_id", "recipient_id")
-        if obligation.get(key)
-    )
-    display_ids.update(
-        member["_detail_scope"]["position"][key]
-        for member in members
-        if "position" in member["_detail_scope"]
-        for key in ("operator_id", "project_id")
-    )
-    model = prepare_model(
-        {
-            "open_items": summary,
-            "_voucher_display_head": _brief_vouchers.display_head_from_descriptors(descriptors),
-        },
-        items=prepare_items(entries, collections=("open_items", "open_members")),
-    )
+    first = {}
+    for value in member_entries:
+        candidate = value.sort_key, value.item_id
+        current = first.get(value.group_key)
+        if current is None or candidate < current:
+            first[value.group_key] = candidate
+    for identity, fold in folds.items():
+        order, member_id = first[identity]
+        fold["first"] = {"id": member_id, "sort": order}
+    entries.extend(member_entries)
+    descriptors = describe(reader, members, captured, read)
+    records, _ = inputs.records(captured, members, descriptors)
+    display_ids = {identity for value in records.values() for identity in value["objects"]}
     businesses = tuple(
         sorted({body.reference["business_id"] for body in captured.contents.values()})
     )
-    return bind(
-        model,
-        cooperation.inputs.merge(
-            ReadInputs(
-                result_kinds=("opening.package",),
-                all_obligations=True,
-                business_ids=businesses,
-                current_business_ids=tuple(sorted(set(businesses) | set(contracts))),
-                object_ids=tuple(sorted(display_ids)),
-            )
-        ),
+    dependencies = cooperation.inputs.merge(
+        ReadInputs(
+            result_kinds=("opening.package",),
+            all_obligations=True,
+            business_ids=businesses,
+            current_business_ids=tuple(sorted(set(businesses) | set(contracts))),
+            object_ids=tuple(sorted(display_ids)),
+        )
+    )
+    records = inputs.full(dependencies, records, cooperation.inputs.object_ids)
+    entries.extend(
+        index.item(index.BUSINESSES, identity, value) for identity, value in records.items()
+    )
+    entries.extend(
+        index.item(index.OBJECTS, identity, {"count": count})
+        for identity, count in inputs.object_counts(records).items()
+    )
+    entries.extend(index.item(index.FOLDS, identity, value) for identity, value in folds.items())
+    entries.extend(
+        index.item(index.VOUCHERS, identity, {"count": count})
+        for identity, count in inputs.voucher_counts(records).items()
+    )
+    return index.complete(
+        {
+            "open_items": summary,
+            "_category_folds": categories,
+            "_inputs": inputs.static(dependencies).wire(),
+        },
+        entries,
+        read.head,
     )
 
 

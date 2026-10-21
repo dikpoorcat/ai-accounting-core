@@ -217,6 +217,10 @@ def _ready_collection(scope_key, component, collection, read):
     manifest = manifests.get(collection)
     if not isinstance(manifest, dict) or set(manifest) != {"count", "digest"}:
         raise ContractError("invalid_input", "所选模型不提供这个读取集合。")
+    if component == "brief_open_items":
+        from . import _brief_open_index
+
+        state = dict(state, item_epoch=_brief_open_index.validate(summary))
     return repository, state, manifest
 
 
@@ -235,7 +239,9 @@ def collection_items(scope_key, component, collection, item_ids, read):
         raise ContractError("storage_corrupt", "读取集合项目数量与完整目录不一致。")
     rows = repository.item_get(scope_key, component, collection, item_ids) if item_ids else ()
     by_id = {row["item_id"]: row for row in rows}
-    if set(by_id) != set(item_ids) or any(row["head"] != state["ready_head"] for row in rows):
+    if set(by_id) != set(item_ids) or any(
+        row["head"] != state.get("item_epoch", state["ready_head"]) for row in rows
+    ):
         raise ContractError("storage_corrupt", "读取集合引用缺失或混入了其他版本，请重新生成。")
     return tuple(_decode(by_id[item_id]) for item_id in item_ids)
 
@@ -262,7 +268,7 @@ def collection_page(scope_key, component, collection, query, page, read):
         raise ContractError("storage_corrupt", "读取集合项目数量与完整目录不一致。")
     rows = repository.item_page(scope_key, component, collection, query, after, page.limit + 1)
     more, rows = len(rows) > page.limit, rows[: page.limit]
-    if any(row["head"] != state["ready_head"] for row in rows):
+    if any(row["head"] != state.get("item_epoch", state["ready_head"]) for row in rows):
         raise ContractError("storage_corrupt", "读取集合中混入了其他版本的项目。")
     next_cursor = None
     if more:
