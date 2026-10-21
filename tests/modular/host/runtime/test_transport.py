@@ -131,6 +131,12 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
             await session.initialize()
             resource = await session.read_resource("accounting://contracts")
             catalog = json.loads(resource.contents[0].text)
+            guides = await session.read_resource("accounting://guides")
+            assert len(json.loads(guides.contents[0].text)["topics"]) == 5
+            expense_guide = await session.read_resource(
+                "accounting://guides/business/operations.expense"
+            )
+            assert "实际收付款另记" in expense_guide.contents[0].text
             assert {item["command"] for item in catalog["commands"]} == set(runtime.agent.commands)
             for item in catalog["commands"]:
                 Draft202012Validator.check_schema(item["request_schema"])

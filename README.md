@@ -22,24 +22,7 @@
 
 ## 模块化体系运行
 
-使用仓库虚拟环境，不使用系统默认 Python。先构建独立静态页面：
-
-```powershell
-npm --prefix frontend run build:modular
-& '.tmp-kernel-venv/Scripts/python.exe' -m ai_accounting_modular.host.runtime.cli --help
-```
-
-安装项目后可用 `finance-modular` 代替上面的 Python 模块命令。全局 `--catalog` 参数放在子命令之前，目录库使用绝对路径：
-
-```powershell
-finance-modular --catalog D:\新会计资料\catalog.sqlite3 init
-finance-modular --catalog D:\新会计资料\catalog.sqlite3 serve
-finance-modular --catalog D:\新会计资料\catalog.sqlite3 mcp
-```
-
-`init` 在原生窗口建立老板身份；`serve` 启动并打开看板；`daemon` 在前台运行；`mcp` 让 AI 连接同一服务。老板密码和恢复码在原生窗口处理，不放入聊天或命令行。`company-create` 新建公司，`company-register` 登记已恢复或重建的公司；完整输入以命令帮助和公开 Schema 为准。`service-info` 和 `stop` 只访问指定服务，不自动启动服务。
-
-不带目录参数的 `mcp` 只提供离线恢复与重建。恢复或重建总是交付明确的新目标，登记接入是另一个动作。新入口不自动搬移真实资料、替换数据库或接替现有服务。
+安装、独立启动、完整新建公司／登记 JSON、真实 CLI `call` 形式、MCP 接入及离线恢复／重建，统一见[安装、运行与会计 AI 接入](docs/redesign/09-runtime-and-ai.md)。该说明随安装包按需提供；新入口不自动搬移真实资料、替换数据库或接替现有服务。
 
 ## 现有运行入口
 

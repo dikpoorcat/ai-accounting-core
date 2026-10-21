@@ -1,4 +1,4 @@
-"""Generate Python wire types and packaged schemas from the design contracts.
+"""Generate wire types, packaged schemas and AI guides from the design truth.
 
 The generated types describe fields for developers. Runtime constraints remain
 in the original JSON Schema, including conditional and cross-field shapes.
@@ -24,6 +24,243 @@ SCHEMAS = (
     "dashboard-response-v2.json",
 )
 BASE = "https://ai-accounting.local/design/"
+
+# Exact documented inputs, not a prefix fallback or a claim about an assembled instance.
+BUSINESS_GUIDES = (
+    (
+        "经营与往来",
+        (
+            "operations.service_sale",
+            "operations.expense",
+            "operations.other_income",
+            "operations.advance",
+            "operations.advance_fulfillment",
+            "operations.advance_refund",
+            "operations.sale_return",
+            "operations.expense_recovery",
+            "operations.deposit",
+            "operations.pass_through",
+            "operations.pass_through_return",
+            "operations.reimbursement",
+            "operations.overpayment",
+        ),
+    ),
+    (
+        "用工与薪酬",
+        (
+            "people.employment",
+            "people.relationship",
+            "people.remuneration",
+            "people.contribution_policy",
+            "people.contribution_actual",
+        ),
+    ),
+    (
+        "资产与项目",
+        (
+            "assets.acquisition",
+            "assets.activation",
+            "assets.disposal",
+            "assets.project_cost",
+            "assets.project_release",
+        ),
+    ),
+    (
+        "借款与股东资金",
+        (
+            "financing.owner_funding",
+            "financing.loan_contract",
+            "financing.loan_drawdown",
+            "financing.interest_period",
+        ),
+    ),
+    ("货币基金", ("investment.money_fund_purchase", "investment.money_fund_redemption")),
+    (
+        "合作项目投资",
+        (
+            "investment.cooperation_contract",
+            "investment.cooperation_funding",
+            "investment.cooperation_collection",
+            "investment.cooperation_payment",
+            "investment.cooperation_operator_transfer",
+            "investment.cooperation_distribution",
+            "investment.cooperation_exit",
+        ),
+    ),
+    (
+        "实际资金、备用金与核对",
+        (
+            "money.movement",
+            "money.transfer",
+            "money.bank_statement",
+            "money.platform_activity",
+            "money.reserve_internal",
+            "money.reconciliation",
+        ),
+    ),
+    (
+        "税费和期间口径",
+        (
+            "taxes.tax_point",
+            "taxes.assessment",
+            "taxes.actual_declaration",
+            "taxes.tax_credit",
+            "taxes.vat_policy",
+            "taxes.surtax_policy",
+            "taxes.used_asset_vat_policy",
+            "taxes.income_tax_policy",
+            "taxes.prepayment_basis",
+        ),
+    ),
+    ("期初与报表接续", ("opening.package", "reports.continuation")),
+)
+
+GUIDE_LINKS = {
+    "#合作项目投资": "accounting://guides/business/investment.cooperation_contract",
+    "03-contracts.md": "accounting://guides/commands",
+    "05-business-rules.md": "accounting://guides/business",
+    "05b-financial-reporting.md": "accounting://guides/reporting",
+    "08-ai-work-and-materials.md": "accounting://guides/work",
+    "09-runtime-and-ai.md": "accounting://guides/runtime",
+    "core.schema.json": "accounting://contracts",
+    "business-facts.schema.json": "accounting://contracts",
+}
+
+
+def markdown_section(text, heading):
+    """Extract an existing exact heading and its children; missing/duplicate is an error."""
+    lines = text.splitlines(keepends=True)
+    matches = [index for index, line in enumerate(lines) if line.rstrip() == heading]
+    if len(matches) != 1:
+        raise ValueError(f"Guide heading must exist exactly once: {heading}")
+    start = matches[0]
+    level = len(heading) - len(heading.lstrip("#"))
+    for end in range(start + 1, len(lines)):
+        match = re.match(r"^(#{1,6}) ", lines[end])
+        if match and len(match[1]) <= level:
+            return "".join(lines[start:end]).strip() + "\n"
+    return "".join(lines[start:]).strip() + "\n"
+
+
+def fact_kinds(document):
+    kinds, visited = set(), set()
+
+    def visit(node):
+        if "$ref" in node:
+            prefix = "#/$defs/"
+            if not node["$ref"].startswith(prefix):
+                raise ValueError("Fact guide discovery requires its actual local input union.")
+            name = node["$ref"][len(prefix) :]
+            if name not in visited:
+                visited.add(name)
+                visit(document["$defs"][name])
+        kind = node.get("properties", {}).get("kind", {}).get("const")
+        if kind is not None:
+            if not isinstance(kind, str) or kind in kinds:
+                raise ValueError(f"Fact kind must have one documented input: {kind}")
+            kinds.add(kind)
+        for branch in node.get("oneOf", ()):
+            visit(branch)
+
+    visit(document["$defs"]["Fact"])
+    return kinds
+
+
+def guide_outputs(root, business_document):
+    source = root / "docs/redesign"
+
+    def read(name):
+        return (source / name).read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    def page(title, name, text):
+        def link(match):
+            label, target = match.groups()
+            if target in GUIDE_LINKS:
+                return f"[{label}]({GUIDE_LINKS[target]})"
+            if ":" in target or target.startswith("#"):
+                return match[0]
+            name = target.split("#", 1)[0].rsplit("/", 1)[-1]
+            if name in GUIDE_LINKS:
+                return f"[{label}]({GUIDE_LINKS[name]})"
+            # Design-only references are identified honestly, never dangling workspace links.
+            return f"{label}（设计参考：{target}）"
+
+        return {
+            "title": title,
+            "source": "docs/redesign/" + name,
+            "text": re.sub(r"\[([^\]]+)\]\(([^\s)]+)\)", link, text).strip() + "\n",
+        }
+
+    operations = read("08-ai-work-and-materials.md")
+    work = "\n\n".join(
+        markdown_section(operations, "## " + heading)
+        for heading in (
+            "开始工作时取得什么",
+            "资料如何进入系统",
+            "不让老板承担程序协调",
+            "当前待办只保留还需要做的事",
+            "核对、更正和顾问审查",
+        )
+    )
+    contracts = read("03-contracts.md")
+    commands = "\n\n".join(
+        markdown_section(contracts, "## " + heading)
+        for heading in ("通用字段", "完整业务办理", "其他公开入口", "标准业务文档")
+    )
+    reporting = read("05b-financial-reporting.md")
+    # Keep the installed operating text, not the developers' acceptance instructions.
+    development = markdown_section(reporting, "## 开发验收")
+    reporting = reporting[: reporting.index(development)].strip() + "\n"
+    rules = read("05-business-rules.md")
+    common = markdown_section(rules, "## 公共事实与计算条件")
+    corrections = "\n".join(
+        markdown_section(rules, "### " + heading)
+        for heading in ("义务转移与多付重分类", "同一业务更正分类")
+    )
+    business, sections = {}, {}
+    for heading, kinds in BUSINESS_GUIDES:
+        level = "### " if heading in {"货币基金", "合作项目投资"} else "## "
+        section = markdown_section(rules, level + heading)
+        sections[heading] = page(heading, "05-business-rules.md", section)["text"]
+        for kind in kinds:
+            if kind in business:
+                raise ValueError(f"Duplicate guide mapping: {kind}")
+            business[kind] = heading
+    actual = fact_kinds(business_document)
+    if set(business) != actual:
+        raise ValueError(
+            f"Business guides differ from Fact inputs; missing={sorted(actual - business.keys())}; "
+            f"extra={sorted(business.keys() - actual)}"
+        )
+    topics = {
+        "work": page("会计 AI 工作引导", "08-ai-work-and-materials.md", work),
+        "commands": page("公开命令与标准资料", "03-contracts.md", commands),
+        "business": page(
+            "按事实种类读取业务规则",
+            "05-business-rules.md",
+            "先用 accounting_schema 取得当前实例实际支持的 kind，再读取 "
+            "accounting://guides/business/{kind}。规则文档不证明当前实例已装配该业务。\n",
+        ),
+        "reporting": page("报表期间、采用与未知", "05b-financial-reporting.md", reporting),
+        "runtime": page(
+            "安装、运行与 AI 接入", "09-runtime-and-ai.md", read("09-runtime-and-ai.md")
+        ),
+    }
+    payload = {
+        "format": "ai-accounting-guides/1",
+        "topics": topics,
+        "business": {
+            "kinds": business,
+            "sections": sections,
+            "common": page("公共事实", "05-business-rules.md", common)["text"],
+            "corrections": page("更正与清偿", "05-business-rules.md", corrections)["text"],
+        },
+    }
+    return {
+        root / "src/ai_accounting_modular/agent/_guides.json": (
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode("utf-8")
+    }
 
 
 def unique_object(pairs):
@@ -222,6 +459,7 @@ def outputs():
         else:
             documents[BASE + name] = document
     generated[TARGET / "_wire_types.py"] = TypeGenerator(documents).generate().encode("utf-8")
+    generated.update(guide_outputs(ROOT, documents[BASE + "business-facts.schema.json"]))
     return generated
 
 
@@ -238,7 +476,7 @@ def main():
     if args.check:
         if different:
             parser.exit(1, "Generated contracts differ:\n" + "\n".join(different) + "\n")
-        print("Modular contract types and packaged schemas are synchronized.")
+        print("Modular contract types, schemas and AI guides are synchronized.")
         return
     for path, content in expected.items():
         path.parent.mkdir(parents=True, exist_ok=True)

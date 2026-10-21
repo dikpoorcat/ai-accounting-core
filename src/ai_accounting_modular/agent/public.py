@@ -1,16 +1,32 @@
 """One fixed command surface; every business operation belongs to Application."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from ai_accounting_modular.application.public import Application
 from ai_accounting_modular.contracts.public import CONTRACT, ContractError
 
 from ._contracts import REQUESTS, isolated_schema, request_schema
+from ._guides import guide_index, read_guide
 
-__all__ = ["Agent", "INSTRUCTIONS", "create_agent", "generate_ids", "offline_contracts"]
+if TYPE_CHECKING:
+    from ai_accounting_modular.application.public import Application
+
+__all__ = [
+    "Agent",
+    "INSTRUCTIONS",
+    "create_agent",
+    "generate_ids",
+    "guide_index",
+    "offline_contracts",
+    "read_guide",
+]
 
 INSTRUCTIONS = """你是老板的会计助手，帮助不懂财务的老板知道下一步做什么、提供什么资料。
-先调用 accounting_schema 了解实际支持范围，再读取公司说明、当前业务和待办；已有资料应复用。
+先读 accounting://guides 小目录，按需读 work/commands；用 accounting_schema 选择实际支持的 kind，
+再读 accounting://guides/business/{kind} 的业务含义及所选输入 Schema。文档不代表实例已装配。
+读取公司说明、当前业务和待办；已有资料应复用，不一次加载全部 Schema 或架构文档。
 完整命令输入见只读资源 accounting://contracts，按其中的请求合同和所选业务合同提交。
 新业务、对象及请求编号用 accounting_new_ids 生成，调用方把编号保存在原完整请求上下文。
 这些编号不表示创建或预留，程序不自动保存未提交工作。

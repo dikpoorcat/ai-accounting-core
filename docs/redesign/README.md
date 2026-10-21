@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | contracts / storage | 严格字段、整数金额与日期；单公司事务、回滚试算、结构核验及一致数据库副本。 | [公开合同](03-contracts.md)、[数据结构](04-data-model.md) |
 | identity / 六类业务 / ledger | 稳定对象、类型明确的业务核算、原子采用、统一凭证与余额、开放期替换及闭期更正。 | [业务规则](05-business-rules.md)、[统一财务取数](05b-financial-reporting.md) |
-| application / agent | 完整业务协调、事实查找、试算、现实说明、当前未解事项和AI调用。生成文档或页面失败后由程序接续，不重复记账。 | [公开命令](03-contracts.md)、[AI工作](08-ai-work-and-materials.md) |
+| application / agent | 完整业务协调、事实查找、只读月结检查、现实说明、当前未解事项和AI调用。生成文档或页面失败后由程序接续，不重复记账。 | [公开命令](03-contracts.md)、[AI工作](08-ai-work-and-materials.md) |
 | records | 原件身份、归档、只读检查和当前标准业务文档；标准文档只表达最终事实。XLS可读缓存值，不能提取公式表达式时明确说明。 | [数据结构](04-data-model.md)、[资料处理](08-ai-work-and-materials.md) |
 | files / 离线交付 | 已验证ZIP备份、准确恢复、最终事实重建、任务接续和受控下载；新目标不覆盖已有文件。 | [恢复与重建](02-architecture.md#备份恢复和简化重建)、[文件合同](03-contracts.md) |
 | reading / dashboard | 同一快照的五页、完整分页、精确业务与凭证、只读月度核对及顾问来源；各owner声明实际读取依赖。 | [看板合同](06-dashboard-adapter.md) |
@@ -51,9 +51,7 @@
 
 ## 新体系运行入口
 
-前端独立构建：`npm --prefix frontend run build:modular`。安装本项目后使用 `finance-modular`，源码运行使用仓库虚拟环境的 `python -m ai_accounting_modular.host.runtime.cli`。
-
-在线目录命令显式指定新目录库的绝对路径：`--catalog <新目录库> init`建立老板身份；`--catalog <目录库> serve`启动并打开看板，`--catalog <目录库> daemon`在前台运行；`--catalog <目录库> mcp`提供AI接口。先用`--help`查看参数；新建公司使用`company-create`的完整JSON资料，已交付恢复或重建目标使用`company-register`明确登记。`service-info`与`stop`只访问指定服务，不另起居民。`ids`和离线恢复、重建命令不需要目录参数；没有目录参数的`mcp`只提供离线恢复与重建，不连接原账套。
+安装、前端构建、独立服务、完整公司接入 JSON、CLI `call` 和实际 MCP 调用统一见[安装、运行与会计 AI 接入](09-runtime-and-ai.md)。操作说明和所选业务规则随包按需读取，运行时不依赖工作区设计文档。
 
 这些命令不会自动搬移真实资料、接替现有入口或导入旧体系数据库。完整固定场景、浏览器、内部替换和性能验收仍在进行，运行层接通不代表项目最终验收已经完成。
 

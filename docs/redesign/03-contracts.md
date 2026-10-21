@@ -69,7 +69,9 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 
 ## 其他公开入口
 
-下表是应用层可调用能力；CLI 使用对应连字符命令。MCP 不再暴露原来登记/准备/计算/发布等多段内部手续。
+下表是应用层可调用能力。在线 CLI 使用 `finance-modular --catalog <绝对目录库> call accounting-apply --input <完整请求.json>` 这样的 `call` 形式，命令名接受连字符或下划线；MCP 使用 `accounting_command(command="accounting_apply", payload=完整请求)`。只有 Schema、UUID 和身份窗口另有专用工具，离线恢复／重建有独立入口；完整示例见[安装与接入](09-runtime-and-ai.md)。MCP 不暴露登记/准备/计算/发布等多段内部手续。
+
+`accounting://guides` 是小型只读操作目录，按需提供工作引导、公开命令、`business/{kind}` 业务规则、报表含义和运行说明。正文从本设计唯一来源生成并随包安装，不从工作区读取；主题及 kind 为明确目录，不能用任意路径读取文档。规则目录不是当前实例的支持承诺，仍先用 `accounting_schema` 选择实际支持的 kind，再读取对应规则和输入合同。离线 MCP 只提供适用的运行／恢复／重建说明及两个离线命令合同。
 
 | 入口 | 输入 | 返回及作用 |
 | --- | --- | --- |

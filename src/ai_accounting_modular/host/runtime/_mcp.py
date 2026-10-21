@@ -7,15 +7,49 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import StrictInt
 
-from ai_accounting_modular.agent.public import INSTRUCTIONS, generate_ids, offline_contracts
+from ai_accounting_modular.agent.public import (
+    INSTRUCTIONS,
+    generate_ids,
+    guide_index,
+    offline_contracts,
+    read_guide,
+)
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.host.public import create_offline_application
 
 from .public import Runtime
 
 
+def _guides(mcp, *, offline=False):
+    @mcp.resource("accounting://guides", mime_type="application/json")
+    def guides() -> str:
+        """按需说明目录；文档不代表当前实例支持的业务种类。"""
+        directory = guide_index()
+        if offline:
+            directory["topics"] = [
+                item for item in directory["topics"] if item["topic"] == "runtime"
+            ]
+            directory["message"] = "离线实例只处理明确的恢复／重建目标；参阅运行说明。"
+        return json.dumps(directory, ensure_ascii=False)
+
+    @mcp.resource("accounting://guides/{topic}", mime_type="text/markdown")
+    def guide(topic: str) -> str:
+        """读取明确静态主题，拒绝任意文件路径。"""
+        if offline and topic != "runtime":
+            raise ContractError("unsupported_guide", "离线实例只提供恢复／重建运行说明。")
+        return read_guide(topic)
+
+    if not offline:
+
+        @mcp.resource("accounting://guides/business/{kind}", mime_type="text/markdown")
+        def business_guide(kind: str) -> str:
+            """读取指定完整 Fact kind 的原有业务规则；实际支持范围先查 accounting_schema。"""
+            return read_guide("business", kind=kind)
+
+
 def create_mcp(client):
     mcp = FastMCP("modular-local-accounting", instructions=INSTRUCTIONS)
+    _guides(mcp)
 
     async def call(function, *arguments):
         try:
@@ -67,8 +101,10 @@ def create_offline_mcp():
             "restore 恢复原账，rebuild 只用最终事实建立简化新账。"
             "check 不创建目标，run 不覆盖既有位置。"
             "这里没有当前公司、居民或日常记账；完成后须明确登记接入。"
+            "按需运行说明见 accounting://guides/runtime。"
         ),
     )
+    _guides(mcp, offline=True)
 
     @mcp.resource("accounting://contracts", mime_type="application/json")
     def contracts() -> str:
