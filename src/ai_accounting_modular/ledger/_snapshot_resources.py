@@ -11,9 +11,9 @@ from ._resource_view import resource_definition
 from ._values import check_parts, fail, unique
 
 _DEFINITIONS = {
-    "obligation": ("obligation", "core.schema.json", "Obligation"),
-    "cost_lot": ("cost", "core.schema.json", "CostLot"),
-    "result_fund_movement": ("funds", "business-facts.schema.json", "FundMovement"),
+    "obligation": "obligation",
+    "cost_lot": "cost",
+    "result_fund_movement": "funds",
 }
 
 
@@ -27,6 +27,7 @@ def _ref(row, prefix):
 
 def verify_resources(records, heads):
     seen = defaultdict(list)
+    slots = defaultdict(list)
     outputs = set()
     for table in RESOURCE_TABLES:
         for row in records[table]:
@@ -38,9 +39,10 @@ def verify_resources(records, heads):
             if head["target_state"] == "withdrawn":
                 fail("storage_corrupt", "已撤去目标不能保留有效资源。")
             if table in _DEFINITIONS:
-                kind, document, name = _DEFINITIONS[table]
-                value = resource_definition(kind, head, row, stored_source_reference(head)).value
-                validate_contract(document, name, value)
+                kind = _DEFINITIONS[table]
+                definition = resource_definition(kind, head, row, stored_source_reference(head))
+                value = definition.value
+                slots[result_id].append((kind, definition.reference["slot"]))
                 seen[table, business_id, row["public_slot"], head["posting_period"]].append(
                     result_id
                 )
@@ -126,4 +128,15 @@ def verify_resources(records, heads):
                 fail("storage_corrupt", "正式税额贡献序号不连续。")
         elif len(values) != 1:
             fail("storage_corrupt", "同一期间的公开资源槽不能重复。")
-    return outputs
+    return outputs, slots
+
+
+def verify_selected_slots(slots, heads):
+    """Already checked definitions must remain unique in each actual selected set."""
+    seen = set()
+    for head in heads:
+        for kind, slot in slots.get(head["result_id"], ()):
+            key = kind, head["business_id"], slot
+            if key in seen:
+                fail("storage_corrupt", "同一业务的公开资源槽不能重复。")
+            seen.add(key)

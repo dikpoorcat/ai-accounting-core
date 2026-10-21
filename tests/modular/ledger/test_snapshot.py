@@ -16,11 +16,13 @@ from _financial_snapshot_review_support import opening as app_opening
 from _financial_snapshot_review_support import payment as app_payment
 from test_adoption import BUSINESS, COMPANY, SOURCE, _payment_at, adopt_declared, expense, refund
 from test_adoption import store as store
+from test_aggregations import journal
 from test_closing import close
-from test_financial_core import ORIGIN, origin, save
+from test_financial_core import ORIGIN, funds, origin, save
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, content_digest
 from ai_accounting_modular.ledger import _closing, _financial
+from ai_accounting_modular.ledger._output_digest import RESOURCE_TABLES, output_digests
 from ai_accounting_modular.ledger.public import (
     AdoptedBusinessVersion,
     LedgerSnapshot,
@@ -174,6 +176,57 @@ def test_two_open_slots_cannot_claim_different_versions_of_one_business(store):
     )
     _tamper(store, "UPDATE adopted_result SET adopted_fact_seq=2 WHERE result_slot='aux'")
     with pytest.raises(ContractError) as error:
+        _snapshot(store, ledger)
+    assert error.value.code == "storage_corrupt"
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_selected_fund_slots_cannot_overlap_across_different_adoption_months(store, frozen):
+    ledger = create_ledger()
+    change = funds(journal(BUSINESS, [("1002", 100), ("3001", -100)]), 100, "capital_receipts")
+    extra = deepcopy(change["plans"][0])
+    extra["result_slot"] = extra["basis"]["result_slot"] = extra["target"]["result_slot"] = "aux"
+    extra["accounting_period"] = extra["basis"]["period"] = "2026-02"
+    extra["fund_movements"][0].update(
+        movement_id=str(uuid4()), public_slot="second", actual_on="2026-02-15"
+    )
+    change["plans"].append(extra)
+    change["businesses"][0]["complete_result_slots"].append("aux")
+    change["publications"].append({**change["publications"][0], "result_slot": "aux"})
+    save(store, ledger, [origin("0"), change])
+    if frozen:
+        close(store, ledger, "2026-02")
+        changed = deepcopy(change)
+        changed["businesses"][0].update(op="replace", expected_seq=1)
+        changed["plans"][0]["fund_movements"][0].update(
+            movement_id=str(uuid4()), public_slot="third"
+        )
+        save(store, ledger, [changed], correction="2026-03")
+    assert _snapshot(store, ledger).result_count == (4 if frozen else 3)
+
+    def duplicate(connection):
+        connection.execute(
+            "UPDATE result_fund_movement SET public_slot='funds' WHERE result_id IN "
+            "(SELECT result_id FROM adopted_result WHERE result_slot='aux')"
+        )
+        # Preserve the saved-output seal so only selected public identity is damaged.
+        connection.row_factory = sqlite3.Row
+        tables = ("voucher", "voucher_line", *RESOURCE_TABLES)
+        records = {
+            table: [dict(row) for row in connection.execute("SELECT * FROM " + table)]
+            for table in tables
+        }
+        result_ids = [row[0] for row in connection.execute("SELECT result_id FROM adopted_result")]
+        connection.executemany(
+            "UPDATE adopted_result SET formal_output_digest=? WHERE result_id=?",
+            [
+                (digest, result_id)
+                for result_id, digest in output_digests(records, result_ids).items()
+            ],
+        )
+
+    _tamper(store, duplicate)
+    with pytest.raises(ContractError, match="公开资源槽不能重复") as error:
         _snapshot(store, ledger)
     assert error.value.code == "storage_corrupt"
 
@@ -349,6 +402,11 @@ def test_actual_expense_keeps_known_and_unestablished_report_contributions(tmp_p
         "DELETE FROM voucher_sequence",
         "UPDATE obligation SET amount_fen=-1",
         "UPDATE obligation SET allowed_settlements_json='[\"invented\"]'",
+        'UPDATE obligation SET allowed_settlements_json=\'["money","money"]\'',
+        "UPDATE obligation SET cashflow_weights_json='["
+        '{"category":"other_operating_payments","weight":"1"},'
+        '{"category":"other_operating_payments","weight":"1"}]'
+        "'",
         "INSERT INTO result_source SELECT result_id,'"
         + SOURCE
         + "','unrecorded source' FROM adopted_result",
@@ -370,6 +428,9 @@ def test_corrupt_persisted_result_voucher_index_or_resource_is_rejected(store, s
     [
         "UPDATE result_fund_movement SET actual_on='2026-02-15'",
         "UPDATE result_fund_movement SET cashflow_parts_json='[]'",
+        "UPDATE result_fund_movement SET cashflow_parts_json='["
+        '{"category":"other_operating_payments","amount_fen":"1"}]'
+        "'",
         "UPDATE settlement SET amount_fen=200000",
         "UPDATE settlement SET source_public_slot='missing'",
         "UPDATE settlement SET period='2026-02'",

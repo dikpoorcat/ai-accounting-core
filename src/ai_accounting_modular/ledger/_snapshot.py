@@ -16,7 +16,7 @@ from ._balances import unique_movements, validate_capacities
 from ._closing import _basis, _record
 from ._output_digest import verify_output_digests
 from ._planning import stored_source_reference
-from ._snapshot_resources import verify_resources
+from ._snapshot_resources import verify_resources, verify_selected_slots
 from ._snapshot_vouchers import verify_vouchers
 from ._values import fail
 
@@ -212,7 +212,8 @@ def _verify(context, repo):
     records = repo.snapshot_records()
     heads, bases, slots = _results(records, context)
     source_ids = _sources(records, heads, bases, slots)
-    outputs = verify_resources(records, heads) | verify_vouchers(records, heads, repo)
+    outputs, resource_slots = verify_resources(records, heads)
+    outputs |= verify_vouchers(records, heads, repo)
     verify_output_digests(records, heads)
     for result_id, row in heads.items():
         if row["business_period"] < context.start_period and (
@@ -231,9 +232,7 @@ def _verify(context, repo):
         selected = repo.resource_view(as_of=cutoff)
         validate_capacities(selected, businesses)
         unique_movements(selected, movements)
-        selected.definition_maps(selected.current_heads(businesses), "obligation")
-        selected.definition_maps(selected.current_heads(businesses), "cost")
-        selected.definition_maps(selected.current_heads(businesses), "funds")
+        verify_selected_slots(resource_slots, selected.current_heads(businesses))
     for closed in sorted(records["period_close"], key=lambda row: row["period"]):
         validate_contract("core.schema.json", "Month", closed["period"])
         first, report = _record(repo, closed, context)
