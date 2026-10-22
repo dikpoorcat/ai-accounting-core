@@ -84,8 +84,6 @@ def run(
             )
     root = Path(root).resolve()
     manifest = describe(root)
-    if not probe:
-        assert manifest["official_scale"] is True
     static = (
         Path(static_directory)
         if static_directory is not None
@@ -163,7 +161,7 @@ def run(
             return {
                 "format": "modular-c14-browser/1",
                 "status": "passed" if passed else "failed",
-                "official": not probe,
+                "official": manifest["official_scale"] and not probe,
                 "measurement": "Vue DOM plus two continuous stable frames",
                 "mode": mode,
                 "scale_months": manifest["months"],
