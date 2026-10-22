@@ -103,7 +103,7 @@ def advanced_source(book, *, count=8):
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
         current = repository.state(_monthly.key(scope(book, "2026-01")), index.COMPONENT)
-        payload = update.base(repository, current)
+        payload = update.base(repository, current).payload
         assert current["state"] == "ready" and current["ready_head"] == current["wanted_head"]
         assert not repository.open_pending_rows(current["scope_key"])
         assert payload["open_items"]["current_cutoff_period"] == "2026-02"
@@ -186,7 +186,10 @@ def test_registered_but_never_published_new_month_can_fork_after_its_full_notice
         repository = read.repository("reading")
         previous = repository.state(_monthly.key(scope(book, "2026-01")), index.COMPONENT)
         assert previous["state"] == "ready" and previous["ready_head"] == previous["wanted_head"]
-        assert update.base(repository, previous)["open_items"]["current_cutoff_period"] == "2026-02"
+        assert (
+            update.base(repository, previous).payload["open_items"]["current_cutoff_period"]
+            == "2026-02"
+        )
         target = repository.state(_monthly.key(scope(book, "2026-02")), index.COMPONENT)
         assert target["ready_head"] == 0 and target["content_digest"] is None
         assert repository.payload(target["scope_key"], index.COMPONENT) is None
@@ -462,7 +465,7 @@ def test_closed_retirement_of_a_fully_paid_claim_rediscovers_its_missing_member(
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
         source = repository.state(_monthly.key(scope(book, "2026-01")), index.COMPONENT)
-        assert update.base(repository, source)["open_items"]["total_count"] == 0
+        assert update.base(repository, source).payload["open_items"]["total_count"] == 0
     current, model = fork_plan(book)
     publish_plan(book, current, model)
     assert cold_equal(book, "2026-02")["payable_fen"] == "100000"

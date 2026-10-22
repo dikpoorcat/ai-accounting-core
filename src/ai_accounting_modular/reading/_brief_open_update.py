@@ -26,13 +26,13 @@ from ._context import last_period
 def mark(repository, state, scope, impact, head):
     key = state["scope_key"]
     try:
-        payload = base(repository, state)
+        directory = base(repository, state)
+        payload = directory.payload if directory is not None else None
         if state["state"] == "failed":
             repository.open_mark(key, head, full=True)
             repository.open_advance_failed(key, head)
             return False
         selected = _dependencies.inputs(payload) if payload is not None else ReadInputs()
-        directory = index.Directory(repository, key, payload) if payload is not None else None
         exact = inputs.affected(directory, scope["period_to"], impact) if directory else True
         affected = exact or _monthly.affected(scope, index.COMPONENT, impact, selected)
         if affected:
@@ -154,7 +154,8 @@ def prepare(reader, scope, read, state):
     initial = rollover.initial(repository, state)
     if full and not initial:
         return brief.prepare(reader, scope, read)
-    payload = base(repository, state)
+    directory = base(repository, state)
+    payload = directory.payload if directory is not None else None
     current_cutoff = last_period(reader, read) or scope["period_to"]
     if payload is None:
         previous = (
@@ -173,7 +174,6 @@ def prepare(reader, scope, read, state):
     else:
         if current_cutoff < payload["open_items"]["current_cutoff_period"]:
             return brief.prepare(reader, scope, read)
-        directory = index.Directory(repository, key, payload)
         complete = payload["open_items"]["complete"]
     return prepare_from_base(
         reader,

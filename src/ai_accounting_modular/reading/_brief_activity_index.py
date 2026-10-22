@@ -7,7 +7,6 @@ from dataclasses import dataclass, replace
 from ai_accounting_modular.contracts.public import (
     ContractError,
     content_digest,
-    loads_json,
 )
 
 from . import _brief_activity_dependencies as dependencies
@@ -92,15 +91,9 @@ def base(repository, state):
             return None
         corrupt()
     try:
-        payload = loads_json(saved["payload_json"])
-        if (
-            saved["head"] != state["ready_head"]
-            or content_digest(payload) != state["content_digest"]
-        ):
-            corrupt()
         from ._brief_activity_directory import Directory
 
-        return Directory(repository, state["scope_key"], payload)
+        return Directory.from_row(repository, state, saved)
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise ContractError("storage_corrupt", "业务活动的目录基底不完整。") from error
 

@@ -11,7 +11,6 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_open_buckets as buckets
-from . import _dependencies
 from ._collections import IndexItem, PreparedModel, _decode, prepare_items, prepare_model
 
 COMPONENT = "brief_open_items"
@@ -63,12 +62,7 @@ def base(repository, state):
     row = repository.payload(state["scope_key"], COMPONENT)
     if row is None:
         return None
-    value = loads_json(row["payload_json"])
-    if row["head"] != state["ready_head"] or content_digest(value) != state["content_digest"]:
-        corrupt()
-    validate(value)
-    _dependencies.inputs(value)
-    return value
+    return Directory.from_row(repository, state, row)
 
 
 def cooperation_inputs(payload):
@@ -158,8 +152,21 @@ class Directory:
     """Same-read bucket proofs only; never a cache across transactions or scopes."""
 
     def __init__(self, repository, scope_key, payload):
-        self.repository, self.scope_key = repository, scope_key
         self.epoch = validate(payload)
+        self._bind(repository, scope_key, payload)
+
+    @classmethod
+    def from_row(cls, repository, state, row):
+        from ._component_view import summary
+
+        payload, epoch = summary(state["scope_key"], COMPONENT, state, row)
+        directory = cls.__new__(cls)
+        directory.epoch = epoch
+        directory._bind(repository, state["scope_key"], payload)
+        return directory
+
+    def _bind(self, repository, scope_key, payload):
+        self.repository, self.scope_key, self.payload = repository, scope_key, payload
         self.roots, self.loaded = payload["_buckets"], {}
         if repository.open_bucket_count(scope_key) != sum(
             len(root) for root in self.roots.values()

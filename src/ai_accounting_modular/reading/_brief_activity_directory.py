@@ -13,8 +13,21 @@ from ._collections import CollectionFilter, _read_item
 
 class Directory:
     def __init__(self, repository, scope_key, payload):
-        self.repository, self.scope_key, self.payload = repository, scope_key, payload
         self.epoch = index.validate(payload, scope_key)
+        self._bind(repository, scope_key, payload)
+
+    @classmethod
+    def from_row(cls, repository, state, row):
+        from ._component_view import summary
+
+        payload, epoch = summary(state["scope_key"], index.COMPONENT, state, row)
+        directory = cls.__new__(cls)
+        directory.epoch = epoch
+        directory._bind(repository, state["scope_key"], payload)
+        return directory
+
+    def _bind(self, repository, scope_key, payload):
+        self.repository, self.scope_key, self.payload = repository, scope_key, payload
         self.roots, self.loaded = payload["_buckets"], {}
         if repository.activity_bucket_count(scope_key) != sum(
             len(value) for value in self.roots.values()

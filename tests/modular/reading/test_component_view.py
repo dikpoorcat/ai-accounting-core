@@ -1,5 +1,6 @@
 """Same-read component proofs never replace actual bytes, context or owner checks."""
 
+from collections import OrderedDict
 from copy import deepcopy
 
 import pytest
@@ -18,6 +19,7 @@ from ai_accounting_modular.reading import (
 from ai_accounting_modular.reading import (
     _brief_groups,
     _brief_open,
+    _component_view,
     _item_buckets,
     _monthly,
 )
@@ -25,6 +27,7 @@ from ai_accounting_modular.reading import (
     _brief_open_index as open_items,
 )
 from ai_accounting_modular.reading._collections import CollectionFilter, collection_page
+from ai_accounting_modular.reading._repository import ReadingRepository
 
 from .test_brief_activity import capture as publish_activity
 from .test_brief_activity_incremental import book as book
@@ -45,6 +48,7 @@ def snapshot(book, read):
 
 
 def count_headers(monkeypatch):
+    monkeypatch.setattr(_component_view, "_summary_checks", OrderedDict())
     counts = {activity.COMPONENT: 0, open_items.COMPONENT: 0}
     for owner in (activity, open_items):
         original = owner.validate
@@ -87,11 +91,17 @@ def test_snapshot_mutations_cannot_change_the_private_directory_or_its_manifest(
         assert _brief_groups.activity_page(saved, read, {})["page"]["total_count"] == 1
 
 
-def test_direct_collection_and_reused_snapshot_on_another_read_both_recheck_headers(
-    book, monkeypatch
-):
+def test_another_read_reuses_only_static_checks_and_rechecks_actual_directory(book, monkeypatch):
     prepared(book)
     counts = count_headers(monkeypatch)
+    physical_checks = []
+    count_buckets = ReadingRepository.activity_bucket_count
+
+    def counted(repository, scope_key):
+        physical_checks.append(repository)
+        return count_buckets(repository, scope_key)
+
+    monkeypatch.setattr(ReadingRepository, "activity_bucket_count", counted)
     with book.kernel.storage.read_unit(book.company) as read:
         saved = snapshot(book, read)
         _brief_groups.activity_page(saved, read, {})
@@ -105,10 +115,14 @@ def test_direct_collection_and_reused_snapshot_on_another_read_both_recheck_head
             saved.scope_key, activity.COMPONENT, "activity", CollectionFilter(), PageQuery(), other
         )
         _brief_groups.activity_page(saved, other, {})
-    assert counts == {activity.COMPONENT: 2, open_items.COMPONENT: 1}
+    assert counts == {activity.COMPONENT: 1, open_items.COMPONENT: 1}
+    assert len(physical_checks) == 2
+    assert physical_checks[0] is not physical_checks[1]
 
 
-@pytest.mark.parametrize("change", ["raw_whitespace", "raw_content", "state"])
+@pytest.mark.parametrize(
+    "change", ["raw_whitespace", "raw_content", "state", "digest", "format", "payload_head"]
+)
 def test_cached_header_requires_the_actual_raw_and_full_ready_state_again(
     book, monkeypatch, change
 ):
@@ -118,13 +132,18 @@ def test_cached_header_requires_the_actual_raw_and_full_ready_state_again(
         saved = snapshot(book, read)
         _brief_groups.activity_page(saved, read, {})
         repository = read.repository("reading")
-        if change == "state":
+        if change in {"state", "digest", "format"}:
             fetch = repository.state
 
             def changed(scope, component):
                 value = fetch(scope, component)
                 if component == activity.COMPONENT:
-                    value["wanted_head"] += 1
+                    if change == "state":
+                        value["wanted_head"] += 1
+                    elif change == "format":
+                        value["format_version"] -= 1
+                    else:
+                        value["content_digest"] = "0" * 64
                 return value
 
             monkeypatch.setattr(repository, "state", changed)
@@ -134,9 +153,12 @@ def test_cached_header_requires_the_actual_raw_and_full_ready_state_again(
             def changed(scope, component):
                 value = fetch(scope, component)
                 if component == activity.COMPONENT:
-                    value["payload_json"] = (
-                        "\n" + value["payload_json"] if change == "raw_whitespace" else "{}"
-                    )
+                    if change == "payload_head":
+                        value["head"] += 1
+                    else:
+                        value["payload_json"] = (
+                            "\n" + value["payload_json"] if change == "raw_whitespace" else "{}"
+                        )
                 return value
 
             monkeypatch.setattr(repository, "payload", changed)
@@ -227,6 +249,7 @@ def test_normal_view_constructor_itself_checks_actual_hash_and_owner_invariants(
         repository = read.repository("reading")
         state = repository.state(scope_key, activity.COMPONENT)
         payload = repository.payload(scope_key, activity.COMPONENT)
+        _ComponentView(scope_key, activity.COMPONENT, read, state, payload)
         wrong_hash = dict(payload, payload_json="{}")
         with pytest.raises(ContractError) as error:
             _ComponentView(scope_key, activity.COMPONENT, read, state, wrong_hash)
@@ -239,3 +262,51 @@ def test_normal_view_constructor_itself_checks_actual_hash_and_owner_invariants(
         with pytest.raises(ContractError) as error:
             _ComponentView(scope_key, activity.COMPONENT, read, state, payload)
         assert error.value.code == "storage_corrupt"
+
+
+@pytest.mark.parametrize("owner", [activity, open_items])
+def test_base_reads_never_share_decoded_summary_values(book, monkeypatch, owner):
+    prepared(book)
+    counts = count_headers(monkeypatch)
+    scope_key = _monthly.key(selection(book))
+    with book.kernel.storage.read_unit(book.company) as read:
+        repository = read.repository("reading")
+        directory = owner.base(repository, repository.state(scope_key, owner.COMPONENT))
+        expected = deepcopy(directory.payload)
+        directory.payload["_buckets"].clear()
+        directory.payload["_inputs"].clear()
+    with book.kernel.storage.read_unit(book.company) as read:
+        repository = read.repository("reading")
+        directory = owner.base(repository, repository.state(scope_key, owner.COMPONENT))
+        assert directory.payload == expected
+        assert counts[owner.COMPONENT] == 1
+
+
+@pytest.mark.parametrize(
+    "owner,collection,bucket_collection",
+    [
+        (activity, "activity", activity.BUCKETS),
+        (open_items, "open_items", open_items.BUCKETS),
+    ],
+)
+def test_static_summary_hit_still_reads_actual_bucket_on_a_new_transaction(
+    book, owner, collection, bucket_collection
+):
+    prepared(book)
+    scope_key = _monthly.key(selection(book))
+    with book.kernel.storage.read_unit(book.company) as read:
+        collection_page(
+            scope_key, owner.COMPONENT, collection, CollectionFilter(), PageQuery(), read
+        )
+    with book.kernel.storage.maintenance_unit(book.company) as unit:
+        unit.repository("reading")._session.execute(
+            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
+            "AND collection_key=?",
+            (scope_key, owner.COMPONENT, bucket_collection),
+        )
+    with book.kernel.storage.read_unit(book.company) as read:
+        with pytest.raises(ContractError) as error:
+            collection_page(
+                scope_key, owner.COMPONENT, collection, CollectionFilter(), PageQuery(), read
+            )
+    assert error.value.code == "storage_corrupt"

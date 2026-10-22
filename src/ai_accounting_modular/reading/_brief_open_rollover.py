@@ -54,14 +54,15 @@ def select(repository, scope, current_cutoff, start_period):
             continue
     for month, state in sorted(candidates, key=lambda value: value[0], reverse=True):
         try:
-            payload = index.base(repository, state)
+            directory = index.base(repository, state)
+            payload = directory.payload if directory is not None else None
             if (
                 payload is None
                 or payload["open_items"]["cutoff_period"] != month
                 or payload["open_items"]["current_cutoff_period"] != current_cutoff
             ):
                 continue
-            return state, payload, index.Directory(repository, state["scope_key"], payload)
+            return state, payload, directory
         except (ContractError, KeyError, TypeError, ValueError):
             continue
     return None
@@ -84,13 +85,14 @@ def matches(repository, patch, target_scope, proposed):
             patch.base_digest,
         ):
             return False
-        payload = index.base(repository, state)
+        directory = index.base(repository, state)
+        payload = directory.payload if directory is not None else None
         return (
             payload is not None
             and payload["open_items"]["cutoff_period"] == previous["period_to"]
             and payload["open_items"]["current_cutoff_period"]
             == proposed["open_items"]["current_cutoff_period"]
-            and index.Directory(repository, patch.base_scope, payload).epoch == patch.item_epoch
+            and directory.epoch == patch.item_epoch
         )
     except (ContractError, KeyError, TypeError, ValueError):
         return False
