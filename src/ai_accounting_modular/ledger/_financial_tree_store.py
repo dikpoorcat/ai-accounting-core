@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-import sys
 from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from threading import Lock
@@ -11,8 +9,6 @@ from threading import Lock
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 
 from ._financial_tree import _CheckedStructure, _identity, corrupt, digest
-
-_LONG_DIGITS = re.compile(rf"[0-9]{{{sys.int_info.str_digits_check_threshold + 1},}}")
 
 
 class _StructureCache:
@@ -35,9 +31,11 @@ class _StructureCache:
                 return existing[0]
         checked = _CheckedStructure(raw, identity)
         size = len(raw.encode("utf-8"))
-        # All admissible integers fit every legal interpreter digit policy.
-        # A long digit string is conservatively left uncached as well.
-        if checked._value["oversize"] or size > self._max_bytes or _LONG_DIGITS.search(raw):
+        if (
+            checked._value["oversize"]
+            or size > self._max_bytes
+            or not checked.integer_policy_independent
+        ):
             return checked
         with self._lock:
             existing = self._entries.get(key)
@@ -140,7 +138,7 @@ class TreeStore:
         checked = _checked_structure(raw, identity)
         # A read's staging and GC must not depend on cross-read LRU capacity.
         # Long integer tokens still cannot reuse a more permissive parser policy.
-        if not _LONG_DIGITS.search(raw):
+        if checked.integer_policy_independent:
             self._checked[identity] = checked
         return checked
 

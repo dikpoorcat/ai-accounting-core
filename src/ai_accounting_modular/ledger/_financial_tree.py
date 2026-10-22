@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import sys
 from collections import defaultdict
 from collections.abc import Mapping
 from copy import deepcopy
@@ -16,6 +18,7 @@ from ai_accounting_modular.contracts.public import ContractError, canonical_json
 from ._values import fail
 
 FORMAT = "ledger-financial-tree/1"
+_LONG_DIGITS = re.compile(rf"[0-9]{{{sys.int_info.str_digits_check_threshold + 1},}}")
 
 
 def corrupt():
@@ -321,6 +324,7 @@ class _CheckedStructure:
     _value: dict = field(repr=False)
     _rows: tuple = field(repr=False)
     children: tuple[_Ref, ...]
+    integer_policy_independent: bool = field(init=False, repr=False)
 
     def __init__(self, raw, identity):
         value, rows, children = _structure(raw, identity)
@@ -329,6 +333,9 @@ class _CheckedStructure:
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_rows", rows)
         object.__setattr__(self, "children", children)
+        # All reusable integer tokens fit every legal interpreter digit policy.
+        # Long digit strings conservatively prevent reuse as well.
+        object.__setattr__(self, "integer_policy_independent", _LONG_DIGITS.search(raw) is None)
 
     def entries(self):
         return tuple(Entry._from_structure(self, index) for index in range(len(self._rows)))

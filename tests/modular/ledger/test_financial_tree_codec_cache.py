@@ -3,6 +3,7 @@
 import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import FrozenInstanceError, replace
 from threading import Barrier
 
 import _financial_snapshot_review_support as support
@@ -62,6 +63,42 @@ def test_cross_store_hit_still_reads_actual_rows_and_independent_structure_still
     _, _, fresh = assemble(reader)
     assert tuple(fresh.entries(root)) == tuple(values)
     assert decoded == [root.digest, root.digest]
+
+
+def test_integer_policy_metadata_is_minted_only_by_strict_immutable_construction():
+    raw, root = stored_node()
+    checked = tree_module._CheckedStructure(raw, root.digest)
+    assert checked.integer_policy_independent is True
+    with pytest.raises(TypeError):
+        tree_module._CheckedStructure(raw, root.digest, integer_policy_independent=True)
+    with pytest.raises(FrozenInstanceError):
+        checked.integer_policy_independent = False
+    with pytest.raises(ValueError):
+        replace(checked, integer_policy_independent=False)
+    with pytest.raises(ContractError):
+        tree_module._CheckedStructure(raw + " ", root.digest)
+
+
+def test_policy_classification_runs_once_per_actual_strict_decode(monkeypatch):
+    raw, root = stored_node()
+    reader = Reader({(module.TreeStore.NODES, root.digest): raw})
+    monkeypatch.setattr(module, "_structure_cache", module._StructureCache())
+    original, calls = tree_module._LONG_DIGITS, []
+
+    class Observed:
+        def search(self, value):
+            calls.append(value)
+            return original.search(value)
+
+    monkeypatch.setattr(tree_module, "_LONG_DIGITS", Observed())
+    first = module.TreeStore(reader)
+    assert first.checked_nodes((root.digest,))[0].integer_policy_independent
+    assert first.checked_nodes((root.digest,))[0].integer_policy_independent
+    second = module.TreeStore(reader)
+    assert second.checked_nodes((root.digest,))[0].integer_policy_independent
+    assert calls == [raw] and len(reader.calls) == 2
+    structure(raw, root.digest)
+    assert calls == [raw, raw]
 
 
 def test_one_read_keeps_proofs_through_global_eviction_staging_publication_and_gc(monkeypatch):
@@ -224,6 +261,9 @@ def test_minimum_integer_policy_is_a_conservative_admission_boundary(codec, digi
         checked_raw = store._staged[new_root.digest]
         first = codec.get(checked_raw, new_root.digest)
         second = codec.get(checked_raw, new_root.digest)
+        assert first.integer_policy_independent is (
+            digits == sys.int_info.str_digits_check_threshold
+        )
         assert (first is second) == (digits == sys.int_info.str_digits_check_threshold)
     finally:
         sys.set_int_max_str_digits(original)
