@@ -80,7 +80,7 @@ F 合同完成后，各家庭可用公开账务/身份读取替身先实现纯�
 **owner：读取交付负责人。** 交付 `reading/dashboard/`、必要前端 API/生成类型接续、`tests/modular/reading/dashboard/`及对应前端测试。reading 维护派生模型和计划，dashboard 只适配既有 HTTP；二者不重算账务。
 
 - 输入为ledger、领域、money、records、identity公开结果、storage公司元数据及统一ReadContext；输出为reading.public、冻结的五页响应、报表三接口及独立只读来源查阅。请求、字段、版本、分页、取消、差异与预算全部依 [看板规范](06-dashboard-adapter.md)。
-- 私有表仅 `read_scope_head/read_component/read_item`。文件任务仓储归F包的独立files模块；reading拥有报表plan与口径，通过共同FileTaskPort接续，不直接写 `file_task` 或反向导入application。
+- 私有表仅 `read_scope_head/read_component/read_item`。文件任务仓储归F包的独立files模块；reading维护报表交付plan和读取调度，通过共同FileTaskPort接续。财务金额与取数口径由ledger/reporting统一提供；reading不直接写 `file_task` 或反向导入application。
 - 允许改本包和所属测试；前端接续遵守根目录 FRONTEND.md。主要显示内容、UI 样式和既有交互保持，只读核对文案、精确业务范围、版本接续、失败刷新和任务轮询按看板合同实现。合作投资只接通既有财务汇总、真实资金和完整凭证，不新增专页、板块、专项AI/HTTP接口或项目管理展示；通用进展无适用明细时明确说明，不阻断记账。顾问从AI提供的/review/materials深链进入第11节独立来源页，依严格ReviewMaterialsQuery/Response和SourceContentQuery打开已登记原件/老板补充。不修改主导航，不为合作另设分支或增加原五页默认请求。
 - 复用现有 Vue 组件、API 消费方式、取消/缓存与递增追加行为；旧 `dashboard_sort.py`、分区和组明细测试只作为行为索引。新后台不得调用旧总服务、旧事实表或跨模块私表。
 - F 及公开读取合同就绪后可用确定的语义结果替身独立开发；真实集成必须接同一公司事务中的真实领域/账务结果，并验证跨月余额、冻结读取、旧分页409、当前模型及导出所见一致。报表partial的有据金额正常显示、未知null且禁完整导出；不得无限preparing。来源页验收引用范围/分页、冻结旧依据、开放旧代409、跨公司404、原件校验失败不交付及移动读取租约，依[来源样例](examples/review-materials-cases.json)。

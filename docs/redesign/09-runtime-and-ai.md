@@ -6,10 +6,11 @@
 
 ## 安装与启动
 
-源码开发使用仓库 `.tmp-kernel-venv` 的 Python 3.12。先安装前端依赖并生成随包静态页面，再构建 Python wheel：
+源码开发使用仓库 `.tmp-kernel-venv` 的 Python 3.12。先安装前端依赖，分别构建既存 `finance-local` 和新体系 `finance-modular` 的随包静态页面，再构建 Python wheel；两套页面使用独立输出目录：
 
 ```powershell
 npm --prefix frontend ci
+npm --prefix frontend run build:release
 npm --prefix frontend run build:modular
 & '.tmp-kernel-venv/Scripts/python.exe' -m pip wheel . --no-deps --wheel-dir dist
 ```
