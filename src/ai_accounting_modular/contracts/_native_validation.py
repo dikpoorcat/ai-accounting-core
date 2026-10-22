@@ -9,6 +9,8 @@ from jsonschema.exceptions import FormatError
 from ._dispatch import _CHILDREN, _LISTS, _MAPS
 from ._validation_keywords import integer_bound, wire_fen
 
+_CANONICAL_UUID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
 
 class _StrictInteger:
     def __init__(self, parent, value, path):
@@ -107,6 +109,11 @@ def compile_schema(node):
         result["x-python-integer"] = True
     if type(node.get("const")) in {int, bool}:
         result["x-python-const"] = node["const"]
+    if node.get("format") == "uuid" and node.get("pattern") == _CANONICAL_UUID:
+        # This exact full-match pattern implies the installed UUID format:
+        # 32 ASCII hex digits and the four canonical hyphens. Keep the pattern,
+        # avoiding a second UUID parse; every other format/pattern stays intact.
+        result.pop("format")
     if "pattern" in node:
         result["x-python-pattern"] = result.pop("pattern")
     return result
