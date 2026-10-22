@@ -12,6 +12,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     CurrentIssue,
     CurrentNote,
+    FactDocumentPart,
     NoteChange,
     ReadContext,
     Source,
@@ -177,7 +178,7 @@ class DocumentSnapshot:
     scopes: tuple[str, ...]
     confirmed_set_id: str | None
     base_manifest_json: str | None
-    parts_json: tuple[str, ...]
+    parts_json: tuple[str | FactDocumentPart, ...]
     _part_keys: tuple[str, ...] = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -212,9 +213,15 @@ class DocumentSnapshot:
         )
         parts, keys = [], []
         for raw in raw_parts:
-            part, body = document(raw, "StandardPart")
+            if type(raw) is FactDocumentPart:
+                body, key = raw.canonical_json, raw.key
+            else:
+                if isinstance(raw, FactDocumentPart):
+                    raise ContractError("invalid_input", "事实文档片必须使用正常构造的精确类型。")
+                part, body = document(raw, "StandardPart")
+                key = part["key"]
             parts.append(body)
-            keys.append(part["key"])
+            keys.append(key)
         object.__setattr__(self, "company_root", root)
         object.__setattr__(self, "targets", targets)
         object.__setattr__(self, "scopes", scopes)

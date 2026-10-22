@@ -21,6 +21,7 @@ from ._contexts import (
 from ._errors import ContractError
 from ._fact_analysis import FactAnalysis, analyze_fact
 from ._fact_collections import restore_fact_collection, split_fact_collection
+from ._fact_document import FactDocumentPart
 from ._fact_sources import (
     fact_source_ids,
     fact_source_paths,
@@ -90,6 +91,7 @@ __all__ = [
     "query_selection",
     "ContractError",
     "FactAnalysis",
+    "FactDocumentPart",
     "analyze_fact",
     "restore_fact_collection",
     "split_fact_collection",

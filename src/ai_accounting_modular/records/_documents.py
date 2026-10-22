@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    analyze_fact,
+    FactDocumentPart,
     canonical_json,
     content_digest,
     loads_json,
@@ -134,24 +134,23 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
     parts, used_sources = {}, set()
     groups = defaultdict(list)
     seen = set()
-    for value in facts:
-        analysis = analyze_fact(value)
-        fact = analysis.fact
-        if fact["business_id"] in seen:
-            raise ContractError("invalid_input", "同一最终业务不能出现在多个标准分片。")
-        seen.add(fact["business_id"])
-        fact["evidence_ids"] = sorted(set(fact["evidence_ids"]))
-        used_sources.update(analysis.source_ids)
-        key = validate_key("facts:" + fact["kind"].split(".")[0] + ":" + fact["period"])
+    for fact in facts:
+        try:
+            if type(fact) is not dict:
+                raise TypeError
+            key = validate_key("facts:" + fact["kind"].split(".")[0] + ":" + fact["period"])
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise ContractError("invalid_input", "最终事实缺少明确的领域或月份。") from error
         if key not in selected:
             raise ContractError("invalid_input", "事实导出必须只覆盖本次选定的完整业务分片。")
         groups[key].append(fact)
     for key, values in groups.items():
-        parts[key] = {
-            "format": FORMAT,
-            "key": key,
-            "facts": sorted(values, key=lambda fact: fact["business_id"]),
-        }
+        part = FactDocumentPart({"format": FORMAT, "key": key, "facts": values})
+        if seen.intersection(part.business_ids):
+            raise ContractError("invalid_input", "同一最终业务不能出现在多个标准分片。")
+        seen.update(part.business_ids)
+        used_sources.update(part.source_ids)
+        parts[key] = part
     if "objects" in selected and objects is None:
         raise ContractError("invalid_input", "对象片待更新时必须导出完整当前对象集合。")
     if "objects" not in selected and objects:
@@ -204,7 +203,10 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
         tuple(sorted(selected)),
         current["published_set_id"] if current else None,
         canonical_json(base) if base is not None else None,
-        tuple(canonical_json(parts[key]) for key in sorted(parts)),
+        tuple(
+            parts[key] if type(parts[key]) is FactDocumentPart else canonical_json(parts[key])
+            for key in sorted(parts)
+        ),
     )
     for key, raw in zip(snapshot._part_keys, snapshot.parts_json, strict=True):
         target = indexed.get(key)

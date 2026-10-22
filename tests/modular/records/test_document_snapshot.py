@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from test_documents import _first_facts, _publish, company_identity
 
-from ai_accounting_modular.contracts.public import ContractError, loads_json
+from ai_accounting_modular.contracts.public import ContractError, FactDocumentPart, loads_json
 from ai_accounting_modular.records.public import DocumentSnapshot, ShardTarget, open_standard_bundle
 
 
@@ -140,3 +140,29 @@ def test_replacing_a_valid_snapshot_rechecks_then_preserves_exact_prepared_bytes
             for part in copied.parts_json
             if loads_json(part)["key"] == shard["key"]
         )
+
+
+def test_typed_fact_part_and_normal_raw_snapshot_have_identical_public_bytes(records_case):
+    snapshot = _capture(records_case)
+    incoming = [
+        FactDocumentPart(loads_json(raw)) if key.startswith("facts:") else raw
+        for key, raw in zip(snapshot._part_keys, snapshot.parts_json, strict=True)
+    ]
+    typed = DocumentSnapshot(**(_arguments(snapshot) | {"parts_json": incoming}))
+    incoming.clear()
+    assert typed == snapshot
+    assert all(type(raw) is str for raw in typed.parts_json)
+    assert replace(typed) == snapshot
+
+
+def test_fact_part_subclass_cannot_inject_unchecked_text_into_a_snapshot(records_case):
+    snapshot = _capture(records_case)
+
+    class UncheckedPart(FactDocumentPart):
+        def __init__(self):
+            object.__setattr__(self, "_body", "invalid")
+            object.__setattr__(self, "key", "facts:operations:2026-01")
+
+    with pytest.raises(ContractError) as error:
+        DocumentSnapshot(**(_arguments(snapshot) | {"parts_json": [UncheckedPart()]}))
+    assert error.value.code == "invalid_input"

@@ -1,4 +1,4 @@
-"""Capture shares strict fact analysis while external snapshots stay untrusted."""
+"""Capture shares strict fact shards while external snapshots stay untrusted."""
 
 from copy import deepcopy
 from dataclasses import replace
@@ -103,3 +103,35 @@ def test_strict_fact_validation_remains_at_capture_and_external_snapshot_prepare
     with storage.read_unit(company.company_id) as read:
         assert read.head == snapshot.head
         assert records.document_status(read)["state"] == "pending"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        False,
+        [],
+        {},
+        {"kind": None, "period": "2026-01"},
+        {"kind": "operations.expense", "period": []},
+    ],
+)
+def test_capture_reports_invalid_raw_fact_structure_as_a_contract_error(records_case, bad):
+    storage, (company, _), records = records_case
+    _first_facts(records_case)
+    with storage.read_unit(company.company_id) as read, pytest.raises(ContractError) as error:
+        records.capture_documents(company_identity(company), [bad], [], read)
+    assert error.value.code == "invalid_input"
+
+
+def test_capture_rejects_one_business_appearing_in_two_complete_month_shards(records_case):
+    storage, (company, _), records = records_case
+    first, obj = _first_facts(records_case)
+    second = deepcopy(first)
+    second["period"] = "2026-02"
+    with storage.write_unit(company.company_id) as unit:
+        records.mark_document_targets(("facts:operations:2026-02",), unit)
+    with storage.read_unit(company.company_id) as read, pytest.raises(ContractError) as error:
+        records.capture_documents(company_identity(company), [first, second], [obj], read)
+    assert error.value.code == "invalid_input"
+    assert "多个标准分片" in str(error.value)
