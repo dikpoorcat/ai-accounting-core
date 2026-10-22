@@ -181,12 +181,12 @@ PositionPage同时包含有界ReadPage、完整范围totals和筛选后totals；
 | 端口 | 输入与返回 |
 | --- | --- |
 | `financial_projection_request(kind, scope, read)` | kind 为 `summary_values` 或 `snapshot`；返回 FinancialProjectionRequest，含规范 scope、稳定 key 和描述符定位。身份绑定模型格式、公司、数据库、种类及范围，不含全局业务头或请求的 expected_head；后续端口再次核对请求，不能修改其中的字典后继续沿用旧 key。 |
-| `prepare_financial_projection(requests, changes, closure_ranges, read, *, base=None, rebuild=False)` | 在同一读快照中消费实际 FormalChange 和关账起止月对，返回 FinancialProjectionPlan：规范 header_json、其 SHA256、逐项 writes(collection,key,payload_json) 和 deletes(collection,key)。正常更新只准备发生变化的正式来源；首次增加读取范围时核对完整薄目录，发现过去未通知到此范围的业务。rebuild=True 时 base 必须为 None，并提供全部登记请求；返回完整产物，reading 通过发布核对后一次替换旧准备资料。 |
+| `prepare_financial_projection(requests, changes, closure_ranges, read, *, base=None, rebuild=False)` | 在同一读快照中消费实际 FormalChange 和关账起止月对，返回 FinancialProjectionPlan：规范 header_json、其 SHA256、逐项 writes(collection,key,payload_json) 和 deletes(collection,key)。正常更新核对变化业务槽的完整保留链。新增范围先固定兼容基底，再按实际月份边界发现候选槽；没有兼容基底时发现目标完整范围，不拿待办代替历史发现。首次冷建及显式 rebuild 完整发现；rebuild=True 时 base 必须为 None，并提供全部登记请求，发布核对后才替换旧准备资料。 |
 | `read_financial_projection(request, read, base)` | 从已准备的范围返回 FinancialProjectionArtifact，含请求身份、实际描述符定位及摘要、范围版本和结果。金额摘要为 FinancialSummaryValues(version,scope,values,issues)，不枚举完整公开 Sources；三表为严格 FinancialSnapshot。未覆盖请求返回 None，已声明内容缺失或损坏返回错误。金额摘要与完整 FinancialSummary 使用同一版本工厂；完整来源只在需要完整公开结果时读取。 |
 
 base 遵守 FinancialProjectionReader：提供 header_json 和按输入顺序返回正文或 None 的 get_blocks。内部 JSON 由 ledger 验证，reading 不解释余额、正式来源或索引节点。基底通过了格式核验不表示已经包含后来业务；reading 必须在正式提交中登记相关待办，完成准备后才交给消费者。
 
-同公司只保存一份共享的精确来源正文和正式采用链；各范围只持有实际选中的余额、发生额及必要边界。来源正文依据该结果自己的正式采用引用确定，不借用后来业务的分类。准备发布核对目标、格式、就绪点、原基底摘要及待办摘要；消费者发布核对自己的描述符和格式，不把其他范围的待办或整个公司准备头当作本范围变化。失败使用同样的比较条件，迟到的失败不能把新结果标为失败。待办仅保存当前合并范围，成功后清除，不形成操作历史。
+同公司只保存一份共享的精确来源正文和正式采用链；建立后，每次正式变化都在同一事务进入其当前合并待办，包括消费者范围以外的变化。各范围只持有实际选中的余额、发生额及必要边界，正文按本次真实采用确定。准备发布核对目标、格式、就绪点、原基底摘要及待办摘要；消费者仍按自身依赖更新，发布核对自己的描述符和格式，不采用整个公司准备头。失败使用同样的比较条件，迟到失败不能覆盖新结果。成功后清除待办，不形成操作历史；旧格式须显式重建后才能沿用。
 
 ### 资金与投资的批量读取
 

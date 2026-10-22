@@ -197,27 +197,42 @@ class Model:
             fail("storage_corrupt", "财务请求缺少实际覆盖的正式角色。")
         return key, self.roles[key]
 
-    def _extend_role(self, spec, values):
+    @staticmethod
+    def _role_base(spec, available):
         candidates = [
-            role
-            for role in self.roles.values()
-            if role.spec["kind"] == spec["kind"]
-            and role.spec["view"] == spec["view"]
+            (key, previous)
+            for key, previous in available.items()
+            if previous["kind"] == spec["kind"]
+            and previous["view"] == spec["view"]
             and (
                 spec["kind"] == "stock"
-                or (role.spec["first"] == spec["first"] and role.spec["cash"] == spec["cash"])
+                or (previous["first"] == spec["first"] and previous["cash"] == spec["cash"])
             )
         ]
         field = "cutoff" if spec["kind"] == "stock" else "last"
-        before = [role for role in candidates if role.spec[field] <= spec[field]]
-        previous = (
-            max(before, key=lambda role: role.spec[field])
+        before = [value for value in candidates if value[1][field] <= spec[field]]
+        return (
+            max(before, key=lambda value: value[1][field])
             if before
-            else (min(candidates, key=lambda role: role.spec[field]) if candidates else None)
+            else (min(candidates, key=lambda value: value[1][field]) if candidates else None)
         )
-        role = self._role(spec, previous.wire() if previous else None)
-        role.extend(values, previous.spec if previous else None)
-        return role
+
+    def _role_plan(self, requested, *, discover):
+        available = {key: role.spec for key, role in self.roles.items()}
+        requests = dict(self.requests)
+        requests.update((value.key, value) for value in requested)
+        result = []
+        for value in requests.values():
+            for spec in required_roles(value, self.read.start_period, saved=self.saved(value)):
+                key = content_digest(spec)
+                if key in available:
+                    continue
+                if not discover:
+                    fail("storage_corrupt", "已有财务读取请求丢失了正式角色覆盖。")
+                previous = self._role_base(spec, available)
+                result.append((key, spec, previous))
+                available[key] = spec
+        return result
 
     def saved(self, value):
         if value.key not in self._saved:
@@ -260,14 +275,18 @@ class Model:
         requested = tuple(verified_request(value, self.read) for value in requested)
         old_roots = self.root_ids()
         fresh = any(value.key not in self.requests for value in requested)
-        discover = self.base.header_json is None or fresh
-        identities = (
-            None
-            if discover
-            else tuple(sorted({(value.business_id, value.result_slot) for value in changes}))
-        )
+        cold = self.base.header_json is None
+        planned = self._role_plan(requested, discover=cold or fresh)
+        identities = {(value.business_id, value.result_slot) for value in changes}
+        repo = self.read.repository("ledger")
+        if not cold:
+            for _, spec, previous in planned:
+                identities.update(
+                    repo.financial_projection_candidates(spec, previous[1] if previous else None)
+                )
+        identities = None if cold else tuple(sorted(identities))
         old = self._old_chains(identities)
-        actual = self.read.repository("ledger").financial_projection_chains(identities)
+        actual = repo.financial_projection_chains(identities)
         capture = Selection(
             self.read.repository("ledger"),
             "current",
@@ -330,13 +349,11 @@ class Model:
         for role in self.roles.values():
             role.patch(pairs)
         self.requests.update((value.key, value) for value in requested)
-        for value in self.requests.values():
-            for spec in required_roles(value, self.read.start_period, saved=self.saved(value)):
-                key = content_digest(spec)
-                if key not in self.roles:
-                    if not discover:
-                        fail("storage_corrupt", "已有财务读取请求丢失了正式角色覆盖。")
-                    self.roles[key] = self._extend_role(spec, tuple(new.values()))
+        for key, spec, previous in planned:
+            base = self.roles[previous[0]] if previous else None
+            role = self._role(spec, base.wire() if base else None)
+            role.extend(tuple(new.values()), base.spec if base else None)
+            self.roles[key] = role
         required = {
             content_digest(spec)
             for value in self.requests.values()

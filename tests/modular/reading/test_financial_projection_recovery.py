@@ -74,6 +74,28 @@ def retry_view(case, entry):
     )
 
 
+def obsolete_owner(target, unit):
+    work = target.work()
+    old_format = FINANCIAL_PROJECTION_FORMAT - 1
+    work["registered"] = {
+        content_digest(
+            {
+                "format": old_format,
+                "company_id": unit.company_id,
+                "database_id": unit.database_id,
+                **value,
+            }
+        ): value
+        for value in work["registered"].values()
+    }
+    target.save_work(work, unit.head)
+    target._session.execute(
+        "UPDATE read_scope_head SET format_version=?,state='ready' WHERE scope_key=?",
+        (old_format, target.scope_key),
+    )
+    return set(work["registered"])
+
+
 @pytest.mark.parametrize("entry", ("monthly", "quarterly"))
 @pytest.mark.parametrize("damage", ("old_format", "storage_corrupt"))
 def test_ready_consumer_explicit_retry_rebuilds_obsolete_or_corrupt_real_producer(
@@ -89,22 +111,7 @@ def test_ready_consumer_explicit_retry_rebuilds_obsolete_or_corrupt_real_produce
         assert not work["pending"]
         if damage == "old_format":
             # The former owner format also used different request identities.
-            work["registered"] = {
-                content_digest(
-                    {
-                        "format": 1,
-                        "company_id": unit.company_id,
-                        "database_id": unit.database_id,
-                        **value,
-                    }
-                ): value
-                for value in work["registered"].values()
-            }
-            target.save_work(work, unit.head)
-            target._session.execute(
-                "UPDATE read_scope_head SET format_version=1,state='ready' WHERE scope_key=?",
-                (target.scope_key,),
-            )
+            obsolete_owner(target, unit)
         else:
             target._session.execute(
                 "UPDATE read_scope_head SET state='failed',error_code='storage_corrupt' "
@@ -135,6 +142,65 @@ def test_ready_consumer_explicit_retry_rebuilds_obsolete_or_corrupt_real_produce
     assert ready_views(case) == expected
     assert reading_rows(case, healthy_only=True) == unchanged
     assert formal_documents(case) == documents
+
+
+@pytest.mark.parametrize("entry", ("monthly", "quarterly"))
+def test_old_owner_and_unrelated_posting_preserve_apply_and_require_explicit_rebuild(
+    live_case, entry
+):
+    case = live_case
+    case.seed()
+    page(case)
+    quarter(case)
+    drain(case)
+    before = page(case), quarter(case)
+
+    def same_financial_values():
+        assert page(case) == before[0]
+        actual = quarter(case)
+        assert actual.state == "ready" and actual.version == before[1].version
+        # A new formal commit advances the live head even when this financial
+        # scope is unchanged. All saved financial fields and PreTax stay equal.
+        assert {
+            key: value for key, value in actual.payload["snapshot"].items() if key != "head"
+        } == {key: value for key, value in before[1].payload["snapshot"].items() if key != "head"}
+
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        target = projection.store(unit)
+        old_keys = obsolete_owner(target, unit)
+        assert old_keys.isdisjoint(
+            projection.request(case.kernel.reading, value, kind, unit).key
+            for kind, value in (
+                ("summary_values", scope(case)),
+                (
+                    "snapshot",
+                    {
+                        "company_id": case.company,
+                        "period_from": "2026-01",
+                        "period_to": "2026-03",
+                        "view": "as_posted",
+                    },
+                ),
+            )
+        )
+    future = case.expense("70000", "2026-07")
+    response = case.app.accounting_apply(case.request(future))
+    assert response["completion"] == "complete", response
+    documents = formal_documents(case)
+    with case.kernel.storage.read_unit(case.company) as read:
+        target = projection.store(read)
+        state, work = target.state(), target.work()
+        assert state["state"] == "failed" and state["error_code"] == "storage_corrupt"
+        assert work["rebuild"] and not work["pending"]
+    same_financial_values()
+    retry_view(case, entry)
+    drain(case)
+    same_financial_values()
+    assert formal_documents(case) == documents
+    with case.kernel.storage.read_unit(case.company) as read:
+        target = projection.store(read)
+        assert target.state()["format_version"] == FINANCIAL_PROJECTION_FORMAT
+        assert target.work()["registered"] and old_keys.isdisjoint(target.work()["registered"])
 
 
 def test_ready_real_producer_and_consumers_explicit_retry_is_a_noop(live_case):

@@ -21,6 +21,7 @@ from ai_accounting_modular.ledger._financial_projection_indexes import BodyDirec
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
 from ai_accounting_modular.ledger._financial_tree import Entry, Tree
+from ai_accounting_modular.ledger.public import FINANCIAL_PROJECTION_FORMAT
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_model import Blocks, scope
 
@@ -305,8 +306,8 @@ def test_old_projection_format_requires_explicit_rebuild(book):
         selected = book.app.ledger.financial_projection_request("summary_values", scope(book), read)
     prepare(book, blocks, (selected,))
     old = loads_json(blocks.header_json)
-    assert old["format"] == 3
-    old["format"] = 2
+    assert old["format"] == FINANCIAL_PROJECTION_FORMAT
+    old["format"] = FINANCIAL_PROJECTION_FORMAT - 1
     blocks.header_json = canonical_json(old)
     with book.app.storage.read_unit(book.company) as read:
         with pytest.raises(ContractError) as error:

@@ -373,6 +373,43 @@ class LedgerRepository(ReadRepository):
             ]
         return records
 
+    def financial_projection_candidates(self, spec, previous=None):
+        """Find identities at a role boundary, never partial adoption chains.
+
+        Stock follows adoption months for as-posted and economic months for
+        current. Compatible flow roles have the same first month; otherwise
+        the caller builds the entire requested flow from an empty role.
+        """
+        field = "cutoff" if spec["kind"] == "stock" else "last"
+        column = "r.posting_period" if spec["view"] == "as_posted" else "r.business_period"
+        last = spec[field]
+        if previous is not None:
+            first, last = sorted((previous[field], last))
+            if first == last:
+                return ()
+            predicate = f"{column}>? AND {column}<=?"
+            args = first, last
+        elif spec["kind"] == "flow":
+            predicate = f"{column}>=? AND {column}<=?"
+            args = spec["first"], last
+        else:
+            predicate, args = f"{column}<=?", (last,)
+        selection = (
+            " JOIN result_slot_current c ON c.head_result_id=r.result_id"
+            if spec["view"] == "current"
+            else ""
+        )
+        return tuple(
+            (row["business_id"], row["result_slot"])
+            for row in self._session.fetchall(
+                "SELECT DISTINCT r.business_id,r.result_slot FROM adopted_result r"
+                + selection
+                + " WHERE "
+                + predicate,
+                args,
+            )
+        )
+
     def financial_projection_chains(self, business_slots=None):
         """Exact surviving adoption metadata, including frozen anchors and current pointers."""
         if business_slots is not None and not business_slots:

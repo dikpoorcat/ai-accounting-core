@@ -45,8 +45,11 @@ def test_unrelated_future_posting_keeps_old_ready_artifact_and_later_fills_new_s
     before = page(case)
     result = case.app.accounting_apply(case.request(case.expense("70000", "2026-07")))
     assert result["completion"] == "complete"
-    assert case.kernel.reading.run_pending(case.company) == ()
-    assert page(case) == before and len(owner.prepared) == 1
+    with case.kernel.storage.read_unit(case.company) as read:
+        private = projection.key(read)
+        assert projection.store(read).work()["pending"] == []
+    assert case.kernel.reading.run_pending(case.company) == (private,)
+    assert page(case) == before and len(owner.prepared) == 2
     page(case, "2026-07")
     drain(case)
     assert page(case, "2026-07").payload["financial"]["expense"]["amount_fen"] == "70000"

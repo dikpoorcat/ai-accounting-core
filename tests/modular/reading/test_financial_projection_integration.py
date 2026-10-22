@@ -296,7 +296,10 @@ def test_real_future_b_does_not_rewrite_ready_a_and_new_range_catches_up(live_ca
         old_descriptor = _financial_projection.store(read).get_blocks((selected.descriptor_key,))
     saved = case.app.accounting_apply(case.request(case.expense("70000", "2026-07")))
     assert saved["completion"] == "complete", saved
-    assert case.kernel.reading.run_pending(case.company) == ()
+    with case.kernel.storage.read_unit(case.company) as read:
+        private = _financial_projection.key(read)
+        assert _financial_projection.store(read).work()["pending"] == []
+    assert case.kernel.reading.run_pending(case.company) == (private,)
     assert month_page(case) == before
     assert month_page(case, "2026-07").state == "preparing"
     settle(case)

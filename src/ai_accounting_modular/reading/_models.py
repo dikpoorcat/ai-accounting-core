@@ -224,7 +224,10 @@ def mark_targets(reader, impact, unit):
             if not cache_corruption(error):
                 raise
             _fail_corrupt(repository, state)
-    if financial:
+    # The shared chain catalog must see changes outside every consumer's current
+    # range too. Otherwise a later range could subtract a stale open target.
+    producer_exists = _financial_projection.store(unit).state() is not None
+    if financial or (producer_exists and impact.formal_changes):
         _financial_projection.queue_requests(
             reader,
             financial,
