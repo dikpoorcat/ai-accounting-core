@@ -63,6 +63,9 @@ def test_failed_scenario_retains_observed_time_but_cannot_be_a_successful_sample
         "intended_scale_months": 2,
         "pending_period": "2026-02",
         "months": 1,
+        "people": 4,
+        "employees": 3,
+        "contractors": 1,
         "businesses_per_month": 240,
         "ending_bank_fen": 1000,
     }
@@ -98,20 +101,26 @@ def test_failed_scenario_retains_observed_time_but_cannot_be_a_successful_sample
     )
 
 
-def test_lifecycle_orchestration_keeps_the_selected_independent_samples(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("months", "employees", "contractors", "businesses", "official"),
+    ((12, 50, 5, 1000, True), (2, 3, 1, 240, False)),
+)
+def test_lifecycle_orchestration_keeps_the_selected_independent_samples(
+    tmp_path, monkeypatch, months, employees, contractors, businesses, official
+):
     """A pure orchestration oracle, not measured accounting or qualification evidence."""
     manifest = {
-        "intended_scale_months": 12,
-        "pending_period": "2026-12",
-        "months": 11,
-        "people": 55,
-        "employees": 50,
-        "contractors": 5,
-        "businesses_per_month": 1000,
+        "intended_scale_months": months,
+        "pending_period": f"2026-{months:02d}",
+        "months": months - 1,
+        "people": employees + contractors,
+        "employees": employees,
+        "contractors": contractors,
+        "businesses_per_month": businesses,
         "ending_bank_fen": 1000,
     }
     prepared, copied, committed = [], [], []
-    sentinel = SimpleNamespace(cold_reading={"elapsed_ms": 123, "period": "2026-11"})
+    sentinel = SimpleNamespace(cold_reading={"elapsed_ms": 123, "period": f"2026-{months - 1:02d}"})
 
     def baseline(*args, **kwargs):
         prepared.append((args, kwargs))
@@ -147,6 +156,9 @@ def test_lifecycle_orchestration_keeps_the_selected_independent_samples(tmp_path
         "sample"
     ] * scenarios.SAMPLES
     assert result["warmups"] == scenarios.WARMUPS and result["sample_count"] == scenarios.SAMPLES
+    assert result["scale_months"] == months and result["official"] is official
+    assert result["employees"] == employees and result["contractors"] == contractors
+    assert result["total_people"] == employees + contractors
     assert result["status"] == "passed"
     assert result["summary"]["samples"] == [60000] * scenarios.SAMPLES
     assert result["summary"]["status"] == "measured" and "budget" not in result["summary"]
@@ -158,7 +170,13 @@ def test_lifecycle_orchestration_keeps_the_selected_independent_samples(tmp_path
 def test_cold_baseline_failure_is_reported_without_fabricating_formal_samples(
     tmp_path, monkeypatch, failure
 ):
-    manifest = {"months": 1, "period_to": "2026-01"}
+    manifest = {
+        "months": 1,
+        "period_to": "2026-01",
+        "people": 4,
+        "employees": 3,
+        "contractors": 1,
+    }
     monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
     monkeypatch.setattr(scenarios, "package", lambda *args: None)
 
@@ -185,6 +203,9 @@ def test_interruption_preserves_finished_attempt_and_marks_current_attempt_incom
         "intended_scale_months": 2,
         "pending_period": "2026-02",
         "months": 1,
+        "people": 4,
+        "employees": 3,
+        "contractors": 1,
         "businesses_per_month": 240,
         "ending_bank_fen": 1000,
     }

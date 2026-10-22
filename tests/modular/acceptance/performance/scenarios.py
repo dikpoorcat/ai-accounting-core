@@ -32,10 +32,6 @@ def run(root, output_root, mode, scenario, *, probe=False):
         assert intended == manifest["months"] + 1
     else:
         intended, period = manifest["months"], manifest["period_to"]
-    if not probe:
-        assert intended in SCALES and manifest["people"] == PEOPLE
-        assert manifest["employees"] == EMPLOYEES and manifest["contractors"] == CONTRACTORS
-        assert manifest["businesses_per_month"] == BUSINESSES_PER_MONTH
     destination = Path(output_root).resolve()
     destination.mkdir(parents=False, exist_ok=False)
     warmups, repeats = (1, 1) if probe else (WARMUPS, SAMPLES)
@@ -43,12 +39,17 @@ def run(root, output_root, mode, scenario, *, probe=False):
     report = {
         "format": "modular-c14-lifecycle/1",
         "status": "running",
-        "official": not probe,
+        "official": not probe
+        and intended in SCALES
+        and manifest["people"] == PEOPLE
+        and manifest["employees"] == EMPLOYEES
+        and manifest["contractors"] == CONTRACTORS
+        and manifest["businesses_per_month"] == BUSINESSES_PER_MONTH,
         "measurement": scenario,
         "scale_months": intended,
-        "employees": EMPLOYEES,
-        "contractors": CONTRACTORS,
-        "total_people": PEOPLE,
+        "employees": manifest["employees"],
+        "contractors": manifest["contractors"],
+        "total_people": manifest["people"],
         "mode": mode,
         "warmups": warmups,
         "sample_count": repeats,
