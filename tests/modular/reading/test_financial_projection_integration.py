@@ -393,7 +393,7 @@ def test_real_hot_one_slot_captures_only_changed_bodies_without_full_source_read
         pytest.fail("真实hot生产不应重新展开全公司Sources或回退完整公共财务计算。")
 
     def bounded_entries(tree, root, *, first=None, last=None):
-        if tree.domain == "financial-source-bodies/1" and first is None and last is None:
+        if tree.domain == "financial-source-bodies/2" and first is None and last is None:
             pytest.fail("真实hot生产不应遍历完整Source正文目录。")
         return entries(tree, root, first=first, last=last)
 

@@ -172,8 +172,8 @@ class Model:
         return cls(spec, self.store, self.bodies, saved)
 
     def root_ids(self):
-        # Publication owns the complete graph. A consumer instead resolves only
-        # the roles declared by its request, within this same read snapshot.
+        # Publication owns every tree root; Source bodies follow the company
+        # directory in the same plan. Consumers resolve only their own roles.
         for saved in self.header["roles"].values():
             self._get_role(saved["spec"])
         roots = [root.digest for root in (self.bodies.root, self.chain_root) if root]
@@ -331,15 +331,10 @@ class Model:
         old_atoms = {head["atom"] for _, before, _ in changed for head in before}
         new_atoms = {head["atom"] for _, _, after in changed for head in after}
         removed = old_atoms - new_atoms
-        # Old Counter legs can still be needed while replacing role leaves in this plan.
-        self.bodies.get_many(sorted(removed))
         known = {head["atom"] for heads in old.values() for head in heads}
         missing = [head for head in actual if atoms[head["result_id"]] not in known]
         captured = bodies_module.capture_bodies(capture, missing) if missing else {}
-        self.bodies._bodies.update(captured)
-        writes = {identity: Entry(identity, body) for identity, body in captured.items()}
-        writes.update((identity, None) for identity in removed)
-        self.bodies.root = self.bodies.tree.patch(self.bodies.root, writes)
+        self.bodies.prepare(captured, sorted(removed))
         updates = {}
         for identity, _, after in changed:
             key = chains.key(*identity)
@@ -417,13 +412,18 @@ class Model:
     def plan(self, old_roots):
         plan = self.store.finish(old_roots, self.root_ids())
         writes = [(value.collection, value.key, value.payload_json) for value in plan.writes]
+        body_writes, body_deletes = self.bodies.changes()
+        writes.extend(body_writes)
         for value in self.requests.values():
             raw = canonical_json(self.descriptor(value))
             if self.base.get_blocks((value.descriptor_key,))[0] != raw:
                 writes.append((*value.descriptor_key, raw))
         raw = canonical_json(self.header)
         return FinancialProjectionPlan(
-            raw, sha256(raw.encode("utf-8")).hexdigest(), tuple(writes), plan.deletes
+            raw,
+            sha256(raw.encode("utf-8")).hexdigest(),
+            tuple(writes),
+            (*plan.deletes, *body_deletes),
         )
 
     def supplements(self, selection, first, last):

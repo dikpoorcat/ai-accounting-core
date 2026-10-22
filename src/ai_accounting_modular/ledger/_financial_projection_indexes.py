@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    canonical_json,
     checked_fen,
+    loads_json,
     validate_contract,
     validate_contract_items,
 )
@@ -14,7 +18,7 @@ from ._cashflow import _ROWS, missing_classification
 from ._financial_order import head_key, target_key
 from ._financial_projection_bodies import COLUMN, validate_body
 from ._financial_projection_fold import Fold, Notice, Unknown, combine, values_fold
-from ._financial_tree import Entry, Tree
+from ._financial_tree import Entry, Tree, _identity, digest
 from ._values import fail
 
 
@@ -194,24 +198,96 @@ class PlainStrategy:
 class BodyDirectory:
     """The single company body catalog; returned bodies are internal read-only borrows."""
 
+    BODIES = "_financial_source_bodies"
+
     def __init__(self, store, descriptor=None):
-        # Source atoms are read in sparse groups, unlike ordered role ranges.
-        # Small leaves bound unrelated body decoding while retaining the same
-        # immutable-node ownership and collection-wide Source identity.
-        self.tree = Tree("financial-source-bodies/1", PlainStrategy(), store, max_items=16)
+        self.store = store
+        self.tree = Tree("financial-source-bodies/2", PlainStrategy(), store)
         self.root = self.tree.root(descriptor)
         self._bodies, self._lines = {}, {}
+        self._writes, self._deletes = {}, set()
+
+    @staticmethod
+    def _reference(entry):
+        if entry is None or not _identity(value := entry.value):
+            fail("storage_corrupt", "财务角色引用的正式来源正文不在同一公司目录内。")
+        return value
+
+    @staticmethod
+    def _decode(raw, reference, identity):
+        try:
+            if type(raw) is not str or digest(raw) != reference:
+                raise ValueError
+            body = loads_json(raw)
+            if canonical_json(body) != raw:
+                raise ValueError
+            return validate_body(body, identity)
+        except (ContractError, TypeError, ValueError, RecursionError) as error:
+            raise ContractError(
+                "storage_corrupt", "财务来源正文与目录摘要或身份不一致。"
+            ) from error
 
     def get_many(self, identities):
         identities = tuple(identities)
         needed = tuple(dict.fromkeys(value for value in identities if value not in self._bodies))
         if needed:
-            actual = self.tree.get_many(self.root, needed)
-            for identity, entry in zip(needed, actual, strict=True):
-                if entry is None:
-                    fail("storage_corrupt", "财务角色引用的正式来源正文不在同一公司目录内。")
-                self._bodies[identity] = validate_body(entry.value, identity)
+            references = tuple(
+                self._reference(entry) for entry in self.tree.get_many(self.root, needed)
+            )
+            actual = self.store._read((self.BODIES, reference) for reference in references)
+            for identity, reference, raw in zip(needed, references, actual, strict=True):
+                raw = self._writes.get(reference, raw)
+                self._bodies[identity] = self._decode(raw, reference, identity)
         return tuple(self._bodies[identity] for identity in identities)
+
+    def prepare(self, captured, removed=()):
+        """One chain owns each atom; publish its body and thin locator together."""
+        removed = tuple(dict.fromkeys(removed))
+        if set(captured) & set(removed):
+            fail("storage_corrupt", "同一财务来源不能同时写入和退出。")
+        keys = (*captured, *removed)
+        old = dict(zip(keys, self.tree.get_many(self.root, keys), strict=True))
+        # Retired legs remain available in this read while roles replace their leaves.
+        self.get_many(removed)
+        prepared = {}
+        for identity, body in captured.items():
+            body = validate_body(deepcopy(body), identity)
+            raw = canonical_json(body)
+            reference = digest(raw)
+            if (old[identity] is not None and self._reference(old[identity]) != reference) or (
+                identity in self._bodies and canonical_json(self._bodies[identity]) != raw
+            ):
+                fail("storage_corrupt", "同一正式来源不能静默改写财务正文。")
+            prepared[identity] = body, raw, reference
+        references = tuple(value[2] for value in prepared.values())
+        actual = self.store._read((self.BODIES, reference) for reference in references)
+        for (identity, (_, raw, reference)), saved in zip(prepared.items(), actual, strict=True):
+            saved = self._writes.get(reference, saved)
+            if (saved is not None and saved != raw) or (
+                saved is None and old[identity] is not None
+            ):
+                fail("storage_corrupt", "已有财务来源正文缺失或与实际不可变原文不一致。")
+        updates = {}
+        for (identity, (body, raw, reference)), saved in zip(prepared.items(), actual, strict=True):
+            if self._writes.get(reference, saved) is None:
+                self._writes[reference] = raw
+            self._deletes.discard(reference)
+            self._bodies[identity] = body
+            updates[identity] = Entry(identity, reference)
+        for identity in removed:
+            reference = self._reference(old[identity])
+            if reference in self._writes:
+                del self._writes[reference]
+            else:
+                self._deletes.add(reference)
+            updates[identity] = None
+        self.root = self.tree.patch(self.root, updates)
+
+    def changes(self):
+        return (
+            tuple((self.BODIES, key, raw) for key, raw in sorted(self._writes.items())),
+            tuple((self.BODIES, key) for key in sorted(self._deletes)),
+        )
 
     def line(self, identity, line_no):
         if identity not in self._lines:

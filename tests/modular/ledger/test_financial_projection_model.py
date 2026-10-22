@@ -7,13 +7,14 @@ from types import SimpleNamespace
 import _financial_snapshot_review_support as support
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, loads_json
+from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 from ai_accounting_modular.ledger._financial import normalize
 from ai_accounting_modular.ledger._financial_calculation import calculate_snapshot, summary_values
 from ai_accounting_modular.ledger._financial_cells import Issues
+from ai_accounting_modular.ledger._financial_projection_bodies import source_atom
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import structure
+from ai_accounting_modular.ledger._financial_tree import digest, structure
 
 
 class Blocks:
@@ -261,6 +262,18 @@ def assert_graph(model, blocks):
         if collection == "_financial_node_refs"
     }
     assert actual == expected
+    directory = {entry.key: entry.value for entry in model.bodies.tree.entries(model.bodies.root)}
+    atoms = {head["atom"] for chain in model._old_chains().values() for head in chain}
+    assert set(directory) == atoms
+    body_keys = {
+        identity for collection, identity in blocks.values if collection == model.bodies.BODIES
+    }
+    assert set(directory.values()) == body_keys and len(body_keys) == len(atoms)
+    for atom, reference in directory.items():
+        raw = blocks.values[model.bodies.BODIES, reference]
+        body = loads_json(raw)
+        assert digest(raw) == reference and canonical_json(body) == raw
+        assert source_atom(body["source"]) == atom
 
 
 def test_request_mutation_and_missing_declared_descriptor_do_not_turn_into_empty_values(tmp_path):

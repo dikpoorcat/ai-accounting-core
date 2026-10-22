@@ -41,6 +41,13 @@ class Rows:
         for item in plan.writes:
             self.values[item.collection, item.key] = item.payload_json
 
+    def publish_bodies(self, directory):
+        writes, deletes = directory.changes()
+        for key in deletes:
+            del self.values[key]
+        for collection, key, raw in writes:
+            self.values[collection, key] = raw
+
 
 def records(tmp_path):
     book = support.assemble(tmp_path)
@@ -54,7 +61,7 @@ def load_bodies(book, read, rows):
     actual = capture_bodies(selection, tuple(selection.stock("2026-01").values()))
     store = TreeStore(rows)
     bodies = BodyDirectory(store)
-    bodies.root = bodies.tree.full(Entry(identity, body) for identity, body in actual.items())
+    bodies.prepare(actual)
     return selection, actual, store, bodies
 
 
@@ -98,6 +105,7 @@ def test_reloaded_roles_match_real_journal_cube_and_do_not_include_the_company_b
             assert fold.finish(initial) == expected[dimension]
         roots = (bodies.root, flow_root, journal_root)
         rows.publish(store.finish((), tuple(root.digest for root in roots)))
+        rows.publish_bodies(bodies)
         reloaded_store = TreeStore(rows)
         loaded = BodyDirectory(reloaded_store, bodies.root.wire())
         loaded_flow = Tree("financial-pl-cf/1", FlowStrategy(loaded), reloaded_store)
@@ -111,13 +119,9 @@ def test_reloaded_roles_match_real_journal_cube_and_do_not_include_the_company_b
     with book.app.storage.read_unit(book.company) as read:
         selection = Selection(read.repository("ledger"), "current", "2026-02", "2026-01", Issues())
         added = capture_bodies(selection, tuple(selection.stock("2026-02").values()))
-        changes = {
-            identity: Entry(identity, body)
-            for identity, body in added.items()
-            if identity not in actual
-        }
+        changes = {identity: body for identity, body in added.items() if identity not in actual}
         assert len(changes) == 1
-        loaded.root = loaded.tree.patch(loaded.root, changes)
+        loaded.prepare(changes)
         assert loaded.root.digest != bodies.root.digest
         assert loaded_flow.root(flow_root.wire()).digest == flow_root.digest
         assert loaded_flow.summary(saved) == previous_summary
@@ -136,12 +140,11 @@ def test_missing_body_and_invalid_cached_fen_or_line_identity_are_never_filled_i
         assert missing.value.code == "storage_corrupt"
         wrong = deepcopy(body)
         wrong["profit"]["14"] = True
-        bodies.root = bodies.tree.full((Entry(identity, wrong),))
         with pytest.raises(ContractError) as amount:
-            Tree("flow/1", FlowStrategy(bodies), store).full((Entry("one", [identity, 1]),))
+            bodies.prepare({identity: wrong})
         assert amount.value.code == "storage_corrupt"
         bodies = BodyDirectory(store)
-        bodies.root = bodies.tree.full((Entry(identity, body),))
+        bodies.prepare({identity: body})
         line = body["journal"][0]
         with pytest.raises(ContractError) as invalid_line:
             Tree("journal/1", JournalStrategy(bodies), store).full(
@@ -209,7 +212,7 @@ def test_non_profit_journal_and_frozen_baseline_keep_real_source_entries(tmp_pat
         assert len(entries) == 2 and sorted(entry.value[1] for entry in entries) == [-1, 1]
         store = TreeStore(Rows())
         bodies = BodyDirectory(store)
-        bodies.root = bodies.tree.full(Entry(identity, body) for identity, body in actual.items())
+        bodies.prepare(actual)
         tree = Tree("financial-pl-cf/1", FlowStrategy(bodies), store)
         root = tree.full(entries)
         assert root is not None and root.count == 2 and tree.summary(root) == {}

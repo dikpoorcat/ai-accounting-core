@@ -151,7 +151,7 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
     def unchanged_roles(original):
         def guarded(tree, *args, **kwargs):
             # Root integrity checks remain allowed; no earlier amount range is traversed.
-            assert tree.domain in ("financial-source-bodies/1", "financial-adoption-chains/1")
+            assert tree.domain in ("financial-source-bodies/2", "financial-adoption-chains/1")
             return original(tree, *args, **kwargs)
 
         return guarded
