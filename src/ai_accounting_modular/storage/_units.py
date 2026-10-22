@@ -109,9 +109,12 @@ def database_unit(
         if context is not None:
             context._active = False
             # End transaction-owned cycles even if a caller keeps the closed context.
+            for cache in context._snapshot_caches:
+                dict.clear(cache)
             context._repositories.clear()
             if writable:
                 context._checks.clear()
+            context._snapshot_caches.clear()
         if token is not None:
             _active_writes.reset(token)
         connection.close()

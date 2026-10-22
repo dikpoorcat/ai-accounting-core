@@ -45,6 +45,15 @@ class RepositorySession:
     def __init__(self, unit: StorageContext, tables: frozenset[str]):
         self.__unit = unit
         self.__tables = tables
+        self.__snapshot_cache: dict | None = None
+
+    def snapshot_cache(self) -> dict:
+        """An owner's same-snapshot values, cleared when this transaction ends."""
+        self.__unit._require_active()
+        if self.__snapshot_cache is None:
+            self.__snapshot_cache = {}
+            self.__unit._snapshot_caches.append(self.__snapshot_cache)
+        return self.__snapshot_cache
 
     def _run(
         self,
@@ -138,6 +147,7 @@ class StorageContext:
         self._maintenance = maintenance
         self._factories = factories
         self._repositories: dict[str, Any] = {}
+        self._snapshot_caches: list[dict] = []
         self._business_changed = False
         self._failed = False
         self._active = True
