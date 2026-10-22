@@ -115,6 +115,9 @@ class Count:
             corrupt()
         return value
 
+    def summary_from_count(self, count):
+        return self.decode_summary(count)
+
 
 class Trees:
     def __init__(self, pool):

@@ -139,7 +139,12 @@ class _Node:
 
 
 class SummaryStrategy(Protocol):
-    """Leaf and branch folds must agree for the same ordered entry sequence."""
+    """Leaf and branch folds must agree for the same ordered entry sequence.
+
+    A strategy whose summary depends only on entry count may optionally provide
+    summary_from_count(count: int) -> Any. Its result must equal both folds.
+    Other strategies obtain child summaries from actual strictly decoded nodes.
+    """
 
     def leaf(self, entries: tuple[Entry, ...]) -> Any: ...
     def branch(self, children: tuple[TreeChild, ...]) -> Any: ...
@@ -400,7 +405,21 @@ class Tree:
             raise ValueError("an immutable tree needs an explicit domain and positive capacities")
         self.domain, self.strategy, self.store = domain, strategy, store
         self.max_items, self.max_bytes = max_items, max_bytes
+        missing = object()
+        from_count = getattr(strategy, "summary_from_count", missing)
+        if from_count is not missing and not callable(from_count):
+            raise ValueError("summary_from_count must be callable when provided")
+        self._summary_from_count = None if from_count is missing else from_count
         self._loaded = {}
+
+    def _check_count_summary(self, count, encoded):
+        if self._summary_from_count is not None:
+            try:
+                expected = self.strategy.encode_summary(self._summary_from_count(count))
+                if canonical_json(encoded) != canonical_json(expected):
+                    corrupt()
+            except (AssertionError, KeyError, TypeError, ValueError, UnicodeError, RecursionError):
+                corrupt()
 
     def _decode(self, checked):
         if type(checked) is not _CheckedStructure:
@@ -417,6 +436,7 @@ class Tree:
             summary_json = _encode_parsed(value["summary"])
             if canonical_json(self.strategy.encode_summary(summary)) != summary_json:
                 corrupt()
+            self._check_count_summary(value["count"], value["summary"])
         except (AssertionError, KeyError, TypeError, ValueError):
             corrupt()
         return _Node(
@@ -475,6 +495,8 @@ class Tree:
             else sum(child.weight for child in children)
         )
         summary = self.strategy.leaf(entries) if entries else self.strategy.branch(children)
+        encoded_summary = self.strategy.encode_summary(summary)
+        self._check_count_summary(count, encoded_summary)
         prefix = commonprefix((_route(first), _route(last)))
         value = {
             "format": FORMAT,
@@ -487,7 +509,7 @@ class Tree:
             "last": last,
             "count": count,
             "weight": weight,
-            "summary": self.strategy.encode_summary(summary),
+            "summary": encoded_summary,
             "oversize": False,
         }
         if entries:
@@ -726,12 +748,17 @@ class Tree:
             children = {_route(root.first)[len(prefix) : len(prefix) + 1]: root}
         else:
             prefix = node.prefix
-            # One frontier read obtains real decoded summaries, not copies in
-            # every parent. Unchanged immutable children are reused afterwards.
-            children = {
-                _route(child.ref.first)[len(prefix) : len(prefix) + 1]: child.ref
-                for child in self._load(node.children)
-            }
+            # Count-only summaries follow this actual parent's checked locators.
+            # These temporary references never become decoded nodes or proofs.
+            refs = (
+                tuple(
+                    TreeChild(*child.wire(), deepcopy(self._summary_from_count(child.count)))
+                    for child in node.children
+                )
+                if self._summary_from_count is not None
+                else tuple(child.ref for child in self._load(node.children))
+            )
+            children = {_route(child.first)[len(prefix) : len(prefix) + 1]: child for child in refs}
         grouped = defaultdict(dict)
         for key, value in changes.items():
             route = _route(key)
@@ -747,7 +774,7 @@ class Tree:
         if not ordered:
             return None
         if len(ordered) == 1:
-            return ordered[0]
+            return self._load(ordered)[0].ref
         count = sum(child.count for child in ordered)
         key_prefix = commonprefix((ordered[0].first, ordered[-1].last))
         escaped_prefix = len(canonical_json(key_prefix).encode("utf-8")) - 2
