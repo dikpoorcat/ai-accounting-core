@@ -160,6 +160,7 @@ def queue_requests(
             "storage_corrupt",
             expected_state=state["state"],
             expected_format=state["format_version"],
+            expected_revision=state["revision"],
         )
 
 
@@ -233,12 +234,14 @@ def retry(reader, scope, kind, scope_key, version, unit):
 
 def produce(reader, company_id):
     token = None
+    revision = None
     try:
         with reader.storage.read_unit(company_id) as read:
             target = store(read)
             state = target.state()
             if state is None or state["state"] != "preparing":
                 return False
+            revision = state["revision"]
             token = target.token()
             if state["format_version"] != FINANCIAL_PROJECTION_FORMAT:
                 corrupt()
@@ -264,7 +267,9 @@ def produce(reader, company_id):
         if token is not None:
             with reader.storage.maintenance_unit(company_id) as unit:
                 store(unit).fail(
-                    token, error.code if isinstance(error, ContractError) else "production_failed"
+                    token,
+                    error.code if isinstance(error, ContractError) else "production_failed",
+                    expected_revision=revision,
                 )
         return False
 

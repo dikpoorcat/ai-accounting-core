@@ -1,6 +1,7 @@
 """A new month may inherit only a checked, current previous-month Open projection."""
 
 from copy import deepcopy
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -23,6 +24,7 @@ from ai_accounting_modular.reading import (
 )
 from ai_accounting_modular.reading import (
     _monthly,
+    _open_store,
 )
 from ai_accounting_modular.reading._collections import CollectionFilter
 from ai_accounting_modular.reading.public import MonthScope
@@ -85,9 +87,7 @@ def cold_equal(book, month):
             (row[0], row[1]): row[-1] for row in expected.rows
         }
         for collection in index.PUBLIC:
-            known = repository.item_page(
-                _monthly.key(selected), index.COMPONENT, collection, CollectionFilter(), None, 500
-            )
+            known = directory.item_page(collection, CollectionFilter(), None, 500)
             directory.check_many(known)
     return fresh["open_items"]
 
@@ -215,7 +215,7 @@ def test_missing_unfinished_failed_or_old_horizon_sources_use_a_real_cold_captur
         payload = loads_json(full.payload_json)
         payload["open_items"]["current_cutoff_period"] = "2026-01"
         # Isolate the horizon guard from pending/state guards with a sealed header.
-        stale = index.seal(payload, full.rows, payload["_item_epoch"])
+        stale = replace(full, model=index.seal(payload, (), payload["_item_epoch"]))
     key = _monthly.key(scope(book, "2026-01"))
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
@@ -233,6 +233,7 @@ def test_missing_unfinished_failed_or_old_horizon_sources_use_a_real_cold_captur
                 index.COMPONENT,
                 source["wanted_head"],
                 "production_failed",
+                expected_revision=source["revision"],
                 expected_state="ready",
             )
         elif unusable == "old_format":
@@ -246,6 +247,12 @@ def test_missing_unfinished_failed_or_old_horizon_sources_use_a_real_cold_captur
                 (key, index.COMPONENT),
             )
         elif stale is not None:
+            repository.open_mark(key, unit.head, full=True)
+            repository._session.execute(
+                "UPDATE read_scope_head SET state='preparing' "
+                "WHERE scope_key=? AND component_key=?",
+                (key, index.COMPONENT),
+            )
             assert repository.publish(
                 key, index.COMPONENT, unit.head, _monthly.version(index.COMPONENT), stale
             )
@@ -379,6 +386,7 @@ def test_source_changes_with_unchanged_target_head_reject_the_old_fork(book, cha
                 index.COMPONENT,
                 source["wanted_head"],
                 "production_failed",
+                expected_revision=source["revision"],
                 expected_state="ready",
             )
         elif changed == "format":
@@ -482,9 +490,15 @@ def test_opening_completeness_is_read_for_q_instead_of_inherited_from_a_checked_
     payload["open_items"].update(complete=False, payable_fen=None, receivable_fen=None)
     # Interface-level fixture: a sealed, internally valid derived header is not
     # proof of the new cutoff's completeness. This is not a natural Apply sequence.
-    incomplete = index.seal(payload, model.rows, payload["_item_epoch"])
+    incomplete = replace(model, model=index.seal(payload, (), payload["_item_epoch"]))
     with book.kernel.storage.maintenance_unit(book.company) as unit:
-        assert unit.repository("reading").publish(
+        repository = unit.repository("reading")
+        repository.open_mark(_monthly.key(selected), unit.head, full=True)
+        repository._session.execute(
+            "UPDATE read_scope_head SET state='preparing' WHERE scope_key=? AND component_key=?",
+            (_monthly.key(selected), index.COMPONENT),
+        )
+        assert repository.publish(
             _monthly.key(selected),
             index.COMPONENT,
             unit.head,
@@ -588,28 +602,30 @@ def test_later_target_formal_work_rejects_the_prepared_fork_and_keeps_current_wo
     assert cold_equal(book, "2026-02")["payable_fen"] == "100335"
 
 
-def test_copy_failure_rolls_back_every_target_row_and_publication_header(book, monkeypatch):
+def test_node_publication_failure_rolls_back_shared_nodes_and_target_header(book, monkeypatch):
     advanced_source(book)
     current, model = fork_plan(book)
-    copied = []
-    with pytest.raises(RuntimeError, match="copy boundary failed"):
+    with book.kernel.storage.read_unit(book.company) as read:
+        before = tuple(
+            dict(row)
+            for row in read.repository("reading")._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? ORDER BY collection_key,item_id",
+                (_open_store.SCOPE,),
+            )
+        )
+    published = []
+    original = _open_store.publish
+
+    def fail_after_nodes(repository, token, plan):
+        result = original(repository, token, plan)
+        assert result
+        published.append(plan)
+        raise RuntimeError("shared node boundary failed")
+
+    with pytest.raises(RuntimeError, match="shared node boundary failed"):
         with book.kernel.storage.maintenance_unit(book.company) as unit:
             repository = unit.repository("reading")
-            execute = repository._session.execute
-
-            def fail_after_copy(sql, parameters=()):
-                result = execute(sql, parameters)
-                statement = sql.lstrip().upper()
-                if (
-                    statement.startswith("INSERT")
-                    and "READ_ITEM" in statement
-                    and "SELECT" in statement
-                ):
-                    copied.append(sql)
-                    raise RuntimeError("copy boundary failed")
-                return result
-
-            monkeypatch.setattr(repository._session, "execute", fail_after_copy)
+            monkeypatch.setattr(_open_store, "publish", fail_after_nodes)
             repository.publish(
                 current["scope_key"],
                 index.COMPONENT,
@@ -617,7 +633,7 @@ def test_copy_failure_rolls_back_every_target_row_and_publication_header(book, m
                 _monthly.version(index.COMPONENT),
                 model,
             )
-    assert copied, "the fault must happen after a real cross-scope copy"
+    assert published, "the fault must happen after actual shared-node publication"
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
         assert repository.state(current["scope_key"], index.COMPONENT) == current
@@ -625,4 +641,14 @@ def test_copy_failure_rolls_back_every_target_row_and_publication_header(book, m
         assert repository.item_counts(
             current["scope_key"], index.COMPONENT, "open_members", CollectionFilter()
         ) == (0, 0)
-        assert repository.open_bucket_count(current["scope_key"]) == 0
+        assert (
+            tuple(
+                dict(row)
+                for row in repository._session.fetchall(
+                    "SELECT * FROM read_item WHERE scope_key=? ORDER BY collection_key,item_id",
+                    (_open_store.SCOPE,),
+                )
+            )
+            == before
+        )
+    cold_equal(book, "2026-01")

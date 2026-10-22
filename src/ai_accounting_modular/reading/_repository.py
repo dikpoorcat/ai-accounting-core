@@ -5,6 +5,7 @@ from ai_accounting_modular.contracts.public import canonical_json, loads_json
 from . import _brief_activity_index as activity_index
 from . import _brief_open_index as open_index
 from . import _brief_open_rollover as open_rollover
+from . import _open_store
 from ._collections import PreparedModel
 from ._financial_projection import PreparedFinancial
 from ._financial_store import FinancialStore
@@ -41,7 +42,8 @@ class ReadingRepository:
 
     def mark(self, scope_key, component, head):
         self._session.execute(
-            "UPDATE read_scope_head SET wanted_head=?,state='preparing',error_code=NULL "
+            "UPDATE read_scope_head SET wanted_head=?,state='preparing',error_code=NULL,"
+            "revision=revision+1 "
             "WHERE scope_key=? AND component_key=? AND wanted_head<?",
             (head, scope_key, component, head),
         )
@@ -74,6 +76,7 @@ class ReadingRepository:
             ):
                 return False
             model = financial.model
+        open_model = model if isinstance(model, open_index.PreparedOpen) else None
         patch = (
             model
             if isinstance(
@@ -82,14 +85,20 @@ class ReadingRepository:
             else None
         )
         activity_patch = isinstance(patch, activity_index.PreparedActivityPatch)
-        if patch is not None:
-            model = patch.model
+        if patch is not None or open_model is not None:
+            model = model.model
         if not isinstance(model, PreparedModel):
             raise TypeError("model must be prepared before publication")
         state = self.state(scope_key, component)
         if state is None or (state["wanted_head"], state["format_version"]) != (
             wanted_head,
             format_version,
+        ):
+            return False
+        if open_model is not None and (
+            component != open_index.COMPONENT
+            or open_model.scope_key != scope_key
+            or state["state"] != "preparing"
         ):
             return False
         fork = isinstance(patch, open_index.PreparedOpenPatch) and patch.base_scope != scope_key
@@ -120,6 +129,8 @@ class ReadingRepository:
                     if full or not dirty:
                         return False
         if component == open_index.COMPONENT:
+            if open_model is None:
+                raise TypeError("Open publication requires its shared graph plan")
             payload = loads_json(model.payload_json)
             epoch = open_index.validate(payload)
         elif component == activity_index.COMPONENT:
@@ -136,21 +147,17 @@ class ReadingRepository:
         if fork and not open_rollover.matches(self, patch, scope_key, payload):
             return False
         rows = tuple((scope_key, *row, component, epoch) for row in model.rows)
-        if patch is None or fork:
+        if open_model is not None:
+            if rows:
+                raise TypeError("Open models publish shared nodes rather than scope rows")
+            if not _open_store.publish(self, open_model.pool_token, open_model.tree_plan):
+                return False
+        if open_model is not None or patch is None:
             self._session.execute(
                 "DELETE FROM read_item WHERE scope_key=? AND component_key=?",
                 (scope_key, component),
             )
-        if fork:
-            self._session.execute(
-                "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
-                "object_id,group_key,category,payload_json,component_key,head) "
-                "SELECT ?,collection_key,item_id,sort_key,business_id,object_id,group_key,"
-                "category,payload_json,component_key,head FROM read_item "
-                "WHERE scope_key=? AND component_key=? AND collection_key IN (?,?,?)",
-                (scope_key, patch.base_scope, component, *open_index.PUBLIC, open_index.BUCKETS),
-            )
-        if patch is not None:
+        if activity_patch:
             self._session.executemany(
                 "DELETE FROM read_item WHERE scope_key=? AND component_key=? "
                 "AND collection_key=? AND item_id=?",
@@ -161,7 +168,7 @@ class ReadingRepository:
                 (
                     scope_key,
                     component,
-                    activity_index.DIRTY if activity_patch else open_index.DIRTY,
+                    activity_index.DIRTY,
                 ),
             )
         if rows:
@@ -178,7 +185,7 @@ class ReadingRepository:
         )
         self._session.execute(
             "UPDATE read_scope_head SET ready_head=?,content_digest=?,"
-            "state='ready',error_code=NULL "
+            "state='ready',error_code=NULL,revision=revision+1 "
             "WHERE scope_key=? AND component_key=?",
             (wanted_head, model.content_digest, scope_key, component),
         )
@@ -266,31 +273,9 @@ class ReadingRepository:
 
     def activity_advance_failed(self, scope_key, head):
         self._session.execute(
-            "UPDATE read_scope_head SET wanted_head=MAX(wanted_head,?) WHERE scope_key=? "
-            "AND component_key=? AND state='failed'",
-            (head, scope_key, activity_index.COMPONENT),
-        )
-
-    def open_bucket_count(self, scope_key):
-        return self._session.fetchone(
-            "SELECT COUNT(*) FROM read_item WHERE scope_key=? AND component_key=? "
-            "AND collection_key=?",
-            (scope_key, open_index.COMPONENT, open_index.BUCKETS),
-        )[0]
-
-    def open_bucket_rows(self, scope_key, bucket_keys):
-        return tuple(
-            dict(row)
-            for row in self._session.fetchall(
-                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
-                "AND collection_key=? AND item_id IN (SELECT value FROM json_each(?))",
-                (
-                    scope_key,
-                    open_index.COMPONENT,
-                    open_index.BUCKETS,
-                    canonical_json(list(bucket_keys)),
-                ),
-            )
+            "UPDATE read_scope_head SET wanted_head=?,revision=revision+1 WHERE scope_key=? "
+            "AND component_key=? AND state='failed' AND wanted_head<?",
+            (head, scope_key, activity_index.COMPONENT, head),
         )
 
     def open_mark(self, scope_key, head, business_ids=(), *, full=False):
@@ -320,9 +305,9 @@ class ReadingRepository:
 
     def open_advance_failed(self, scope_key, head):
         self._session.execute(
-            "UPDATE read_scope_head SET wanted_head=MAX(wanted_head,?) WHERE scope_key=? "
-            "AND component_key=? AND state='failed'",
-            (head, scope_key, open_index.COMPONENT),
+            "UPDATE read_scope_head SET wanted_head=?,revision=revision+1 WHERE scope_key=? "
+            "AND component_key=? AND state='failed' AND wanted_head<?",
+            (head, scope_key, open_index.COMPONENT, head),
         )
 
     def _item_scope(self, scope_key, component, collection, query=None):
@@ -383,28 +368,33 @@ class ReadingRepository:
         wanted_head,
         code,
         *,
+        expected_revision,
         expected_state="preparing",
         expected_format=None,
     ):
-        self._session.execute(
-            "UPDATE read_scope_head SET state='failed',error_code=? "
-            "WHERE scope_key=? AND component_key=? AND wanted_head=? AND state=? "
-            "AND (? IS NULL OR format_version=?)",
-            (
-                code,
-                scope_key,
-                component,
-                wanted_head,
-                expected_state,
-                expected_format,
-                expected_format,
-            ),
+        return (
+            self._session.execute(
+                "UPDATE read_scope_head SET state='failed',error_code=?,revision=revision+1 "
+                "WHERE scope_key=? AND component_key=? AND wanted_head=? AND state=? "
+                "AND revision=? AND (? IS NULL OR format_version=?)",
+                (
+                    code,
+                    scope_key,
+                    component,
+                    wanted_head,
+                    expected_state,
+                    expected_revision,
+                    expected_format,
+                    expected_format,
+                ),
+            )
+            == 1
         )
 
     def retry(self, scope_key, component, *, format_version=None):
         self._session.execute(
             "UPDATE read_scope_head SET state='preparing',error_code=NULL,"
-            "format_version=COALESCE(?,format_version) "
+            "format_version=COALESCE(?,format_version),revision=revision+1 "
             "WHERE scope_key=? AND component_key=? AND "
             "(state='failed' OR (? IS NOT NULL AND format_version<>?))",
             (format_version, scope_key, component, format_version, format_version),

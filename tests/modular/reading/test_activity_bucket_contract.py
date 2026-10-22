@@ -1,7 +1,6 @@
 """Actual Activity changes preserve complete results while touching only current local indexes."""
 
 from copy import deepcopy
-from hashlib import sha256
 from uuid import uuid4
 
 import pytest
@@ -16,10 +15,10 @@ from ai_accounting_modular.reading import _brief_activity as activity
 from ai_accounting_modular.reading import _brief_activity_index as index
 from ai_accounting_modular.reading import _brief_activity_totals as totals
 from ai_accounting_modular.reading import _brief_activity_update as update
-from ai_accounting_modular.reading import _brief_open_buckets, _funds_items, _item_buckets, _monthly
 from ai_accounting_modular.reading import _brief_open_index as open_index
 from ai_accounting_modular.reading import _brief_open_inputs as open_inputs
 from ai_accounting_modular.reading import _brief_open_update as open_update
+from ai_accounting_modular.reading import _funds_items, _item_buckets, _monthly
 
 from . import _activity_full_oracle as oracle
 from .test_brief_activity import capture as publish_full
@@ -292,30 +291,6 @@ def test_mark_checks_actual_reverse_and_input_key_proof_before_deciding_not_affe
     assert matches_complete(book)["activity_count"] == 1
 
 
-@pytest.mark.parametrize("private,displays", [(True, False), (True, True), (False, False)])
-def test_neutral_codec_keeps_exact_existing_open_namespace_and_bytes(private, displays):
-    collection, identity = "_open_objects", "id"
-    bucket = _brief_open_buckets.key(collection, identity).rsplit(":", 1)[1]
-    values = {identity: {"amount": "1"}} if private else {identity: ("sort", "a" * 64)}
-    entries = '[["id",{"amount":"1"}]]' if private else '[["sort","id","' + "a" * 64 + '"]]'
-    kind, field = ("private", "values") if private else ("mirror", "triples")
-    expected = (
-        f'{{"bucket":"{bucket}","collection":"{collection}",'
-        f'"format":"ai-accounting-reading-open-bucket/1","kind":"{kind}","{field}":{entries}}}'
-    )
-    descriptor, raw = _brief_open_buckets.prepare(
-        collection, bucket, values, private=private, displays=displays
-    )
-    assert raw == expected
-    assert descriptor["digest"] == sha256((raw if private else entries).encode()).hexdigest()
-    assert (
-        _brief_open_buckets.read(
-            raw, collection, bucket, descriptor, private=private, displays=displays
-        )
-        == values
-    )
-
-
 def test_unread_unrelated_bucket_is_deferred_but_selected_root_and_explicit_retry_stay_strict(
     book, monkeypatch
 ):
@@ -489,7 +464,11 @@ def test_old_partial_cannot_publish_over_failure_or_same_head_full_retry(book, c
     assert isinstance(model, (index.PreparedActivityPatch, open_index.PreparedOpenPatch))
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         unit.repository("reading").fail(
-            scope_key, component, previous["wanted_head"], "production_failed"
+            scope_key,
+            component,
+            previous["wanted_head"],
+            "production_failed",
+            expected_revision=previous["revision"],
         )
     if phase == "retry":
         _monthly.retry(book.kernel.reading, selection(book), (component,))
@@ -503,8 +482,13 @@ def test_old_partial_cannot_publish_over_failure_or_same_head_full_retry(book, c
             assert full
     before = _saved_rows(book, component)
     assert before[0]["wanted_head"] == previous["wanted_head"]
-    assert before[0]["ready_head"] == previous["ready_head"]
-    assert before[0]["content_digest"] == previous["content_digest"]
+    assert before[0]["revision"] > previous["revision"]
+    if phase == "retry" and component == open_index.COMPONENT:
+        assert before[0]["ready_head"] == 0 and before[0]["content_digest"] is None
+        assert before[1] is None
+    else:
+        assert before[0]["ready_head"] == previous["ready_head"]
+        assert before[0]["content_digest"] == previous["content_digest"]
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         assert not unit.repository("reading").publish(
             scope_key,
@@ -516,5 +500,46 @@ def test_old_partial_cannot_publish_over_failure_or_same_head_full_retry(book, c
     assert _saved_rows(book, component) == before
     if phase == "failed":
         _monthly.retry(book.kernel.reading, selection(book), (component,))
+    assert book.kernel.reading.run_pending(book.company)
+    (matches_complete if component == index.COMPONENT else matches_cold)(book)
+
+
+@pytest.mark.parametrize("component", [index.COMPONENT, open_index.COMPONENT])
+def test_a_notification_failure_uses_its_own_transaction_updated_revision(
+    book, monkeypatch, component
+):
+    first = book.seed()
+    (publish_full if component == index.COMPONENT else publish_open)(book)
+    key = _monthly.key(selection(book))
+    with book.kernel.storage.read_unit(book.company) as read:
+        repository = read.repository("reading")
+        before = repository.state(key, component)
+        repository_type, original = type(repository), type(repository).mark
+        old_head = read.head
+    advanced = []
+
+    def interrupted(repository, selected, name, head):
+        result = original(repository, selected, name, head)
+        if (selected, name) == (key, component):
+            current = repository.state(selected, name)
+            assert current["revision"] > before["revision"]
+            advanced.append(current)
+            raise ContractError(
+                "storage_corrupt", "synthetic failure after this transaction's mark"
+            )
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repository_type, "mark", interrupted)
+        first["data"]["amount_fen"] = "9"
+        change(book, first)
+    assert len(advanced) == 1
+    with book.kernel.storage.read_unit(book.company) as read:
+        failed = read.repository("reading").state(key, component)
+        assert read.head == old_head + 1
+        assert (failed["state"], failed["error_code"]) == ("failed", "storage_corrupt")
+        assert failed["wanted_head"] == read.head
+        assert failed["revision"] > advanced[0]["revision"]
+    _monthly.retry(book.kernel.reading, selection(book), (component,))
     assert book.kernel.reading.run_pending(book.company)
     (matches_complete if component == index.COMPONENT else matches_cold)(book)

@@ -7,12 +7,14 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, loads_json
+from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.reading import (
     _brief_open,
     _brief_open_displays,
     _brief_open_sources,
+    _monthly,
 )
+from ai_accounting_modular.reading._collections import collection_items
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_application import replacement
 from tests.modular.domains.people.test_people import case as business_case
@@ -98,11 +100,17 @@ def test_selected_frozen_journal_is_not_replaced_by_its_future_current_adoption(
         expected = external_model(case, selected, read, monkeypatch)
         monkeypatch.setattr(case.kernel.ledger, "get_effective_voucher_directory", forbidden)
         actual = _brief_open.prepare(case.kernel.reading, selected, read)
-        value = next(
-            loads_json(row[-1])["value"] for row in actual.rows if row[0] == "open_members"
-        )
-        assert (value["outstanding_fen"], value["current_outstanding_fen"]) == ("100000", "80000")
     assert actual == expected
+    publish(case)
+    with case.kernel.storage.read_unit(case.company) as read:
+        value = collection_items(
+            _monthly.key(scope(case)),
+            _monthly.BRIEF_OPEN_ITEMS,
+            "open_members",
+            (first["business_id"] + ":primary",),
+            read,
+        )[0]
+    assert (value["outstanding_fen"], value["current_outstanding_fen"]) == ("100000", "80000")
 
 
 def test_no_journal_is_a_known_none_not_an_absent_lookup(case, monkeypatch):

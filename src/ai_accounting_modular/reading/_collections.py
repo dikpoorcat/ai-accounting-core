@@ -265,12 +265,35 @@ def read_items(rows, *, collections=()):
         raise ContractError("storage_corrupt", "读取集合项目或完整目录不一致。") from error
 
 
+class _StoredCollections:
+    """Bind the ordinary SQL collection reader to its existing scope and owner."""
+
+    def __init__(self, repository, scope_key, component):
+        self.repository, self.scope_key, self.component = repository, scope_key, component
+
+    def item_counts(self, collection, query):
+        return self.repository.item_counts(self.scope_key, self.component, collection, query)
+
+    def item_get(self, collection, item_ids):
+        return self.repository.item_get(self.scope_key, self.component, collection, item_ids)
+
+    def item_page(self, collection, query, after, limit):
+        return self.repository.item_page(
+            self.scope_key, self.component, collection, query, after, limit
+        )
+
+
 def _ready_collection(scope_key, component, collection, read):
     from ._component_view import ready
 
     repository = read.repository("reading")
     view = ready(scope_key, component, read)
-    return repository, view.state, view.manifest(collection), view.directory
+    items = (
+        view.directory
+        if component == "brief_open_items"
+        else _StoredCollections(repository, scope_key, component)
+    )
+    return items, view.state, view.manifest(collection), view.directory
 
 
 def _decode_rows(rows, state, directory):
@@ -290,13 +313,11 @@ def collection_items(scope_key, component, collection, item_ids, read):
         or len(set(item_ids)) != len(item_ids)
     ):
         raise ContractError("invalid_input", "集合批量定位须提供最多500个不重复的项目身份。")
-    repository, state, manifest, directory = _ready_collection(
-        scope_key, component, collection, read
-    )
-    total, _ = repository.item_counts(scope_key, component, collection, CollectionFilter())
+    items, state, manifest, directory = _ready_collection(scope_key, component, collection, read)
+    total, _ = items.item_counts(collection, CollectionFilter())
     if type(manifest["count"]) is not int or total != manifest["count"]:
         raise ContractError("storage_corrupt", "读取集合项目数量与完整目录不一致。")
-    rows = repository.item_get(scope_key, component, collection, item_ids) if item_ids else ()
+    rows = items.item_get(collection, item_ids) if item_ids else ()
     by_id = {row["item_id"]: row for row in rows}
     if set(by_id) != set(item_ids):
         raise ContractError("storage_corrupt", "读取集合引用缺失或混入了其他版本，请重新生成。")
@@ -305,9 +326,7 @@ def collection_items(scope_key, component, collection, item_ids, read):
 
 def collection_page(scope_key, component, collection, query, page, read):
     _filters(query)
-    repository, state, manifest, directory = _ready_collection(
-        scope_key, component, collection, read
-    )
+    items, state, manifest, directory = _ready_collection(scope_key, component, collection, read)
     filters = asdict(query)
     filters["categories"] = list(query.categories)
     version = content_digest(
@@ -322,10 +341,10 @@ def collection_page(scope_key, component, collection, query, page, read):
         }
     )
     after = _after(page, version)
-    total, filtered = repository.item_counts(scope_key, component, collection, query)
+    total, filtered = items.item_counts(collection, query)
     if type(manifest["count"]) is not int or total != manifest["count"]:
         raise ContractError("storage_corrupt", "读取集合项目数量与完整目录不一致。")
-    rows = repository.item_page(scope_key, component, collection, query, after, page.limit + 1)
+    rows = items.item_page(collection, query, after, page.limit + 1)
     values = _decode_rows(rows, state, directory)
     more, rows = len(rows) > page.limit, rows[: page.limit]
     next_cursor = None

@@ -93,6 +93,7 @@ def test_private_pending_failure_keeps_changes_and_late_notification_rejects_old
     with case.kernel.storage.read_unit(case.company) as read:
         target = projection.store(read)
         work, token = target.work(), target.token()
+        revision = target.state()["revision"]
         registered = projection._requests(case.kernel.reading, work, read)
         plan = owner(
             tuple(registered[key] for key in work["pending"]),
@@ -106,7 +107,7 @@ def test_private_pending_failure_keeps_changes_and_late_notification_rejects_old
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         target = projection.store(unit)
         assert not target.publish(token, plan)
-        assert not target.fail(token, "production_failed")
+        assert not target.fail(token, "production_failed", expected_revision=revision)
         assert {value["business_id"] for value in target.work()["changes"]} == {
             first["business_id"],
             second["business_id"],

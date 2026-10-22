@@ -9,7 +9,6 @@ import pytest
 from ai_accounting_modular.contracts.public import (
     ReadInputs,
     canonical_json,
-    content_digest,
     loads_json,
 )
 from ai_accounting_modular.reading import (
@@ -20,6 +19,7 @@ from ai_accounting_modular.reading import (
     _brief_open_update,
     _monthly,
 )
+from ai_accounting_modular.reading._collections import CollectionFilter
 from ai_accounting_modular.reading.public import MonthScope
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as company_fixture
@@ -62,15 +62,16 @@ def bounded_patch(case, monkeypatch):
         assert case.kernel.reading.run_pending(case.company)
     assert snapshot(case) is not None
     fresh = matches_cold(case)
-    expected = sorted(row[1:] for row in fresh.rows if row[0] == "open_members")
     with case.kernel.storage.read_unit(case.company) as read:
-        actual = read.repository("reading")._session.fetchall(
-            "SELECT item_id,sort_key,business_id,object_id,group_key,category,payload_json "
-            "FROM read_item WHERE scope_key=? AND component_key=? "
-            "AND collection_key='open_members'",
-            (_monthly.key(scope(case)), index.COMPONENT),
+        repository = read.repository("reading")
+        directory = index.base(
+            repository, repository.state(_monthly.key(scope(case)), index.COMPONENT)
         )
-    assert sorted(tuple(row) for row in actual) == expected
+        actual = directory.item_page("open_members", CollectionFilter(), None, 500)
+        directory.check_many(actual)
+        expected = loads_json(fresh.payload_json)["_collections"]["open_members"]
+        assert len(actual) == expected["count"]
+        assert directory.payload["_collections"]["open_members"] == expected
     return set(seen)
 
 
@@ -349,18 +350,9 @@ def test_only_open_format_upgrades_through_explicit_retry_without_changing_other
     key = _monthly.key(scope(case))
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
-        row = repository.payload(key, index.COMPONENT)
-        payload = loads_json(row["payload_json"])
-        del payload["_cooperation_inputs"]
-        payload["_semantic_digest"] = index.semantic(payload)
         repository._session.execute(
-            "UPDATE read_component SET payload_json=? WHERE scope_key=? AND component_key=?",
-            (canonical_json(payload), key, index.COMPONENT),
-        )
-        repository._session.execute(
-            "UPDATE read_scope_head SET format_version=7,content_digest=? "
-            "WHERE scope_key=? AND component_key=?",
-            (content_digest(payload), key, index.COMPONENT),
+            "UPDATE read_scope_head SET format_version=? WHERE scope_key=? AND component_key=?",
+            (index.FORMAT_VERSION - 1, key, index.COMPONENT),
         )
         head = unit.head
     result = _monthly.deliver(
@@ -377,4 +369,7 @@ def test_only_open_format_upgrades_through_explicit_retry_without_changing_other
     assert reader.page("funds", month, {}) == funds
     with case.kernel.storage.read_unit(case.company) as read:
         assert read.head == head
-        assert read.repository("reading").state(key, index.COMPONENT)["format_version"] == 8
+        assert (
+            read.repository("reading").state(key, index.COMPONENT)["format_version"]
+            == index.FORMAT_VERSION
+        )

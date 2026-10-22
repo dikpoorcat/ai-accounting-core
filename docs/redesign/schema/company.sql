@@ -665,6 +665,7 @@ scope_key TEXT NOT NULL,
  content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest)=64),
  state TEXT NOT NULL CHECK(state IN ('ready','preparing','failed')),
  error_code TEXT,
+ revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),
  PRIMARY KEY(scope_key,component_key)
 ) STRICT;
 

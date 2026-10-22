@@ -165,7 +165,8 @@ class FinancialStore:
         self._session.execute(
             "UPDATE read_scope_head SET wanted_head=MAX(wanted_head,?),format_version=?,"
             "state=CASE WHEN state='failed' AND ?=0 THEN state ELSE 'preparing' END,"
-            "error_code=CASE WHEN state='failed' AND ?=0 THEN error_code ELSE NULL END "
+            "error_code=CASE WHEN state='failed' AND ?=0 THEN error_code ELSE NULL END,"
+            "revision=revision+1 "
             "WHERE scope_key=? AND component_key=?",
             (head, FINANCIAL_PROJECTION_FORMAT, retry, retry, self.scope_key, COMPONENT),
         )
@@ -226,17 +227,22 @@ class FinancialStore:
         )
         self._session.execute(
             "UPDATE read_scope_head SET ready_head=?,content_digest=?,"
-            "state='ready',error_code=NULL "
+            "state='ready',error_code=NULL,revision=revision+1 "
             "WHERE scope_key=? AND component_key=?",
             (token.wanted, plan.header_digest, self.scope_key, COMPONENT),
         )
         return True
 
-    def fail(self, token, code):
+    def fail(self, token, code, *, expected_revision):
         if not self._matches(token):
             return False
-        self.repository.fail(self.scope_key, COMPONENT, token.wanted, code)
-        return True
+        return self.repository.fail(
+            self.scope_key,
+            COMPONENT,
+            token.wanted,
+            code,
+            expected_revision=expected_revision,
+        )
 
     def consumer_token(self, descriptor_key):
         collection, identity = descriptor_key
@@ -268,7 +274,8 @@ class FinancialStore:
         self._session.execute(
             "UPDATE read_scope_head SET wanted_head=MAX(wanted_head,?),"
             "state=CASE WHEN state='failed' THEN state ELSE 'preparing' END,"
-            "error_code=CASE WHEN state='failed' THEN error_code ELSE NULL END "
+            "error_code=CASE WHEN state='failed' THEN error_code ELSE NULL END,"
+            "revision=revision+1 "
             "WHERE scope_key=? AND component_key='financial'",
             (head, scope_key),
         )

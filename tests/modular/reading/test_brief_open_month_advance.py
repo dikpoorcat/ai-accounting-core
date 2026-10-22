@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import loads_json
 from ai_accounting_modular.reading import _brief_open_sources, _monthly
+from ai_accounting_modular.reading._collections import collection_items
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_read_remuneration import bank_object
 
@@ -38,13 +38,13 @@ def test_first_later_month_payment_updates_only_its_claim(case, monkeypatch, clo
     assert summary["payable_fen"] == "300000"
     assert summary["current_cutoff_period"] == "2026-02"
     with case.kernel.storage.read_unit(case.company) as read:
-        member = read.repository("reading").item_get(
+        value = collection_items(
             _monthly.key(scope(case)),
             _monthly.BRIEF_OPEN_ITEMS,
             "open_members",
-            [first["business_id"] + ":primary"],
+            (first["business_id"] + ":primary",),
+            read,
         )[0]
-    value = loads_json(member["payload_json"])["value"]
     assert value["outstanding_fen"] == "100000"
     assert value["current_outstanding_fen"] == "40000"
     matches_cold(case)

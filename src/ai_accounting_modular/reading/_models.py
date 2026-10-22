@@ -121,6 +121,7 @@ def page(reader, scope):
                 FINANCIAL,
                 state["wanted_head"],
                 "storage_corrupt",
+                expected_revision=state["revision"],
                 expected_state=state["state"],
             )
         return ModelDelivery("failed", normalized, reason="corrupt")
@@ -165,6 +166,7 @@ def _fail_corrupt(repository, state):
         state["component_key"],
         state["wanted_head"],
         "storage_corrupt",
+        expected_revision=state["revision"],
         expected_state=state["state"],
         expected_format=state["format_version"],
     )
@@ -223,7 +225,9 @@ def mark_targets(reader, impact, unit):
         except (ContractError, KeyError, TypeError, ValueError) as error:
             if not cache_corruption(error):
                 raise
-            _fail_corrupt(repository, state)
+            current = repository.state(state["scope_key"], state["component_key"])
+            if current is not None:
+                _fail_corrupt(repository, current)
     # The shared chain catalog must see changes outside every consumer's current
     # range too. Otherwise a later range could subtract a stale open target.
     producer_exists = _financial_projection.store(unit).state() is not None
@@ -369,6 +373,7 @@ def run_pending(reader, company_id, limit):
                     component,
                     wanted,
                     error.code if isinstance(error, ContractError) else "production_failed",
+                    expected_revision=state["revision"],
                     expected_format=state["format_version"],
                 )
     return tuple(completed)

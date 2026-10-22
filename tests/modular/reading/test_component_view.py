@@ -22,6 +22,7 @@ from ai_accounting_modular.reading import (
     _component_view,
     _item_buckets,
     _monthly,
+    _open_store,
 )
 from ai_accounting_modular.reading import (
     _brief_open_index as open_items,
@@ -85,7 +86,7 @@ def test_snapshot_mutations_cannot_change_the_private_directory_or_its_manifest(
         original = deepcopy(saved.components)
         saved.components[activity.COMPONENT]["_buckets"].clear()
         saved.components[activity.COMPONENT]["_collections"]["activity"]["count"] = 999
-        saved.components[open_items.COMPONENT]["_buckets"].clear()
+        saved.components[open_items.COMPONENT]["_roots"].clear()
         saved.components[open_items.COMPONENT]["open_items"]["categories"].clear()
         assert snapshot(book, read).components == original
         assert _brief_groups.activity_page(saved, read, {})["page"]["total_count"] == 1
@@ -194,15 +195,13 @@ def test_a_cached_directory_still_checks_each_actual_selected_row(book, monkeypa
 
 
 @pytest.mark.parametrize(
-    "component,collection,buckets",
+    "component,collection",
     [
-        (activity.COMPONENT, "activity", activity.BUCKETS),
-        (open_items.COMPONENT, "open_items", open_items.BUCKETS),
+        (activity.COMPONENT, "activity"),
+        (open_items.COMPONENT, "open_items"),
     ],
 )
-def test_real_writable_contexts_never_reuse_a_bucket_proof_after_a_write(
-    book, component, collection, buckets
-):
+def test_real_writable_contexts_never_reuse_a_proof_after_a_write(book, component, collection):
     prepared(book)
     scope_key = _monthly.key(selection(book))
     with book.kernel.storage.maintenance_unit(book.company) as unit:
@@ -211,11 +210,7 @@ def test_real_writable_contexts_never_reuse_a_bucket_proof_after_a_write(
             scope_key, component, collection, CollectionFilter(), PageQuery(), unit
         )
         identity = first.items[0]["group_key"]
-        unit.repository("reading")._session.execute(
-            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
-            "AND collection_key=? AND item_id=?",
-            (scope_key, component, buckets, _item_buckets.key(collection, identity)),
-        )
+        _damage_index(unit.repository("reading"), scope_key, component, collection, identity)
         with pytest.raises(ContractError) as error:
             collection_page(scope_key, component, collection, CollectionFilter(), PageQuery(), unit)
         assert error.value.code == "storage_corrupt"
@@ -273,7 +268,7 @@ def test_base_reads_never_share_decoded_summary_values(book, monkeypatch, owner)
         repository = read.repository("reading")
         directory = owner.base(repository, repository.state(scope_key, owner.COMPONENT))
         expected = deepcopy(directory.payload)
-        directory.payload["_buckets"].clear()
+        directory.payload["_roots" if owner is open_items else "_buckets"].clear()
         directory.payload["_inputs"].clear()
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
@@ -283,15 +278,13 @@ def test_base_reads_never_share_decoded_summary_values(book, monkeypatch, owner)
 
 
 @pytest.mark.parametrize(
-    "owner,collection,bucket_collection",
+    "owner,collection",
     [
-        (activity, "activity", activity.BUCKETS),
-        (open_items, "open_items", open_items.BUCKETS),
+        (activity, "activity"),
+        (open_items, "open_items"),
     ],
 )
-def test_static_summary_hit_still_reads_actual_bucket_on_a_new_transaction(
-    book, owner, collection, bucket_collection
-):
+def test_static_summary_hit_still_reads_actual_index_on_a_new_transaction(book, owner, collection):
     prepared(book)
     scope_key = _monthly.key(selection(book))
     with book.kernel.storage.read_unit(book.company) as read:
@@ -299,14 +292,31 @@ def test_static_summary_hit_still_reads_actual_bucket_on_a_new_transaction(
             scope_key, owner.COMPONENT, collection, CollectionFilter(), PageQuery(), read
         )
     with book.kernel.storage.maintenance_unit(book.company) as unit:
-        unit.repository("reading")._session.execute(
-            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
-            "AND collection_key=?",
-            (scope_key, owner.COMPONENT, bucket_collection),
-        )
+        _damage_index(unit.repository("reading"), scope_key, owner.COMPONENT, collection)
     with book.kernel.storage.read_unit(book.company) as read:
         with pytest.raises(ContractError) as error:
             collection_page(
                 scope_key, owner.COMPONENT, collection, CollectionFilter(), PageQuery(), read
             )
     assert error.value.code == "storage_corrupt"
+
+
+def _damage_index(repository, scope_key, component, collection, identity=None):
+    if component == open_items.COMPONENT:
+        payload = loads_json(repository.payload(scope_key, component)["payload_json"])
+        node_id = payload["_roots"][collection][0]
+        repository._session.execute(
+            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND collection_key=? "
+            "AND item_id=?",
+            (_open_store.SCOPE, _open_store.NODES, node_id),
+        )
+    else:
+        sql = (
+            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
+            "AND collection_key=?"
+        )
+        params = (scope_key, component, activity.BUCKETS)
+        if identity is not None:
+            sql += " AND item_id=?"
+            params += (_item_buckets.key(collection, identity),)
+        repository._session.execute(sql, params)

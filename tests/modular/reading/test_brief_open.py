@@ -25,15 +25,23 @@ def publish(case, month="2026-01"):
     scope = _monthly.normalize(
         {"company_id": case.company, "period_from": month, "period_to": month, "view": "as_posted"}
     )
+    component, key = _monthly.BRIEF_OPEN_ITEMS, _monthly.key(scope)
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        repository = unit.repository("reading")
+        repository.register(key, component, unit.head, _monthly.version(component))
+        repository.open_mark(key, unit.head, full=True)
+        # This helper explicitly requests a cold reconstruction even at the
+        # same formal head, rather than publishing into an already-ready scope.
+        repository._session.execute(
+            "UPDATE read_scope_head SET wanted_head=?,state='preparing' "
+            "WHERE scope_key=? AND component_key=?",
+            (unit.head, key, component),
+        )
     with case.kernel.storage.read_unit(case.company) as read:
         model = _brief_open.prepare(case.kernel.reading, scope, read)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
-        repository = unit.repository("reading")
-        component = _monthly.BRIEF_OPEN_ITEMS
-        repository.register(_monthly.key(scope), component, unit.head, _monthly.version(component))
-        repository.mark(_monthly.key(scope), component, unit.head)
-        assert repository.publish(
-            _monthly.key(scope), component, unit.head, _monthly.version(component), model
+        assert unit.repository("reading").publish(
+            key, component, unit.head, _monthly.version(component), model
         )
     with case.kernel.storage.read_unit(case.company) as read:
         return _monthly.ready_snapshot(case.kernel.reading, scope, (component,), read)

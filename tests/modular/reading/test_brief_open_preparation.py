@@ -1,16 +1,17 @@
-"""Carry each already checked digest through full and incremental publication unchanged."""
+"""Prepared Open roots own their inputs and still authenticate actual published values."""
+
+from copy import deepcopy
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
-from ai_accounting_modular.reading import _brief_open_buckets as buckets
+from ai_accounting_modular.contracts.public import ContractError, ReadInputs, loads_json
 from ai_accounting_modular.reading import _brief_open_index as index
-from ai_accounting_modular.reading import _monthly
-from ai_accounting_modular.reading._collections import IndexItem
+from ai_accounting_modular.reading import _monthly, _open_store
+from ai_accounting_modular.reading._collections import IndexItem, prepare_items, read_items
 from tests.modular.application._working_case import case as case
 
-from .test_brief_open_buckets import publish
 from .test_brief_open_incremental import scope
+from .test_brief_open_tree import publish
 
 
 def entries():
@@ -27,104 +28,132 @@ def entries():
     ]
 
 
-def legacy_digest_extraction(monkeypatch):
-    """The previous path got each digest by decoding its freshly serialized body."""
-    prepare = index.prepare_rows
-
-    def from_serialized_rows(*args, **kwargs):
-        rows, _ = prepare(*args, **kwargs)
-        return rows, tuple(loads_json(row[-1])["digest"] for row in rows)
-
-    monkeypatch.setattr(index, "prepare_rows", from_serialized_rows)
-
-
-def no_new_body_decodes(monkeypatch):
-    prepare, decode = index.prepare_rows, index.loads_json
-    new_bodies = set()
-
-    def capture(*args, **kwargs):
-        rows, digests = prepare(*args, **kwargs)
-        new_bodies.update(row[-1] for row in rows)
-        return rows, digests
-
-    def checked(raw):
-        assert raw not in new_bodies, "new rows must reuse their factory binding digests"
-        return decode(raw)
-
-    monkeypatch.setattr(index, "prepare_rows", capture)
-    monkeypatch.setattr(index, "loads_json", checked)
-
-
-@pytest.mark.parametrize("values", [(), entries()])
-def test_full_packet_matches_previous_digest_extraction_bytes_without_decoding_new_rows(
-    values, monkeypatch
-):
-    summary = {"title": "中文汇总", "amount_fen": "9007199254740993"}
-    with monkeypatch.context() as hook:
-        legacy_digest_extraction(hook)
-        expected = index.complete(summary, values, 17)
-    with monkeypatch.context() as hook:
-        no_new_body_decodes(hook)
-        actual = index.complete(summary, values, 17)
-    assert actual == expected  # All payload bytes, hash, ordinary rows and physical buckets.
-
-
-def test_patch_packet_matches_previous_digest_extraction_bytes_and_keeps_base_proof(
-    case, monkeypatch
-):
+@pytest.mark.parametrize("populated", [False, True])
+def test_prepared_full_roots_detach_caller_values_before_real_publication(case, populated):
     case.seed(expense=False)
-    publish(case, entries())
+    values = entries() if populated else []
+    expected = deepcopy(values[0].value) if populated else None
+    summary = {
+        "_inputs": ReadInputs().wire(),
+        "_cooperation_inputs": ReadInputs().wire(),
+        "open_items": {"cutoff_period": "2026-01", "current_cutoff_period": "2026-01"},
+        "title": {"text": "中文汇总"},
+    }
+    key = _monthly.key(scope(case))
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        repository = unit.repository("reading")
+        repository.register(key, index.COMPONENT, unit.head, _monthly.version(index.COMPONENT))
+        state = repository.state(key, index.COMPONENT)
+        prepared = index.complete(summary, values, unit.head, repository=repository, scope_key=key)
+        before = deepcopy(prepared)
+        summary["title"]["text"] = "caller changed after preparation"
+        if populated:
+            values[0].value["中文"][3]["text"] = "caller changed after preparation"
+        assert prepared == before
+        assert repository.publish(
+            key, index.COMPONENT, state["wanted_head"], _monthly.version(index.COMPONENT), prepared
+        )
     with case.kernel.storage.read_unit(case.company) as read:
-        key = _monthly.key(scope(case))
+        repository = read.repository("reading")
+        directory = index.base(repository, repository.state(key, index.COMPONENT))
+        assert directory.payload["title"] == {"text": "中文汇总"}
+        actual = directory.get("open_members", ("member-2",), required=populated)
+        if not populated:
+            assert actual == {} and directory.payload["_collections"]["open_members"]["count"] == 0
+        else:
+            assert actual == {"member-2": expected}
+            actual["member-2"]["中文"][3]["text"] = "changed returned value"
+            assert directory.get("open_members", ("member-2",), required=True) == {
+                "member-2": expected
+            }
+    if populated:
+        with case.kernel.storage.read_unit(case.company) as read:
+            repository = read.repository("reading")
+            directory = index.base(repository, repository.state(key, index.COMPONENT))
+            assert directory.get("open_members", ("member-2",), required=True) == {
+                "member-2": expected
+            }
+
+
+def test_same_content_patch_and_cold_full_keep_roots_manifest_and_base_proof(case):
+    case.seed(expense=False)
+    original = publish(case, entries())
+    key = _monthly.key(scope(case))
+    with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")
         state = repository.state(key, index.COMPONENT)
-        payload = loads_json(repository.payload(key, index.COMPONENT)["payload_json"])
-        directory = index.Directory(repository, key, payload)
-        summary = {k: v for k, v in payload.items() if k not in {"_semantic_digest", "_item_epoch"}}
-        changed = [
-            IndexItem("open_members", "member-2", "002", {"amount_fen": "-1"}),
-            index.item(index.VOUCHERS, "new-display", {"count": 1}),
-        ]
-        deletes = [(index.VOUCHERS, "display")]
-        with monkeypatch.context() as hook:
-            legacy_digest_extraction(hook)
-            expected = index.patch(summary, changed, deletes, directory, state)
-        with monkeypatch.context() as hook:
-            no_new_body_decodes(hook)
-            actual = index.patch(summary, changed, deletes, directory, state)
-    assert actual == expected  # Includes the exact deletes, base version and item epoch.
+        directory = index.base(repository, state)
+        summary = {
+            name: value
+            for name, value in directory.payload.items()
+            if name not in {"_semantic_digest", "_item_epoch"}
+        }
+        cold = index.complete(
+            summary, entries(), directory.epoch, repository=repository, scope_key=key
+        )
+        patched = index.patch(summary, entries(), (), directory, state, scope_key=key)
+        assert patched.payload_json == cold.payload_json == original.payload_json
+        assert patched.content_digest == cold.content_digest == original.content_digest
+        assert loads_json(patched.payload_json)["_roots"] == directory.payload["_roots"]
+        assert loads_json(patched.payload_json)["_collections"] == directory.payload["_collections"]
+        assert cold.tree_plan.writes == cold.tree_plan.deletes == ()
+        assert patched.tree_plan.writes == patched.tree_plan.deletes == ()
+        assert (
+            patched.base_ready,
+            patched.base_digest,
+            patched.item_epoch,
+            patched.base_scope,
+        ) == (state["ready_head"], state["content_digest"], directory.epoch, key)
 
 
-@pytest.mark.parametrize("damage", ["value", "index", "bucket"])
-def test_prepared_metadata_never_replaces_persisted_body_index_or_bucket_verification(case, damage):
+@pytest.mark.parametrize("damage", ["changed_raw", "missing_node"])
+def test_prepared_roots_do_not_replace_actual_node_byte_or_existence_checks(case, damage):
     case.seed(expense=False)
-    model = publish(case, entries())
+    prepared = publish(case, entries())
     key = _monthly.key(scope(case))
-    payload = loads_json(model.payload_json)
+    identity = loads_json(prepared.payload_json)["_roots"]["rows"][0]
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         session = unit.repository("reading")._session
-        if damage == "value":
-            raw = next(row[-1] for row in model.rows if row[:2] == ("open_members", "member-2"))
-            body = loads_json(raw)
-            body["value"] = {"changed_after_preparation": True}
-            session.execute(
-                "UPDATE read_item SET payload_json=? WHERE scope_key=? AND collection_key=? "
-                "AND item_id=?",
-                (canonical_json(body), key, "open_members", "member-2"),
-            )
-        elif damage == "index":
-            session.execute(
-                "UPDATE read_item SET sort_key='changed-after-preparation' WHERE scope_key=? "
-                "AND collection_key=? AND item_id=?",
-                (key, "open_members", "member-2"),
+        where = "WHERE scope_key=? AND collection_key=? AND item_id=?"
+        parameters = (_open_store.SCOPE, _open_store.NODES, identity)
+        if damage == "changed_raw":
+            # Every declared field stays identical, but these are different actual bytes.
+            changed = session.execute(
+                "UPDATE read_item SET payload_json=payload_json || ' ' " + where, parameters
             )
         else:
-            session.execute(
-                "DELETE FROM read_item WHERE scope_key=? AND collection_key=? AND item_id=?",
-                (key, index.BUCKETS, buckets.key("open_members", "member-2")),
-            )
+            changed = session.execute("DELETE FROM read_item " + where, parameters)
+        assert changed == 1
+    with (
+        case.kernel.storage.read_unit(case.company) as read,
+        pytest.raises(ContractError) as failure,
+    ):
+        repository = read.repository("reading")
+        directory = index.base(repository, repository.state(key, index.COMPONENT))
+        directory.get("open_members", ("member-2",), required=True)
+    assert failure.value.code == "storage_corrupt"
+
+
+@pytest.mark.parametrize("damage", ["value", "index"])
+def test_a_self_consistent_logical_row_must_still_match_its_actual_published_root(case, damage):
+    case.seed(expense=False)
+    publish(case, entries())
+    key = _monthly.key(scope(case))
     with case.kernel.storage.read_unit(case.company) as read:
+        repository = read.repository("reading")
+        directory = index.base(repository, repository.state(key, index.COMPONENT))
+        actual = directory.item_get("open_members", ("member-2",))[0]
+        changed = IndexItem(
+            "open_members",
+            "member-2",
+            "changed-order" if damage == "index" else "002",
+            {"changed_after_preparation": True} if damage == "value" else entries()[0].value,
+            group_key="group",
+        )
+        raw = prepare_items((changed,)).rows[0][-1]
+        forged = dict(actual, sort_key=changed.sort_key, payload_json=raw)
+        _, decoded = read_items((forged,))
+        assert decoded[0].value == changed.value  # Its own complete index/body digest is valid.
         with pytest.raises(ContractError) as failure:
-            directory = index.Directory(read.repository("reading"), key, payload)
-            directory.get("open_members", ("member-2",), required=True)
+            directory.check_many((forged,))
     assert failure.value.code == "storage_corrupt"

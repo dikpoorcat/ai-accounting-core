@@ -1,32 +1,23 @@
-"""BriefOpen's own compact indexes and publication proof; no formal accounting lives here."""
+"""Open's immutable range roots, strict logical rows and publication candidates."""
 
+from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, replace
 
-from ai_accounting_modular.contracts.public import (
-    ContractError,
-    ReadInputs,
-    content_digest,
-    loads_json,
-)
+from ai_accounting_modular.contracts.public import ReadInputs, canonical_json, content_digest
+from ai_accounting_modular.storage.public import TreePlan
 
-from . import _brief_open_buckets as buckets
-from ._collections import IndexItem, PreparedModel, _decode, prepare_model, prepare_rows
+from . import _brief_open_tree as blocks
+from ._brief_open_queries import Queries
+from ._collections import IndexItem, PreparedModel, _index, _read_item, prepare_model
+from ._open_store import OpenPool
 
 COMPONENT = "brief_open_items"
-FORMAT_VERSION = 8
+FORMAT_VERSION = 9
 DIRTY = "_open_pending"
-BUSINESSES = "_open_businesses"
-OBJECTS = "_open_objects"
-FOLDS = "_open_folds"
-VOUCHERS = "_open_displays"
-BUCKETS = "_open_buckets"
-COLLECTIONS = ("open_items", "open_members", BUSINESSES, OBJECTS, FOLDS, VOUCHERS)
-PUBLIC = ("open_items", "open_members")
-
-
-def corrupt(message="待收待付读取索引不完整，请重新生成。"):
-    raise ContractError("storage_corrupt", message)
+BUSINESSES, OBJECTS, FOLDS, VOUCHERS = blocks.PRIVATE
+COLLECTIONS, PUBLIC = blocks.COLLECTIONS, blocks.PUBLIC
+corrupt = blocks.corrupt
 
 
 def item(collection, identity, value):
@@ -43,33 +34,24 @@ def semantic(payload):
     )
 
 
-def validate(payload):
-    cooperation_inputs(payload)
-    epoch = payload["_item_epoch"]
-    if type(epoch) is not int or epoch < 0 or payload["_semantic_digest"] != semantic(payload):
-        corrupt()
-    roots = payload["_buckets"]
-    buckets.validate(roots, COLLECTIONS, VOUCHERS, PUBLIC)
-    if (
-        buckets.manifest(roots) != payload["_collections"]
-        or buckets.display_head(roots[VOUCHERS]) != payload["_voucher_display_head"]
-    ):
-        corrupt()
-    return epoch
-
-
-def base(repository, state):
-    row = repository.payload(state["scope_key"], COMPONENT)
-    if row is None:
-        return None
-    return Directory.from_row(repository, state, row)
-
-
 def cooperation_inputs(payload):
     try:
         return ReadInputs.from_wire(payload["_cooperation_inputs"])
     except (KeyError, TypeError, ValueError):
         corrupt("待收待付缺少完整的合作位置输入依赖，请重新生成。")
+
+
+def validate(payload):
+    cooperation_inputs(payload)
+    epoch = payload["_item_epoch"]
+    if type(epoch) is not int or epoch < 0 or payload["_semantic_digest"] != semantic(payload):
+        corrupt()
+    blocks.validate(payload["_roots"])
+    if payload["_collections"] != blocks.manifests(payload["_roots"]) or payload[
+        "_voucher_display_head"
+    ] != blocks.display_head(payload["_roots"]):
+        corrupt()
+    return epoch
 
 
 def seal(payload, rows, epoch):
@@ -79,77 +61,70 @@ def seal(payload, rows, epoch):
     return replace(prepare_model(payload), rows=tuple(rows))
 
 
-def _prepared(entries):
-    public, grouped, identities = [], {}, set()
-    for entry in entries:
-        if (
-            not isinstance(entry, IndexItem)
-            or entry.collection not in COLLECTIONS
-            or not isinstance(entry.item_id, str)
-            or not entry.item_id
-        ):
-            corrupt("待收待付项目引用了未声明的集合。")
-        identity = entry.collection, entry.item_id
-        if identity in identities:
-            corrupt("待收待付集合不能重复保存同一项目。")
-        identities.add(identity)
-        if entry.collection in PUBLIC:
-            public.append(entry)
-        else:
-            if entry.sort_key != entry.item_id or any(
-                getattr(entry, field) is not None
-                for field in ("business_id", "object_id", "group_key", "category")
-            ):
-                corrupt("待收待付私有项目只能使用其明确身份。")
-            grouped.setdefault(buckets.key(*identity), {})[entry.item_id] = entry.value
-    rows, digests = prepare_rows(public)
-    for row, digest in zip(rows, digests, strict=True):
-        collection, identity, order = row[:3]
-        grouped.setdefault(buckets.key(collection, identity), {})[identity] = order, digest
-    return rows, grouped
-
-
-def _bucket(identity, values):
-    collection, bucket = identity.rsplit(":", 1)
-    descriptor, raw = buckets.prepare(
-        collection,
-        bucket,
-        values,
-        private=collection not in PUBLIC,
-        displays=collection == VOUCHERS,
-    )
-    return descriptor, (BUCKETS, identity, identity, None, None, None, None, raw)
-
-
-def complete(summary, entries, epoch):
-    public, grouped = _prepared(entries)
-    roots = {collection: {} for collection in COLLECTIONS}
-    rows = list(public)
-    for key, values in grouped.items():
-        collection, bucket = key.rsplit(":", 1)
-        descriptor, row = _bucket(key, values)
-        roots[collection][bucket] = descriptor
-        rows.append(row)
-    return seal(_summary(summary, roots), rows, epoch)
-
-
-def decoded(row, epoch):
-    if row["head"] != epoch:
-        corrupt("待收待付项目混入了其他生成代次，请重新生成。")
-    return _decode(row)
-
-
 def _summary(summary, roots):
+    saved = blocks.wire(roots)
     return dict(
         summary,
-        _buckets=roots,
-        _collections=buckets.manifest(roots),
-        _voucher_display_head=buckets.display_head(roots[VOUCHERS]),
+        _roots=saved,
+        _collections=blocks.manifests(saved),
+        _voucher_display_head=blocks.display_head(saved),
     )
 
 
-class Directory:
-    """Same-read bucket proofs only; never a cache across transactions or scopes."""
+@dataclass(frozen=True)
+class PreparedOpen:
+    model: PreparedModel
+    pool_token: str | None
+    tree_plan: TreePlan
+    scope_key: str
+
+    @property
+    def payload_json(self):
+        return self.model.payload_json
+
+    @property
+    def content_digest(self):
+        return self.model.content_digest
+
+    @property
+    def rows(self):
+        return self.model.rows
+
+
+@dataclass(frozen=True)
+class PreparedOpenPatch(PreparedOpen):
+    base_ready: int
+    base_digest: str
+    item_epoch: int
+    base_scope: str
+
+
+def base(repository, state):
+    row = repository.payload(state["scope_key"], COMPONENT)
+    if row is None:
+        if state["ready_head"] != 0 or state["content_digest"] is not None:
+            corrupt("待收待付已发布范围缺少汇总，须重新生成共享索引。")
+        return None
+    return Directory.from_row(repository, state, row)
+
+
+def complete(summary, entries, epoch, *, repository, scope_key):
+    pool = OpenPool(repository)
+    trees = blocks.Trees(pool)
+    state = repository.state(scope_key, COMPONENT)
+    previous = base(repository, state) if state is not None else None
+    old = blocks.digests(previous.roots) if previous is not None else ()
+    roots = trees.full(entries)
+    return PreparedOpen(
+        seal(_summary(summary, roots), (), epoch),
+        pool.token,
+        trees.store.finish(old, blocks.digests(roots)),
+        scope_key,
+    )
+
+
+class Directory(Queries):
+    """Actual roots belong to this read; immutable nodes can be shared across months."""
 
     def __init__(self, repository, scope_key, payload):
         self.epoch = validate(payload)
@@ -160,159 +135,187 @@ class Directory:
         from ._component_view import summary
 
         payload, epoch = summary(state["scope_key"], COMPONENT, state, row)
-        directory = cls.__new__(cls)
-        directory.epoch = epoch
-        directory._bind(repository, state["scope_key"], payload)
-        return directory
+        result = cls.__new__(cls)
+        result.epoch = epoch
+        result._bind(repository, state["scope_key"], payload)
+        return result
 
     def _bind(self, repository, scope_key, payload):
         self.repository, self.scope_key, self.payload = repository, scope_key, payload
-        self.roots, self.loaded = payload["_buckets"], {}
-        if repository.open_bucket_count(scope_key) != sum(
-            len(root) for root in self.roots.values()
-        ):
-            corrupt("待收待付物理桶数量与完整目录不一致。")
+        self.pool = OpenPool(repository)
+        if self.pool.token is None:
+            corrupt("待收待付范围缺少实际共享索引，请重新生成。")
+        self.trees = blocks.Trees(self.pool)
+        self.trees.store.read_blocks(
+            (self.trees.store.NODES, root[0])
+            for root in payload["_roots"].values()
+            if root is not None
+        )
+        self.roots = self.trees.load(payload["_roots"])
+        for collection in PUBLIC:
+            first, last = blocks.bounds(collection)
+            count = self.trees.trees["rows"].summary(self.roots["rows"], first=first, last=last)
+            if count != self.payload["_collections"][collection]["count"]:
+                corrupt("待收待付完整项目与排序目录数量不一致。")
 
-    def load(self, keys):
-        missing = set(keys) - self.loaded.keys()
-        if not missing:
-            return
-        for key in missing:
-            collection, bucket = key.rsplit(":", 1)
+    def _entries(self, collection, identities):
+        if collection not in COLLECTIONS:
+            corrupt("待收待付项目引用了未声明的集合。")
+        keys = tuple(blocks.key(collection, identity) for identity in identities)
+        return self.trees.trees["rows"].get_many(self.roots["rows"], keys)
+
+    def _row(self, collection, identity, entry):
+        try:
+            saved = entry.value
+            if entry.key != blocks.key(collection, identity) or set(saved) != {
+                "index",
+                "value",
+                "digest",
+            }:
+                corrupt()
+            index = saved["index"]
             if (
-                collection not in COLLECTIONS
-                or len(bucket) != 2
-                or any(c not in "0123456789abcdef" for c in bucket)
+                set(index)
+                != {
+                    "collection",
+                    "item_id",
+                    "sort_key",
+                    "business_id",
+                    "object_id",
+                    "group_key",
+                    "category",
+                }
+                or index["collection"] != collection
+                or index["item_id"] != identity
             ):
                 corrupt()
-        selected = {}
-        for row in self.repository.open_bucket_rows(self.scope_key, tuple(sorted(missing))):
-            key = row["item_id"]
-            if (
-                key not in missing
-                or key in selected
-                or row["collection_key"] != BUCKETS
-                or row["sort_key"] != key
-                or row["scope_key"] != self.scope_key
-                or row["component_key"] != COMPONENT
-                or row["head"] != self.epoch
-                or any(
-                    row[field] is not None
-                    for field in ("business_id", "object_id", "group_key", "category")
-                )
-            ):
-                corrupt()
-            collection, bucket = key.rsplit(":", 1)
-            expected = self.roots[collection].get(bucket)
-            if expected is None:
-                corrupt("未声明的待收待付桶中存在额外内容。")
-            selected[key] = buckets.read(
-                row["payload_json"],
-                collection,
-                bucket,
-                expected,
-                private=collection not in PUBLIC,
-                displays=collection == VOUCHERS,
-            )
-        for key in missing - selected.keys():
-            collection, bucket = key.rsplit(":", 1)
-            if bucket in self.roots[collection]:
-                corrupt()
-            selected[key] = {}
-        self.loaded.update(selected)
+            row = {
+                "scope_key": self.scope_key,
+                "component_key": COMPONENT,
+                "head": self.epoch,
+                **{
+                    ("collection_key" if key == "collection" else key): value
+                    for key, value in index.items()
+                },
+                "payload_json": canonical_json(
+                    {"digest": saved["digest"], "value": saved["value"]}
+                ),
+            }
+            item, _, digest = _read_item(row)
+            return row, item, digest
+        except (KeyError, TypeError, ValueError, AttributeError):
+            corrupt()
 
     def known(self, collection, identities):
-        if collection not in COLLECTIONS:
-            raise ContractError("invalid_input", "待收待付目录未声明所选集合。")
-        identities = set(identities)
-        self.load(buckets.key(collection, identity) for identity in identities)
+        identities = tuple(dict.fromkeys(identities))
         return {
             identity
-            for identity in identities
-            if identity in self.loaded[buckets.key(collection, identity)]
+            for identity, entry in zip(
+                identities, self._entries(collection, identities), strict=True
+            )
+            if entry is not None
         }
 
+    def _materialize(self, collection, item_ids):
+        if collection not in PUBLIC:
+            corrupt()
+        values = tuple(
+            self._row(collection, identity, entry)
+            for identity, entry in zip(item_ids, self._entries(collection, item_ids), strict=True)
+            if entry is not None
+        )
+        selected = self.trees.trees[collection].get_many(
+            self.roots[collection],
+            tuple(blocks.key(item.sort_key, item.item_id) for _, item, _ in values),
+        )
+        for (_, _, digest), entry in zip(values, selected, strict=True):
+            if entry is None or entry.value != digest:
+                corrupt("待收待付项目未被本范围的排序根引用。")
+        return values
+
+    def item_get(self, collection, item_ids):
+        return tuple(row for row, _, _ in self._materialize(collection, item_ids))
+
     def check(self, row):
-        collection, identity = row["collection_key"], row["item_id"]
-        if (
-            collection not in PUBLIC
-            or row["scope_key"] != self.scope_key
-            or row["component_key"] != COMPONENT
-        ):
-            corrupt()
-        key = buckets.key(collection, identity)
-        self.load((key,))
-        value = decoded(row, self.epoch)
-        digest = loads_json(row["payload_json"])["digest"]
-        if self.loaded[key].get(identity) != (row["sort_key"], digest):
-            corrupt()
-        return value
+        return self.check_many((row,))[0]
 
     def check_many(self, rows):
-        """One bucket read anchors every returned row and any paging lookahead."""
-        self.load(buckets.key(row["collection_key"], row["item_id"]) for row in rows)
-        return tuple(self.check(row) for row in rows)
+        rows, grouped, expected = tuple(rows), defaultdict(set), {}
+        try:
+            for row in rows:
+                collection, identity = row["collection_key"], row["item_id"]
+                if (
+                    collection not in PUBLIC
+                    or row["scope_key"] != self.scope_key
+                    or row["component_key"] != COMPONENT
+                    or row["head"] != self.epoch
+                ):
+                    corrupt()
+                grouped[collection].add(identity)
+            for collection, identities in grouped.items():
+                for row, item, _ in self._materialize(collection, tuple(sorted(identities))):
+                    expected[collection, item.item_id] = row, item.value
+            result = []
+            for row in rows:
+                actual, value = expected[row["collection_key"], row["item_id"]]
+                if actual != row:
+                    corrupt()
+                result.append(deepcopy(value))
+            return tuple(result)
+        except (KeyError, TypeError, ValueError):
+            corrupt()
 
     def get(self, collection, identities, *, required=False):
         identities = tuple(dict.fromkeys(identities))
-        expected = self.known(collection, identities)
-        if required and expected != set(identities):
+        if collection in PUBLIC:
+            values = self._materialize(collection, identities)
+            if required and len(values) != len(identities):
+                corrupt()
+            return {item.item_id: item.value for _, item, _ in values}
+        actual = self._entries(collection, identities)
+        if required and any(entry is None for entry in actual):
             corrupt()
-        if collection not in PUBLIC:
-            return {
-                identity: deepcopy(self.loaded[buckets.key(collection, identity)][identity])
-                for identity in identities
-                if identity in expected
-            }
-        rows = (
-            self.repository.item_get(self.scope_key, COMPONENT, collection, identities)
-            if identities
-            else ()
-        )
-        if {row["item_id"] for row in rows} != expected:
+        result = {}
+        for identity, entry in zip(identities, actual, strict=True):
+            if entry is not None:
+                value = entry.value
+                if not isinstance(value, dict):
+                    corrupt()
+                result[identity] = value
+        return result
+
+
+def patch(summary, entries, deletes, directory, state, *, scope_key):
+    additions = {}
+    for entry in entries:
+        if not isinstance(entry, IndexItem) or entry.collection not in COLLECTIONS:
             corrupt()
-        return {row["item_id"]: self.check(row) for row in rows}
-
-
-@dataclass(frozen=True)
-class PreparedOpenPatch:
-    model: PreparedModel
-    deletes: tuple[tuple[str, str], ...]
-    base_ready: int
-    base_digest: str
-    item_epoch: int
-    base_scope: str
-
-
-def patch(summary, entries, deletes, directory, state):
-    public, updates = _prepared(entries)
+        _index(entry)
+        identity = entry.collection, entry.item_id
+        if identity in additions:
+            corrupt("待收待付集合不能重复保存同一项目。")
+        additions[identity] = entry
     deletes = set(deletes)
     if any(collection not in COLLECTIONS for collection, _ in deletes):
         corrupt()
-    changed = deletes | {
-        (key.rsplit(":", 1)[0], identity) for key, values in updates.items() for identity in values
-    }
-    keys = {buckets.key(*identity) for identity in changed}
-    directory.load(keys)
-    values = {key: dict(directory.loaded[key]) for key in keys}
-    for collection, identity in deletes:
-        values[buckets.key(collection, identity)].pop(identity, None)
-    for key, additions in updates.items():
-        values[key].update(additions)
-    roots = deepcopy(directory.roots)
-    rows = list(public)
-    removed = {(collection, identity) for collection, identity in changed if collection in PUBLIC}
-    for key, selected in values.items():
-        collection, bucket = key.rsplit(":", 1)
-        removed.add((BUCKETS, key))
-        if selected:
-            roots[collection][bucket], row = _bucket(key, selected)
-            rows.append(row)
+    identities, old = deletes | set(additions), {}
+    for collection in COLLECTIONS:
+        selected = tuple(identity for name, identity in identities if name == collection)
+        if collection in PUBLIC:
+            for _, value, _ in directory._materialize(collection, selected):
+                old[collection, value.item_id] = value
         else:
-            roots[collection].pop(bucket, None)
+            for identity, value in directory.get(collection, selected).items():
+                old[collection, identity] = item(collection, identity, value)
+    roots = directory.trees.patch(directory.roots, old, additions, deletes)
     return PreparedOpenPatch(
-        seal(_summary(summary, roots), rows, directory.epoch),
-        tuple(sorted(removed)),
+        seal(_summary(summary, roots), (), directory.epoch),
+        directory.pool.token,
+        directory.trees.store.finish(
+            blocks.digests(directory.roots) if scope_key == directory.scope_key else (),
+            blocks.digests(roots),
+        ),
+        scope_key,
         state["ready_head"],
         state["content_digest"],
         directory.epoch,

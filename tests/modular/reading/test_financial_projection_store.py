@@ -29,21 +29,22 @@ def pending_plan(case):
         plan = case.kernel.ledger.prepare_financial_projection(
             tuple(requests.values()), (), (), read, base=None, rebuild=True
         )
-    return token, plan
+        revision = target.state()["revision"]
+    return token, plan, revision
 
 
 def test_same_head_new_request_cannot_be_cleared_by_an_old_producer(financial_case):
     case, _ = financial_case
     case.seed()
     page(case)
-    token, plan = pending_plan(case)
+    token, plan, revision = pending_plan(case)
     page(case, "2026-02")
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         target = projection.store(unit)
         assert not target.publish(token, plan, rebuild=True)
         assert len(target.work()["pending"]) == 2
         assert target.header_json is None
-        assert not target.fail(token, "production_failed")
+        assert not target.fail(token, "production_failed", expected_revision=revision)
     drain(case)
     assert page(case).state == page(case, "2026-02").state == "ready"
 
@@ -52,7 +53,7 @@ def test_same_head_rebuild_does_not_let_an_old_plan_replace_the_new_base(financi
     case, _ = financial_case
     case.seed()
     page(case)
-    old, plan = pending_plan(case)
+    old, plan, _ = pending_plan(case)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         assert projection.store(unit).publish(old, plan, rebuild=True)
         selected = projection.request(case.kernel.reading, scope(case), "summary_values", unit)
@@ -99,7 +100,7 @@ def test_rebuild_replaces_all_owner_garbage_only_after_successful_cas(financial_
         )
         selected = projection.request(case.kernel.reading, scope(case), "summary_values", unit)
         projection.queue(case.kernel.reading, selected, unit, retry=True, rebuild=True)
-    token, plan = pending_plan(case)
+    token, plan, _ = pending_plan(case)
     bad = FinancialProjectionPlan(
         plan.header_json, plan.header_digest, (*plan.writes, ("bad", "json", "not-json")), ()
     )

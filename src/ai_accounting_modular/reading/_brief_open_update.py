@@ -51,13 +51,16 @@ def mark(repository, state, scope, impact, head):
         return affected
     except (ContractError, KeyError, TypeError, ValueError):
         repository.open_mark(key, head, full=True)
-        repository.fail(
-            key,
-            index.COMPONENT,
-            state["wanted_head"],
-            "storage_corrupt",
-            expected_state=state["state"],
-        )
+        current = repository.state(key, index.COMPONENT)
+        if current is not None:
+            repository.fail(
+                key,
+                index.COMPONENT,
+                current["wanted_head"],
+                "storage_corrupt",
+                expected_revision=current["revision"],
+                expected_state=current["state"],
+            )
         repository.open_advance_failed(key, head)
         return False
 
@@ -126,9 +129,7 @@ def _groups(directory, old, new_entries, category_folds, entries, deletes):
             else:
                 # At most changed members + one surviving representative, using the
                 # existing group index even when the group has 100,000 members.
-                found = directory.repository.item_page(
-                    directory.scope_key,
-                    index.COMPONENT,
+                found = directory.item_page(
                     "open_members",
                     CollectionFilter(group_key=identity),
                     None,
@@ -260,4 +261,4 @@ def prepare_from_base(
         captured.current_cutoff,
         captured.complete,
     )
-    return index.patch(summary, entries, deletes, directory, state)
+    return index.patch(summary, entries, deletes, directory, state, scope_key=_monthly.key(scope))

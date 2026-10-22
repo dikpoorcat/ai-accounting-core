@@ -1,5 +1,5 @@
 {
-  "fingerprint": "0908fc9f20a1f04aa41b78c879654849898cab36904e31b440c4e0477f2a0a24",
+  "fingerprint": "f21dd9a88aa23426727bb7339b66fb7827128fc1ba18326d4bfe6fb676dc911d",
   "kind": "company",
   "objects": [
     {
@@ -908,7 +908,7 @@
     {
       "name": "read_scope_head",
       "owner": "reading",
-      "sql": "CREATE TABLE read_scope_head (\nscope_key TEXT NOT NULL,\n component_key TEXT NOT NULL,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n ready_head INTEGER NOT NULL DEFAULT 0 CHECK(ready_head>=0 AND ready_head<=wanted_head),\n format_version INTEGER NOT NULL CHECK(format_version>=1),\n content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest)=64),\n state TEXT NOT NULL CHECK(state IN ('ready','preparing','failed')),\n error_code TEXT,\n PRIMARY KEY(scope_key,component_key)\n) STRICT",
+      "sql": "CREATE TABLE read_scope_head (\nscope_key TEXT NOT NULL,\n component_key TEXT NOT NULL,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n ready_head INTEGER NOT NULL DEFAULT 0 CHECK(ready_head>=0 AND ready_head<=wanted_head),\n format_version INTEGER NOT NULL CHECK(format_version>=1),\n content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest)=64),\n state TEXT NOT NULL CHECK(state IN ('ready','preparing','failed')),\n error_code TEXT,\n revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),\n PRIMARY KEY(scope_key,component_key)\n) STRICT",
       "table": "read_scope_head",
       "type": "table"
     },

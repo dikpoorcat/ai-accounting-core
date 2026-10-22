@@ -8,7 +8,6 @@ import pytest
 from ai_accounting_modular.contracts.public import MAX_FEN, ContractError, PageQuery, loads_json
 from ai_accounting_modular.reading import (
     _brief_open,
-    _brief_open_buckets,
     _brief_open_index,
     _brief_open_inputs,
     _brief_open_sources,
@@ -16,7 +15,12 @@ from ai_accounting_modular.reading import (
     _brief_open_update,
     _monthly,
 )
-from ai_accounting_modular.reading._collections import CollectionFilter, collection_page
+from ai_accounting_modular.reading._collections import (
+    CollectionFilter,
+    collection_items,
+    collection_page,
+)
+from ai_accounting_modular.reading._open_store import NODES, SCOPE
 from ai_accounting_modular.reading._repository import ReadingRepository
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as case
@@ -34,6 +38,12 @@ def scope(case):
             "view": "as_posted",
         }
     )
+
+
+def rows_root(repository, key):
+    return loads_json(repository.payload(key, _monthly.BRIEF_OPEN_ITEMS)["payload_json"])["_roots"][
+        "rows"
+    ][0]
 
 
 def snapshot(case):
@@ -80,13 +90,13 @@ def test_hot_change_reads_only_changed_business_and_matches_a_cold_model(case, m
 
     published = []
     original_publish = ReadingRepository.publish
-    original_items = ReadingRepository.item_page
+    original_items = _brief_open_index.Directory.item_page
 
-    def no_unrelated_members(repository, key, component, collection, *args):
+    def no_unrelated_members(directory, collection, *args):
         assert collection != "open_members", (
             "an unchanged group representative needs no member body"
         )
-        return original_items(repository, key, component, collection, *args)
+        return original_items(directory, collection, *args)
 
     def publish_patch(repository, key, component, wanted, format_version, model):
         assert isinstance(model, _brief_open_index.PreparedOpenPatch)
@@ -96,18 +106,21 @@ def test_hot_change_reads_only_changed_business_and_matches_a_cold_model(case, m
     with monkeypatch.context() as patch:
         patch.setattr(_brief_open_sources, "capture", bounded)
         patch.setattr(ReadingRepository, "publish", publish_patch)
-        patch.setattr(ReadingRepository, "item_page", no_unrelated_members)
+        patch.setattr(_brief_open_index.Directory, "item_page", no_unrelated_members)
         assert case.kernel.reading.run_pending(case.company)
     after = snapshot(case)
     assert after is not None and after.version != initial.version
     assert set(seen) == {first["business_id"]}
-    unchanged = second["business_id"] + ":primary"
-    assert all(("open_members", unchanged) not in model.deletes for model in published)
-    assert all(
-        not (row[0] == "open_members" and row[1] == unchanged)
-        for model in published
-        for row in model.model.rows
-    )
+    assert all(model.model.rows == () for model in published)
+    with case.kernel.storage.read_unit(case.company) as read:
+        repository = read.repository("reading")
+        directory = _brief_open_index.base(
+            repository, repository.state(_monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS)
+        )
+        unchanged = directory.get(
+            "open_members", (second["business_id"] + ":primary",), required=True
+        )
+        assert next(iter(unchanged.values()))["outstanding_fen"] == "200000"
     assert after.components[_monthly.BRIEF_OPEN_ITEMS]["open_items"]["payable_fen"] == "290000"
     matches_cold(case)
 
@@ -183,14 +196,17 @@ def test_stale_patch_cannot_publish_or_clear_a_newer_committed_business(case):
     matches_cold(case)
 
 
-def test_corrupt_compact_bucket_fails_and_explicit_full_retry_includes_later_changes(case):
+def test_corrupt_shared_node_fails_and_explicit_full_retry_includes_later_changes(case):
     first = case.seed()
     publish(case)
     key = _monthly.key(scope(case))
     with case.kernel.storage.maintenance_unit(case.company) as unit:
-        unit.repository("reading")._session.execute(
-            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND collection_key=?",
-            (key, _brief_open_index.BUCKETS),
+        repository = unit.repository("reading")
+        root = rows_root(repository, key)
+        repository._session.execute(
+            "UPDATE read_item SET payload_json='{}' "
+            "WHERE scope_key=? AND collection_key=? AND item_id=?",
+            (SCOPE, NODES, root),
         )
     change(case, first, "90000")
     assert case.kernel.reading.run_pending(case.company) == ()
@@ -227,13 +243,13 @@ def test_closed_january_progress_updates_from_a_february_payment_without_full_ca
     selected = snapshot(case).components[_monthly.BRIEF_OPEN_ITEMS]["open_items"]
     assert selected["payable_fen"] == "100000"
     with case.kernel.storage.read_unit(case.company) as read:
-        member = read.repository("reading").item_get(
+        value = collection_items(
             _monthly.key(scope(case)),
             _monthly.BRIEF_OPEN_ITEMS,
             "open_members",
-            [first["business_id"] + ":primary"],
+            (first["business_id"] + ":primary",),
+            read,
         )[0]
-    value = loads_json(member["payload_json"])["value"]
     assert value["outstanding_fen"] == "100000" and value["current_outstanding_fen"] == "40000"
     matches_cold(case)
 
@@ -327,7 +343,8 @@ def test_failed_atomic_patch_rolls_back_rows_and_keeps_work_for_full_retry(case,
         original = session_type.executemany
 
     def interrupted(session, sql, args):
-        if "INSERT INTO read_item" in sql and "ON CONFLICT" not in sql:
+        args = tuple(args)
+        if "INSERT INTO read_item" in sql and any(row[0] == SCOPE for row in args):
             raise RuntimeError("synthetic publication interrupted after deletes")
         return original(session, sql, args)
 
@@ -339,9 +356,10 @@ def test_failed_atomic_patch_rolls_back_rows_and_keeps_work_for_full_retry(case,
         assert repository.payload(key, _monthly.BRIEF_OPEN_ITEMS) == old_payload
         full, pending = _brief_open_inputs.pending(repository, key)
         assert not full and pending == {first["business_id"]}
-        assert repository.item_get(
-            key, _monthly.BRIEF_OPEN_ITEMS, "open_members", [first["business_id"] + ":primary"]
+        directory = _brief_open_index.base(
+            repository, repository.state(key, _monthly.BRIEF_OPEN_ITEMS)
         )
+        assert directory.get("open_members", [first["business_id"] + ":primary"], required=True)
     _monthly.retry(case.kernel.reading, scope(case), (_monthly.BRIEF_OPEN_ITEMS,))
     assert case.kernel.reading.run_pending(case.company)
     matches_cold(case)
@@ -357,12 +375,12 @@ def test_missing_dependency_index_cannot_silently_ignore_a_later_notification(ca
         apply(case, case.expense("1000", "2026-02"), objects=[bank])
     publish(case)
     key = _monthly.key(scope(case))
-    identity = first["business_id"] if formal else case.party
     with case.kernel.storage.maintenance_unit(case.company) as unit:
+        repository = unit.repository("reading")
         assert (
-            unit.repository("reading")._session.execute(
+            repository._session.execute(
                 "DELETE FROM read_item WHERE scope_key=? AND collection_key=? AND item_id=?",
-                (key, _brief_open_index.BUCKETS, _brief_open_buckets.key(collection, identity)),
+                (SCOPE, NODES, rows_root(repository, key)),
             )
             == 1
         )
@@ -405,23 +423,23 @@ def test_same_count_dependency_damage_cannot_hide_a_real_notification(
         apply(case, case.expense("1000", "2026-02"), objects=[bank])
     publish(case)
     key = _monthly.key(scope(case))
-    identity = first["business_id"] if formal else case.party
-    row_id = _brief_open_buckets.key(collection, identity)
     edits = {
         "identity": ("item_id=?", str(uuid4())),
         "sort": ("sort_key=?", "damaged order"),
         "epoch": ("head=?", 0),
-        "body": ("payload_json=json_set(payload_json,'$.values',json(?))", "[]"),
-        "collection": ("payload_json=json_set(payload_json,'$.collection',?)", "wrong"),
+        "body": ("payload_json=json_set(payload_json,'$.entries',json(?))", "[]"),
+        "collection": ("payload_json=json_set(payload_json,'$.domain',?)", "wrong"),
         "metadata": ("group_key=?", "not a logical group"),
     }
     expression, replacement = edits[corruption]
     with case.kernel.storage.maintenance_unit(case.company) as unit:
+        repository = unit.repository("reading")
+        row_id = rows_root(repository, key)
         assert (
-            unit.repository("reading")._session.execute(
+            repository._session.execute(
                 f"UPDATE read_item SET {expression} WHERE scope_key=? AND component_key=? "
                 "AND collection_key=? AND item_id=?",
-                (replacement, key, _monthly.BRIEF_OPEN_ITEMS, _brief_open_index.BUCKETS, row_id),
+                (replacement, SCOPE, _monthly.BRIEF_OPEN_ITEMS, NODES, row_id),
             )
             == 1
         )
@@ -431,18 +449,18 @@ def test_same_count_dependency_damage_cannot_hide_a_real_notification(
         if formal
         else None
     )
-    allowed = {
-        _brief_open_buckets.key(collection, identity),
-        *([_brief_open_buckets.key(collection, notification["business_id"])] if formal else []),
-    }
-    original = ReadingRepository.open_bucket_rows
+    from ai_accounting_modular.storage.public import Tree
 
-    def bounded(repository, selected_scope, keys):
-        assert set(keys) <= allowed, "a notification reads only involved identity buckets"
-        return original(repository, selected_scope, keys)
+    original = Tree.entries
+
+    def no_full_open_tree(tree, *args, **kwargs):
+        assert not tree.domain.startswith("reading-open-"), (
+            "notifications must use exact root paths"
+        )
+        return original(tree, *args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(ReadingRepository, "open_bucket_rows", bounded)
+        patch.setattr(Tree, "entries", no_full_open_tree)
         if formal:
             apply(case, notification)
         else:
@@ -515,24 +533,20 @@ def test_closed_correction_uses_each_partys_actual_formal_identity_without_full_
     matches_cold(case)
 
 
-def test_member_epoch_must_equal_the_full_generation_not_merely_be_older(case):
+def test_logical_member_epoch_must_equal_the_bound_scope_generation(case):
     case.seed()
     publish(case)
     key = _monthly.key(scope(case))
-    with case.kernel.storage.maintenance_unit(case.company) as unit:
-        repository = unit.repository("reading")
-        epoch = loads_json(repository.payload(key, _monthly.BRIEF_OPEN_ITEMS)["payload_json"])[
-            "_item_epoch"
-        ]
-        assert epoch > 0
-        repository._session.execute(
-            "UPDATE read_item SET head=? WHERE scope_key=? AND collection_key='open_members'",
-            (epoch - 1, key),
+    with case.kernel.storage.read_unit(case.company) as read:
+        repository = read.repository("reading")
+        directory = _brief_open_index.base(
+            repository, repository.state(key, _monthly.BRIEF_OPEN_ITEMS)
         )
-    with case.kernel.storage.read_unit(case.company) as read, pytest.raises(ContractError) as error:
-        collection_page(
-            key, _monthly.BRIEF_OPEN_ITEMS, "open_members", CollectionFilter(), PageQuery(), read
-        )
+        row = directory.item_page("open_members", CollectionFilter(), None, 1)[0]
+        assert row["head"] > 0
+        row["head"] -= 1
+        with pytest.raises(ContractError) as error:
+            directory.check_many((row,))
     assert error.value.code == "storage_corrupt"
 
 
@@ -561,7 +575,7 @@ def test_explicit_full_retry_does_not_depend_on_a_corrupt_old_header_or_pending_
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_both_real_factories_keep_private_bucket_delta_and_public_pages_cold_equal(tmp_path, mode):
+def test_both_real_factories_keep_shared_root_patch_and_public_pages_cold_equal(tmp_path, mode):
     with install_ledger_implementation(mode):
         fixture = case.__wrapped__(tmp_path)
         book = next(fixture)

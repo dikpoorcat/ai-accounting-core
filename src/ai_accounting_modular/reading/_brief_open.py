@@ -84,6 +84,8 @@ def prepare(reader, scope, read):
         },
         entries,
         read.head,
+        repository=read.repository("reading"),
+        scope_key=_monthly.key(scope),
     )
 
 

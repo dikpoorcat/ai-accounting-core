@@ -10,7 +10,12 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from . import _brief_activity_index, _brief_open_index, _dependencies, _financial_projection
+from . import (
+    _brief_activity_index,
+    _brief_open_index,
+    _dependencies,
+    _financial_projection,
+)
 from ._collections import collection_items as _collection_items
 from ._collections import collection_page
 from ._context import last_period, period
@@ -250,6 +255,7 @@ def deliver(reader, scope, components, build):
                     corrupt,
                     state["wanted_head"],
                     "storage_corrupt",
+                    expected_revision=state["revision"],
                     expected_state=state["state"],
                 )
     if expected is not None and result.state != "ready":
@@ -324,7 +330,10 @@ def retry(reader, scope, components):
                 if component == BRIEF_ACTIVITY:
                     repository.activity_mark(key(normalized), unit.head, full=True)
                 else:
-                    repository.open_mark(key(normalized), unit.head, full=True)
+                    from ._open_store import reset
+
+                    reset(repository, unit.head, version(component))
+                    continue
             repository.retry(key(normalized), component, format_version=version(component))
             if full:
                 repository.mark(key(normalized), component, unit.head)
