@@ -228,6 +228,9 @@ def _validate_structure(value, size):
         ):
             corrupt()
         too_large = size > value["max_bytes"]
+        # False is one byte longer than True. The marker always describes
+        # whether the otherwise identical false envelope would exceed capacity.
+        marker_ok = value["oversize"] == (size + int(value["oversize"]) > value["max_bytes"])
         if kind == "leaf":
             if (
                 type(value["entries"]) is not list
@@ -255,10 +258,9 @@ def _validate_structure(value, size):
             children = ()
             # A builder can try an over-capacity leaf before splitting it.
             # No strict read or staging operation accepts that candidate.
-            # False is one byte longer than True at the singleton boundary.
             capacity_ok = (
                 value["count"] <= value["max_items"]
-                and value["oversize"] == (size + int(value["oversize"]) > value["max_bytes"])
+                and marker_ok
                 and (not too_large or value["count"] == 1)
             )
         else:
@@ -288,7 +290,10 @@ def _validate_structure(value, size):
             ):
                 corrupt()
             entries = []
-            capacity_ok = not value["oversize"] and not too_large
+            # The 2..17 radix children are indivisible routing metadata.
+            # Long boundary keys can require an oversize branch, just as one
+            # indivisible entry can require an oversize leaf.
+            capacity_ok = marker_ok
         return tuple(entries), children, capacity_ok
     except (
         ContractError,
@@ -494,7 +499,7 @@ class Tree:
         else:
             value["children"] = [child.wire() for child in children]
         built = _BuiltNode(value)
-        if entries and count == 1 and not built.capacity_ok:
+        if not built.capacity_ok and (not entries or count == 1):
             value["oversize"] = True
             built = _BuiltNode(value)
         node = _Node(
@@ -543,8 +548,6 @@ class Tree:
             groups[_route(item.key)[len(prefix) : len(prefix) + 1]].append(item)
         children = tuple(self._full(values) for _, values in sorted(groups.items()))
         node = self._make(children=children)
-        if len(node.payload_json.encode("utf-8")) > self.max_bytes:
-            raise ValueError("immutable branch metadata exceeds its declared byte capacity")
         self._stage(node)
         return node.ref
 
@@ -755,7 +758,5 @@ class Tree:
         if count <= self.max_items and entry_bytes <= self.max_bytes:
             return self.full(item for child in ordered for item in self.entries(child))
         result = self._make(children=ordered)
-        if len(result.payload_json.encode("utf-8")) > self.max_bytes:
-            raise ValueError("immutable branch metadata exceeds its declared byte capacity")
         self._stage(result)
         return result.ref
