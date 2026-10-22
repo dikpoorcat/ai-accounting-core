@@ -47,6 +47,15 @@ def publish(case, entries):
 
 def patch(case, entries, deletes):
     key = _monthly.key(scope(case))
+    # This fixture changes only synthetic projection rows at the same formal
+    # head. Install the requested partial work before preparing its patch.
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        repo = unit.repository("reading")
+        repo.open_mark(key, unit.head, ("00000000-0000-4000-8000-000000000001",))
+        repo._session.execute(
+            "UPDATE read_scope_head SET state='preparing' WHERE scope_key=? AND component_key=?",
+            (key, index.COMPONENT),
+        )
     with case.kernel.storage.read_unit(case.company) as read:
         repo = read.repository("reading")
         state = repo.state(key, index.COMPONENT)

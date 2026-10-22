@@ -260,39 +260,11 @@ def read_items(rows, *, collections=()):
 
 
 def _ready_collection(scope_key, component, collection, read):
+    from ._component_view import ready
+
     repository = read.repository("reading")
-    state = repository.state(scope_key, component)
-    if state is None or state["state"] != "ready":
-        raise ContractError("read_model_not_ready", "所选读取集合尚未就绪。")
-    payload = repository.payload(scope_key, component)
-    if (
-        payload is None
-        or payload["head"] != state["ready_head"]
-        or state["ready_head"] != state["wanted_head"]
-    ):
-        raise ContractError("storage_corrupt", "读取集合与已就绪范围不一致。")
-    try:
-        summary = loads_json(payload["payload_json"])
-        if not isinstance(summary, dict) or content_digest(summary) != state["content_digest"]:
-            raise ValueError
-        manifests = summary.get("_collections")
-        if not isinstance(manifests, dict):
-            raise ValueError
-    except (ContractError, ValueError, TypeError) as error:
-        raise ContractError("storage_corrupt", "读取集合目录的内容摘要不一致。") from error
-    manifest = manifests.get(collection)
-    if not isinstance(manifest, dict) or set(manifest) != {"count", "digest"}:
-        raise ContractError("invalid_input", "所选模型不提供这个读取集合。")
-    directory = None
-    if component == "brief_open_items":
-        from . import _brief_open_index
-
-        directory = _brief_open_index.Directory(repository, scope_key, summary)
-    elif component == "brief_activity":
-        from ._brief_activity_directory import Directory
-
-        directory = Directory(repository, scope_key, summary)
-    return repository, state, manifest, directory
+    view = ready(scope_key, component, read)
+    return repository, view.state, view.manifest(collection), view.directory
 
 
 def _decode_rows(rows, state, directory):

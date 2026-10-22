@@ -7,7 +7,6 @@ from ai_accounting_modular.contracts.public import (
     ReadInputs,
     canonical_json,
     content_digest,
-    loads_json,
     validate_contract,
 )
 
@@ -93,28 +92,13 @@ def collection_items(snapshot, component, name, item_ids, read):
         raise
 
 
-def _load(repository, scope_key, component, state):
+def _load(scope_key, component, state, read):
     if state["format_version"] != version(component):
         raise _CorruptComponent(component)
-    payload = repository.payload(scope_key, component)
     try:
-        if (
-            payload is None
-            or payload["head"] != state["ready_head"]
-            or state["ready_head"] != state["wanted_head"]
-        ):
-            raise ValueError
-        value = loads_json(payload["payload_json"])
-        if not isinstance(value, dict) or content_digest(value) != state["content_digest"]:
-            raise ValueError
-        _dependencies.inputs(value)
-        if component == BRIEF_OPEN_ITEMS:
-            from . import _brief_open_index
+        from ._component_view import ready
 
-            _brief_open_index.validate(value)
-        elif component == BRIEF_ACTIVITY:
-            _brief_activity_index.validate(value, scope_key)
-        return {key: item for key, item in value.items() if key not in {"_inputs", "_item_epoch"}}
+        return ready(scope_key, component, read).monthly_summary()
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise _CorruptComponent(component) from error
 
@@ -123,8 +107,7 @@ def _ready_snapshot(reader, normalized, states, read):
     if any(state is None or state["state"] != "ready" for state in states.values()):
         return None
     scope_key = key(normalized)
-    repository = read.repository("reading")
-    values = {name: _load(repository, scope_key, name, state) for name, state in states.items()}
+    values = {name: _load(scope_key, name, state, read) for name, state in states.items()}
     selected = period(normalized["period_to"], reader.ledger.closed_through(read))
     version = content_digest(
         {

@@ -13,6 +13,7 @@ from ._financial_store import FinancialStore
 class ReadingRepository:
     def __init__(self, session):
         self._session = session
+        self._component_views = {}
 
     def reset(self):
         for table in ("read_item", "read_component", "read_scope_head"):
