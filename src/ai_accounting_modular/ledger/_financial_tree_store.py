@@ -2,12 +2,61 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import re
+import sys
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
+from threading import Lock
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 
 from ._financial_tree import _CheckedStructure, _identity, corrupt, digest
+
+_LONG_DIGITS = re.compile(rf"[0-9]{{{sys.int_info.str_digits_check_threshold + 1},}}")
+
+
+class _StructureCache:
+    """Bound pure decoding by node count and original UTF-8 bytes, not RAM size."""
+
+    def __init__(self, *, max_nodes=4096, max_bytes=16 * 1024 * 1024):
+        self._max_nodes, self._max_bytes = max_nodes, max_bytes
+        self._entries = OrderedDict()
+        self._raw_bytes = 0
+        self._lock = Lock()
+
+    def get(self, raw, identity):
+        if type(raw) is not str or not _identity(identity):
+            corrupt()
+        key = identity, raw
+        with self._lock:
+            existing = self._entries.get(key)
+            if existing is not None:
+                self._entries.move_to_end(key)
+                return existing[0]
+        checked = _CheckedStructure(raw, identity)
+        size = len(raw.encode("utf-8"))
+        # All admissible integers fit every legal interpreter digit policy.
+        # A long digit string is conservatively left uncached as well.
+        if checked._value["oversize"] or size > self._max_bytes or _LONG_DIGITS.search(raw):
+            return checked
+        with self._lock:
+            existing = self._entries.get(key)
+            if existing is not None:
+                self._entries.move_to_end(key)
+                return existing[0]
+            self._entries[key] = checked, size
+            self._raw_bytes += size
+            while len(self._entries) > self._max_nodes or self._raw_bytes > self._max_bytes:
+                _, (_, removed_size) = self._entries.popitem(last=False)
+                self._raw_bytes -= removed_size
+        return checked
+
+
+_structure_cache = _StructureCache()
+
+
+def _checked_structure(raw, identity):
+    return _structure_cache.get(raw, identity)
 
 
 @dataclass(frozen=True)
@@ -28,7 +77,9 @@ class TreeStore:
 
     Root lists are multisets. Body-directory roots belong here just once; domain
     code maintains thin logical Source references rather than physical body IDs.
-    No SQL, cross-read cache, persisted work log or scan of unrelated nodes exists.
+    Actual rows and selection stay within this read. Only strict parsing of the
+    same immutable bytes may be reused across reads; role checks remain local.
+    No SQL, persisted work log or scan of unrelated nodes exists.
     """
 
     NODES = "_financial_nodes"
@@ -38,7 +89,6 @@ class TreeStore:
     def __init__(self, reader):
         self.reader = reader
         self._base, self._staged, self._edges = {}, {}, {}
-        self._checked = {}
 
     def _read(self, keys):
         keys = tuple(keys)
@@ -79,12 +129,7 @@ class TreeStore:
         return identity
 
     def _check(self, raw, identity):
-        checked = self._checked.get(identity)
-        if checked is None:
-            checked = self._checked[identity] = _CheckedStructure(raw, identity)
-        elif type(raw) is not str or checked.payload_json != raw:
-            corrupt()
-        return checked
+        return _checked_structure(raw, identity)
 
     def _node(self, identity):
         raw = self._read(((self.NODES, identity),))[0]

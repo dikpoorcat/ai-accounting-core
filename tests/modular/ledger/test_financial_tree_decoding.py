@@ -1,4 +1,4 @@
-"""Strict stored bytes are checked once per store, without trusting caller flags."""
+"""Strict bytes may share codec proofs; rows and strategies remain independently checked."""
 
 import sys
 from collections import Counter
@@ -9,9 +9,15 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 from ai_accounting_modular.ledger import _financial_tree as module
+from ai_accounting_modular.ledger import _financial_tree_store as store_module
 from ai_accounting_modular.ledger._financial_tree import Entry, Tree, digest, structure
 from ai_accounting_modular.ledger._financial_tree_store import TreeStore
 from tests.modular.ledger.test_financial_tree import Summary, assemble, persisted
+
+
+@pytest.fixture(autouse=True)
+def isolated_codec(monkeypatch):
+    monkeypatch.setattr(store_module, "_structure_cache", store_module._StructureCache())
 
 
 def test_loading_stored_entries_does_not_revalidate_them_as_external_inputs(monkeypatch):
@@ -30,6 +36,7 @@ def test_each_actual_node_is_decoded_once_across_tree_reads_staging_and_gc(monke
     reader, root, expected = persisted(30, max_items=4)
     original = module._structure
     observed = Counter()
+    monkeypatch.setattr(store_module, "_structure_cache", store_module._StructureCache())
 
     def decode(raw, identity):
         observed[identity] += 1
@@ -50,9 +57,10 @@ def test_each_actual_node_is_decoded_once_across_tree_reads_staging_and_gc(monke
     removed = store.finish((root.digest,), ())
     assert removed.deletes and not removed.writes
     assert observed and set(observed.values()) == {1}
+    reader.calls.clear()
     _, _, fresh = assemble(reader, max_items=4)
     assert tuple(fresh.entries(root)) == tuple(expected)
-    assert set(observed.values()) == {2}
+    assert reader.calls and set(observed.values()) == {1}
 
 
 def test_checked_node_cannot_be_supplied_as_unvalidated_fields_or_rebound_to_other_bytes():
@@ -148,7 +156,7 @@ def test_structure_never_exposes_a_mutable_alias_into_checked_entries():
     assert structure(raw, root.digest)[1][0].value == {"n": 0}
 
 
-def test_checked_structure_is_not_shared_across_stores_or_summary_strategies():
+def test_shared_structure_never_shares_strategy_acceptance_or_hides_changed_actual_rows():
     reader, root, values = persisted(1)
     _, store, tree = assemble(reader)
     assert tuple(tree.entries(root)) == tuple(values)

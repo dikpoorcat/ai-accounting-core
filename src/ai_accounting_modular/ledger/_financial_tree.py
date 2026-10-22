@@ -312,8 +312,8 @@ class _CheckedStructure:
     """Private owned JSON, obtainable only by strict decoding of actual bytes.
 
     Its nested values never leave this boundary except through isolated Entry
-    and structure views. TreeStore may share it only for its one read lifetime;
-    financial strategy validation remains the responsibility of each Tree.
+    and structure views. A bounded codec cache may share identical strict bytes;
+    actual row ownership stays with each Store, and strategy checks with each Tree.
     """
 
     payload_json: str
