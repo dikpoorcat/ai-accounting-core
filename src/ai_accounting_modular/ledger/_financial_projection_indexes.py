@@ -195,7 +195,10 @@ class BodyDirectory:
     """The single company body catalog; returned bodies are internal read-only borrows."""
 
     def __init__(self, store, descriptor=None):
-        self.tree = Tree("financial-source-bodies/1", PlainStrategy(), store)
+        # Source atoms are read in sparse groups, unlike ordered role ranges.
+        # Small leaves bound unrelated body decoding while retaining the same
+        # immutable-node ownership and collection-wide Source identity.
+        self.tree = Tree("financial-source-bodies/1", PlainStrategy(), store, max_items=16)
         self.root = self.tree.root(descriptor)
         self._bodies, self._lines = {}, {}
 

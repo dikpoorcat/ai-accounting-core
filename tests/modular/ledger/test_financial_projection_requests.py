@@ -39,7 +39,7 @@ def test_factory_normalizes_once_and_ignores_transient_expected_and_company_head
     other = ledger.financial_projection_request(
         "summary_values", scope(as_of="2026-01"), context(head="later-unrelated-head")
     )
-    assert FINANCIAL_PROJECTION_FORMAT == 3
+    assert FINANCIAL_PROJECTION_FORMAT == 5
     assert created == other
     assert created.descriptor_key == ("requests", created.key)
     assert created.scope == scope(as_of="2026-01")
