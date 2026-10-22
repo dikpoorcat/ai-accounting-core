@@ -71,7 +71,9 @@ def pretax_values(rows):
 def pretax_basis_digest(first, last, start, slices, prior, source, kind, *, view="current"):
     """Hash only the actual PL1/2/30 slices and necessary boundary basis."""
     values = [
-        {key: value for key, value in item.items() if key != "sign" or view != "current"}
+        item
+        if type(item) is dict and (view != "current" or "sign" not in item)
+        else {key: value for key, value in item.items() if key != "sign" or view != "current"}
         for item in slices
     ]
     payload = {

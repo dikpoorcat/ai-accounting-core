@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from ai_accounting_modular.contracts.public import checked_fen, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    checked_fen,
+    validate_contract,
+    validate_contract_items,
+)
 
 from ._balances import sum_amounts
 from ._cashflow import _ROWS, missing_classification
@@ -78,7 +83,7 @@ def flow_value(identity, body, sign):
     return [identity, sign, pretax]
 
 
-def pretax_slice(entry):
+def _pretax_input(entry):
     value = entry.value
     if (
         type(value) is not list
@@ -99,17 +104,47 @@ def pretax_slice(entry):
         or any(type(amount) is not int for amount in raw[3:])
     ):
         fail("storage_corrupt", "财务税前依据的真实薄切片损坏。")
-    validate_contract("core.schema.json", "Id", raw[0])
-    validate_contract("core.schema.json", "Month", raw[2])
-    for amount in raw[3:]:
-        checked_fen(amount)
+    return value[1], raw
+
+
+def _pretax_record(sign, raw):
     return {
         "business_id": raw[0],
         "result_slot": raw[1],
         "period": raw[2],
-        "sign": value[1],
+        "sign": sign,
         "values": raw[3:],
     }
+
+
+def pretax_slice(entry):
+    """The original per-item order also supplies exact diagnostics for failed batches."""
+    selected = _pretax_input(entry)
+    if selected is None:
+        return None
+    sign, raw = selected
+    validate_contract("core.schema.json", "Id", raw[0])
+    validate_contract("core.schema.json", "Month", raw[2])
+    for amount in raw[3:]:
+        checked_fen(amount)
+    return _pretax_record(sign, raw)
+
+
+def pretax_slices(entries):
+    """Validate the same scalar contracts together; failed data keeps its first old error."""
+    entries = tuple(entries)
+    try:
+        selected = [value for entry in entries if (value := _pretax_input(entry)) is not None]
+        validate_contract_items("core.schema.json", "Id", [raw[0] for _, raw in selected])
+        validate_contract_items("core.schema.json", "Month", [raw[2] for _, raw in selected])
+        for _, raw in selected:
+            for amount in raw[3:]:
+                checked_fen(amount)
+    except (ContractError, TypeError, ValueError):
+        for entry in entries:
+            pretax_slice(entry)
+        raise
+    return [_pretax_record(sign, raw) for sign, raw in selected]
 
 
 def flow_entries(values, *, view, first, last, anchors, include_cash):

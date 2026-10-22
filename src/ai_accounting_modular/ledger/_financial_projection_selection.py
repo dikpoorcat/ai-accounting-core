@@ -12,7 +12,7 @@ from ._financial_order import CHILD_KEYS
 from ._financial_positions import cash_before, positions
 from ._financial_projection_bodies import COLUMN
 from ._financial_projection_fold import Fold, Notice, Unknown
-from ._financial_projection_indexes import flow_source_used, pretax_slice
+from ._financial_projection_indexes import flow_source_used, pretax_slices
 from ._financial_selection import Selection
 from ._journal_amounts import journal_amount
 from ._values import fail
@@ -237,7 +237,7 @@ class ProjectionCalculation:
 
     def pretax_slices(self, first, last):
         role = self._flow(first, last, "pretax")
-        result = [value for entry in role.entries() if (value := pretax_slice(entry)) is not None]
+        result = pretax_slices(role.entries())
         return sorted(
             result,
             key=lambda item: (
