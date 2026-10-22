@@ -30,6 +30,13 @@ def _in(column, values, clauses, args):
         args.append(canonical_json(list(values)))
 
 
+def _scalar_in(column, values, clauses, args):
+    # Directory inputs are already bounded by their public read contracts.
+    if values:
+        clauses.append(f"{column} IN (" + ",".join("?" for _ in values) + ")")
+        args.extend(values)
+
+
 def _resource_keys(business, slot, business_ids, references):
     clauses, args = [], []
     _in(business, business_ids, clauses, args)
@@ -495,9 +502,9 @@ class ReadRepository:
             if flow:
                 clauses.append("r.business_period>=?")
                 args.append(first)
-        _in(business_kind(), kinds, clauses, args)
-        _in("r.business_id", business_ids, clauses, args)
-        _in("r.result_slot", result_slots, clauses, args)
+        _scalar_in(business_kind(), kinds, clauses, args)
+        _scalar_in("r.business_id", business_ids, clauses, args)
+        _scalar_in("r.result_slot", result_slots, clauses, args)
         return "adopted_result r", " AND ".join(clauses), tuple(args)
 
     def read_identity_rows(self, table, where, args):
@@ -529,14 +536,18 @@ class ReadRepository:
         ]
 
     def read_voucher_scope(self, scope, kinds, selected_view, business_ids=(), roles=()):
-        clauses = ["v.period>=?", "v.period<=?"]
-        args = [scope["period_from"], scope["period_to"]]
-        if selected_view.as_of is not None:
-            clauses.append("v.period<=?")
-            args.append(selected_view.as_of)
-        _in("r.business_id", business_ids, clauses, args)
-        _in(business_kind(), kinds, clauses, args)
-        _in("v.role", roles, clauses, args)
+        clauses, args = [], []
+        # Formal vouchers belong to their result's posting period; the offline
+        # verifier checks this same invariant. Keep both table ranges explicit.
+        for column in ("v.period", "r.posting_period"):
+            clauses.extend((f"{column}>=?", f"{column}<=?"))
+            args.extend((scope["period_from"], scope["period_to"]))
+            if selected_view.as_of is not None:
+                clauses.append(f"{column}<=?")
+                args.append(selected_view.as_of)
+        _scalar_in("r.business_id", business_ids, clauses, args)
+        _scalar_in(business_kind(), kinds, clauses, args)
+        _scalar_in("v.role", roles, clauses, args)
         return (
             "voucher v JOIN adopted_result r ON r.result_id=v.result_id",
             " AND ".join(clauses),

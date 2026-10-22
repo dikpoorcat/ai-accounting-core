@@ -1,5 +1,5 @@
 {
-  "fingerprint": "ea5cc1cde4d7ff48b789f7448060bf0be8e389d9f5f5546aaed5e904ba77cc49",
+  "fingerprint": "70849c8e879dcec02525992f6c001f14549c71f8c7a08e66bc46c0ba503a8cea",
   "kind": "company",
   "objects": [
     {
@@ -209,6 +209,13 @@
       "name": "adopted_result_financial_boundaries",
       "owner": "ledger",
       "sql": "CREATE INDEX adopted_result_financial_boundaries ON adopted_result(business_id,result_slot,posting_period,result_id) WHERE result_slot='main' AND json_extract(target_json,'$.kind') IN ('opening.package','reports.continuation')",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_kind_posting_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_kind_posting_period ON adopted_result(CASE WHEN target_state='withdrawn' THEN json_extract(target_json,'$.business_kind') ELSE json_extract(target_json,'$.kind') END,posting_period)",
       "table": "adopted_result",
       "type": "index"
     },

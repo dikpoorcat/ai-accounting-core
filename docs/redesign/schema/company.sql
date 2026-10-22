@@ -323,6 +323,8 @@ result_id TEXT PRIMARY KEY CHECK(length(result_id)=36),
 
 CREATE INDEX adopted_result_period ON adopted_result(posting_period,state,business_id,result_slot);
 
+CREATE INDEX adopted_result_kind_posting_period ON adopted_result(CASE WHEN target_state='withdrawn' THEN json_extract(target_json,'$.business_kind') ELSE json_extract(target_json,'$.kind') END,posting_period);
+
 CREATE INDEX adopted_result_business_slot_period ON adopted_result(business_id,result_slot,posting_period);
 
 CREATE INDEX adopted_result_calculation ON adopted_result(calculation_key,calculation_revision,state,result_id);
