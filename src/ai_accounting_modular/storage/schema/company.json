@@ -1,5 +1,5 @@
 {
-  "fingerprint": "8fa620b19b80a516e82e0940f96a932f50cb8cc390b6a5de775c9ecc32f98392",
+  "fingerprint": "ea5cc1cde4d7ff48b789f7448060bf0be8e389d9f5f5546aaed5e904ba77cc49",
   "kind": "company",
   "objects": [
     {
@@ -202,6 +202,13 @@
       "name": "adopted_result_calculation",
       "owner": "ledger",
       "sql": "CREATE INDEX adopted_result_calculation ON adopted_result(calculation_key,calculation_revision,state,result_id)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_financial_boundaries",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_financial_boundaries ON adopted_result(business_id,result_slot,posting_period,result_id) WHERE result_slot='main' AND json_extract(target_json,'$.kind') IN ('opening.package','reports.continuation')",
       "table": "adopted_result",
       "type": "index"
     },

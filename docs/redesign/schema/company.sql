@@ -327,6 +327,8 @@ CREATE INDEX adopted_result_business_slot_period ON adopted_result(business_id,r
 
 CREATE INDEX adopted_result_calculation ON adopted_result(calculation_key,calculation_revision,state,result_id);
 
+CREATE INDEX adopted_result_financial_boundaries ON adopted_result(business_id,result_slot,posting_period,result_id) WHERE result_slot='main' AND json_extract(target_json,'$.kind') IN ('opening.package','reports.continuation');
+
 -- owner: ledger
 CREATE TABLE result_slot_current (
 business_id TEXT NOT NULL REFERENCES business_head(business_id),

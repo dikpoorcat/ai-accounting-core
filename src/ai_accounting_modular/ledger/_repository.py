@@ -469,25 +469,35 @@ class LedgerRepository(ReadRepository):
         return result
 
     def financial_boundaries(self, *, as_of=None):
-        selection = (
-            "JOIN result_slot_current c ON c.head_result_id=r.result_id " if as_of is None else ""
+        boundary = (
+            "r.result_slot='main' AND json_extract(r.target_json,'$.kind') "
+            "IN ('opening.package','reports.continuation')"
         )
-        sql = (
-            "SELECT r.*"
-            + _FINANCIAL_KINDS
-            + " FROM adopted_result r "
-            + selection
-            + (
-                "WHERE r.result_slot='main' AND json_extract(r.target_json,'$.kind') "
-                "IN ('opening.package','reports.continuation')"
+        if as_of is None:
+            sql = (
+                "SELECT r.*" + _FINANCIAL_KINDS + " FROM adopted_result r "
+                "JOIN result_slot_current c ON c.head_result_id=r.result_id WHERE " + boundary
             )
-        )
-        args = ()
-        if as_of is not None:
-            sql += (
-                " AND r.posting_period<=? AND NOT EXISTS(SELECT 1 FROM adopted_result newer "
-                "WHERE newer.business_id=r.business_id AND newer.result_slot=r.result_slot "
-                "AND newer.posting_period<=? AND newer.posting_period>r.posting_period)"
+            args = ()
+        else:
+            # Classify sparse boundary identities before the posting cutoff can
+            # select the ordinary result-period index. Fetch full bodies only
+            # after selection; a newer withdrawal need not itself be a boundary.
+            sql = (
+                "WITH boundary_candidates AS MATERIALIZED ("
+                "SELECT r.result_id,r.business_id,r.result_slot,r.posting_period "
+                "FROM adopted_result r WHERE "
+                + boundary
+                + ") SELECT r.*"
+                + _FINANCIAL_KINDS
+                + " FROM boundary_candidates candidate "
+                "JOIN adopted_result r ON r.result_id=candidate.result_id "
+                "WHERE candidate.posting_period<=? AND NOT EXISTS("
+                "SELECT 1 FROM adopted_result newer "
+                "WHERE newer.business_id=candidate.business_id "
+                "AND newer.result_slot=candidate.result_slot "
+                "AND newer.posting_period<=? "
+                "AND newer.posting_period>candidate.posting_period)"
             )
             args = as_of, as_of
         return [dict(row) for row in self._session.fetchall(sql, args)]
