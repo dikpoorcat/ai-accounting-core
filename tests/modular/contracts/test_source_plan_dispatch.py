@@ -9,6 +9,8 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from ai_accounting_modular.contracts import _dispatch, _fact_sources
+from ai_accounting_modular.contracts import _native_validation as native
+from ai_accounting_modular.contracts import _validation as runtime
 from ai_accounting_modular.contracts._validation import _bundle, _Validator
 from tests.modular.contracts.test_fact_sources import _facts
 
@@ -36,6 +38,8 @@ def compile_plan(monkeypatch):
             "_bundle",
             lambda: (selected_documents, selected),
         )
+        native_registry = native.registry(selected_documents, runtime._BASE)
+        monkeypatch.setattr(_fact_sources, "_native_registry", lambda: native_registry)
         _fact_sources._source_plan.cache_clear()
         plan = _fact_sources._source_plan("SourcePlanTest")
         validator = _Validator(
@@ -100,8 +104,43 @@ def test_overlapping_one_of_branches_are_not_silently_made_exclusive(compile_pla
     assert tuple(plan.source_paths(value)) == ((_A, "/a/source_id"), (_B, "/b/source_id"))
 
 
+@pytest.mark.parametrize("invalid", (None, False, {}, {"source_id": "not-a-uuid"}))
+def test_a_possible_branch_with_invalid_source_is_not_selected(compile_plan, invalid):
+    plan, validator = compile_plan(
+        {
+            "anyOf": [
+                {"properties": {"a": _LOCATOR}, "required": ["a"]},
+                {"properties": {"b": _LOCATOR}, "required": ["b"]},
+            ]
+        }
+    )
+    value = {"a": invalid, "b": {"source_id": _B}}
+    assert validator.is_valid(value)
+    assert tuple(plan.source_paths(value)) == ((_B, "/b/source_id"),)
+
+
+@pytest.mark.parametrize("mode", ("foo", "foo\n", 1, None))
+def test_compiled_condition_preserves_the_original_python_pattern_rules(compile_plan, mode):
+    condition = {"properties": {"mode": {"pattern": "^foo$"}}, "required": ["mode"]}
+    plan, validator = compile_plan(
+        {
+            "if": condition,
+            "then": {"properties": {"a": _LOCATOR}, "required": ["a"]},
+            "else": {"properties": {"b": _LOCATOR}, "required": ["b"]},
+        }
+    )
+    value = {"mode": mode, "a": {"source_id": _A}, "b": {"source_id": _B}}
+    assert validator.is_valid(value)
+    expected = (
+        ((_A, "/a/source_id"),)
+        if _Validator(condition).is_valid(value)
+        else ((_B, "/b/source_id"),)
+    )
+    assert tuple(plan.source_paths(value)) == expected
+
+
 def test_impossible_real_fact_branches_do_not_receive_full_revalidation(monkeypatch):
-    validate = _fact_sources._Validator
+    validate = _fact_sources.compiled_validator
     calls = []
 
     def observed(schema, **kwargs):
@@ -113,7 +152,7 @@ def test_impossible_real_fact_branches_do_not_receive_full_revalidation(monkeypa
 
         return SimpleNamespace(is_valid=matches)
 
-    monkeypatch.setattr(_fact_sources, "_Validator", observed)
+    monkeypatch.setattr(_fact_sources, "compiled_validator", observed)
     _fact_sources._source_plan.cache_clear()
     try:
         plan = _fact_sources._source_plan("Fact")

@@ -7,11 +7,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urljoin
 
-from jsonschema import FormatChecker
-
 from ._dispatch import possible_branch
 from ._errors import ContractError
-from ._validation import _bundle, _Validator, validate_contract
+from ._native_validation import validator as compiled_validator
+from ._validation import _bundle, _native_registry, validate_contract
 from ._wire_types import Fact, PartialFact
 
 
@@ -80,7 +79,7 @@ def _source_plan(definition):
 
     def predicate(uri):
         branch = registry.resolver().lookup(uri).contents
-        validator = _Validator({"$ref": uri}, registry=registry, format_checker=FormatChecker())
+        validator = compiled_validator({"$ref": uri}, registry=_native_registry())
         return lambda value: possible_branch(branch, value) and validator.is_valid(value)
 
     def compile_node(uri):
