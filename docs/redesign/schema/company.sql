@@ -696,11 +696,11 @@ scope_key TEXT NOT NULL,
 
 CREATE INDEX read_item_page ON read_item(scope_key,collection_key,sort_key,item_id);
 
-CREATE INDEX read_item_object ON read_item(scope_key,collection_key,object_id,sort_key,item_id);
+CREATE INDEX read_item_object ON read_item(scope_key,collection_key,object_id,sort_key,item_id) WHERE object_id IS NOT NULL;
 
-CREATE INDEX read_item_group ON read_item(scope_key,collection_key,group_key,sort_key,item_id);
+CREATE INDEX read_item_group ON read_item(scope_key,collection_key,group_key,sort_key,item_id) WHERE group_key IS NOT NULL;
 
-CREATE INDEX read_item_category ON read_item(scope_key,collection_key,category,sort_key,item_id);
+CREATE INDEX read_item_category ON read_item(scope_key,collection_key,category,sort_key,item_id) WHERE category IS NOT NULL;
 
 -- owner: files
 CREATE TABLE file_task (

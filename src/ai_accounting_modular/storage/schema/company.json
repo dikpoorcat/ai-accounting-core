@@ -1,5 +1,5 @@
 {
-  "fingerprint": "70849c8e879dcec02525992f6c001f14549c71f8c7a08e66bc46c0ba503a8cea",
+  "fingerprint": "0908fc9f20a1f04aa41b78c879654849898cab36904e31b440c4e0477f2a0a24",
   "kind": "company",
   "objects": [
     {
@@ -866,21 +866,21 @@
     {
       "name": "read_item_category",
       "owner": "reading",
-      "sql": "CREATE INDEX read_item_category ON read_item(scope_key,collection_key,category,sort_key,item_id)",
+      "sql": "CREATE INDEX read_item_category ON read_item(scope_key,collection_key,category,sort_key,item_id) WHERE category IS NOT NULL",
       "table": "read_item",
       "type": "index"
     },
     {
       "name": "read_item_group",
       "owner": "reading",
-      "sql": "CREATE INDEX read_item_group ON read_item(scope_key,collection_key,group_key,sort_key,item_id)",
+      "sql": "CREATE INDEX read_item_group ON read_item(scope_key,collection_key,group_key,sort_key,item_id) WHERE group_key IS NOT NULL",
       "table": "read_item",
       "type": "index"
     },
     {
       "name": "read_item_object",
       "owner": "reading",
-      "sql": "CREATE INDEX read_item_object ON read_item(scope_key,collection_key,object_id,sort_key,item_id)",
+      "sql": "CREATE INDEX read_item_object ON read_item(scope_key,collection_key,object_id,sort_key,item_id) WHERE object_id IS NOT NULL",
       "table": "read_item",
       "type": "index"
     },
