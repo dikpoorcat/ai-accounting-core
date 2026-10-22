@@ -34,6 +34,15 @@ _SELECTIONS = {
         "OperationsExpenseRecovery", ("expense_id", "counterparty_id")
     ),
     "operations.pass_through": _Selection("OperationsPassThrough", ("payer_id", "beneficiary_id")),
+    "money.movement": _Selection("MoneyMovement", ("type", "reserve_expense_fen")),
+}
+
+_INPUT_VARIANTS = {
+    "MoneyMovement": {
+        "settlement": _Selection("SettlementMovement", ("type",)),
+        "managed_reserve": _Selection("ReserveMovement", ("type",)),
+        "payroll_reserve": _Selection("PayrollReserveMovement", ("type", "reserve_expense_fen")),
+    }
 }
 
 
@@ -86,11 +95,15 @@ def _fragment(row, selection, checked):
                 [basis],
                 fields=("kind", "adopted_quantities"),
             )
+            variants = _INPUT_VARIANTS.get(selection.definition)
+            accounting = selection if variants is None else variants.get(data.get("type"))
+            if accounting is None:
+                raise ValueError("unknown installed accounting input variant")
             checked_items(
                 "business-facts.schema.json",
-                "Accounting" + selection.definition,
+                "Accounting" + accounting.definition,
                 [data],
-                fields=selection.fields,
+                fields=accounting.fields,
             )
         except (ContractError, ValueError, TypeError) as error:
             if isinstance(error, ContractError) and error.code == "invalid_contract":

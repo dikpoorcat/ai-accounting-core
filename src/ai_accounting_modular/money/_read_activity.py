@@ -8,7 +8,10 @@ from ai_accounting_modular.contracts.public import (
     ReadInputs,
     ReadPage,
 )
-from ai_accounting_modular.ledger.public import SettlementEventQuery
+from ai_accounting_modular.ledger.public import (
+    AdoptedOriginProjection,
+    SettlementEventQuery,
+)
 
 from ._common import amount, fail, total
 from ._queries import page_values, scope_selection, version
@@ -52,15 +55,49 @@ def _parts(owner, movements, scope, read):
         if page.next_cursor is None:
             break
         cursor = page.next_cursor
-    sources = {item.use.source["result_id"]: item.use.source for item in events}
+    sources = {}
+    for item in events:
+        source = item.use.source
+        previous = sources.setdefault(source["result_id"], source)
+        if previous != source:
+            fail("真实付款分项的同一正式结果包含冲突来源。", "storage_corrupt")
     obligations = {}
     refs = list(sources.values())
     for start in range(0, len(refs), 500):
-        headers = owner._ledger.get_adopted_sources(refs[start : start + 500], read)
-        for content in owner._ledger.get_adopted_contents(
-            tuple(item.reference for item in headers), read
+        requested = refs[start : start + 500]
+        headers = owner._ledger.get_adopted_sources(requested, read)
+        if len(headers) != len(requested) or any(
+            item.source != source
+            or any(
+                item.reference[field] != source[source_field]
+                for field, source_field in (
+                    ("business_id", "business_id"),
+                    ("result_id", "result_id"),
+                    ("result_slot", "result_slot"),
+                    ("generation", "result_generation"),
+                )
+            )
+            for item, source in zip(headers, requested, strict=True)
         ):
-            for quantity in content.basis["adopted_quantities"]:
+            fail("真实付款分项缺少精确的正式来源定位。", "storage_corrupt")
+        contents = owner._ledger.get_obligation_origins(
+            tuple(item.reference for item in headers), read
+        )
+        if len(contents) != len(headers):
+            fail("真实付款分项的正式采用依据不完整。", "storage_corrupt")
+        for header, content in zip(headers, contents, strict=True):
+            target, basis = (
+                (content.target_fields, content.basis_fields)
+                if isinstance(content, AdoptedOriginProjection)
+                else (content.target, content.basis)
+            )
+            if (
+                content.source != header.source
+                or content.reference != header.reference
+                or target["kind"] != header.business_kind
+            ):
+                fail("真实付款的采用依据与精确正式来源不一致。", "storage_corrupt")
+            for quantity in basis["adopted_quantities"]:
                 if quantity["type"] == "obligation":
                     ref = quantity["source"]
                     key = (content.source["result_id"], ref["business_id"], ref["slot"])

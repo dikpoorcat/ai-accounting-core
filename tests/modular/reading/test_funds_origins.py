@@ -52,7 +52,7 @@ def mixed(book, *, account=None):
     return expense, purchase, paid
 
 
-def test_mixed_funds_fragment_matches_full_model_and_never_loads_expense_body(book, monkeypatch):
+def test_mixed_funds_fragment_matches_full_model_without_expense_or_payment_body(book, monkeypatch):
     expense, purchase, paid = mixed(book)
     ledger, reader = book.kernel.ledger, book.kernel.reading
     with book.kernel.storage.read_unit(book.company) as read:
@@ -78,11 +78,11 @@ def test_mixed_funds_fragment_matches_full_model_and_never_loads_expense_body(bo
         actual = _funds.prepare(reader, selection(book), read)
     assert actual == expected
     assert expense["business_id"] not in observed
+    assert paid["business_id"] not in observed
     by_business = {item.reference["business_id"]: item for item in fragments}
     assert isinstance(by_business[expense["business_id"]], AdoptedOriginProjection)
-    assert all(
-        isinstance(by_business[item["business_id"]], AdoptedContent) for item in (purchase, paid)
-    )
+    assert isinstance(by_business[paid["business_id"]], AdoptedOriginProjection)
+    assert isinstance(by_business[purchase["business_id"]], AdoptedContent)
 
 
 @pytest.mark.parametrize("damage", ["source", "generation", "period", "kind", "missing"])
