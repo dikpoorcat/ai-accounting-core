@@ -111,7 +111,7 @@ class LedgerRepository(ReadRepository):
         self._prepared = {}
         self._bound_plans = {}
         self.resource_revision = 0
-        self._resource_views = {}
+        self._resource_views = session.snapshot_cache()
 
     def resource_view(self, *, as_of=None):
         from ._resource_view import ResourceRepository
