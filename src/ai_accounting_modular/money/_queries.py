@@ -1,7 +1,7 @@
 """One company selection and the shared bounded page contract."""
 
 import base64
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
@@ -37,7 +37,7 @@ def scope_selection(scope, read):
 
 def wire(value):
     if is_dataclass(value):
-        return wire(asdict(value))
+        return {field.name: wire(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {key: wire(item) for key, item in value.items()}
     if isinstance(value, tuple | list):
