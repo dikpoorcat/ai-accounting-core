@@ -1,5 +1,6 @@
 """Company-owned financial contributions and exact range roots, atomically publishable."""
 
+from collections import defaultdict
 from hashlib import sha256
 
 from ai_accounting_modular.contracts.public import (
@@ -165,6 +166,84 @@ class Model:
             self.bodies,
         )
         self._saved = {}
+
+    @classmethod
+    def for_request(cls, read, value):
+        """Evaluate one public scope without initializing a publishable company catalog."""
+        value = verified_request(value, read)
+        model = cls(read)
+        specs = required_roles(value, read.start_period, saved=model.saved(value))
+        if not specs:
+            return model
+        grouped = model._request_heads(value, specs)
+        needed = {}
+        for spec in specs:
+            for heads in grouped:
+                if spec["kind"] == "stock":
+                    head = chains.stock(heads, spec["view"], spec["cutoff"])
+                    selected = (head,) if head is not None else ()
+                else:
+                    selected = (
+                        head
+                        for head, _, _ in chains.flow(
+                            heads, spec["view"], spec["first"], spec["last"]
+                        )
+                    )
+                needed.update((head["result_id"], head) for head in selected)
+        capture = Selection(
+            read.repository("ledger"),
+            value.scope["view"],
+            value.scope["period_to"],
+            read.start_period,
+            Issues(),
+        )
+        for head in needed.values():
+            head["atom"] = source_atom(capture.source(head))
+        captured = bodies_module.capture_bodies(capture, tuple(needed.values())) if needed else {}
+        model.bodies.prepare(captured)
+        for spec in specs:
+            role = model._role(spec)
+            role.extend(grouped)
+            model.roles[content_digest(spec)] = role
+        # No adoption-chain header or publication plan is produced here. The
+        # shared producer alone maintains the complete company catalog.
+        return model
+
+    def _request_heads(self, value, specs):
+        repo, view = self.read.repository("ledger"), value.scope["view"]
+        heads = {}
+        cutoffs = {spec["cutoff"] for spec in specs if spec["kind"] == "stock"}
+        flows = [spec for spec in specs if spec["kind"] == "flow"]
+        if view == "current":
+            cutoffs.update(spec["last"] for spec in flows)
+            cutoffs = {max(cutoffs)} if cutoffs else set()
+        for cutoff in sorted(cutoffs):
+            for head in repo.financial_heads(cutoff, view=view, metadata_only=True):
+                # This is a fact of financial_heads' actual current-pointer join,
+                # not an inferred current status for historical adoption rows.
+                if view == "current":
+                    head = head | {"is_current": 1}
+                heads[head["result_id"]] = head
+        if view == "as_posted" and flows:
+            # A single request's current and YTD flows overlap at the same end.
+            first, last = min(spec["first"] for spec in flows), max(spec["last"] for spec in flows)
+            positive = repo.adoptions_between(first, last, metadata_only=True)
+            heads.update((head["result_id"], head) for head in positive)
+            baselines = {
+                head["baseline_result_id"]
+                for head in positive
+                if head["baseline_result_id"] and head["business_kind"] not in chains.BOUNDARIES
+            }
+            missing = baselines - heads.keys()
+            if missing:
+                heads.update(
+                    (head["result_id"], head)
+                    for head in repo.financial_results(sorted(missing), metadata_only=True)
+                )
+        grouped = defaultdict(list)
+        for head in heads.values():
+            grouped[head["business_id"], head["result_slot"]].append(head)
+        return tuple(tuple(values) for values in grouped.values())
 
     def _role(self, spec, saved=None):
         cls = StockRole if spec["kind"] == "stock" else FlowRole

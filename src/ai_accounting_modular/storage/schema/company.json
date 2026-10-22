@@ -1,5 +1,5 @@
 {
-  "fingerprint": "f21dd9a88aa23426727bb7339b66fb7827128fc1ba18326d4bfe6fb676dc911d",
+  "fingerprint": "c4522b0be4ea7850c6a39007b449b0880a50c9016cce0d0d8882b4116f72a603",
   "kind": "company",
   "objects": [
     {
@@ -190,6 +190,13 @@
       "sql": "CREATE TABLE identity_object (\nobject_id TEXT PRIMARY KEY CHECK(length(object_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('person','organization','bank_account','cash_account','platform_account','project','investment_product','asset')),\n name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),\n sort_key TEXT NOT NULL,\n seq INTEGER NOT NULL CHECK(seq>=1),\n data_json TEXT NOT NULL CHECK(json_valid(data_json)),\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36)\n) STRICT",
       "table": "identity_object",
       "type": "table"
+    },
+    {
+      "name": "adopted_result_business_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_business_period ON adopted_result(business_period)",
+      "table": "adopted_result",
+      "type": "index"
     },
     {
       "name": "adopted_result_business_slot_period",

@@ -103,8 +103,7 @@ def read_projection(value, read, base):
 
 def _public(kind, scope, read):
     selected = request(kind, scope, read)
-    model = Model(read)
-    model.advance((selected,), ())
+    model = Model.for_request(read, selected)
     descriptor = model.descriptor(selected)
     value, selection = _calculate(model, selected, descriptor)
     version = descriptor["version"]

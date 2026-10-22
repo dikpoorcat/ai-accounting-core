@@ -33,8 +33,11 @@ def _selected_table(cutoff, business_ids=()):
     where, args = ["posting_period<=?"], [cutoff]
     _in("business_id", business_ids, where, args)
     latest = (
-        "SELECT business_id,result_slot,MAX(posting_period) AS posting_period "
-        "FROM adopted_result WHERE " + " AND ".join(where) + " GROUP BY business_id,result_slot"
+        "WITH candidates AS MATERIALIZED ("
+        "SELECT business_id,result_slot,posting_period FROM adopted_result WHERE "
+        + " AND ".join(where)
+        + ") SELECT business_id,result_slot,MAX(posting_period) AS posting_period "
+        "FROM candidates GROUP BY business_id,result_slot"
     )
     return (
         "adopted_result r JOIN (" + latest + ") selected "
