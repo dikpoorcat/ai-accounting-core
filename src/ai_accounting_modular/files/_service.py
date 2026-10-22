@@ -211,8 +211,6 @@ class Files:
         with locked(self._lock_path(metadata, row), 1, blocking=False) as acquired:
             if not acquired:
                 return False
-            if row["attempts"] >= 3:
-                return False
             live = self._live(metadata)
             live.release(row["task_id"])
             context = self._context(metadata, row["task_id"], row["capture_id"])
@@ -227,7 +225,7 @@ class Files:
                     metadata.company_id,
                     row,
                     state="expired",
-                    attempts=row["attempts"] + 1,
+                    attempts=min(3, row["attempts"] + 1),
                     error=_failure(error),
                     expired=True,
                 )
@@ -673,28 +671,9 @@ class Files:
             ids = read.repository("files").executable()
         return tuple(self.run(company_id, task_id) for task_id in ids)
 
-    def cleanup(self, company_id, *, retry_failed=False):
-        """Retry bounded obsolete cleanup; leases are always restored first."""
+    def cleanup(self, company_id):
+        """Try each obsolete cleanup once, after restoring all current input leases."""
         self.recover(company_id)
-        if retry_failed:
-            metadata = self._metadata(company_id)
-            with self._storage.read_unit(company_id) as read:
-                rows = read.repository("files").current()
-            for initial in rows:
-                if initial["state"] != "expired" or initial["attempts"] < 3:
-                    continue
-                with locked(self._lock_path(metadata, initial), 0):
-                    row = self._row(company_id, initial["task_id"], plan=True)
-                    if row is not None and row["state"] == "expired" and row["attempts"] == 3:
-                        row = self._change(
-                            company_id,
-                            row,
-                            state="expired",
-                            attempts=0,
-                            error=(row["error_code"], row["error_message"]),
-                            expired=True,
-                        )
-                        self._cleanup_locked(metadata, row)
 
     @contextmanager
     def verified_download(self, company_id, task_id):

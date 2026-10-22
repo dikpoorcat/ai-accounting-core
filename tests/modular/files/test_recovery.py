@@ -8,7 +8,8 @@ from threading import Barrier
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
-from ai_accounting_modular.files.public import ExpireTask
+from ai_accounting_modular.files._repository import FilesRepository
+from ai_accounting_modular.files.public import ExpireTask, ProductionError
 
 from ._support import SyntheticProducer, backup_plan, report_plan, service
 
@@ -69,23 +70,90 @@ def test_all_current_leases_restore_before_any_expired_cleanup(file_case):
         restarted.close()
 
 
-def test_cleanup_attempt_budget_requires_explicit_maintenance_after_three(file_case):
+@pytest.mark.parametrize("kind", ["backup", "report_export"])
+@pytest.mark.parametrize("resume", ["cleanup", "request", "restart"])
+def test_expired_cleanup_resumes_without_hidden_maintenance(file_case, monkeypatch, kind, resume):
+    storage, (company, _), producer, files = file_case
+    plan = backup_plan(storage, company) if kind == "backup" else report_plan(company)
+    task = files.ensure_current(plan, plan["scope_head"], "creator")
+    files.update(
+        task["task_id"], "pending", plan["scope_head"], ExpireTask(), company_id=company.company_id
+    )
+    obsolete = company.company_root / "runtime/file-tasks" / task["task_id"] / "work/obsolete"
+    obsolete.parent.mkdir(parents=True)
+    obsolete.write_bytes(b"synthetic obsolete output")
+    producer.cleanup_failures = 4
+    for attempt in (1, 2, 3, 3):
+        before = len([event for event in producer.events if event[0] == "cleanup"])
+        files.cleanup(company.company_id)
+        assert len([event for event in producer.events if event[0] == "cleanup"]) == before + 1
+        current = files.get(company.company_id, task["task_id"])
+        assert (current["state"], current["attempts"]) == ("expired", attempt)
+        assert current["error_code"] == "file_generation_failed"
+        assert "path" not in current and obsolete.exists()
+    events = len(producer.events)
+    files.get(company.company_id, task["task_id"])
+    assert files.run_pending(company.company_id) == ()
+    assert len(producer.events) == events
+    active, successor = files, None
+    try:
+        if resume == "request":
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    FilesRepository,
+                    "current",
+                    lambda *_args, **_kwargs: pytest.fail("a scope handoff must not scan tasks"),
+                )
+                successor = active.ensure_current(plan, plan["scope_head"], "next request")
+        elif resume == "restart":
+            files.close()
+            active = service(storage, producer)
+            active.recover(company.company_id)
+        else:
+            active.cleanup(company.company_id)
+        assert not obsolete.exists()
+        with pytest.raises(ContractError) as removed:
+            active.get(company.company_id, task["task_id"])
+        assert removed.value.code == "not_found"
+        if successor is None:
+            if kind == "backup":
+                plan = backup_plan(storage, company, label="next capture")
+            successor = active.ensure_current(plan, plan["scope_head"], "next request")
+        assert successor["task_id"] != task["task_id"]
+        assert (successor["state"], successor["attempts"]) == ("pending", 0)
+        done = active.run(company.company_id, successor["task_id"])
+        assert done["state"] == "succeeded"
+        with active.verified_download(company.company_id, successor["task_id"]) as download:
+            assert download.byte_size == done["byte_size"] and download.stream.read()
+    finally:
+        if active is not files:
+            active.close()
+
+
+def test_cleanup_error_remains_explicit_until_the_same_request_can_resume(file_case):
     _, (company, _), producer, files = file_case
     plan = report_plan(company)
     task = files.ensure_current(plan, plan["scope_head"], "creator")
     files.update(
         task["task_id"], "pending", plan["scope_head"], ExpireTask(), company_id=company.company_id
     )
-    producer.cleanup_failures = 3
-    for attempt in (1, 2, 3):
+
+    def unavailable(_context, _keep_capture):
+        raise ProductionError("unsafe_path", "合成清理位置暂不可用。", retryable=False)
+
+    producer.cleanup_hook = unavailable
+    for _ in range(4):
         files.cleanup(company.company_id)
-        assert files.get(company.company_id, task["task_id"])["attempts"] == attempt
-    events = len(producer.events)
-    files.cleanup(company.company_id)
-    assert len(producer.events) == events
-    files.cleanup(company.company_id, retry_failed=True)
-    with pytest.raises(ContractError):
-        files.get(company.company_id, task["task_id"])
+    with pytest.raises(ContractError) as blocked:
+        files.ensure_current(plan, plan["scope_head"], "resume request")
+    assert blocked.value.code == "file_cleanup_pending"
+    current = files.get(company.company_id, task["task_id"])
+    assert (current["state"], current["attempts"]) == ("expired", 3)
+    assert (current["error_code"], current["message"]) == ("unsafe_path", "合成清理位置暂不可用。")
+    assert not any(event[0] == "produce" for event in producer.events)
+    producer.cleanup_hook = None
+    successor = files.ensure_current(plan, plan["scope_head"], "resume request")
+    assert files.run(company.company_id, successor["task_id"])["state"] == "succeeded"
 
 
 def test_shared_capture_handoff_failure_keeps_full_old_plan_and_pin(file_case):
