@@ -11,7 +11,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_open_buckets as buckets
-from ._collections import IndexItem, PreparedModel, _decode, prepare_items, prepare_model
+from ._collections import IndexItem, PreparedModel, _decode, prepare_model, prepare_rows
 
 COMPONENT = "brief_open_items"
 FORMAT_VERSION = 8
@@ -102,11 +102,11 @@ def _prepared(entries):
             ):
                 corrupt("待收待付私有项目只能使用其明确身份。")
             grouped.setdefault(buckets.key(*identity), {})[entry.item_id] = entry.value
-    prepared = prepare_items(public)
-    for row, digest in zip(prepared.rows, prepared.row_digests, strict=True):
+    rows, digests = prepare_rows(public)
+    for row, digest in zip(rows, digests, strict=True):
         collection, identity, order = row[:3]
         grouped.setdefault(buckets.key(collection, identity), {})[identity] = order, digest
-    return prepared.rows, grouped
+    return rows, grouped
 
 
 def _bucket(identity, values):

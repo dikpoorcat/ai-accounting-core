@@ -316,11 +316,12 @@ def summaries(categories, reviews):
 
 
 def complete(members):
-    grouped = defaultdict(list)
+    grouped, entries = defaultdict(list), []
     for member in members:
-        grouped[member["row"]["group_key"]].append(member)
-    entries, categories, reviews = [], {}, {}
-    entries.extend(member_item(member) for member in members)
+        item = member_item(member)
+        entries.append(item)
+        grouped[item.group_key].append(item)
+    categories, reviews = {}, {}
     selected = candidates(members)
     entries.extend(selected)
     by_group = defaultdict(list)
@@ -328,12 +329,12 @@ def complete(members):
         by_group[candidate.group_key].append(candidate)
     for identity, values in grouped.items():
         fold = empty()
-        adjust(fold, values, 1)
+        adjust(fold, (value.value for value in values), 1)
         representative = min(by_group[identity], key=lambda value: (value.sort_key, value.item_id))
-        ordered = min((member_item(value).sort_key, value["row"]["key"]) for value in values)
+        ordered = min((value.sort_key, value.item_id) for value in values)
         fold["first"] = [representative.sort_key, representative.item_id]
         fold["order"] = list(ordered)
-        first = min(values, key=member_order)
+        first = min(values, key=lambda value: member_order(value.value)).value
         item = group(first, fold, ordered[0])
         entries.extend((item, IndexItem(FOLDS, identity, identity, fold)))
         category_adjust(categories, item.value, 1)

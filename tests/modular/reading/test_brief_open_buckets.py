@@ -262,13 +262,14 @@ def test_full_factory_rejects_duplicate_private_identity_and_does_not_make_bindi
     value = index.item(index.FOLDS, "fold", {"count": 1})
     with pytest.raises(ContractError):
         index.complete({}, [value, value], 1)
-    prepare = index.prepare_items
+    prepare = index.prepare_rows
 
     def public_only(items):
+        items = tuple(items)
         assert all(item.collection in index.PUBLIC for item in items)
         return prepare(items)
 
-    monkeypatch.setattr(index, "prepare_items", public_only)
+    monkeypatch.setattr(index, "prepare_rows", public_only)
     model = index.complete({}, [value], 1)
     assert len(model.rows) == 1 and model.rows[0][0] == index.BUCKETS
 

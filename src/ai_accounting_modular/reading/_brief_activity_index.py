@@ -17,7 +17,7 @@ from ._brief_activity_dependencies import OBJECTS as OBJECTS
 from ._brief_activity_dependencies import ROOTS as ROOTS
 from ._brief_activity_dependencies import corrupt as corrupt
 from ._brief_activity_dependencies import root_item as root_item
-from ._collections import PreparedModel, _decode, prepare_items, prepare_model
+from ._collections import PreparedModel, _decode, prepare_model, prepare_rows
 
 COMPONENT = "brief_activity"
 FORMAT_VERSION = 9
@@ -104,16 +104,16 @@ def _prepared(entries):
         entry.collection not in COLLECTIONS for entry in entries
     ):
         corrupt()
-    mirrored = prepare_items(entry for entry in entries if entry.collection in MIRRORS)
+    rows, digests = prepare_rows(entry for entry in entries if entry.collection in MIRRORS)
     grouped = {}
     for entry in entries:
         if entry.collection not in MIRRORS:
             grouped.setdefault(buckets.key(entry.collection, entry.item_id), {})[entry.item_id] = (
                 entry.value
             )
-    for row, digest in zip(mirrored.rows, mirrored.row_digests, strict=True):
+    for row, digest in zip(rows, digests, strict=True):
         grouped.setdefault(buckets.key(row[0], row[1]), {})[row[1]] = row[2], digest
-    return mirrored.rows, grouped
+    return rows, grouped
 
 
 def _bucket(identity, values):
@@ -166,8 +166,11 @@ def complete(members, vouchers, roots, scope_key, epoch):
             or set(value["vouchers"]) != voucher_ids[root_id]
         ):
             corrupt()
-    for entry in (*vouchers, *(totals.member_item(member) for member in members)):
+    for entry in vouchers:
         dependencies.owned(entry, owned)
+    for entry in entries:
+        if entry.collection == "activity_members":
+            dependencies.owned(entry, owned)
     dependency_items, selected = dependencies.complete(roots)
     entries.extend((*vouchers, *roots, *dependency_items))
     public, grouped = _prepared(entries)

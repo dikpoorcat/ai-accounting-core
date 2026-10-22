@@ -16,7 +16,7 @@ from ai_accounting_modular.reading import _brief_activity as activity
 from ai_accounting_modular.reading import _brief_activity_index as index
 from ai_accounting_modular.reading import _brief_activity_totals as totals
 from ai_accounting_modular.reading import _brief_activity_update as update
-from ai_accounting_modular.reading import _brief_open_buckets, _item_buckets, _monthly
+from ai_accounting_modular.reading import _brief_open_buckets, _funds_items, _item_buckets, _monthly
 from ai_accounting_modular.reading import _brief_open_index as open_index
 from ai_accounting_modular.reading import _brief_open_inputs as open_inputs
 from ai_accounting_modular.reading import _brief_open_update as open_update
@@ -182,6 +182,75 @@ def test_actual_day_order_and_voucher_representative_change_independently(book):
     assert revised["first"] == fold["first"]
     assert revised["order"] != fold["order"]
     assert matches_complete(book)["group_count"] == 1
+
+
+def test_complete_constructs_each_member_sort_key_once_and_preserves_both_orders(book, monkeypatch):
+    initialize(book)
+    facts = [
+        {
+            "business_id": str(uuid4()),
+            "kind": "operations.other_income",
+            "period": "2026-01",
+            "evidence_ids": [book.source_id],
+            "effective_on": "2026-01-" + day,
+            "data": {
+                "income_kind": "bank_interest",
+                "amount_fen": "1",
+                "funds_account_id": BANK,
+                "counterparty_id": book.party,
+            },
+        }
+        for day in ("28", "02", "15")
+    ]
+    apply(book, *facts)
+    with book.kernel.storage.read_unit(book.company) as read:
+        members, vouchers, roots = activity.capture(book.kernel.reading, selection(book), read)
+        expected, _ = oracle.indexes(sorted(members, key=totals.member_order))
+        expected_items = {(item.collection, item.item_id): item for item in expected}
+        original, pinyin = totals.member_item, _funds_items.lazy_pinyin
+        constructed, names = [], []
+
+        def build(member):
+            constructed.append(member["row"]["key"])
+            return original(member)
+
+        def transliterate(name, **kwargs):
+            names.append(name)
+            return pinyin(name, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(totals, "member_item", build)
+            patch.setattr(_funds_items, "lazy_pinyin", transliterate)
+            model = activity.assemble(
+                members, vouchers, roots, scope_key=_monthly.key(selection(book)), epoch=read.head
+            )
+    assert constructed == [member["row"]["key"] for member in members]
+    assert names == [member["row"]["party"] for member in members]
+    actual = {
+        (row[0], row[1]): (row[2], loads_json(row[-1])["value"])
+        for row in model.rows
+        if row[0] in {"activity", "activity_members"}
+    }
+    assert actual == {key: (item.sort_key, item.value) for key, item in expected_items.items()}
+    folds = {
+        identity: value
+        for row in model.rows
+        if row[0] == index.BUCKETS and loads_json(row[-1])["collection"] == totals.FOLDS
+        for identity, value in loads_json(row[-1])["values"]
+    }
+    assert len(folds) == 1
+    (fold,) = folds.values()
+    first = min(members, key=totals.member_order)
+    assert first["row"]["date"] == "2026-01-28"
+    assert fold["first"][1] == totals.candidate_id(
+        first["row"]["subject_id"], first["row"]["group_key"]
+    )
+    assert (
+        next(member for member in members if member["row"]["key"] == fold["order"][1])["row"][
+            "date"
+        ]
+        == "2026-01-02"
+    )
 
 
 @pytest.mark.parametrize("damage", ["inputs", "business_reverse"])

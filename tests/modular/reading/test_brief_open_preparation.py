@@ -1,7 +1,5 @@
 """Carry each already checked digest through full and incremental publication unchanged."""
 
-from dataclasses import replace
-
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
@@ -31,31 +29,29 @@ def entries():
 
 def legacy_digest_extraction(monkeypatch):
     """The previous path got each digest by decoding its freshly serialized body."""
-    prepare = index.prepare_items
+    prepare = index.prepare_rows
 
     def from_serialized_rows(*args, **kwargs):
-        prepared = prepare(*args, **kwargs)
-        return replace(
-            prepared, row_digests=tuple(loads_json(row[-1])["digest"] for row in prepared.rows)
-        )
+        rows, _ = prepare(*args, **kwargs)
+        return rows, tuple(loads_json(row[-1])["digest"] for row in rows)
 
-    monkeypatch.setattr(index, "prepare_items", from_serialized_rows)
+    monkeypatch.setattr(index, "prepare_rows", from_serialized_rows)
 
 
 def no_new_body_decodes(monkeypatch):
-    prepare, decode = index.prepare_items, index.loads_json
+    prepare, decode = index.prepare_rows, index.loads_json
     new_bodies = set()
 
     def capture(*args, **kwargs):
-        prepared = prepare(*args, **kwargs)
-        new_bodies.update(row[-1] for row in prepared.rows)
-        return prepared
+        rows, digests = prepare(*args, **kwargs)
+        new_bodies.update(row[-1] for row in rows)
+        return rows, digests
 
     def checked(raw):
         assert raw not in new_bodies, "new rows must reuse their factory binding digests"
         return decode(raw)
 
-    monkeypatch.setattr(index, "prepare_items", capture)
+    monkeypatch.setattr(index, "prepare_rows", capture)
     monkeypatch.setattr(index, "loads_json", checked)
 
 

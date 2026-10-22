@@ -156,13 +156,19 @@ def _prepared(rows, digests, collections=()):
     return PreparedItems(tuple(rows), manifest, tuple(digests))
 
 
-def prepare_items(items, *, collections=()):
-    """All serialization and hashes precede the short publication transaction."""
+def prepare_rows(items):
+    """Strictly bind each row; the owning collection factory checks membership."""
     rows, digests = [], []
     for item in items:
         row, digest = _bound(_index(item), item.value)
         rows.append(row)
         digests.append(digest)
+    return tuple(rows), tuple(digests)
+
+
+def prepare_items(items, *, collections=()):
+    """All serialization and hashes precede the short publication transaction."""
+    rows, digests = prepare_rows(items)
     return _prepared(rows, digests, collections)
 
 

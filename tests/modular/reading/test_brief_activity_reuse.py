@@ -25,7 +25,7 @@ def test_selected_values_are_detached_and_only_changed_rows_are_prepared(book, m
         assert base.get("activity_members", (member_id,), required=True)[member_id] != member
     first["data"]["amount_fen"] = "120"
     change(book, first)
-    original, prepared = index.prepare_items, []
+    original, prepared = index.prepare_rows, []
 
     def changed_only(items, **kwargs):
         items = tuple(items)
@@ -37,7 +37,7 @@ def test_selected_values_are_detached_and_only_changed_rows_are_prepared(book, m
         return original(items, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(index, "prepare_items", changed_only)
+        patch.setattr(index, "prepare_rows", changed_only)
         assert book.kernel.reading.run_pending(book.company)
     assert any(item.collection == "activity_members" for item in prepared)
     assert not any(item.business_id == second["business_id"] for item in prepared)
