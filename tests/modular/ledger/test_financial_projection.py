@@ -83,9 +83,10 @@ def test_public_financial_projection_batches_only_used_targets_and_uses_integer_
         assert expected_summary.expense == {"state": "known", "amount_fen": "199"}
         assert expected_summary.net_profit == {"state": "known", "amount_fen": "-199"}
         targets, actual_rows, stock_requests = [], [], []
-        read_targets, read_lines, read_heads = (
+        read_targets, read_lines, read_heads, read_chains = (
             repo.financial_targets,
             repo.financial_lines,
+            repo.financial_heads,
             repo.financial_projection_chains,
         )
 
@@ -107,25 +108,29 @@ def test_public_financial_projection_batches_only_used_targets_and_uses_integer_
             actual_rows.extend(values)
             return values
 
-        def headers(business_slots=None):
-            values = read_heads(business_slots)
+        def headers(cutoff, *, view, metadata_only=False):
+            assert metadata_only is True
+            assert view == scope["view"]
+            assert cutoff <= scope["period_to"]
+            values = read_heads(cutoff, view=view, metadata_only=metadata_only)
             assert all("target_json" not in value and "basis_json" not in value for value in values)
-            stock_requests.append(business_slots)
+            stock_requests.append((cutoff, view))
             return values
 
         def forbidden(*args, **kwargs):
-            pytest.fail("金融投影展开了完整凭证或不必要的正式Basis正文")
+            pytest.fail("公开财务读取展开了全公司采用链、完整凭证或不必要的正式Basis正文")
 
         monkeypatch.setattr(repo, "financial_targets", target_bodies)
         monkeypatch.setattr(repo, "financial_lines", integer_lines)
-        monkeypatch.setattr(repo, "financial_projection_chains", headers)
+        monkeypatch.setattr(repo, "financial_heads", headers)
+        monkeypatch.setattr(repo, "financial_projection_chains", forbidden)
         monkeypatch.setattr(repo, "vouchers", forbidden)
         monkeypatch.setattr(repo, "results", forbidden)
         actual = ledger.financial_snapshot(scope, read)
         actual_summary = ledger.financial_summary(scope, read)
         needed = {
             row["result_id"]
-            for row in read_heads()
+            for row in read_chains()
             if row["business_id"] in (interest["business_id"], tax["business_id"])
             and row["target_kind"] in ("operations.other_income", "taxes.assessment")
         }
