@@ -13,7 +13,7 @@ from ._collections import IndexItem, PreparedModel, _index, _read_item, prepare_
 from ._open_store import OpenPool
 
 COMPONENT = "brief_open_items"
-FORMAT_VERSION = 9
+FORMAT_VERSION = 10
 DIRTY = "_open_pending"
 BUSINESSES, OBJECTS, FOLDS, VOUCHERS = blocks.PRIVATE
 COLLECTIONS, PUBLIC = blocks.COLLECTIONS, blocks.PUBLIC
@@ -167,7 +167,7 @@ class Directory(Queries):
     def _row(self, collection, identity, entry):
         try:
             saved = entry.value
-            if entry.key != blocks.key(collection, identity) or set(saved) != {
+            if set(saved) != {
                 "index",
                 "value",
                 "digest",
@@ -187,6 +187,7 @@ class Directory(Queries):
                 }
                 or index["collection"] != collection
                 or index["item_id"] != identity
+                or entry.key != blocks.key(index["sort_key"], identity)
             ):
                 corrupt()
             row = {
@@ -219,19 +220,57 @@ class Directory(Queries):
     def _materialize(self, collection, item_ids):
         if collection not in PUBLIC:
             corrupt()
-        values = tuple(
-            self._row(collection, identity, entry)
+        located = tuple(
+            (identity, entry)
             for identity, entry in zip(item_ids, self._entries(collection, item_ids), strict=True)
             if entry is not None
         )
         selected = self.trees.trees[collection].get_many(
             self.roots[collection],
-            tuple(blocks.key(item.sort_key, item.item_id) for _, item, _ in values),
+            tuple(
+                blocks.key(self._sort(collection, identity, locator), identity)
+                for identity, locator in located
+            ),
         )
-        for (_, _, digest), entry in zip(values, selected, strict=True):
-            if entry is None or entry.value != digest:
+        return self._rows(
+            collection,
+            tuple(identity for identity, _ in located),
+            selected,
+            tuple(locator for _, locator in located),
+        )
+
+    @staticmethod
+    def _sort(collection, identity, locator):
+        if locator is None or locator.key != blocks.key(collection, identity):
+            corrupt("待收待付项目缺少本范围的身份定位。")
+        order = locator.value
+        if type(order) is not str or not order:
+            corrupt("待收待付项目的排序定位不完整。")
+        return order
+
+    def _rows(self, collection, identities, entries, locators):
+        result = []
+        for identity, entry, locator in zip(identities, entries, locators, strict=True):
+            if entry is None:
                 corrupt("待收待付项目未被本范围的排序根引用。")
-        return values
+            value = self._row(collection, identity, entry)
+            if self._sort(collection, identity, locator) != value[1].sort_key:
+                corrupt("待收待付项目与本范围的身份定位不一致。")
+            result.append(value)
+        return tuple(result)
+
+    def _ordered(self, collection, entries):
+        if collection not in PUBLIC:
+            corrupt()
+        identities = []
+        for entry in entries:
+            if entry is None:
+                corrupt("待收待付排序目录引用的项目缺失。")
+            order = blocks.parts(entry.key)
+            if len(order) != 2:
+                corrupt()
+            identities.append(order[1])
+        return self._rows(collection, identities, entries, self._entries(collection, identities))
 
     def item_get(self, collection, item_ids):
         return tuple(row for row, _, _ in self._materialize(collection, item_ids))

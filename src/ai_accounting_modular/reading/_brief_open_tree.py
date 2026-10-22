@@ -124,10 +124,10 @@ class Trees:
         self.store = TreeStore(pool, namespace=NAMESPACE)
         self.trees = {
             role: Tree(
-                "reading-open-" + role + "/1",
+                "reading-open-" + role + ("/2" if role in ("rows", *PUBLIC) else "/1"),
                 Count(),
                 self.store,
-                max_items=16 if role == "rows" else 128,
+                max_items=16 if role in ("rows", *PUBLIC) else 128,
             )
             for role in ROLES
         }
@@ -178,8 +178,14 @@ def prepared(item):
         return result
     _, digest = _bound(index, item.value)
     result = [
-        ("rows", Entry(identity, {"index": index, "value": item.value, "digest": digest})),
-        (item.collection, Entry(key(item.sort_key, item.item_id), digest)),
+        ("rows", Entry(identity, item.sort_key)),
+        (
+            item.collection,
+            Entry(
+                key(item.sort_key, item.item_id),
+                {"index": index, "value": item.value, "digest": digest},
+            ),
+        ),
     ]
     result.extend(
         (

@@ -44,18 +44,18 @@ class Queries:
             if getattr(query, field) is not None
         } | ({"category"} if query.categories else set())
 
-    def _scan(self, role, prefix, after):
+    def _scan(self, role, prefix, after, batch_size):
         tree, root = self.trees.trees[role], self.roots[role]
         first, last = blocks.bounds(*prefix) if prefix else (None, None)
         cursor = blocks.key(*prefix, *after) if after is not None else None
         while True:
-            selected = tree.scan(root, first=first, last=last, after=cursor, limit=128)
+            selected = tree.scan(root, first=first, last=last, after=cursor, limit=batch_size)
             for entry in selected:
                 values = blocks.parts(entry.key)
                 if values[: len(prefix)] != prefix or len(values) != len(prefix) + 2:
                     blocks.corrupt()
-                yield (values[-2], values[-1]), entry.value, prefix
-            if len(selected) < 128:
+                yield (values[-2], values[-1]), entry, prefix
+            if len(selected) < batch_size:
                 return
             cursor = selected[-1].key
 
@@ -71,22 +71,29 @@ class Queries:
         if not count:
             return
         stream = merge(
-            *(self._scan(role, prefix, after) for prefix in prefixes),
+            *(self._scan(role, prefix, after, batch_size) for prefix in prefixes),
             key=lambda value: value[0],
         )
         while True:
             candidates = tuple(islice(stream, batch_size))
             if not candidates:
                 break
-            values = self._materialize(collection, tuple(order[1] for order, _, _ in candidates))
-            if len(values) != len(candidates):
-                blocks.corrupt()
-            for (order, digest, prefix), (row, _, actual_digest) in zip(
+            entries = (
+                tuple(entry for _, entry, _ in candidates)
+                if role == collection
+                else self.trees.trees[collection].get_many(
+                    self.roots[collection],
+                    tuple(blocks.key(*order) for order, _, _ in candidates),
+                )
+            )
+            values = self._ordered(collection, entries)
+            for (order, entry, prefix), (row, _, actual_digest) in zip(
                 candidates, values, strict=True
             ):
                 if (
                     (row["sort_key"], row["item_id"]) != order
-                    or actual_digest != digest
+                    or role == "filters"
+                    and actual_digest != entry.value
                     or prefix
                     and row[prefix[1]] != prefix[2]
                 ):
