@@ -1,4 +1,4 @@
-"""Count-only summaries defer unopened subtrees, never actual content checks."""
+"""Count summaries and publication frontiers use actual strictly checked nodes."""
 
 import sys
 from dataclasses import replace
@@ -74,19 +74,19 @@ def observe(monkeypatch):
     return decoded
 
 
-def test_count_patch_and_publication_do_not_decode_unchanged_frontier(monkeypatch, codec):
+def test_count_patch_and_publication_share_strict_frontier_proofs(monkeypatch, codec):
     reader, root, child = persisted()
     decoded = observe(monkeypatch)
     _, store, tree = assemble(reader)
     changed = tree.patch(root, {"a": Entry("a", {"n": -1})})
     plan = store.finish((root.digest,), (changed.digest,))
-    assert child.digest not in decoded
-    assert child.digest not in tree._loaded and child.digest not in store._checked
-    assert all(key[0] != child.digest for key in codec._entries)
+    assert decoded.count(child.digest) == 1
+    assert child.digest in tree._loaded and child.digest in store._checked
+    assert any(key[0] == child.digest for key in codec._entries)
     assert (NODES, child.digest) in {key for batch in reader.calls for key in batch}
     reader.apply(plan)
     assert tree.get_many(changed, ("b",))[0].value == {"n": 1}
-    assert child.digest in decoded and child.digest in tree._loaded
+    assert decoded.count(child.digest) == 1
     assert_graph(reader, (changed,))
 
 
@@ -184,21 +184,15 @@ def rebind_child(reader, root, child, *, field, value):
 @pytest.mark.parametrize(
     "field,value", [("summary", 2), ("domain", "foreign/1"), ("format", "old/1")]
 )
-def test_unopened_child_is_deferred_but_actual_content_and_collapse_are_strict(field, value):
+def test_patch_frontier_rejects_inconsistent_unmodified_child(field, value):
     reader, root, child = persisted()
-    root, identity = rebind_child(reader, root, child, field=field, value=value)
+    root, _ = rebind_child(reader, root, child, field=field, value=value)
     _, store, tree = assemble(reader)
-    changed = tree.patch(root, {"a": Entry("a", {"n": -1})})
-    reader.apply(store.finish((root.digest,), (changed.digest,)))
-    assert identity not in tree._loaded and identity not in store._checked
-    for operation in (
-        lambda: tree.get_many(changed, ("b",)),
-        lambda: tree.scan(changed, after="a", limit=1),
-        lambda: tree.patch(changed, {"a": None, "c": None}),
-    ):
-        with pytest.raises(ContractError) as error:
-            operation()
-        assert error.value.code == "storage_corrupt"
+    before = dict(reader.rows)
+    with pytest.raises(ContractError) as error:
+        tree.patch(root, {"a": Entry("a", {"n": -1})})
+    assert error.value.code == "storage_corrupt"
+    assert not store._staged and reader.rows == before
 
 
 @pytest.mark.parametrize(
@@ -224,13 +218,26 @@ def test_count_saved_root_summary_must_match_its_actual_count():
         tree.root(replace(root, digest=digest(raw)).wire())
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-def test_existing_root_is_strict_even_when_also_a_new_parent_child(reverse):
+def stage_parent(reader, store, root):
+    """Isolate Store's retained-edge checks from Tree's earlier role checks."""
+    value = loads_json(reader.rows[NODES, root.digest])
+    value["domain"] = "stored-parent/1"
+    return store.stage_node(canonical_json(value), (child[0] for child in value["children"]))
+
+
+@pytest.mark.parametrize("location", ["child_only", "root_first", "root_last"])
+def test_existing_node_is_strict_as_child_or_explicit_root(location):
     reader, root, child = persisted()
     root, identity = rebind_child(reader, root, child, field="format", value="old/1")
-    _, store, tree = assemble(reader)
-    changed = tree.patch(root, {"a": Entry("a", {"n": -1})})
-    roots = (identity, changed.digest) if reverse else (changed.digest, identity)
+    store = TreeStore(reader, namespace="_test")
+    parent = stage_parent(reader, store, root)
+    roots = (
+        (parent,)
+        if location == "child_only"
+        else (identity, parent)
+        if location == "root_first"
+        else (parent, identity)
+    )
     with pytest.raises(ContractError) as error:
         store.finish((root.digest,), roots)
     assert error.value.code == "storage_corrupt"
@@ -241,7 +248,7 @@ def test_existing_root_is_strict_even_when_also_a_new_parent_child(reverse):
 
 
 @pytest.mark.parametrize("damage", ["missing", "hash", "type", "utf8", "staged"])
-def test_retention_checks_actual_bytes_without_minting_a_decode_proof(damage, codec):
+def test_publication_checks_actual_retained_bytes_and_staged_conflicts(damage, codec):
     reader, root, child = persisted()
 
     class Text(str):
@@ -256,34 +263,41 @@ def test_retention_checks_actual_bytes_without_minting_a_decode_proof(damage, co
         reader.rows[key] = Text(reader.rows[key])
     elif damage == "utf8":
         reader.rows[key] = "\ud800"
-    _, store, tree = assemble(reader)
-    changed = tree.patch(root, {"a": Entry("a", {"n": -1})})
+    store = TreeStore(reader, namespace="_test")
+    parent = stage_parent(reader, store, root)
     if damage == "staged":
         store._staged[child.digest] = "different staged bytes"
     with pytest.raises(ContractError) as error:
-        store.finish((root.digest,), (changed.digest,))
+        store.finish((root.digest,), (parent,))
     assert error.value.code == "storage_corrupt"
-    assert child.digest not in store._checked
-    assert all(key[0] != child.digest for key in codec._entries)
+    if damage == "staged":
+        assert store._checked[child.digest].payload_json == reader.rows[key]
+    else:
+        assert child.digest not in store._checked
+        assert all(key[0] != child.digest for key in codec._entries)
 
 
-def test_unchanged_long_integer_policy_is_delayed_until_actual_read_root_stage_or_gc():
+def test_current_integer_policy_is_checked_at_patch_publication_read_stage_and_gc():
     previous = sys.get_int_max_str_digits()
     try:
         sys.set_int_max_str_digits(0)
         reader, root, child = persisted(huge=True)
         sys.set_int_max_str_digits(sys.int_info.str_digits_check_threshold)
         _, store, tree = assemble(reader)
-        changed = tree.patch(root, {"a": Entry("a", {"n": -1})})
-        reader.apply(store.finish((root.digest,), (changed.digest,)))
-        assert child.digest not in store._checked and child.digest not in tree._loaded
-        with pytest.raises(ContractError):
-            tree.get_many(changed, ("b",))
-        with pytest.raises(ContractError):
-            TreeStore(reader, namespace="_test").finish((), (child.digest,))
-        with pytest.raises(ContractError):
-            TreeStore(reader, namespace="_test").stage_node(reader.rows[NODES, child.digest], ())
-        with pytest.raises(ContractError):
-            TreeStore(reader, namespace="_test").finish((changed.digest,), ())
+        before = dict(reader.rows)
+        parent = stage_parent(reader, store, root)
+        for operation in (
+            lambda: tree.patch(root, {"a": Entry("a", {"n": -1})}),
+            lambda: store.finish((root.digest,), (parent,)),
+            lambda: tree.get_many(root, ("b",)),
+            lambda: TreeStore(reader, namespace="_test").finish((), (child.digest,)),
+            lambda: TreeStore(reader, namespace="_test").stage_node(
+                reader.rows[NODES, child.digest], ()
+            ),
+            lambda: TreeStore(reader, namespace="_test").finish((root.digest,), ()),
+        ):
+            with pytest.raises(ContractError) as error:
+                operation()
+            assert error.value.code == "storage_corrupt" and reader.rows == before
     finally:
         sys.set_int_max_str_digits(previous)

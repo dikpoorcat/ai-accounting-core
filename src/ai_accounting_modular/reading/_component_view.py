@@ -1,8 +1,6 @@
-"""Fresh component views and bounded, database-independent checks of exact summary bytes."""
+"""Strict actual component summaries and views owned by one read transaction."""
 
-from collections import OrderedDict
 from copy import deepcopy
-from threading import Lock
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
@@ -13,14 +11,9 @@ from ai_accounting_modular.contracts.public import (
 
 from . import _dependencies
 
-_SUMMARY_LIMIT = 16
-_SUMMARY_BYTES = 8 * 1024 * 1024
-_summary_checks = OrderedDict()
-_summary_lock = Lock()
-
 
 def summary(scope_key, component, state, row):
-    """Parse anew; reuse only scalar checks of the same complete persisted raw."""
+    """Validate actual header bindings, content digest and the owner's summary contract."""
     try:
         raw = row["payload_json"]
         payload = loads_json(raw)
@@ -39,46 +32,15 @@ def summary(scope_key, component, state, row):
         version = state["format_version"]
         if owner is not None and version != owner.FORMAT_VERSION:
             raise ValueError
-        identity = scope_key, component
-        cacheable = (
-            owner is not None
-            and type(raw) is str
-            and type(scope_key) is str
-            and type(component) is str
-            and type(version) is int
-        )
-        with _summary_lock:
-            checked = _summary_checks.get(identity) if cacheable else None
-            if checked is not None and checked[:2] == (version, raw):
-                _summary_checks.move_to_end(identity)
-            else:
-                checked = None
-        if checked is None:
-            digest = content_digest(payload)
-            epoch = None
-            if component == "brief_activity":
-                epoch = owner.validate(payload, scope_key)
-            elif owner is not None:
-                epoch = owner.validate(payload)
-            if owner is not None:
-                _dependencies.inputs(payload)
-        else:
-            _, _, digest, epoch, _ = checked
-        if digest != state["content_digest"]:
+        if content_digest(payload) != state["content_digest"]:
             raise ValueError
-        if checked is None and cacheable:
-            size = len(raw.encode("utf-8"))
-            with _summary_lock:
-                # Candidate payloads are checked outside this cache; publication
-                # may recheck only its persisted base here.
-                _summary_checks.pop(identity, None)
-                if size <= _SUMMARY_BYTES:
-                    _summary_checks[identity] = version, raw, digest, epoch, size
-                    while (
-                        len(_summary_checks) > _SUMMARY_LIMIT
-                        or sum(value[4] for value in _summary_checks.values()) > _SUMMARY_BYTES
-                    ):
-                        _summary_checks.popitem(last=False)
+        epoch = None
+        if component == "brief_activity":
+            epoch = owner.validate(payload, scope_key)
+        elif owner is not None:
+            epoch = owner.validate(payload)
+        if owner is not None:
+            _dependencies.inputs(payload)
         return payload, epoch
     except (ContractError, KeyError, ValueError, TypeError) as error:
         raise ContractError("storage_corrupt", "读取集合目录的内容摘要不一致。") from error
@@ -164,7 +126,7 @@ def ready(scope_key, component, read):
     )
     binding = _binding(scope_key, component, read, state, payload)
     # UnitOfWork publicly identifies writable/maintenance transactions. Such a
-    # transaction can change buckets without changing the component header.
+    # transaction can change stored indexes without changing the component header.
     writable = isinstance(read, UnitOfWork)
     identity = scope_key, component
     current = repository._component_views.get(identity) if not writable else None

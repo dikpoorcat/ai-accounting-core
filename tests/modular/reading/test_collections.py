@@ -17,12 +17,11 @@ from ai_accounting_modular.identity.public import IdentityContext
 from ai_accounting_modular.reading._collections import (
     CollectionFilter,
     IndexItem,
+    _read_item,
     collection_items,
     collection_page,
-    merge_items,
     prepare_items,
     prepare_model,
-    read_items,
 )
 from ai_accounting_modular.storage.public import CompanySpec
 
@@ -88,21 +87,18 @@ def test_index_and_payload_keep_the_exact_canonical_binding_for_nested_unicode_v
     }
     digest = content_digest({"index": expected_index, "value": value})
     prepared = prepare_items([selected])
-    assert prepared.row_digests == (digest,)
     assert prepared.rows[0][-1] == canonical_json({"digest": digest, "value": value})
     assert prepared.manifest == (("entries", 1, content_digest([["顺序", "项目", digest]])),)
 
 
-def test_prepared_digest_metadata_keeps_factory_row_order_and_is_detached_from_mutable_values():
+def test_prepared_rows_and_manifests_keep_factory_order_and_detach_mutable_values():
     entries = [item(2, collection="z"), item(1, collection="a"), item(3, collection="z")]
     prepared = prepare_items(entries)
     assert tuple(row[0] for row in prepared.rows) == ("z", "a", "z")
-    expected = tuple(loads_json(row[-1])["digest"] for row in prepared.rows)
-    assert prepared.row_digests == expected
-    assert all(type(digest) is str for digest in prepared.row_digests)
+    original_rows, original_manifest = prepared.rows, prepared.manifest
     for entry in entries:
         entry.value.clear()
-    assert prepared.row_digests == expected
+    assert (prepared.rows, prepared.manifest) == (original_rows, original_manifest)
     assert all(loads_json(row[-1])["value"] for row in prepared.rows)
 
 
@@ -129,28 +125,13 @@ def test_strict_read_reuses_canonical_bytes_and_keeps_decoded_values_independent
     original = prepare_items([item(2), item(1)], collections=("empty",))
     rows = [stored_row(row) for row in original.rows]
     rows[0]["payload_json"] = " \n" + rows[0]["payload_json"] + "\n"
-    prepared, decoded = read_items(rows, collections=("empty",))
-    assert prepared == original
-    decoded[0].value["amount_fen"] = "0"
+    decoded = tuple(_read_item(row) for row in rows)
+    canonical_rows = tuple(row for _, row, _ in decoded)
+    assert canonical_rows == original.rows
+    decoded[0][0].value["amount_fen"] = "0"
     rows[0]["payload_json"] = "{}"
-    assert prepared == original
-    assert loads_json(prepared.rows[0][-1])["value"]["amount_fen"] == "9007199254740993"
-
-
-def test_prepared_selection_and_merge_keep_original_bindings_and_reject_overlap():
-    original = prepare_items([item(1), item(2)])
-    prepared, _ = read_items([stored_row(row) for row in original.rows])
-    kept = prepared.select((("entries", "item-0002"),))
-    result = merge_items(kept, prepare_items([item(3)]), collections=("empty",))
-    expected = prepare_items([item(2), item(3)], collections=("empty",))
-    assert result == expected
-    for operation in (
-        lambda: prepared.select((("entries", "missing"),)),
-        lambda: merge_items(kept, kept),
-        lambda: read_items([stored_row(original.rows[0])] * 2),
-    ):
-        with pytest.raises(ContractError):
-            operation()
+    assert canonical_rows == original.rows
+    assert loads_json(canonical_rows[0][-1])["value"]["amount_fen"] == "9007199254740993"
 
 
 @pytest.mark.parametrize("field", ["item_id", "sort_key", "business_id", "payload_json"])
@@ -158,7 +139,7 @@ def test_strict_read_does_not_treat_saved_digest_as_a_validation_flag(field):
     rows = [stored_row(prepare_items([item(1)]).rows[0])]
     rows[0][field] = "{}" if field == "payload_json" else "invalid"
     with pytest.raises(ContractError) as error:
-        read_items(rows)
+        _read_item(rows[0])
     assert error.value.code == "storage_corrupt"
 
 

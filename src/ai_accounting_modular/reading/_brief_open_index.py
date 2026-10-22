@@ -207,16 +207,6 @@ class Directory(Queries):
         except (KeyError, TypeError, ValueError, AttributeError):
             corrupt()
 
-    def known(self, collection, identities):
-        identities = tuple(dict.fromkeys(identities))
-        return {
-            identity
-            for identity, entry in zip(
-                identities, self._entries(collection, identities), strict=True
-            )
-            if entry is not None
-        }
-
     def _materialize(self, collection, item_ids):
         if collection not in PUBLIC:
             corrupt()

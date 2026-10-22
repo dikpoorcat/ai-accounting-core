@@ -165,19 +165,8 @@ class TreeStore:
             corrupt()
         return raw, tuple(child.digest for child in self._check(raw, identity).children)
 
-    @staticmethod
-    def _check_retained(raw, identity):
-        # Keeping unopened immutable bytes does not interpret their contents or
-        # create a parsing proof. Actual reads and GC still decode strictly.
-        try:
-            if type(raw) is not str or not _identity(identity) or digest(raw) != identity:
-                corrupt()
-        except UnicodeError:
-            corrupt()
-
     def _new_nodes(self, roots):
         pending, result, visited = tuple(roots), set(), set()
-        root_ids = set(pending)
         while pending:
             wanted = tuple(
                 dict.fromkeys(identity for identity in pending if identity not in visited)
@@ -187,10 +176,7 @@ class TreeStore:
             following = []
             for identity, raw in zip(wanted, actual, strict=True):
                 if raw is not None:
-                    if identity in root_ids:
-                        self._check(raw, identity)
-                    else:
-                        self._check_retained(raw, identity)
+                    self._check(raw, identity)
                     if identity in self._staged and self._staged[identity] != raw:
                         corrupt()
                 else:

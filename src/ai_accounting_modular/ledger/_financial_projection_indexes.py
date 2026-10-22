@@ -182,9 +182,6 @@ def flow_entries(values, *, view, first, last, anchors, include_cash):
 
 
 class PlainStrategy:
-    def summary_from_count(self, count):
-        return None
-
     def leaf(self, entries):
         return None
 

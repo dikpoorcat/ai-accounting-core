@@ -18,15 +18,6 @@ from ai_accounting_modular.storage.public import block_digest as digest
 from tests.modular.ledger.test_financial_projection_indexes import Rows
 
 
-class StoredSummaries:
-    """The same None folds, deliberately using the normal actual-child path."""
-
-    leaf = PlainStrategy.leaf
-    branch = PlainStrategy.branch
-    encode_summary = PlainStrategy.encode_summary
-    decode_summary = PlainStrategy.decode_summary
-
-
 def tree(rows, domain, strategy):
     store = TreeStore(rows, namespace="_financial")
     return store, Tree(domain, strategy, store, max_items=1)
@@ -41,7 +32,7 @@ def tree(rows, domain, strategy):
         "financial-controlled-resources/2",
     ],
 )
-def test_plain_patch_skips_unused_child_decode_and_matches_strict_full_graph(monkeypatch, domain):
+def test_plain_patch_checks_actual_frontier_and_matches_cold_full_graph(monkeypatch, domain):
     monkeypatch.setattr(store_module, "_structure_cache", store_module._StructureCache())
     rows = Rows()
     values = [Entry(key, {"value": n}) for n, key in enumerate("abc")]
@@ -62,27 +53,19 @@ def test_plain_patch_skips_unused_child_decode_and_matches_strict_full_graph(mon
     update = Entry("a", {"value": -1})
     changed = changed_tree.patch(root, {"a": update})
     rows.publish(store.finish((root.digest,), (changed.digest,)))
-    assert unused.digest not in decoded
-    assert unused.digest not in changed_tree._loaded and unused.digest not in store._checked
+    assert decoded.count(unused.digest) == 1
+    assert unused.digest in changed_tree._loaded and unused.digest in store._checked
     assert changed.summary is None
     assert changed_tree.get_many(changed, ("b",))[0].value == {"value": 1}
-    assert unused.digest in decoded
+    assert decoded.count(unused.digest) == 1
 
     expected = Rows()
-    strict_store, strict = tree(expected, domain, StoredSummaries())
+    strict_store, strict = tree(expected, domain, PlainStrategy())
     old_full = strict.full(values)
     new_full = strict.full([update, *values[1:]])
     expected.publish(strict_store.finish((), (old_full.digest, new_full.digest)))
     assert root == old_full and changed == new_full and rows.values == expected.values
 
-    previous = Rows()
-    strict_store, strict = tree(previous, domain, StoredSummaries())
-    old_full = strict.full(values)
-    previous.publish(strict_store.finish((), (old_full.digest, old_full.digest)))
-    strict_store, strict = tree(previous, domain, StoredSummaries())
-    old_patch = strict.patch(old_full, {"a": update})
-    previous.publish(strict_store.finish((old_full.digest,), (old_patch.digest,)))
-    assert changed == old_patch and rows.values == previous.values
     # Reusing a locator never exempts a later actual read from checking bytes.
     rows.values[store.NODES, unused.digest] += " "
     _, fresh = tree(rows, domain, PlainStrategy())
@@ -106,6 +89,8 @@ def test_plain_actual_root_rejects_a_self_hashed_nonempty_summary():
     assert error.value.code == "storage_corrupt"
 
 
-@pytest.mark.parametrize("strategy", [FlowStrategy, JournalStrategy, CashBalanceStrategy])
-def test_amount_folds_continue_to_require_actual_child_summaries(strategy):
+@pytest.mark.parametrize(
+    "strategy", [PlainStrategy, FlowStrategy, JournalStrategy, CashBalanceStrategy]
+)
+def test_financial_folds_use_actual_child_summaries(strategy):
     assert not hasattr(strategy, "summary_from_count")

@@ -6,7 +6,6 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, content_digest
 from ai_accounting_modular.reading import _brief_activity_index as activity
-from ai_accounting_modular.reading import _brief_open_index as opened
 from ai_accounting_modular.reading import _collections as collections
 from ai_accounting_modular.reading._collections import IndexItem, prepare_items, prepare_rows
 
@@ -41,7 +40,7 @@ def test_bound_rows_keep_the_original_wire_bytes_order_and_input_isolation():
     rows, actual_digests = prepare_rows(iter(values))
     assert rows == tuple(expected) and actual_digests == tuple(digests)
     prepared = prepare_items(values, collections=("empty",))
-    assert prepared.rows == rows and prepared.row_digests == actual_digests
+    assert prepared.rows == rows
     assert prepared.manifest == (
         ("a", 1, content_digest([["001", "empty", digests[1]]])),
         ("empty", 0, content_digest([])),
@@ -51,32 +50,25 @@ def test_bound_rows_keep_the_original_wire_bytes_order_and_input_isolation():
     assert rows == tuple(expected)
 
 
-@pytest.mark.parametrize(
-    "owner,collection", [(activity, "activity_members"), (opened, "open_members")]
-)
-def test_bucket_preparation_does_not_build_a_discarded_flat_manifest(
-    owner, collection, monkeypatch
-):
+def test_bucket_preparation_does_not_build_a_discarded_flat_manifest(monkeypatch):
+    collection = "activity_members"
     items = [IndexItem(collection, "second", "002", {}), IndexItem(collection, "first", "001", {})]
-    expected = prepare_items(items)
+    expected_rows, expected_digests = prepare_rows(items)
 
     def unused(*args, **kwargs):
         pytest.fail("bucket owners must not assemble a discarded flat manifest")
 
     monkeypatch.setattr(collections, "_prepared", unused)
-    rows, buckets = owner._prepared(items)
-    assert rows == expected.rows
+    rows, buckets = activity._prepared(items)
+    assert rows == expected_rows
     assert {
         identity: digest for values in buckets.values() for identity, (_, digest) in values.items()
-    } == dict(zip((item.item_id for item in items), expected.row_digests, strict=True))
+    } == dict(zip((item.item_id for item in items), expected_digests, strict=True))
 
 
-@pytest.mark.parametrize(
-    "owner,collection", [(activity, "activity_members"), (opened, "open_members")]
-)
 @pytest.mark.parametrize("damage", ["business", "float", "tuple", "duplicate"])
-def test_bucket_binding_retains_strict_index_json_and_duplicate_checks(owner, collection, damage):
-    item = IndexItem(collection, "member", "001", {"nested": [1]})
+def test_bucket_binding_retains_strict_index_json_and_duplicate_checks(damage):
+    item = IndexItem("activity_members", "member", "001", {"nested": [1]})
     if damage == "business":
         items = [replace(item, business_id="invalid")]
     elif damage == "float":
@@ -86,4 +78,4 @@ def test_bucket_binding_retains_strict_index_json_and_duplicate_checks(owner, co
     else:
         items = [item, replace(item, value={"nested": [2]})]
     with pytest.raises((ValueError, ContractError)):
-        owner._prepared(items)
+        activity._prepared(items)

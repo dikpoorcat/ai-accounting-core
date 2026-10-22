@@ -142,8 +142,8 @@ class SummaryStrategy(Protocol):
     """Leaf and branch folds must agree for the same ordered entry sequence.
 
     A strategy whose summary depends only on entry count may optionally provide
-    summary_from_count(count: int) -> Any. Its result must equal both folds.
-    Other strategies obtain child summaries from actual strictly decoded nodes.
+    summary_from_count(count: int) -> Any to check saved and newly built summaries.
+    All strategies obtain child summaries from actual strictly decoded nodes.
     """
 
     def leaf(self, entries: tuple[Entry, ...]) -> Any: ...
@@ -748,17 +748,10 @@ class Tree:
             children = {_route(root.first)[len(prefix) : len(prefix) + 1]: root}
         else:
             prefix = node.prefix
-            # Count-only summaries follow this actual parent's checked locators.
-            # These temporary references never become decoded nodes or proofs.
-            refs = (
-                tuple(
-                    TreeChild(*child.wire(), deepcopy(self._summary_from_count(child.count)))
-                    for child in node.children
-                )
-                if self._summary_from_count is not None
-                else tuple(child.ref for child in self._load(node.children))
-            )
-            children = {_route(child.first)[len(prefix) : len(prefix) + 1]: child for child in refs}
+            children = {
+                _route(child.ref.first)[len(prefix) : len(prefix) + 1]: child.ref
+                for child in self._load(node.children)
+            }
         grouped = defaultdict(dict)
         for key, value in changes.items():
             route = _route(key)

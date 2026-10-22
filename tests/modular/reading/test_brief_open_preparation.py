@@ -1,13 +1,14 @@
 """Prepared Open roots own their inputs and still authenticate actual published values."""
 
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, ReadInputs, loads_json
 from ai_accounting_modular.reading import _brief_open_index as index
 from ai_accounting_modular.reading import _monthly, _open_store
-from ai_accounting_modular.reading._collections import IndexItem, prepare_items, read_items
+from ai_accounting_modular.reading._collections import IndexItem, _read_item, prepare_items
 from tests.modular.application._working_case import case as case
 
 from .test_brief_open_incremental import scope
@@ -26,6 +27,26 @@ def entries():
         IndexItem("open_items", "group", "001", {"amount_fen": "9007199254740993"}),
         index.item(index.VOUCHERS, "display", {"count": 2}),
     ]
+
+
+@pytest.mark.parametrize("damage", ["business", "float", "tuple", "duplicate"])
+def test_root_factory_keeps_strict_index_json_and_duplicate_checks(case, damage):
+    item = IndexItem("open_members", "member", "001", {"nested": [1]})
+    if damage == "business":
+        selected = [replace(item, business_id="invalid")]
+    elif damage == "float":
+        selected = [replace(item, value={"nested": [1.0]})]
+    elif damage == "tuple":
+        selected = [replace(item, value={"nested": [(1,)]})]
+    else:
+        selected = [item, replace(item, value={"nested": [2]})]
+    summary = {"_inputs": ReadInputs().wire(), "_cooperation_inputs": ReadInputs().wire()}
+    key = _monthly.key(scope(case))
+    with case.kernel.storage.read_unit(case.company) as read:
+        repository = read.repository("reading")
+        index.complete(summary, (item,), read.head, repository=repository, scope_key=key)
+        with pytest.raises((ValueError, ContractError)):
+            index.complete(summary, selected, read.head, repository=repository, scope_key=key)
 
 
 @pytest.mark.parametrize("populated", [False, True])
@@ -152,8 +173,8 @@ def test_a_self_consistent_logical_row_must_still_match_its_actual_published_roo
         )
         raw = prepare_items((changed,)).rows[0][-1]
         forged = dict(actual, sort_key=changed.sort_key, payload_json=raw)
-        _, decoded = read_items((forged,))
-        assert decoded[0].value == changed.value  # Its own complete index/body digest is valid.
+        decoded, _, _ = _read_item(forged)
+        assert decoded.value == changed.value  # Its own complete index/body digest is valid.
         with pytest.raises(ContractError) as failure:
             directory.check_many((forged,))
     assert failure.value.code == "storage_corrupt"

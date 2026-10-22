@@ -1,6 +1,5 @@
 """Same-read component proofs never replace actual bytes, context or owner checks."""
 
-from collections import OrderedDict
 from copy import deepcopy
 
 import pytest
@@ -19,7 +18,6 @@ from ai_accounting_modular.reading import (
 from ai_accounting_modular.reading import (
     _brief_groups,
     _brief_open,
-    _component_view,
     _item_buckets,
     _monthly,
     _open_store,
@@ -49,7 +47,6 @@ def snapshot(book, read):
 
 
 def count_headers(monkeypatch):
-    monkeypatch.setattr(_component_view, "_summary_checks", OrderedDict())
     counts = {activity.COMPONENT: 0, open_items.COMPONENT: 0}
     for owner in (activity, open_items):
         original = owner.validate
@@ -92,7 +89,9 @@ def test_snapshot_mutations_cannot_change_the_private_directory_or_its_manifest(
         assert _brief_groups.activity_page(saved, read, {})["page"]["total_count"] == 1
 
 
-def test_another_read_reuses_only_static_checks_and_rechecks_actual_directory(book, monkeypatch):
+def test_another_read_rechecks_summary_and_directory_even_if_old_views_are_copied(
+    book, monkeypatch
+):
     prepared(book)
     counts = count_headers(monkeypatch)
     physical_checks = []
@@ -116,7 +115,7 @@ def test_another_read_reuses_only_static_checks_and_rechecks_actual_directory(bo
             saved.scope_key, activity.COMPONENT, "activity", CollectionFilter(), PageQuery(), other
         )
         _brief_groups.activity_page(saved, other, {})
-    assert counts == {activity.COMPONENT: 1, open_items.COMPONENT: 1}
+    assert counts == {activity.COMPONENT: 2, open_items.COMPONENT: 1}
     assert len(physical_checks) == 2
     assert physical_checks[0] is not physical_checks[1]
 
@@ -274,7 +273,7 @@ def test_base_reads_never_share_decoded_summary_values(book, monkeypatch, owner)
         repository = read.repository("reading")
         directory = owner.base(repository, repository.state(scope_key, owner.COMPONENT))
         assert directory.payload == expected
-        assert counts[owner.COMPONENT] == 1
+        assert counts[owner.COMPONENT] == 2
 
 
 @pytest.mark.parametrize(
@@ -284,7 +283,7 @@ def test_base_reads_never_share_decoded_summary_values(book, monkeypatch, owner)
         (open_items, "open_items"),
     ],
 )
-def test_static_summary_hit_still_reads_actual_index_on_a_new_transaction(book, owner, collection):
+def test_new_transaction_rechecks_the_actual_index(book, owner, collection):
     prepared(book)
     scope_key = _monthly.key(selection(book))
     with book.kernel.storage.read_unit(book.company) as read:

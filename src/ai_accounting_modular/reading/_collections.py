@@ -29,23 +29,10 @@ class IndexItem:
 
 @dataclass(frozen=True)
 class PreparedItems:
-    """Canonical rows and immutable binding digests emitted together by prepare_items."""
+    """Complete canonical rows and their collection manifests, ready for publication."""
 
     rows: tuple[tuple, ...]
     manifest: tuple[tuple[str, int, str], ...]
-    row_digests: tuple[str, ...]
-
-    def select(self, identities):
-        """Keep exact immutable rows; decoded display values are never a proof."""
-        identities = set(identities)
-        selected = [
-            (row, digest)
-            for row, digest in zip(self.rows, self.row_digests, strict=True)
-            if row[:2] in identities
-        ]
-        if {row[:2] for row, _ in selected} != identities:
-            raise ContractError("invalid_input", "所保留的读取项目不在已核验集合中。")
-        return _prepared(tuple(row for row, _ in selected), tuple(digest for _, digest in selected))
 
     def with_summary(self, summary):
         if "_collections" in summary:
@@ -153,7 +140,7 @@ def _prepared(rows, digests, collections=()):
         (key, len(values), content_digest([list(value) for value in sorted(values)]))
         for key, values in sorted(grouped.items())
     )
-    return PreparedItems(tuple(rows), manifest, tuple(digests))
+    return PreparedItems(tuple(rows), manifest)
 
 
 def prepare_rows(items):
@@ -170,17 +157,6 @@ def prepare_items(items, *, collections=()):
     """All serialization and hashes precede the short publication transaction."""
     rows, digests = prepare_rows(items)
     return _prepared(rows, digests, collections)
-
-
-def merge_items(*parts, collections=()):
-    """Combine independently prepared immutable rows without serializing their values."""
-    if any(not isinstance(part, PreparedItems) for part in parts):
-        raise TypeError("only prepared collection rows can be merged")
-    return _prepared(
-        tuple(row for part in parts for row in part.rows),
-        tuple(digest for part in parts for digest in part.row_digests),
-        collections,
-    )
 
 
 def _filters(query):
@@ -249,20 +225,6 @@ def _read_item(row):
 
 def _decode(row):
     return _read_item(row)[0].value
-
-
-def read_items(rows, *, collections=()):
-    """Strictly restore canonical bytes and independent display values in one pass."""
-    items, canonical, digests = [], [], []
-    try:
-        for row in rows:
-            item, raw, digest = _read_item(row)
-            items.append(item)
-            canonical.append(raw)
-            digests.append(digest)
-        return _prepared(canonical, digests, collections), tuple(items)
-    except (ContractError, KeyError, TypeError, ValueError) as error:
-        raise ContractError("storage_corrupt", "读取集合项目或完整目录不一致。") from error
 
 
 class _StoredCollections:
