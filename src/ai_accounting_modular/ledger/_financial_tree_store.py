@@ -89,6 +89,7 @@ class TreeStore:
     def __init__(self, reader):
         self.reader = reader
         self._base, self._staged, self._edges = {}, {}, {}
+        self._checked = {}
 
     def _read(self, keys):
         keys = tuple(keys)
@@ -129,7 +130,19 @@ class TreeStore:
         return identity
 
     def _check(self, raw, identity):
-        return _checked_structure(raw, identity)
+        if type(raw) is not str or not _identity(identity):
+            corrupt()
+        checked = self._checked.get(identity)
+        if checked is not None:
+            if checked.payload_json != raw:
+                corrupt()
+            return checked
+        checked = _checked_structure(raw, identity)
+        # A read's staging and GC must not depend on cross-read LRU capacity.
+        # Long integer tokens still cannot reuse a more permissive parser policy.
+        if not _LONG_DIGITS.search(raw):
+            self._checked[identity] = checked
+        return checked
 
     def _node(self, identity):
         raw = self._read(((self.NODES, identity),))[0]

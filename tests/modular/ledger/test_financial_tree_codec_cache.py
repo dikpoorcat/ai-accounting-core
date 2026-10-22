@@ -1,6 +1,7 @@
 """Only exact immutable bytes share decoding; actual rows and business lifetimes do not."""
 
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -60,6 +61,47 @@ def test_cross_store_hit_still_reads_actual_rows_and_independent_structure_still
     assert decoded == [root.digest, root.digest]
     _, _, fresh = assemble(reader)
     assert tuple(fresh.entries(root)) == tuple(values)
+    assert decoded == [root.digest, root.digest]
+
+
+def test_one_read_keeps_proofs_through_global_eviction_staging_publication_and_gc(monkeypatch):
+    reader, root, values = persisted(30, max_items=4)
+    monkeypatch.setattr(module, "_structure_cache", module._StructureCache(max_nodes=1))
+    original, decoded = tree_module._structure, Counter()
+
+    def observed(raw, identity):
+        decoded[identity] += 1
+        return original(raw, identity)
+
+    monkeypatch.setattr(tree_module, "_structure", observed)
+    _, store, tree = assemble(reader, max_items=4)
+    assert tuple(tree.entries(root)) == tuple(values)
+    changed = tree.patch(root, {values[0].key: Entry(values[0].key, {"n": 999})})
+    second = Tree(tree.domain, Summary(), store, max_items=4)
+    assert second.get_many(changed, (values[0].key,))[0].value == {"n": 999}
+    assert store.finish((root.digest,), (changed.digest,)).writes
+    assert store.finish((root.digest,), ()).deletes
+    assert len(decoded) > 1 and set(decoded.values()) == {1}
+    reader.calls.clear()
+    _, _, fresh = assemble(reader, max_items=4)
+    assert tuple(fresh.entries(root)) == tuple(values)
+    assert reader.calls and max(decoded.values()) == 2
+
+
+def test_ordinary_oversize_proof_is_reused_only_within_its_actual_read(monkeypatch):
+    raw, root = stored_node(max_bytes=128)
+    reader = Reader({(module.TreeStore.NODES, root.digest): raw})
+    original, decoded = tree_module._structure, []
+
+    def observed(value, identity):
+        decoded.append(identity)
+        return original(value, identity)
+
+    monkeypatch.setattr(tree_module, "_structure", observed)
+    store = module.TreeStore(reader)
+    first = store.checked_nodes((root.digest,))[0]
+    assert store.checked_nodes((root.digest,))[0] is first
+    assert module.TreeStore(reader).checked_nodes((root.digest,))[0] is not first
     assert decoded == [root.digest, root.digest]
 
 
