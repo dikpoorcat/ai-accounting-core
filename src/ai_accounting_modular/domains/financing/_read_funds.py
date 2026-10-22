@@ -59,18 +59,33 @@ def _pages(call):
         cursor = page.next_cursor
 
 
-def _contents(ledger, refs, read):
-    unique = {ref["result_id"]: ref for ref in refs}
-    refs, values = list(unique.values()), {}
+def _contents(ledger, refs, read, cache):
+    unique = {}
+    for ref in refs:
+        identity = ref["result_id"]
+        previous = unique.get(identity)
+        body = cache.get(identity)
+        if (previous is not None and previous != ref) or (
+            body is not None and body.reference != ref
+        ):
+            fail("同一次基金读取的正式结果定位相互冲突。", "storage_corrupt")
+        unique[identity] = ref
+    refs = [ref for identity, ref in unique.items() if identity not in cache]
     for start in range(0, len(refs), 500):
-        values.update(
-            (item.reference["result_id"], item)
-            for item in ledger.get_adopted_contents(refs[start : start + 500], read)
-        )
-    return values
+        batch = {ref["result_id"]: ref for ref in refs[start : start + 500]}
+        found = {}
+        for body in ledger.get_adopted_contents(list(batch.values()), read):
+            identity = body.reference["result_id"]
+            if identity in found or body.reference != batch.get(identity):
+                fail("基金正文与所请求的精确正式结果不一致。", "storage_corrupt")
+            found[identity] = body
+        if found.keys() != batch.keys():
+            fail("基金所需的精确正式正文不完整。", "storage_corrupt")
+        cache.update(found)
+    return {identity: cache[identity] for identity in unique}
 
 
-def _confirmations(ledger, scope, read):
+def _confirmations(ledger, scope, read, cache):
     values = list(_pages(lambda page: ledger.query_adopted_values(scope, KINDS, page, read)))
     contents = _contents(
         ledger,
@@ -81,9 +96,12 @@ def _confirmations(ledger, scope, read):
             if ref is not None
         ],
         read,
+        cache,
     )
     events = []
     for item in values:
+        if contents[item.reference["result_id"]].source != item.source:
+            fail("基金确认正文与所选精确正式来源不一致。", "storage_corrupt")
         if item.target == item.baseline_target:
             continue
         for sign, target, ref in (
@@ -119,7 +137,7 @@ def _confirmations(ledger, scope, read):
     return events
 
 
-def _settlements(ledger, scope, selected, read):
+def _settlements(ledger, scope, selected, read, cache):
     query = SettlementEventQuery(
         scope["period_from"], scope["period_to"], components=("money",), source_business_kinds=KINDS
     )
@@ -138,21 +156,29 @@ def _settlements(ledger, scope, selected, read):
                 )
             )
         )
-    contents = _contents(ledger, [item.reference for item in directory], read)
+    contents = _contents(ledger, [item.reference for item in directory], read, cache)
+    if any(contents[item.reference["result_id"]].source != item.source for item in directory):
+        fail("基金确认正文与实际款项采用的正式来源不一致。", "storage_corrupt")
     producers = {item.reference["business_id"]: item for item in contents.values()}
-    consumer_ids = list(dict.fromkeys(item.use.source["business_id"] for item in uses))
-    consumers = []
-    for start in range(0, len(consumer_ids), 500):
-        consumers.extend(
-            _pages(
-                lambda page, batch=consumer_ids[start : start + 500]: (
-                    ledger.query_adopted_directory(
-                        scope, (), page, read, business_ids=tuple(batch), result_slots=("main",)
-                    )
-                )
-            )
-        )
-    by_consumer = {item.reference["business_id"]: item.reference for item in consumers}
+    sources = {}
+    for item in uses:
+        source = item.use.source
+        previous = sources.setdefault(source["result_id"], source)
+        if previous != source or source["result_slot"] != "main":
+            fail("基金实际款项的正式采用来源相互冲突。", "storage_corrupt")
+    requested, by_consumer = list(sources.values()), {}
+    for start in range(0, len(requested), 500):
+        for entry in ledger.get_adopted_sources(requested[start : start + 500], read):
+            identity = entry.source["result_id"]
+            if (
+                identity in by_consumer
+                or entry.source != sources.get(identity)
+                or entry.reference["result_slot"] != "main"
+            ):
+                fail("基金实际款项的精确正式来源不一致。", "storage_corrupt")
+            by_consumer[identity] = entry.reference
+    if by_consumer.keys() != sources.keys():
+        fail("基金实际款项的精确正式来源不完整。", "storage_corrupt")
     events = []
     for item in uses:
         use, movement = item.use, item.movement
@@ -160,12 +186,7 @@ def _settlements(ledger, scope, selected, read):
         if source is None or source.target["kind"] not in KINDS or movement is None:
             fail("基金实际清偿缺少同口径的正式确认或真实资金。", "storage_corrupt")
         purchase = source.target["kind"] == KINDS[0]
-        ref = by_consumer.get(use.source["business_id"])
-        if ref is None or (ref["result_id"], ref["generation"]) != (
-            use.source["result_id"],
-            use.source["result_generation"],
-        ):
-            fail("基金实际款项的正式采用定位不一致。", "storage_corrupt")
+        ref = by_consumer[use.source["result_id"]]
         events.append(
             MoneyFundEvent(
                 use.value["settlement_id"],
@@ -190,8 +211,9 @@ def _settlements(ledger, scope, selected, read):
 
 def _events(owner, scope, read):
     normalized, selected = _scope(scope, read)
-    events = _confirmations(owner._ledger, normalized, read) + _settlements(
-        owner._ledger, normalized, selected, read
+    contents = {}
+    events = _confirmations(owner._ledger, normalized, read, contents) + _settlements(
+        owner._ledger, normalized, selected, read, contents
     )
     events.sort(
         key=lambda item: (

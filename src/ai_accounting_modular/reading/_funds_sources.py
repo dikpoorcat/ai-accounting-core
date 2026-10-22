@@ -8,15 +8,19 @@ from ai_accounting_modular.contracts.public import (
     QuerySelection,
     ResourceDefinition,
 )
-from ai_accounting_modular.ledger.public import AdoptedContent, AdoptedDirectoryEntry
+from ai_accounting_modular.ledger.public import (
+    AdoptedContent,
+    AdoptedDirectoryEntry,
+    AdoptedOriginProjection,
+)
 
-from ._business_labels import business_label, settlement_label
+from ._business_labels import business_label, origin_fields, settlement_label
 
 
 @dataclass(frozen=True)
 class FundSources:
     entries: dict[str, AdoptedDirectoryEntry]
-    contents: dict[str, AdoptedContent]
+    contents: dict[str, AdoptedOriginProjection | AdoptedContent]
     obligations: dict[tuple[str, str], ResourceDefinition]
 
     def label(self, view):
@@ -76,13 +80,13 @@ def load(reader, activity, scope, read):
         raise ContractError("storage_corrupt", "资金业务或分项缺少所选月份的精确正式来源。")
     contents, requested = {}, [entry.reference for entry in entries.values()]
     for start in range(0, len(requested), 500):
-        for content in reader.ledger.get_adopted_contents(requested[start : start + 500], read):
+        for content in reader.ledger.get_obligation_origins(requested[start : start + 500], read):
             entry = entries.get(content.reference["result_id"])
             if (
                 entry is None
                 or content.reference != entry.reference
                 or content.source != entry.source
-                or content.target["kind"] != entry.business_kind
+                or origin_fields(content)[0]["kind"] != entry.business_kind
             ):
                 raise ContractError("storage_corrupt", "资金用途正文与所选精确正式结果不一致。")
             contents[content.reference["result_id"]] = content

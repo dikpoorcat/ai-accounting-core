@@ -250,13 +250,13 @@ def business_label(
 
 
 def settlement_label(
-    content: AdoptedContent,
+    content: AdoptedContent | AdoptedOriginProjection,
     source_labels: Sequence[BusinessLabel],
     direction: Literal["inflow", "outflow"],
 ) -> BusinessLabel:
     """Describe actual allocation purposes; no amount or ownership is inferred from a label."""
     label = business_label(content)
-    if content.target["kind"] != "money.movement":
+    if origin_fields(content)[0]["kind"] != "money.movement":
         return label
     verb = "支付" if direction == "outflow" else "收到"
     if label.code == "managed_reserve":

@@ -2,6 +2,7 @@
 
 from ai_accounting_modular.contracts.public import format_fen, parse_fen
 
+from ._business_labels import origin_fields
 from ._collections import IndexItem
 from ._funds_items import date_key, party_name
 
@@ -52,7 +53,7 @@ def batches(activity, sources, objects):
             )
             remainder = value - sum(part.amount_fen for part in parts)
             if remainder:
-                data = sources.contents[view["source"]["result_id"]].basis["input"]
+                data = origin_fields(sources.contents[view["source"]["result_id"]])[1]["input"]
                 if (
                     data.get("type") != "payroll_reserve"
                     or parse_fen(data["reserve_expense_fen"]) != remainder
