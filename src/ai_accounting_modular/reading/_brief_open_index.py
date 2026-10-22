@@ -141,7 +141,7 @@ class Directory(Queries):
         return result
 
     def _bind(self, repository, scope_key, payload):
-        self.repository, self.scope_key, self.payload = repository, scope_key, payload
+        self.scope_key, self.payload = scope_key, payload
         self.pool = OpenPool(repository)
         if self.pool.token is None:
             corrupt("待收待付范围缺少实际共享索引，请重新生成。")

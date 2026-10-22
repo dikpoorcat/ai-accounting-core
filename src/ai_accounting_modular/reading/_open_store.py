@@ -22,7 +22,7 @@ def _control(generation, revision):
 
 class OpenPool:
     def __init__(self, repository):
-        self.repository, self._session = repository, repository._session
+        self._session = repository._session
         row = self._session.fetchone(
             "SELECT * FROM read_item WHERE scope_key=? AND collection_key=? AND item_id='head'",
             (SCOPE, CONTROL),
