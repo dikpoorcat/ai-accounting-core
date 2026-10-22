@@ -179,6 +179,53 @@ def test_external_entry_input_stays_strict_and_detached():
             Entry("a", invalid)
 
 
+def test_entry_json_copies_keep_aliases_without_reconstructing_builtin_scalars(monkeypatch):
+    expected = [False, None, 1, -(2**63), 10**200, "甲𠮷🙂\x00\n"]
+    shared = {"values": list(expected)}
+    source = [shared, shared, {"again": shared}]
+    entry = Entry("a", source)
+    source.append("later")
+    shared["values"].append("later")
+
+    def unexpected(*args):
+        raise AssertionError("strict builtin JSON needs no generic object reconstruction")
+
+    monkeypatch.setattr(module, "deepcopy", unexpected)
+    first, second = entry.value, entry.value
+    assert len(first) == 3 and first[0]["values"] == expected
+    assert first[0] is first[1] is first[2]["again"]
+    assert second[0] is second[1] is second[2]["again"]
+    assert first[0] is not second[0] and first[0]["values"] is not second[0]["values"]
+    first[0]["values"].append("changed return")
+    second[2]["again"]["new"] = True
+    assert entry.value[0] == {"values": expected}
+
+
+def test_entry_string_subclass_copies_keep_attributes_and_cross_container_aliases():
+    class Text(str):
+        pass
+
+    text = Text("甲𠮷🙂")
+    shared = [False]
+    source = {"text": text, "shared": shared, "again": shared}
+    text.notes = shared
+    text.parent = source
+    entry = Entry("a", source)
+    text.notes.append("changed input")
+    source["new"] = True
+
+    first, second = entry.value, entry.value
+    assert type(first["text"]) is Text and first["text"] == "甲𠮷🙂"
+    assert first["text"].parent is first
+    assert first["text"].notes is first["shared"] is first["again"]
+    assert first["shared"] == [False] and "new" not in first
+    assert first["text"] is not second["text"]
+    first["text"].notes.append("changed return")
+    first["text"].parent["new"] = True
+    assert second["shared"] == [False] and "new" not in second
+    assert entry.value["shared"] == [False] and "new" not in entry.value
+
+
 def test_stored_raw_still_requires_exact_string_type_and_canonical_text():
     reader, root, _ = persisted(1)
     raw = reader.rows[TreeStore.NODES, root.digest]

@@ -43,6 +43,29 @@ def _text(value):
     return str.__str__(value)
 
 
+def _copy_json(value, memo):
+    # Entry owns strictly checked JSON. Copy its containers without generic
+    # object reconstruction, retaining aliases and subclass deepcopy semantics.
+    kind = type(value)
+    if value is None or kind is str or kind is int or kind is bool:
+        return value
+    identity = id(value)
+    if identity in memo:
+        return memo[identity]
+    if kind is list:
+        result = []
+        memo[identity] = result
+        result.extend(_copy_json(item, memo) for item in value)
+        return result
+    if kind is dict:
+        result = {}
+        memo[identity] = result
+        for key, item in value.items():
+            result[key] = _copy_json(item, memo)
+        return result
+    return deepcopy(value, memo)
+
+
 @dataclass(frozen=True, init=False)
 class Entry:
     key: str
@@ -71,7 +94,7 @@ class Entry:
 
     @property
     def value(self):
-        return deepcopy(self._value)
+        return _copy_json(self._value, {})
 
 
 @dataclass(frozen=True)
