@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import closing
 from uuid import uuid4
 
@@ -68,6 +69,53 @@ def test_single_company_transaction_and_repository_lifetime(storage_case):
         assert read.repository("identity").names() == ["乙", "甲"]
     with pytest.raises(ContractError, match="已结束"):
         repository.names()
+
+
+@pytest.mark.parametrize(
+    "mode,ending",
+    [
+        (mode, ending)
+        for mode in ("read", "write", "preview", "maintenance")
+        for ending in ("success", "body_failure", "check_failure")
+        if mode != "read" or ending != "check_failure"
+    ],
+)
+def test_ended_context_releases_owned_repositories_and_final_checks(storage_case, mode, ending):
+    storage, company = storage_case
+    owner = "records" if mode == "maintenance" else "identity"
+    calls, callback_ref = [], None
+
+    class FinalCheck:
+        def __init__(self, context):
+            self.context = context
+
+        def __call__(self):
+            self.context.repository(owner)
+            calls.append(mode)
+            if ending == "check_failure":
+                raise RuntimeError("synthetic end failure")
+
+    # Keep the ended context alive deliberately. Its transaction-owned objects
+    # should be released promptly, rather than waiting for cyclic collection.
+    try:
+        with getattr(storage, f"{mode}_unit")(company.company_id) as context:
+            repository_ref = weakref.ref(context.repository(owner))
+            if mode != "read":
+                callback = FinalCheck(context)
+                callback_ref = weakref.ref(callback)
+                context.check_before_commit(callback)
+                del callback
+            if ending == "body_failure":
+                raise RuntimeError("synthetic end failure")
+    except RuntimeError as error:
+        assert ending != "success" and str(error) == "synthetic end failure"
+    else:
+        assert ending == "success"
+    assert repository_ref() is None
+    assert callback_ref is None or callback_ref() is None
+    assert calls == ([] if mode == "read" or ending == "body_failure" else [mode])
+    with pytest.raises(ContractError, match="已结束"):
+        context.repository(owner)
 
 
 def test_failed_body_and_commit_check_both_roll_back(storage_case):

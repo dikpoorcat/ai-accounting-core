@@ -108,6 +108,10 @@ def database_unit(
     finally:
         if context is not None:
             context._active = False
+            # End transaction-owned cycles even if a caller keeps the closed context.
+            context._repositories.clear()
+            if writable:
+                context._checks.clear()
         if token is not None:
             _active_writes.reset(token)
         connection.close()
