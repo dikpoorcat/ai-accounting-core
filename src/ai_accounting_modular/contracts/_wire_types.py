@@ -652,7 +652,7 @@ class OperationsExpense(TypedDict):
     project_total_fen: NotRequired[NonNegativeFen]
 
 class OperationsOtherIncome(TypedDict):
-    income_kind: Literal['bank_interest', 'company_reward']
+    income_kind: Literal['bank_interest', 'company_reward', 'retained_verification']
     amount_fen: PositiveFen
     funds_account_id: Id
     counterparty_id: NotRequired[Id]
@@ -1743,7 +1743,7 @@ class PartialOperationsExpense(TypedDict):
     project_total_fen: NotRequired[NonNegativeFen]
 
 class PartialOperationsOtherIncome(TypedDict):
-    income_kind: NotRequired[Literal['bank_interest', 'company_reward']]
+    income_kind: NotRequired[Literal['bank_interest', 'company_reward', 'retained_verification']]
     amount_fen: NotRequired[PositiveFen]
     funds_account_id: NotRequired[Id]
     counterparty_id: NotRequired[Id]
@@ -3288,7 +3288,7 @@ class AccountingOperationsExpense(TypedDict):
     project_total_fen: NotRequired[NonNegativeFen]
 
 class AccountingOperationsOtherIncome(TypedDict):
-    income_kind: Literal['bank_interest', 'company_reward']
+    income_kind: Literal['bank_interest', 'company_reward', 'retained_verification']
     amount_fen: PositiveFen
     funds_account_id: Id
     counterparty_id: NotRequired[Id]
@@ -9911,7 +9911,7 @@ class TargetOperationsExpenseRecoveryValues(TypedDict):
 
 class TargetOperationsOtherIncomeValues(TypedDict):
     amount_fen: PositiveFen
-    expense_or_income_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee', 'bank_interest', 'company_reward']
+    expense_or_income_class: Literal['administration', 'sales', 'service', 'bank_fee', 'tax_late_fee', 'social_contribution_late_fee', 'bank_interest', 'company_reward', 'retained_verification']
 
 class TargetOperationsAdvanceValues(TypedDict):
     side: Literal['customer', 'supplier']

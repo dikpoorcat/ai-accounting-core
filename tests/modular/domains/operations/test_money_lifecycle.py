@@ -18,7 +18,7 @@ from ai_accounting_modular.domains.operations.public import (
 )
 from ai_accounting_modular.identity.public import create_identity
 from ai_accounting_modular.identity.public import repository_factory as identity_repository
-from ai_accounting_modular.ledger.public import create_ledger
+from ai_accounting_modular.ledger.public import LedgerQuery, create_ledger
 from ai_accounting_modular.ledger.public import repository_factory as ledger_repository
 from ai_accounting_modular.money.public import create_money
 from ai_accounting_modular.money.public import repository_factory as money_repository
@@ -557,12 +557,22 @@ def test_future_payment_cannot_prove_january_overpayment(system):
     assert get(system, original, paid, excess)["businesses"] == []
 
 
-def test_other_income_has_one_stable_movement_and_retry_does_not_advance_head(system):
+@pytest.mark.parametrize(
+    "income_kind,account,summary",
+    [
+        ("bank_interest", "5603", "银行利息冲财务费用"),
+        ("company_reward", "6301", "确认公司奖励"),
+        ("retained_verification", "6301", "确认可保留的账户验证收入"),
+    ],
+)
+def test_other_income_has_one_stable_movement_and_retry_does_not_advance_head(
+    system, income_kind, account, summary
+):
     app, company, ids = system
     current = fact(
         ids,
         "operations.other_income",
-        {"income_kind": "bank_interest", "amount_fen": "1000", "funds_account_id": ids["bank"]},
+        {"income_kind": income_kind, "amount_fen": "1000", "funds_account_id": ids["bank"]},
         actual="2026-01-15",
     )
     result = app.accounting_apply(command(company, current))
@@ -574,11 +584,79 @@ def test_other_income_has_one_stable_movement_and_retry_does_not_advance_head(sy
     with app.storage.read_unit(company) as read:
         moves = app.ledger.fund_movements(ids["bank"], "2026-01", "2026-01", read)
         assert len(moves) == 1 and moves[0].value["amount_fen"] == "1000"
-    lines = before["businesses"][0]["results"][0]["vouchers"][0]["lines"]
+        assert moves[0].value["cashflow_parts"] == [
+            {"category": "other_operating_receipts", "amount_fen": "1000"}
+        ]
+        assert app.ledger.tax_sales("2026-01", "2026-01", read) == ()
+        assert app.ledger.query_obligations(LedgerQuery(), read).total == 0
+        snapshot = app.ledger.financial_snapshot(
+            {
+                "company_id": company,
+                "period_from": "2026-01",
+                "period_to": "2026-01",
+                "view": "current",
+            },
+            read,
+        )
+    saved = before["businesses"][0]["results"][0]
+    assert saved["basis"]["input"]["income_kind"] == income_kind
+    assert saved["basis"]["source_locations"] == [{"source_id": ids["source"]}]
+    lines = saved["vouchers"][0]["lines"]
     assert [(line["account_code"], line["debit_fen"], line["credit_fen"]) for line in lines] == [
         ("1002", "1000", "0"),
-        ("5603", "0", "1000"),
+        (account, "0", "1000"),
     ]
+    assert lines[1]["summary"] == summary
+    profit = snapshot["profit_statement"]
+    assert profit["22"]["current"] == {
+        "state": "known",
+        "amount_fen": "0" if income_kind == "bank_interest" else "1000",
+    }
+    assert profit["19"]["current"] == {
+        "state": "known",
+        "amount_fen": "-1000" if income_kind == "bank_interest" else "0",
+    }
+    assert profit["23"]["current"] == {"state": "known", "amount_fen": "0"}
+    assert profit["30"]["current"] == {"state": "known", "amount_fen": "1000"}
+    assert snapshot["cash_flow_statement"]["2"]["current"] == {
+        "state": "known",
+        "amount_fen": "1000",
+    }
+
+
+@pytest.mark.parametrize(
+    "problem,error_field",
+    [("missing_day", "code"), ("different_period", "error"), ("unproven_kind", "code")],
+)
+def test_retained_verification_does_not_infer_missing_facts_or_partially_apply(
+    system, problem, error_field
+):
+    app, company, ids = system
+    current = fact(
+        ids,
+        "operations.other_income",
+        {
+            "income_kind": "retained_verification",
+            "amount_fen": "1",
+            "funds_account_id": ids["bank"],
+        },
+        actual="2026-01-15",
+    )
+    if problem == "missing_day":
+        current.pop("effective_on")
+    elif problem == "different_period":
+        current["effective_on"] = "2026-02-01"
+    else:
+        current["data"]["income_kind"] = "account_verification"
+    unrelated = expense(ids, 100)
+    with app.storage.read_unit(company) as read:
+        original_head = read.head
+    result = app.accounting_apply(command(company, unrelated, current))
+    assert result[error_field] == "invalid_input", result
+    assert get(system, unrelated, current)["businesses"] == []
+    with app.storage.read_unit(company) as read:
+        assert read.head == original_head
+        assert app.ledger.fund_movements(ids["bank"], "2026-01", "2026-02", read) == ()
 
 
 def cost_return(ids, original, amount, *, period="2026-01"):

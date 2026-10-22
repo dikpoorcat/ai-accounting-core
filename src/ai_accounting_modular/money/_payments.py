@@ -74,11 +74,14 @@ def settlement(fact, context):
         fail("银行批量付款必须由公司银行账户实际转出。", "invalid_input")
     definitions = _definitions(fact, context)
     if data["payment_method"] == "individual":
-        parties = {item.value.get("party_id") for item in definitions}
-        if len(parties) != 1:
+        parties = {
+            item.value["party_id"] for item in definitions if item.value.get("party_id") is not None
+        }
+        if len(parties) > 1:
             fail("一笔普通收付只能对应同一实际交易方；多收款人使用银行批量付款。")
-        party = next(iter(parties))
-        if data.get("counterparty_id") is not None and data["counterparty_id"] != party:
+        known_party = next(iter(parties), None)
+        party = data.get("counterparty_id", known_party)
+        if known_party is not None and party != known_party:
             fail("实际交易方与来源义务不一致。")
     else:
         party = None
@@ -119,7 +122,7 @@ def settlement(fact, context):
                 )
             if allocation.get("recipient_id", ob["party_id"]) != ob["party_id"]:
                 fail(f"银行批量付款第{index + 1}项实际收款人与来源义务不一致。")
-        elif allocation.get("recipient_id", ob.get("party_id")) != ob.get("party_id"):
+        elif allocation.get("recipient_id", party) != party:
             fail("实际收款人与来源义务不一致。")
         paid = amount(allocation["amount_fen"])
         line(
@@ -343,6 +346,24 @@ def physical(fact, context):
     return plan
 
 
+def _asset_cost_type(result, slot):
+    """Use the adopted cost's explicit nature, irrespective of who supplied it."""
+    kind, data = result.basis["kind"], result.basis["input"]
+    if kind == "assets.acquisition" and slot == "primary" and data["type"] == "direct":
+        return data["asset"]["asset_type"]
+    if kind == "assets.project_cost" and slot == "primary":
+        if data["project_nature"] in {"purchased_intangible", "internal_development"}:
+            return "intangible"
+    if kind == "people.remuneration" and slot == "net_pay":
+        destination = data.get("destination", {})
+        if (
+            destination.get("type") == "project"
+            and destination.get("project_nature") == "purchased_intangible"
+        ):
+            return "intangible"
+    return None
+
+
 def offset(fact, context):
     data = fact["data"]
     first, second = data["first"], data["second"]
@@ -387,14 +408,9 @@ def offset(fact, context):
             if destination.basis["kind"] != "operations.expense":
                 fail("经营预付款只能抵对应经营采购费用，不能挪作资产等其他用途。")
         else:
-            target = destination.basis["input"]
             expected_type = "fixed" if purpose == "fixed_asset" else "intangible"
-            if (
-                destination.basis["kind"] != "assets.acquisition"
-                or target["type"] != "direct"
-                or target["asset"]["asset_type"] != expected_type
-            ):
-                fail("资产预付款只能抵对应类型的直接资产取得成本。")
+            if _asset_cost_type(destination, other["slot"]) != expected_type:
+                fail("资产预付款只能抵对应类型的已确认资产或资本化成本义务。")
     elif any(item["category"] == "advance" for item in (one, two)):
         fail("预付用途必须使用明确的预付款抵销关系。")
     plan = base_plan(fact, context, {"transfer_type": "offset", "amount_fen": format_fen(value)})

@@ -2,6 +2,7 @@
 
 from ai_accounting_modular.contracts.public import (
     BusinessRef,
+    ContractError,
     DirectRelation,
     EvaluationContext,
     LedgerScope,
@@ -329,10 +330,13 @@ class Money:
         # owner checks raw-platform exclusivity against the complete fact set.
         for plan in change_plan["plans"]:
             fact = context.get_fact(plan["business_id"])
-            if fact["kind"] == "money.movement" and fact["data"]["type"] == "payroll_reserve":
-                check_payroll_unpaid(fact, context)
-            if fact["kind"] == "money.reconciliation":
-                validate_reconciliation(fact, context)
+            try:
+                if fact["kind"] == "money.movement" and fact["data"]["type"] == "payroll_reserve":
+                    check_payroll_unpaid(fact, context)
+                if fact["kind"] == "money.reconciliation":
+                    validate_reconciliation(fact, context)
+            except ContractError as error:
+                raise error.at_business(plan["business_id"]) from error
         self.validate_occurrences(change_plan["plans"], context)
 
     def fund_sources(self, fact, fund_movements, context: EvaluationContext):

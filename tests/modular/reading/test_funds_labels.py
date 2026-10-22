@@ -34,6 +34,12 @@ def formal(kind, data):
         ("people.remuneration", {"type": "wage"}, "housing", "住房公积金"),
         ("people.remuneration", {"type": "labor"}, "withholding", "代扣个人所得税"),
         ("operations.expense", {"expense_class": "bank_fee"}, "trade", "银行手续费"),
+        (
+            "operations.other_income",
+            {"income_kind": "retained_verification"},
+            None,
+            "账户验证收入",
+        ),
         ("taxes.assessment", {"type": "income_tax"}, "tax", "企业所得税"),
         ("unrecognized.future_business", {}, None, "业务用途未明确"),
     ],
@@ -75,6 +81,29 @@ def labels(case, month="2026-01"):
         row["subject_id"]: row["list_summary"]
         for row in page(case, month)["data"]["collections"]["movements"]["items"]
     }
+
+
+def test_other_receipts_keep_their_distinct_purposes_in_actual_funds_pages(case):
+    initialize(case)
+    kinds = (
+        ("bank_interest", "银行利息收入"),
+        ("company_reward", "公司奖励收入"),
+        ("retained_verification", "账户验证收入"),
+    )
+    receipts = [
+        fact(
+            "operations.other_income",
+            {"income_kind": kind, "amount_fen": "1", "funds_account_id": BANK},
+            actual="2026-01-15",
+        )
+        for kind, _ in kinds
+    ]
+    apply(case, *receipts)
+    actual = labels(case)
+    assert [actual[item["business_id"]] for item in receipts] == [title for _, title in kinds]
+    data = page(case)["data"]
+    assert data["inflow_fen"] == "3" and data["outflow_fen"] == "0"
+    assert data["movement_count"] == 3 and data["total_fen"] == "3"
 
 
 def test_loan_capital_and_frozen_old_type_keep_their_exact_formal_meaning(case):

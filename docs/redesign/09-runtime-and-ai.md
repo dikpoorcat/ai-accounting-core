@@ -86,6 +86,8 @@ $company.database_id
 
 `accounting=saved`、`documents=pending` 表示账已保存、归档待接续；不能再次创建业务。后台接续标准文档、读取和文件任务，实际状态分别通过 `accounting-documents`、页面及 `accounting-jobs` 查询。失败先区分现实事实缺项、合同错误和临时故障；提交结果不明先按原业务 ID 查询，不盲目重放或更换身份。
 
+单笔核算和资金核对失败时，现有问题字段会指明已知的业务身份；已有更具体的字段、来源和错误原因继续保留。问题字段也可用于定位程序或文档冲突，不能仅因返回了字段就向老板追问，应先核对已有资料与错误性质。
+
 资料的整理和退出条件见[资料工作说明](08-ai-work-and-materials.md#资料如何进入系统)。确已选定无用来源并接续好当前引用后，可提交 `{"company_id":"实际公司UUID","action":"discard","source_ids":["已选来源UUID"]}` 给 `call accounting-sources --input <请求.json>`；MCP 使用同一内容调用 `accounting_command(command="accounting_sources", payload=请求)`。只按返回的file_cleanup.state判断文件是否清完；pending由后台接续，也可沿原source_ids重调，不通过主机命令自行删原件。
 
 ## MCP 接入与按需操作说明

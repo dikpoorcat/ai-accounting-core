@@ -349,7 +349,8 @@
           "type": "string",
           "enum": [
             "bank_interest",
-            "company_reward"
+            "company_reward",
+            "retained_verification"
           ]
         },
         "amount_fen": {
@@ -5865,7 +5866,8 @@
           "type": "string",
           "enum": [
             "bank_interest",
-            "company_reward"
+            "company_reward",
+            "retained_verification"
           ]
         },
         "amount_fen": {
@@ -10710,7 +10712,8 @@
                 "tax_late_fee",
                 "social_contribution_late_fee",
                 "bank_interest",
-                "company_reward"
+                "company_reward",
+                "retained_verification"
               ]
             }
           },
@@ -13827,7 +13830,8 @@
           "type": "string",
           "enum": [
             "bank_interest",
-            "company_reward"
+            "company_reward",
+            "retained_verification"
           ]
         },
         "amount_fen": {

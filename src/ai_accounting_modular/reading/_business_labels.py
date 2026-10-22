@@ -218,6 +218,7 @@ def business_label(
             *{
                 "bank_interest": ("bank_interest", "银行利息收入"),
                 "company_reward": ("company_reward", "公司奖励收入"),
+                "retained_verification": ("retained_verification", "账户验证收入"),
             }.get(data.get("income_kind"), ("other_income", "其他收入"))
         )
     if kind in {"taxes.assessment", "taxes.actual_declaration"}:

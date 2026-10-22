@@ -133,11 +133,21 @@ def test_explicit_zero_carry_differs_from_absent_carry_and_never_uses_pl31(tmp_p
 
 
 @pytest.mark.parametrize("basis", ["newly_established", "existing_ledger"])
-def test_no_fake_continuation_for_new_company_and_no_assumed_zero_for_existing(tmp_path, basis):
+@pytest.mark.parametrize("with_continuation", [False, True])
+def test_sourced_zero_origin_with_or_without_reports_does_not_guess_existing_company_carry(
+    tmp_path, basis, with_continuation
+):
     app, company = assemble(tmp_path)
     initial = opening(value="0", basis=basis)
     assessed, inputs, policy = income_inputs()
     rows = [initial, assessed, inputs, policy]
+    if with_continuation:
+        current = continuation(initial)
+        for key in ("year_beginning_balance", "prior_profit", "prior_cash"):
+            for row in current["data"][key]:
+                for column in row.keys() - {"line"}:
+                    row[column] = "0"
+        rows.append(current)
     response = app.accounting_apply(request(company, *rows))
     if basis == "newly_established":
         assert response.get("completion") == "complete", response

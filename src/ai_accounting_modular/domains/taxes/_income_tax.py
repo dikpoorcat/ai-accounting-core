@@ -114,7 +114,7 @@ def _carry(fact, context, plan):
             adopt_source(plan, source.source)
             plan["basis"]["adopted_quantities"].append(dict(quantities[0]))
             return amount(quantities[0]["cumulative_tax_fen"])
-    elif (
+    if (
         opening is not None
         and start[:4] == f"{year:04d}"
         and is_zero_origin(opening.target, opening.basis)

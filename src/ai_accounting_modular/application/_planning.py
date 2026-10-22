@@ -233,7 +233,12 @@ def evaluate(descriptions, context, ledger, correction_period):
             business_id, result_slot, context.read_context, correction_period=correction_period
         )
         with context.result_scope(((business_id, result_slot),)):
-            plan = owners[business_id, result_slot].evaluate_slot(business_id, result_slot, context)
+            try:
+                plan = owners[business_id, result_slot].evaluate_slot(
+                    business_id, result_slot, context
+                )
+            except ContractError as error:
+                raise error.at_business(business_id) from error
         validate_contract("business-facts.schema.json", "PostingPlan", plan)
         if (plan["business_id"], plan["result_slot"]) != (business_id, result_slot):
             raise ContractError("invalid_input", "领域返回了其他业务或其他槽的核算计划。")

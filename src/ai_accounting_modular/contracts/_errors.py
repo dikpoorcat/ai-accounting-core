@@ -28,6 +28,31 @@ class ContractError(ValueError):
         self.fact_issues = tuple(fact_issues)
         self.diagnostic_id = diagnostic_id
 
+    def at_business(self, business_id: str) -> ContractError:
+        """Add reliable execution context without replacing a more precise issue."""
+        issues = [
+            issue if "business_id" in issue else {**issue, "business_id": business_id}
+            for issue in self.fact_issues
+        ]
+        if not issues:
+            issues.append(
+                {
+                    "code": self.code,
+                    "business_id": business_id,
+                    "field": "/",
+                    "meaning": "本业务核算或依赖核验",
+                    "message": self.message
+                    if len(self.message) <= 2000
+                    else "本业务核验失败，完整原因见错误正文。",
+                    "allowed_precision": [],
+                    "reusable_sources": [],
+                    "blocking_scope": "business",
+                }
+            )
+        return ContractError(
+            self.code, self.message, fact_issues=issues, diagnostic_id=self.diagnostic_id
+        )
+
     def to_response(self) -> ErrorResponse:
         response: ErrorResponse = {
             "status": "rejected",

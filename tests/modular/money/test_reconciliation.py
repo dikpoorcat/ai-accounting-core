@@ -178,6 +178,24 @@ def test_mismatch_groups_never_invent_a_balancing_fee(ids, change):
         validate(ReconciliationContext(ids, [statement, check], [actual]), check)
 
 
+def test_group_amount_failure_identifies_the_reconciliation_not_the_statement(ids):
+    statement, check = pair(ids)
+    actual = funds(ids, 299)
+    check["data"]["matches"] = [
+        {
+            "statement_row_ids": [statement["data"]["rows"][0]["row_id"]],
+            "fund_movement_ids": [actual.value["movement_id"]],
+        }
+    ]
+    with pytest.raises(ContractError) as error:
+        validate(ReconciliationContext(ids, [statement, check], [actual]), check)
+    assert error.value.code == "dependency_conflict"
+    assert error.value.message == "匹配组两边真实金额合计不相等，不能自动补手续费或收入。"
+    assert error.value.fact_issues[0]["business_id"] == check["business_id"]
+    assert error.value.fact_issues[0]["field"] == "/"
+    assert error.value.fact_issues[0]["allowed_precision"] == []
+
+
 def test_empty_following_month_continues_completed_opening_and_missing_month_blocks_only_that_chain(
     ids,
 ):

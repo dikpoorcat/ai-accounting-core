@@ -105,7 +105,11 @@ def validate_capacities(repo, business_ids, retired_keys=()):
                 fail("dependency_conflict", "资金清偿须采用本业务的真实资金发生。")
             if move["direction"] != expected_direction:
                 fail("dependency_conflict", "实际资金方向与义务清偿方向不符。")
-            if move["party_id"] is not None and move["party_id"] != ob["party_id"]:
+            if (
+                move["party_id"] is not None
+                and ob["party_id"] is not None
+                and move["party_id"] != ob["party_id"]
+            ):
                 fail("dependency_conflict", "实际资金交易方与被清偿义务不符。")
             if row["actual_on"] is not None and row["actual_on"] != move["actual_on"]:
                 fail("dependency_conflict", "清偿实际日与同一真实资金实际日不符。")
