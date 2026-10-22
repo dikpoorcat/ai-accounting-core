@@ -30,7 +30,10 @@ def test_all_actual_fact_inputs_have_exact_guides_and_generated_bytes():
     module = generator()
     document = schema_document("business-facts.schema.json")
     generated = module.guide_outputs(ROOT, document)
-    assert all(path.read_bytes() == content for path, content in generated.items())
+    assert all(
+        path.read_bytes().replace(b"\r\n", b"\n") == content
+        for path, content in generated.items()
+    )
     book = json.loads(next(iter(generated.values())))
     assert set(book["business"]["kinds"]) == module.fact_kinds(document)
     assert len(guide_index()["topics"]) == 5

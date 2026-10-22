@@ -471,7 +471,7 @@ def main():
     different = [
         path.relative_to(ROOT).as_posix()
         for path, content in expected.items()
-        if not path.is_file() or path.read_bytes() != content
+        if not path.is_file() or path.read_bytes().replace(b"\r\n", b"\n") != content
     ]
     if args.check:
         if different:
