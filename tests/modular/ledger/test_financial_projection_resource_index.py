@@ -21,8 +21,7 @@ from ai_accounting_modular.ledger._financial_projection_bodies import (
 from ai_accounting_modular.ledger._financial_projection_indexes import BodyDirectory
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import Entry
-from ai_accounting_modular.ledger._financial_tree_store import TreeStore
+from ai_accounting_modular.storage.public import Entry
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_model import Blocks, scope
 
@@ -411,7 +410,7 @@ def test_resource_projection_and_complete_body_share_one_strict_row_validator(bo
         assert resource_projection(body) == valid
         blocks = Blocks()
         blocks.publish(model.plan(()))
-        node_key = TreeStore.NODES, role.roots["resources"].digest
+        node_key = "_financial_nodes", role.roots["resources"].digest
         original_raw = blocks.values[node_key]
         blocks.values[node_key] = original_raw + " "
         with pytest.raises(ContractError) as error:
@@ -508,7 +507,7 @@ def test_small_actual_resource_tree_plan_has_only_thin_fields(book, record_prope
     nodes = [
         raw
         for collection, _, raw in plan.writes
-        if collection == TreeStore.NODES
+        if collection == "_financial_nodes"
         and loads_json(raw)["domain"] == "financial-controlled-resources/2"
     ]
     assert len(nodes) == 1

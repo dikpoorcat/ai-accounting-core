@@ -14,7 +14,8 @@ from ai_accounting_modular.ledger._financial_cells import Issues
 from ai_accounting_modular.ledger._financial_projection_bodies import source_atom
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import digest, structure
+from ai_accounting_modular.storage._immutable_tree import structure
+from ai_accounting_modular.storage.public import block_digest as digest
 
 
 class Blocks:
@@ -322,7 +323,7 @@ def test_consumer_reads_its_roles_while_publication_checks_the_complete_graph(tm
         # still blocks both its own consumer and a complete graph publication.
         blocks.values[january_node] = "{}"
         assert book.app.ledger.read_financial_projection(february, read, blocks) == before
-        with pytest.raises(ContractError, match="财务派生树") as failure:
+        with pytest.raises(ContractError, match="不可变树") as failure:
             book.app.ledger.read_financial_projection(january, read, blocks)
         assert failure.value.code == "storage_corrupt"
         with pytest.raises(ContractError) as failure:

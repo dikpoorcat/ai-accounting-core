@@ -9,10 +9,10 @@ from ai_accounting_modular.ledger import (
     _financial_projection_bodies,
     _financial_projection_indexes,
     _financial_projection_model,
-    _financial_tree,
 )
 from ai_accounting_modular.reading import _financial_projection, _monthly
 from ai_accounting_modular.reading.public import MonthScope
+from ai_accounting_modular.storage.public import Tree
 from tests.modular.application._working_case import case as case
 
 
@@ -134,7 +134,7 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
         monkeypatch.setattr(case.kernel.ledger, method, unexpected)
     capture = _financial_projection_bodies.capture_bodies
     body_reads = _financial_projection_indexes.BodyDirectory.get_many
-    entries, summary = _financial_tree.Tree.entries, _financial_tree.Tree.summary
+    entries, summary = Tree.entries, Tree.summary
     captured = []
 
     def capture_later(selection, heads):
@@ -158,8 +158,8 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
 
     monkeypatch.setattr(_financial_projection_bodies, "capture_bodies", capture_later)
     monkeypatch.setattr(_financial_projection_indexes.BodyDirectory, "get_many", no_earlier_body)
-    monkeypatch.setattr(_financial_tree.Tree, "entries", unchanged_roles(entries))
-    monkeypatch.setattr(_financial_tree.Tree, "summary", unchanged_roles(summary))
+    monkeypatch.setattr(Tree, "entries", unchanged_roles(entries))
+    monkeypatch.setattr(Tree, "summary", unchanged_roles(summary))
     assert page(case) == before
     assert case.kernel.reading.run_pending(case.company) == (producer_key,)
     assert captured

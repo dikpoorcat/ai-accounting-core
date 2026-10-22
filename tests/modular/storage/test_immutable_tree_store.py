@@ -6,11 +6,11 @@ from contextlib import closing
 from random import Random
 
 import pytest
-from test_financial_tree import Reader, assemble, data
 
 from ai_accounting_modular.contracts.public import canonical_json, loads_json
-from ai_accounting_modular.ledger._financial_tree import Entry, structure
-from ai_accounting_modular.ledger._financial_tree_store import TreeStore
+from ai_accounting_modular.storage._immutable_tree import structure
+from ai_accounting_modular.storage.public import Entry
+from tests.modular.storage.test_immutable_tree import NODES, REFS, Reader, assemble, data
 
 
 def assert_graph(reader, roots):
@@ -18,7 +18,7 @@ def assert_graph(reader, roots):
     nodes = {
         key: structure(raw, key)[2]
         for (collection, key), raw in reader.rows.items()
-        if collection == TreeStore.NODES
+        if collection == NODES
     }
     expected = Counter(root.digest for root in roots)
     for children in nodes.values():
@@ -33,7 +33,7 @@ def assert_graph(reader, roots):
     actual = {
         key: loads_json(raw)["count"]
         for (collection, key), raw in reader.rows.items()
-        if collection == TreeStore.REFS
+        if collection == REFS
     }
     assert actual == dict(expected)
 

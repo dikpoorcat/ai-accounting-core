@@ -2,6 +2,8 @@
 
 from collections import Counter
 
+from ai_accounting_modular.storage.public import Entry, Tree
+
 from . import _financial_projection_chains as chains
 from ._financial_order import target_key
 from ._financial_projection_bodies import (
@@ -23,7 +25,6 @@ from ._financial_projection_indexes import (
     order_key,
     prefix_end,
 )
-from ._financial_tree import Entry, Tree
 from ._values import fail
 
 

@@ -1,4 +1,4 @@
-"""Ledger's canonical financial blocks; selection and arithmetic stay with their owner."""
+"""Canonical immutable ordered blocks; selection and arithmetic stay with each owner."""
 
 from __future__ import annotations
 
@@ -15,14 +15,12 @@ from typing import Any, Protocol
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json
 
-from ._values import fail
-
-FORMAT = "ledger-financial-tree/1"
+FORMAT = "ai-accounting-immutable-tree/1"
 _LONG_DIGITS = re.compile(rf"[0-9]{{{sys.int_info.str_digits_check_threshold + 1},}}")
 
 
 def corrupt():
-    fail("storage_corrupt", "财务派生树的正文、摘要、顺序或引用不完整。")
+    raise ContractError("storage_corrupt", "不可变树的正文、摘要、顺序或引用不完整。")
 
 
 def digest(raw):
@@ -41,7 +39,7 @@ def _route(key):
 
 def _text(value):
     if not isinstance(value, str):
-        raise TypeError("financial tree keys require strings")
+        raise TypeError("immutable tree keys require strings")
     str.encode(value, "utf-8")
     return str.__str__(value)
 
@@ -169,13 +167,13 @@ def _unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("duplicate financial node field")
+            raise ValueError("duplicate immutable node field")
         result[key] = value
     return result
 
 
 def _reject_number(value):
-    raise ValueError("financial nodes contain integers, never JSON floats or constants")
+    raise ValueError("immutable nodes contain integers, never JSON floats or constants")
 
 
 def _encode_parsed(value):
@@ -302,7 +300,7 @@ def _validate_structure(value, size):
         RecursionError,
     ) as error:
         raise ContractError(
-            "storage_corrupt", "财务派生树的正文、摘要、顺序或引用不完整。"
+            "storage_corrupt", "不可变树的正文、摘要、顺序或引用不完整。"
         ) from error
 
 
@@ -325,7 +323,7 @@ def _structure(raw, identity):
         return value, rows, children
     except (ContractError, TypeError, ValueError, UnicodeError, RecursionError) as error:
         raise ContractError(
-            "storage_corrupt", "财务派生树的正文、摘要、顺序或引用不完整。"
+            "storage_corrupt", "不可变树的正文、摘要、顺序或引用不完整。"
         ) from error
 
 
@@ -394,7 +392,7 @@ class Tree:
             or not domain
             or any(type(value) is not int or value < 1 for value in (max_items, max_bytes))
         ):
-            raise ValueError("a financial tree needs an explicit domain and positive capacities")
+            raise ValueError("an immutable tree needs an explicit domain and positive capacities")
         self.domain, self.strategy, self.store = domain, strategy, store
         self.max_items, self.max_bytes = max_items, max_bytes
         self._loaded = {}
@@ -461,7 +459,7 @@ class Tree:
     def _make(self, entries=(), children=()):
         entries, children = tuple(entries), tuple(children)
         if bool(entries) == bool(children):
-            raise ValueError("a nonempty financial node is a leaf or a branch")
+            raise ValueError("a nonempty immutable node is a leaf or a branch")
         first, last = (
             (entries[0].key, entries[-1].key) if entries else (children[0].first, children[-1].last)
         )
@@ -525,10 +523,10 @@ class Tree:
     def full(self, entries):
         values = tuple(entries)
         if any(not isinstance(item, Entry) for item in values):
-            raise ValueError("financial entries must have unique exact keys")
+            raise ValueError("immutable entries must have unique exact keys")
         values = tuple(sorted(values, key=lambda item: item.key))
         if any(a.key == b.key for a, b in zip(values, values[1:], strict=False)):
-            raise ValueError("financial entries must have unique exact keys")
+            raise ValueError("immutable entries must have unique exact keys")
         return self._full(values)
 
     def _full(self, entries):
@@ -546,7 +544,7 @@ class Tree:
         children = tuple(self._full(values) for _, values in sorted(groups.items()))
         node = self._make(children=children)
         if len(node.payload_json.encode("utf-8")) > self.max_bytes:
-            raise ValueError("financial branch metadata exceeds its declared byte capacity")
+            raise ValueError("immutable branch metadata exceeds its declared byte capacity")
         self._stage(node)
         return node.ref
 
@@ -614,6 +612,43 @@ class Tree:
             if (first is None or first <= item.key) and (last is None or item.key < last)
         )
 
+    def scan(self, root, *, first=None, last=None, after=None, limit):
+        """Return at most limit ordered entries in [first,last), strictly after a key.
+
+        Only the next overlapping path is loaded. Cursors, filters and the
+        limit-plus-one convention belong to the caller, not this block index.
+        """
+        if type(limit) is not int or limit < 1:
+            raise ValueError("an immutable tree scan requires a positive integer limit")
+        first, last = self._bounds(first, last)
+        after = None if after is None else _text(after)
+        if root is None or (first is not None and last is not None and first >= last):
+            return ()
+        pending, result = [root], []
+        while pending:
+            node = self._load((pending.pop(),))[0]
+            if not self._overlaps(node.ref, first, last) or (
+                after is not None and node.ref.last <= after
+            ):
+                continue
+            if node.entries:
+                for item in node.entries:
+                    if (
+                        (first is None or first <= item.key)
+                        and (last is None or item.key < last)
+                        and (after is None or after < item.key)
+                    ):
+                        result.append(item)
+                        if len(result) == limit:
+                            return tuple(result)
+            else:
+                pending.extend(
+                    child
+                    for child in reversed(node.children)
+                    if self._overlaps(child, first, last) and (after is None or after < child.last)
+                )
+        return tuple(result)
+
     def summary(self, root, *, first=None, last=None):
         """Fold an exact range; temporary boundary summaries never become nodes."""
         first, last = self._bounds(first, last)
@@ -665,7 +700,7 @@ class Tree:
             or (value is not None and (not isinstance(value, Entry) or value.key != key))
             for key, value in changes.items()
         ):
-            raise TypeError("financial changes map exact keys to entries or deletion")
+            raise TypeError("immutable changes map exact keys to entries or deletion")
         return self._patch(root, dict(changes))
 
     def _patch(self, root, changes):
@@ -721,6 +756,6 @@ class Tree:
             return self.full(item for child in ordered for item in self.entries(child))
         result = self._make(children=ordered)
         if len(result.payload_json.encode("utf-8")) > self.max_bytes:
-            raise ValueError("financial branch metadata exceeds its declared byte capacity")
+            raise ValueError("immutable branch metadata exceeds its declared byte capacity")
         self._stage(result)
         return result.ref

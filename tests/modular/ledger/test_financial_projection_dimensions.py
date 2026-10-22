@@ -20,8 +20,8 @@ from ai_accounting_modular.ledger._financial_projection_fold import Fold
 from ai_accounting_modular.ledger._financial_projection_indexes import BodyDirectory, dimension_key
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import Entry, Tree
 from ai_accounting_modular.ledger.public import FINANCIAL_PROJECTION_FORMAT
+from ai_accounting_modular.storage.public import Entry, Tree
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_model import Blocks, scope
 

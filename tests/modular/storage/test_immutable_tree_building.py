@@ -9,10 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
-from ai_accounting_modular.ledger import _financial_tree as module
-from ai_accounting_modular.ledger import _financial_tree_store as storage
-from ai_accounting_modular.ledger._financial_tree import Entry, Tree, digest, structure
-from tests.modular.ledger.test_financial_tree import Summary, assemble, data
+from ai_accounting_modular.storage import _immutable_tree as module
+from ai_accounting_modular.storage import _immutable_tree_store as storage
+from ai_accounting_modular.storage._immutable_tree import structure
+from ai_accounting_modular.storage.public import Entry, Tree
+from ai_accounting_modular.storage.public import block_digest as digest
+from tests.modular.storage.test_immutable_tree import NODES, Summary, assemble, data
 
 
 @pytest.fixture(autouse=True)
@@ -242,7 +244,7 @@ def test_built_receipt_cannot_hide_existing_database_damage_or_gc_reads(monkeypa
     assert not decoded and store.finish((root.digest,), (same.digest,)).writes == ()
     assert decoded[root.digest] == 1
     assert store.finish((root.digest,), ()).deletes and decoded[root.digest] == 1
-    reader.rows[storage.TreeStore.NODES, root.digest] += " "
+    reader.rows[NODES, root.digest] += " "
     _, store, tree = assemble(reader)
     same = tree.full((entry,))
     with pytest.raises(ContractError):

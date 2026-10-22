@@ -1,4 +1,4 @@
-"""Financial cache trees keep immutable content and bounded exact-path reads."""
+"""Immutable trees keep canonical content and bounded exact-path reads."""
 
 from copy import deepcopy
 from dataclasses import replace
@@ -7,8 +7,12 @@ from random import Random
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
-from ai_accounting_modular.ledger._financial_tree import Entry, Tree, digest, structure
-from ai_accounting_modular.ledger._financial_tree_store import TreeStore
+from ai_accounting_modular.storage._immutable_tree import structure
+from ai_accounting_modular.storage.public import Entry, Tree, TreeStore
+from ai_accounting_modular.storage.public import block_digest as digest
+
+NODES = "_test_nodes"
+REFS = "_test_node_refs"
 
 
 class Summary:
@@ -47,7 +51,7 @@ class Reader:
 
 def assemble(reader=None, **capacity):
     reader = Reader() if reader is None else reader
-    store = TreeStore(reader)
+    store = TreeStore(reader, namespace="_test")
     return reader, store, Tree("financial-test-summary/1", Summary(), store, **capacity)
 
 
@@ -127,7 +131,7 @@ def test_actual_json_byte_capacity_and_oversize_singleton_preserve_real_values()
     seen_oversize = False
     for (_, _), raw in reader.rows.items():
         node = loads_json(raw)
-        if node.get("format") != "ledger-financial-tree/1":
+        if node.get("format") != "ai-accounting-immutable-tree/1":
             continue
         if len(raw.encode("utf8")) > 8192:
             assert node["kind"] == "leaf" and node["count"] == 1 and node["oversize"]
@@ -142,7 +146,7 @@ def test_actual_json_byte_capacity_and_oversize_singleton_preserve_real_values()
 @pytest.mark.parametrize("damage", ["missing", "json", "hash", "domain", "capacity", "metadata"])
 def test_used_node_damage_is_never_treated_as_empty(damage):
     reader, root, values = persisted()
-    key = (TreeStore.NODES, root.digest)
+    key = (NODES, root.digest)
     if damage == "missing":
         del reader.rows[key]
     elif damage == "json":
@@ -164,7 +168,7 @@ def test_root_metadata_bool_and_wrong_summary_do_not_bypass_actual_node():
     reader, root, values = persisted()
     _, _, tree = assemble(reader)
     for wrong in (replace(root, count=True), replace(root, first="different")):
-        with pytest.raises(ContractError, match="财务"):
+        with pytest.raises(ContractError, match="不可变"):
             tree.get_many(wrong, (values[0].key,))
     reader, store, tree = assemble()
     one = tree.full((Entry("a", {"n": 1}),))
@@ -202,9 +206,7 @@ def test_plan_contains_no_unrooted_stages_and_does_not_mutate_its_base():
     changed = tree.patch(root, {values[0].key: Entry(values[0].key, {"n": -1})})
     plan = store.finish((root.digest,), (changed.digest,))
     assert reader.rows == before
-    assert (TreeStore.NODES, unused.digest) not in {
-        (row.collection, row.key) for row in plan.writes
-    }
+    assert (NODES, unused.digest) not in {(row.collection, row.key) for row in plan.writes}
     reader.apply(plan)
     _, cleanup, _ = assemble(reader)
     reader.apply(cleanup.finish((changed.digest,), ()))
@@ -213,7 +215,7 @@ def test_plan_contains_no_unrooted_stages_and_does_not_mutate_its_base():
 
 def test_missing_reference_counter_is_corrupt_and_failed_plan_leaves_base_unchanged():
     reader, root, _ = persisted(50)
-    del reader.rows[TreeStore.REFS, root.digest]
+    del reader.rows[REFS, root.digest]
     before = dict(reader.rows)
     _, store, _ = assemble(reader)
     with pytest.raises(ContractError) as error:
@@ -252,7 +254,9 @@ def test_range_summary_uses_stored_subtree_fold_and_only_refolds_boundary_entrie
             return super().leaf(entries)
 
     strategy = Observed()
-    tree = Tree("financial-test-summary/1", strategy, TreeStore(reader), max_items=16)
+    tree = Tree(
+        "financial-test-summary/1", strategy, TreeStore(reader, namespace="_test"), max_items=16
+    )
     assert tree.summary(root, first=values[101].key, last=values[3901].key) == {
         "sum": sum(range(101, 3901))
     }
@@ -262,11 +266,11 @@ def test_range_summary_uses_stored_subtree_fold_and_only_refolds_boundary_entrie
 
 
 def rehash_root(reader, root, mutate):
-    value = loads_json(reader.rows[TreeStore.NODES, root.digest])
+    value = loads_json(reader.rows[NODES, root.digest])
     mutate(value)
     raw = canonical_json(value)
     identity = digest(raw)
-    reader.rows[TreeStore.NODES, identity] = raw
+    reader.rows[NODES, identity] = raw
     return replace(
         root,
         digest=identity,
@@ -301,7 +305,7 @@ def test_rehashed_metadata_and_summary_still_require_the_actual_tree_contract(mu
 
 def test_branch_child_cannot_span_another_radix_symbol_even_with_matching_outer_metadata():
     reader, root, _ = persisted(1000, max_items=8)
-    raw = loads_json(reader.rows[TreeStore.NODES, root.digest])
+    raw = loads_json(reader.rows[NODES, root.digest])
     assert len(raw["children"]) > 2
     # Keep children disjoint and the parent's count/first/last intact, but make
     # the first child's advertised interval span an unused next radix symbol.
@@ -362,7 +366,7 @@ def test_json_null_is_an_entry_and_never_confused_with_deletion():
             return {"sum": sum(item.value is None for item in entries)}
 
     reader = Reader()
-    store = TreeStore(reader)
+    store = TreeStore(reader, namespace="_test")
     tree = Tree("nullable/1", Nullable(), store)
     root = tree.full((Entry("a", None), Entry("b", {"n": 2})))
     assert tree.get_many(root, ("a", "missing"))[0].value is None
@@ -414,7 +418,7 @@ def test_random_byte_boundary_replacements_shrinks_and_deletions_match_cold_fact
 
 def test_disjoint_range_still_checks_the_actual_root_before_using_its_metadata():
     reader, root, _ = persisted(100)
-    del reader.rows[TreeStore.NODES, root.digest]
+    del reader.rows[NODES, root.digest]
     _, _, tree = assemble(reader)
     with pytest.raises(ContractError):
         list(tree.entries(root, first="z"))

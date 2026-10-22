@@ -8,6 +8,7 @@ from ai_accounting_modular.contracts.public import (
     loads_json,
     validate_contract,
 )
+from ai_accounting_modular.storage.public import Entry, Tree, TreeStore
 
 from . import _financial_projection_bodies as bodies_module
 from . import _financial_projection_chains as chains
@@ -24,8 +25,6 @@ from ._financial_projection_types import (
     FinancialProjectionRequest,
 )
 from ._financial_selection import Selection
-from ._financial_tree import Entry, Tree
-from ._financial_tree_store import TreeStore
 from ._planning import source_digest
 from ._values import fail
 
@@ -97,7 +96,7 @@ def required_roles(value, start, *, saved):
 class Model:
     def __init__(self, read, base=None):
         self.read, self.base = read, base if base is not None else EmptyReader()
-        self.store = TreeStore(self.base)
+        self.store = TreeStore(self.base, namespace="_financial")
         raw = self.base.header_json
         if raw is None:
             header = {

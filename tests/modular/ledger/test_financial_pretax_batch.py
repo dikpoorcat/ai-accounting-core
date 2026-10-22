@@ -17,8 +17,8 @@ from ai_accounting_modular.ledger._financial_calculation import calculate_snapsh
 from ai_accounting_modular.ledger._financial_cells import Issues
 from ai_accounting_modular.ledger._financial_projection_requests import request
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import Entry
 from ai_accounting_modular.ledger._profit import pretax_basis_digest
+from ai_accounting_modular.storage.public import Entry
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_model import Blocks
 from tests.modular.ledger.test_financial_projection_ranges import close, corrected

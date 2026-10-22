@@ -18,7 +18,7 @@ from ai_accounting_modular.ledger._financial_calculation import calculate_snapsh
 from ai_accounting_modular.ledger._financial_cells import Issues
 from ai_accounting_modular.ledger._financial_selection import Selection
 from ai_accounting_modular.reading import _financial_projection, _monthly
-from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
+from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, Tree, create_catalog
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import Case
 
@@ -368,7 +368,6 @@ def test_real_hot_one_slot_captures_only_changed_bodies_without_full_source_read
     from ai_accounting_modular.ledger import (
         _financial_projection_bodies,
         _financial_projection_selection,
-        _financial_tree,
     )
 
     case = live_case
@@ -381,7 +380,7 @@ def test_real_hot_one_slot_captures_only_changed_bodies_without_full_source_read
     settle(case)
     replace(case, expense, "120000")
     capture = _financial_projection_bodies.capture_bodies
-    entries = _financial_tree.Tree.entries
+    entries = Tree.entries
     captured = []
 
     def tracked(selection, heads):
@@ -399,7 +398,7 @@ def test_real_hot_one_slot_captures_only_changed_bodies_without_full_source_read
 
     with monkeypatch.context() as patch:
         patch.setattr(_financial_projection_bodies, "capture_bodies", tracked)
-        patch.setattr(_financial_tree.Tree, "entries", bounded_entries)
+        patch.setattr(Tree, "entries", bounded_entries)
         patch.setattr(_financial_projection_selection.ProjectionSelection, "all_sources", forbidden)
         patch.setattr(case.kernel.ledger, "financial_summary", forbidden)
         patch.setattr(case.kernel.ledger, "financial_snapshot", forbidden)

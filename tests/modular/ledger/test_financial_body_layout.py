@@ -11,9 +11,9 @@ from ai_accounting_modular.contracts.public import ContractError, canonical_json
 from ai_accounting_modular.ledger._financial_projection_bodies import source_atom
 from ai_accounting_modular.ledger._financial_projection_indexes import BodyDirectory
 from ai_accounting_modular.ledger._financial_projection_model import Model
-from ai_accounting_modular.ledger._financial_tree import Entry, digest
-from ai_accounting_modular.ledger._financial_tree_store import TreeStore
 from ai_accounting_modular.ledger.public import FormalChange
+from ai_accounting_modular.storage.public import Entry, TreeStore
+from ai_accounting_modular.storage.public import block_digest as digest
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_candidates import assert_snapshot
 from tests.modular.ledger.test_financial_projection_model import Blocks, assert_graph, scope
@@ -69,7 +69,7 @@ def saved_body(book):
 
 
 def replace_body_reference(blocks, descriptor, atom, raw):
-    directory = BodyDirectory(TreeStore(blocks), descriptor)
+    directory = BodyDirectory(TreeStore(blocks, namespace="_financial"), descriptor)
     reference = digest(raw)
     blocks.values[BodyDirectory.BODIES, reference] = raw
     changed = directory.tree.patch(directory.root, {atom: Entry(atom, reference)})
@@ -107,13 +107,13 @@ def test_actual_body_bytes_and_atom_are_strict_even_with_a_matching_directory_di
             raw = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         descriptor = replace_body_reference(blocks, descriptor, atom, raw)
     with pytest.raises(ContractError) as failure:
-        BodyDirectory(TreeStore(blocks), descriptor).get_many((atom,))
+        BodyDirectory(TreeStore(blocks, namespace="_financial"), descriptor).get_many((atom,))
     assert failure.value.code == "storage_corrupt"
 
 
 def test_existing_atom_reuses_only_identical_actual_body_and_never_replaces_its_meaning(saved_body):
     blocks, descriptor, atom, body = saved_body
-    directory = BodyDirectory(TreeStore(blocks), descriptor)
+    directory = BodyDirectory(TreeStore(blocks, namespace="_financial"), descriptor)
     directory.prepare({atom: body})
     assert directory.root.wire() == descriptor and directory.changes() == ((), ())
     body["profit"]["14"] += 1
@@ -135,7 +135,7 @@ def test_prepare_rejects_wrong_actual_raw_and_does_not_heal_an_existing_missing_
         blocks.values[BodyDirectory.BODIES, reference] += " "
         descriptor = None
     before = dict(blocks.values)
-    directory = BodyDirectory(TreeStore(blocks), descriptor)
+    directory = BodyDirectory(TreeStore(blocks, namespace="_financial"), descriptor)
     with pytest.raises(ContractError) as failure:
         directory.prepare({atom: body})
     assert failure.value.code == "storage_corrupt"
@@ -145,7 +145,7 @@ def test_prepare_rejects_wrong_actual_raw_and_does_not_heal_an_existing_missing_
 @pytest.mark.parametrize("damage", ["missing", "wrong_raw"])
 def test_failed_body_batch_keeps_root_changes_and_old_legs(saved_body, damage):
     blocks, descriptor, atom, body = saved_body
-    directory = BodyDirectory(TreeStore(blocks), descriptor)
+    directory = BodyDirectory(TreeStore(blocks, namespace="_financial"), descriptor)
     damaged = next(entry for entry in directory.tree.entries(directory.root) if entry.key != atom)
     damaged_key = BodyDirectory.BODIES, damaged.value
     damaged_body = loads_json(blocks.values[damaged_key])
@@ -176,7 +176,7 @@ def test_failed_body_batch_keeps_root_changes_and_old_legs(saved_body, damage):
 def test_new_body_owns_its_input_and_unpublished_retirement_leaves_no_orphan(saved_body):
     _, _, atom, body = saved_body
     blocks = ObservedBlocks()
-    directory = BodyDirectory(TreeStore(blocks))
+    directory = BodyDirectory(TreeStore(blocks, namespace="_financial"))
     directory.prepare({atom: body})
     original = deepcopy(body)
     body["profit"]["14"] += 1
@@ -190,7 +190,7 @@ def test_new_body_owns_its_input_and_unpublished_retirement_leaves_no_orphan(sav
 
 def test_retired_atom_can_only_reattach_its_original_body_without_changing_old_legs(saved_body):
     blocks, descriptor, atom, body = saved_body
-    directory = BodyDirectory(TreeStore(blocks), descriptor)
+    directory = BodyDirectory(TreeStore(blocks, namespace="_financial"), descriptor)
     directory.prepare({}, (atom,))
     retired_root = directory.root
     retired = directory.get_many((atom,))[0]
@@ -219,13 +219,13 @@ def test_real_lookup_reads_only_one_body_and_company_directory_owns_every_body(b
         assert len(actual) == 66
         wanted = sorted(actual)[len(actual) // 2]
         blocks.calls.clear()
-        directory = BodyDirectory(TreeStore(blocks), model.header["bodies"])
+        directory = BodyDirectory(TreeStore(blocks, namespace="_financial"), model.header["bodies"])
         assert directory.get_many((wanted, wanted)) == (actual[wanted], actual[wanted])
         fetched = {
             identity: loads_json(blocks.values[collection, identity])
             for batch in blocks.calls
             for collection, identity in batch
-            if collection == TreeStore.NODES
+            if collection == "_financial_nodes"
         }
         leaves = [node for node in fetched.values() if node["kind"] == "leaf"]
         assert len(leaves) == 1
@@ -254,7 +254,7 @@ def test_real_lookup_reads_only_one_body_and_company_directory_owns_every_body(b
         for key in deletes:
             del blocks.values[key]
         assert not any(
-            collection in (TreeStore.NODES, TreeStore.REFS, BodyDirectory.BODIES)
+            collection in ("_financial_nodes", "_financial_node_refs", BodyDirectory.BODIES)
             for collection, _ in blocks.values
         )
 

@@ -1,4 +1,4 @@
-"""Plan finite financial block ownership changes; Reading performs the outer atomic CAS."""
+"""Plan finite immutable graph ownership; each owner performs its outer atomic CAS."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from threading import Lock
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 
-from ._financial_tree import _LONG_DIGITS, _BuiltNode, _CheckedStructure, _identity, corrupt, digest
+from ._immutable_tree import _LONG_DIGITS, _BuiltNode, _CheckedStructure, _identity, corrupt, digest
 
 
 class _StructureCache:
@@ -73,23 +73,25 @@ class TreePlan:
 class TreeStore:
     """One read's immutable-node staging and isolated reference-count plan.
 
-    Root lists are multisets. Body-directory roots belong here just once; domain
-    code maintains thin logical Source references rather than physical body IDs.
+    Root lists are multisets. Each owner supplies its replaced roots and atomically
+    publishes the plan with a CAS covering this namespace's shared reference graph.
     Actual rows and selection stay within this read. Only strict parsing of the
     same immutable bytes may be reused across reads; role checks remain local.
     No SQL, persisted work log or scan of unrelated nodes exists.
     """
 
-    NODES = "_financial_nodes"
-    REFS = "_financial_node_refs"
-    REF_FORMAT = "ledger-financial-tree-ref/1"
+    REF_FORMAT = "ai-accounting-immutable-tree-ref/1"
 
-    def __init__(self, reader):
+    def __init__(self, reader, *, namespace):
+        if type(namespace) is not str or not namespace:
+            raise ValueError("an immutable graph requires an explicit namespace")
+        self.NODES, self.REFS = namespace + "_nodes", namespace + "_node_refs"
         self.reader = reader
         self._base, self._staged, self._edges = {}, {}, {}
         self._checked = {}
 
-    def _read(self, keys):
+    def read_blocks(self, keys):
+        """Read exact owner blocks once in this snapshot, batching at the reader boundary."""
         keys = tuple(keys)
         needed = tuple(dict.fromkeys(key for key in keys if key not in self._base))
         for offset in range(0, len(needed), 500):
@@ -108,7 +110,11 @@ class TreeStore:
             corrupt()
         missing = tuple(identity for identity in identities if identity not in self._staged)
         actual = dict(
-            zip(missing, self._read((self.NODES, identity) for identity in missing), strict=True)
+            zip(
+                missing,
+                self.read_blocks((self.NODES, identity) for identity in missing),
+                strict=True,
+            )
         )
         result = []
         for identity in identities:
@@ -154,7 +160,7 @@ class TreeStore:
         return checked
 
     def _node(self, identity):
-        raw = self._read(((self.NODES, identity),))[0]
+        raw = self.read_blocks(((self.NODES, identity),))[0]
         if raw is None:
             corrupt()
         return raw, tuple(child.digest for child in self._check(raw, identity).children)
@@ -166,7 +172,7 @@ class TreeStore:
                 dict.fromkeys(identity for identity in pending if identity not in visited)
             )
             visited.update(wanted)
-            actual = self._read((self.NODES, identity) for identity in wanted)
+            actual = self.read_blocks((self.NODES, identity) for identity in wanted)
             following = []
             for identity, raw in zip(wanted, actual, strict=True):
                 if raw is not None:
@@ -182,7 +188,7 @@ class TreeStore:
         return result
 
     def _counter(self, identity, *, new):
-        raw = self._read(((self.REFS, identity),))[0]
+        raw = self.read_blocks(((self.REFS, identity),))[0]
         if new:
             if raw is not None:
                 corrupt()
@@ -192,7 +198,7 @@ class TreeStore:
         try:
             value = loads_json(raw)
         except ContractError as error:
-            raise ContractError("storage_corrupt", "财务派生树的引用计数正文不完整。") from error
+            raise ContractError("storage_corrupt", "不可变树的引用计数正文不完整。") from error
         if (
             type(value) is not dict
             or set(value) != {"format", "node", "count"}
@@ -211,12 +217,12 @@ class TreeStore:
         if any(not _identity(identity) for identity in (*old_roots, *new_roots)):
             corrupt()
         created = self._new_nodes(new_roots)
-        self._read((self.NODES, identity) for identity in set(old_roots))
+        self.read_blocks((self.NODES, identity) for identity in set(old_roots))
         for identity in set(old_roots):
             self._node(identity)
         touched = created | set(old_roots) | set(new_roots)
         touched.update(child for identity in created for child in self._edges[identity])
-        self._read((self.REFS, identity) for identity in touched)
+        self.read_blocks((self.REFS, identity) for identity in touched)
         initial, counts, removed = {}, {}, set()
 
         def count(identity):
@@ -242,7 +248,7 @@ class TreeStore:
         pending = tuple(old_roots)
         while pending:
             batch = Counter(pending)
-            self._read((self.REFS, identity) for identity in batch)
+            self.read_blocks((self.REFS, identity) for identity in batch)
             zero = []
             for identity, amount in batch.items():
                 current = count(identity)
@@ -252,7 +258,7 @@ class TreeStore:
                 if current == amount:
                     removed.add(identity)
                     zero.append(identity)
-            self._read((self.NODES, identity) for identity in zero)
+            self.read_blocks((self.NODES, identity) for identity in zero)
             pending = tuple(child for identity in zero for child in self._node(identity)[1])
         if any(count(identity) < 1 or identity in removed for identity in created):
             corrupt()

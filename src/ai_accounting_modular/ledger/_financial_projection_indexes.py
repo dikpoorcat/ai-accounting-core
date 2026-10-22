@@ -12,13 +12,14 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
     validate_contract_items,
 )
+from ai_accounting_modular.storage.public import Entry, Tree
+from ai_accounting_modular.storage.public import block_digest as digest
 
 from ._balances import sum_amounts
 from ._cashflow import _ROWS, missing_classification
 from ._financial_order import head_key, target_key
 from ._financial_projection_bodies import COLUMN, validate_body
 from ._financial_projection_fold import Fold, Notice, Unknown, combine, values_fold
-from ._financial_tree import Entry, Tree, _identity, digest
 from ._values import fail
 
 
@@ -209,7 +210,11 @@ class BodyDirectory:
 
     @staticmethod
     def _reference(entry):
-        if entry is None or not _identity(value := entry.value):
+        if entry is None or type(value := entry.value) is not str:
+            fail("storage_corrupt", "财务角色引用的正式来源正文不在同一公司目录内。")
+        try:
+            validate_contract("core.schema.json", "Digest", value)
+        except ContractError:
             fail("storage_corrupt", "财务角色引用的正式来源正文不在同一公司目录内。")
         return value
 
@@ -234,7 +239,7 @@ class BodyDirectory:
             references = tuple(
                 self._reference(entry) for entry in self.tree.get_many(self.root, needed)
             )
-            actual = self.store._read((self.BODIES, reference) for reference in references)
+            actual = self.store.read_blocks((self.BODIES, reference) for reference in references)
             for identity, reference, raw in zip(needed, references, actual, strict=True):
                 raw = self._writes.get(reference, raw)
                 self._bodies[identity] = self._decode(raw, reference, identity)
@@ -260,7 +265,7 @@ class BodyDirectory:
                 fail("storage_corrupt", "同一正式来源不能静默改写财务正文。")
             prepared[identity] = body, raw, reference
         references = tuple(value[2] for value in prepared.values())
-        actual = self.store._read((self.BODIES, reference) for reference in references)
+        actual = self.store.read_blocks((self.BODIES, reference) for reference in references)
         for (identity, (_, raw, reference)), saved in zip(prepared.items(), actual, strict=True):
             saved = self._writes.get(reference, saved)
             if (saved is not None and saved != raw) or (

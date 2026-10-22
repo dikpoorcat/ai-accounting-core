@@ -22,8 +22,7 @@ from ai_accounting_modular.ledger._financial_projection_indexes import (
     prefix_end,
 )
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import Entry, Tree
-from ai_accounting_modular.ledger._financial_tree_store import TreeStore
+from ai_accounting_modular.storage.public import Entry, Tree, TreeStore
 
 
 class Rows:
@@ -59,7 +58,7 @@ def records(tmp_path):
 def load_bodies(book, read, rows):
     selection = Selection(read.repository("ledger"), "current", "2026-01", "2026-01", Issues())
     actual = capture_bodies(selection, tuple(selection.stock("2026-01").values()))
-    store = TreeStore(rows)
+    store = TreeStore(rows, namespace="_financial")
     bodies = BodyDirectory(store)
     bodies.prepare(actual)
     return selection, actual, store, bodies
@@ -106,7 +105,7 @@ def test_reloaded_roles_match_real_journal_cube_and_do_not_include_the_company_b
         roots = (bodies.root, flow_root, journal_root)
         rows.publish(store.finish((), tuple(root.digest for root in roots)))
         rows.publish_bodies(bodies)
-        reloaded_store = TreeStore(rows)
+        reloaded_store = TreeStore(rows, namespace="_financial")
         loaded = BodyDirectory(reloaded_store, bodies.root.wire())
         loaded_flow = Tree("financial-pl-cf/1", FlowStrategy(loaded), reloaded_store)
         saved = loaded_flow.root(flow_root.wire())
@@ -132,7 +131,7 @@ def test_missing_body_and_invalid_cached_fen_or_line_identity_are_never_filled_i
     with book.app.storage.read_unit(book.company) as read:
         _, actual, store, bodies = load_bodies(book, read, rows)
         identity, body = next((key, value) for key, value in actual.items() if value["profit"])
-        empty = BodyDirectory(TreeStore(rows))
+        empty = BodyDirectory(TreeStore(rows, namespace="_financial"))
         with pytest.raises(ContractError) as missing:
             Tree("flow/1", FlowStrategy(empty), empty.tree.store).full(
                 (Entry("one", [identity, 1]),)
@@ -210,7 +209,7 @@ def test_non_profit_journal_and_frozen_baseline_keep_real_source_entries(tmp_pat
             include_cash=False,
         )
         assert len(entries) == 2 and sorted(entry.value[1] for entry in entries) == [-1, 1]
-        store = TreeStore(Rows())
+        store = TreeStore(Rows(), namespace="_financial")
         bodies = BodyDirectory(store)
         bodies.prepare(actual)
         tree = Tree("financial-pl-cf/1", FlowStrategy(bodies), store)

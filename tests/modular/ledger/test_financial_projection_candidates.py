@@ -13,8 +13,8 @@ from ai_accounting_modular.ledger._financial_projection_chains import stock
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_projection_requests import request
 from ai_accounting_modular.ledger._financial_selection import Selection
-from ai_accounting_modular.ledger._financial_tree import Tree
 from ai_accounting_modular.ledger.public import FormalChange
+from ai_accounting_modular.storage.public import Tree
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_model import Blocks
 from tests.modular.ledger.test_financial_projection_ranges import close, corrected
