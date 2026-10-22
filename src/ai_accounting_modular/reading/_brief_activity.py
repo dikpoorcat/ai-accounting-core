@@ -8,12 +8,11 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _brief_activity_index as index
-from . import _brief_groups, _brief_vouchers, _brief_vouchers_display
+from . import _brief_vouchers, _brief_vouchers_display
 from ._brief_activity_amounts import EVENT_KINDS
 from ._brief_activity_parts import ActivityEvent, parts, rows, semantic
 from ._brief_activity_sources import Contents, identities, pages
-from ._collections import IndexItem, merge_items, prepare_items, prepare_model
-from ._dependencies import bind
+from ._collections import IndexItem
 
 COMPONENT = index.COMPONENT
 COLLECTIONS = index.COLLECTIONS
@@ -288,87 +287,29 @@ def capture(reader, scope, read, *, business_ids=()):
         for kind in ("parties", "assets"):
             root_objects[voucher.business_id].update(voucher.value["display"][kind])
     roots = []
+    member_ids, voucher_ids = defaultdict(list), defaultdict(list)
+    for member in members:
+        member_ids[member["row"]["subject_id"]].append(member["row"]["key"])
+    for voucher in vouchers:
+        voucher_ids[voucher.business_id].append(voucher.item_id)
     for business_id in sorted(root_ids):
         roots.append(
             index.root_item(
                 business_id,
                 [*root_sources[business_id], *views[business_id].sources],
                 root_objects[business_id],
+                members=member_ids[business_id],
+                vouchers=voucher_ids[business_id],
             )
         )
     return members, vouchers, roots
 
 
-def _member_order(member):
-    row, scope = member["row"], member["scope"]
-    reference = scope["reference"]
-    return (
-        0 if row["voucher_version_id"] else 1,
-        row["voucher_number"],
-        reference["posting_period"],
-        reference["business_id"],
-        reference["result_slot"],
-        reference["result_id"],
-        0 if scope["voucher_role"] == "reversal" else 1,
-        scope["part"],
-    )
-
-
-def assemble(members, vouchers, roots, *, retained=None):
-    retained_items = tuple(retained) if retained is not None else ()
-    members = [
-        *members,
-        *(item.value for item in retained_items if item.collection == "activity_members"),
-    ]
-    vouchers = [
-        *vouchers,
-        *(item for item in retained_items if item.collection == "brief_vouchers"),
-    ]
-    roots = [*roots, *(item for item in retained_items if item.collection == index.ROOTS)]
-    # Keep the group's representative independent of which roots were refreshed.
-    members = sorted(members, key=_member_order)
-    groups, category_counts = _brief_groups.indexes(members)
-    entries = sorted(
-        [*groups, *vouchers, *roots],
-        key=lambda item: (item.collection, item.sort_key, item.item_id),
-    )
-    if retained is None:
-        prepared = prepare_items(entries, collections=COLLECTIONS)
-    else:
-        reused = {row[:2]: row[:7] for row in retained.prepared.rows}
-        if len({(item.collection, item.item_id) for item in entries}) != len(entries):
-            index.corrupt()
-        for item in entries:
-            expected = reused.get((item.collection, item.item_id))
-            if expected is not None and expected != (
-                item.collection,
-                item.item_id,
-                item.sort_key,
-                item.business_id,
-                item.object_id,
-                item.group_key,
-                item.category,
-            ):
-                index.corrupt()
-        prepared = merge_items(
-            retained.prepared,
-            prepare_items(
-                item for item in entries if (item.collection, item.item_id) not in reused
-            ),
-            collections=COLLECTIONS,
-        )
-    model = prepare_model(
-        {
-            "activity_count": len(members),
-            "group_count": sum(item["group_count"] for item in category_counts),
-            "voucher_count": len(vouchers),
-            "activity_groups": category_counts,
-            "review_businesses": _brief_groups.review_businesses(members),
-        },
-        items=prepared,
-    )
-    return bind(model, index.dependencies(roots))
+def assemble(members, vouchers, roots, *, scope_key, epoch):
+    return index.complete(members, vouchers, roots, scope_key, epoch)
 
 
 def prepare(reader, scope, read):
-    return assemble(*capture(reader, scope, read))
+    from ._monthly import key
+
+    return assemble(*capture(reader, scope, read), scope_key=key(scope), epoch=read.head)

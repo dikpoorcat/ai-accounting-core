@@ -341,14 +341,21 @@ def test_old_month_projection_is_not_read_or_repaired_until_explicit_retry(case,
         model = _monthly.capture(case.kernel.reading, _monthly.BRIEF_ACTIVITY, saved.scope, read)
     old = loads_json(model.payload_json)
     del old["review_businesses"]
-    old_model = replace(model, payload_json=canonical_json(old), content_digest=content_digest(old))
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
         repository._session.execute(
             "UPDATE read_scope_head SET format_version=1 WHERE scope_key=?",
             (saved.scope_key,),
         )
-        assert repository.publish(saved.scope_key, _monthly.BRIEF_ACTIVITY, unit.head, 1, old_model)
+        # Install an old derived fixture directly; the current factory rejects its old shape.
+        repository._session.execute(
+            "UPDATE read_component SET payload_json=? WHERE scope_key=? AND component_key=?",
+            (canonical_json(old), saved.scope_key, _monthly.BRIEF_ACTIVITY),
+        )
+        repository._session.execute(
+            "UPDATE read_scope_head SET content_digest=? WHERE scope_key=? AND component_key=?",
+            (content_digest(old), saved.scope_key, _monthly.BRIEF_ACTIVITY),
+        )
         before = unit.head, repository.scopes()
 
     def no_repair(*args, **kwargs):

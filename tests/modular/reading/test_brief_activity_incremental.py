@@ -75,16 +75,18 @@ def matches_complete(book, month="2026-01"):
         current = repository.state(_monthly.key(scope), index.COMPONENT)
         assert current["state"] == "ready", current
         fresh = activity.prepare(book.kernel.reading, scope, read)
-        assert (
-            repository.payload(_monthly.key(scope), index.COMPONENT)["payload_json"]
-            == fresh.payload_json
-        )
+        saved = loads_json(repository.payload(_monthly.key(scope), index.COMPONENT)["payload_json"])
+        assert index.semantic(saved) == index.semantic(loads_json(fresh.payload_json))
         assert index.base(repository, current) is not None
         assert index.pending(repository, _monthly.key(scope)) is None
         rows = repository.activity_rows(_monthly.key(scope))
         actual = {(row["collection_key"], row["item_id"]): row["payload_json"] for row in rows}
         assert actual == {(row[0], row[1]): row[-1] for row in fresh.rows}
-    return loads_json(fresh.payload_json)
+    return {
+        key: value
+        for key, value in loads_json(fresh.payload_json).items()
+        if key not in {"_item_epoch", "_semantic_digest"}
+    }
 
 
 def watch_contents(book, monkeypatch):
@@ -279,11 +281,8 @@ def test_changed_dependency_is_replaced_and_unused_dependency_does_not_accumulat
     assert book.kernel.reading.run_pending(book.company)
     matches_complete(book)
     with book.kernel.storage.read_unit(book.company) as read:
-        roots = {
-            item.item_id: item.value
-            for item in index.base(read.repository("reading"), state(book))
-            if item.collection == index.ROOTS
-        }
+        directory = index.base(read.repository("reading"), state(book))
+        roots = directory.get(index.ROOTS, directory.payload["_inputs"]["business_ids"])
     dependencies = {source["business_id"] for source in roots[paid["business_id"]]["sources"]}
     assert second["business_id"] in dependencies and first["business_id"] not in dependencies
     saved = book.app.accounting_apply(
@@ -535,10 +534,16 @@ def test_damaged_reuse_or_pending_rows_require_explicit_full_retry(book, damaged
         change(book, first)
         seq = 2
     with book.kernel.storage.maintenance_unit(book.company) as unit:
+        from ai_accounting_modular.reading import _item_buckets
+
+        target = index.BUCKETS if damaged == index.ROOTS else damaged
+        args = (_monthly.key(selection(book)), index.COMPONENT, target)
+        if damaged == index.ROOTS:
+            args += (_item_buckets.key(index.ROOTS, first["business_id"]),)
         unit.repository("reading")._session.execute(
             "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
-            "AND collection_key=?",
-            (_monthly.key(selection(book)), index.COMPONENT, damaged),
+            "AND collection_key=?" + (" AND item_id=?" if damaged == index.ROOTS else ""),
+            args,
         )
     first["data"]["amount_fen"] = "80000"
     change(book, first, seq=seq)

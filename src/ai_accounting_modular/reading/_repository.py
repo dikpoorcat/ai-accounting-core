@@ -73,7 +73,14 @@ class ReadingRepository:
             ):
                 return False
             model = financial.model
-        patch = model if isinstance(model, open_index.PreparedOpenPatch) else None
+        patch = (
+            model
+            if isinstance(
+                model, (open_index.PreparedOpenPatch, activity_index.PreparedActivityPatch)
+            )
+            else None
+        )
+        activity_patch = isinstance(patch, activity_index.PreparedActivityPatch)
         if patch is not None:
             model = patch.model
         if not isinstance(model, PreparedModel):
@@ -84,9 +91,13 @@ class ReadingRepository:
             format_version,
         ):
             return False
-        fork = patch is not None and patch.base_scope != scope_key
+        fork = isinstance(patch, open_index.PreparedOpenPatch) and patch.base_scope != scope_key
         if patch is not None:
-            if component != open_index.COMPONENT:
+            if state["state"] != "preparing":
+                return False
+            if component != (activity_index.COMPONENT if activity_patch else open_index.COMPONENT):
+                return False
+            if activity_patch and patch.scope_key != scope_key:
                 return False
             if fork:
                 if not open_rollover.initial(self, state):
@@ -96,13 +107,31 @@ class ReadingRepository:
                 patch.base_digest,
             ):
                 return False
+            if not fork:
+                if activity_patch:
+                    pending = activity_index.pending(self, scope_key, wanted=wanted_head)
+                    if pending is None or pending["full"]:
+                        return False
+                else:
+                    from ._brief_open_inputs import pending as open_pending
+
+                    full, dirty = open_pending(self, scope_key)
+                    if full or not dirty:
+                        return False
         if component == open_index.COMPONENT:
             payload = loads_json(model.payload_json)
             epoch = open_index.validate(payload)
+        elif component == activity_index.COMPONENT:
+            payload = loads_json(model.payload_json)
+            epoch = activity_index.validate(payload, scope_key)
         else:
             payload, epoch = None, wanted_head
         if patch is not None and epoch != patch.item_epoch:
             return False
+        if activity_patch:
+            current = activity_index.base(self, state)
+            if current is None or current.epoch != patch.item_epoch:
+                return False
         if fork and not open_rollover.matches(self, patch, scope_key, payload):
             return False
         rows = tuple((scope_key, *row, component, epoch) for row in model.rows)
@@ -128,7 +157,11 @@ class ReadingRepository:
             )
             self._session.execute(
                 "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
-                (scope_key, component, open_index.DIRTY),
+                (
+                    scope_key,
+                    component,
+                    activity_index.DIRTY if activity_patch else open_index.DIRTY,
+                ),
             )
         if rows:
             self._session.executemany(
@@ -167,6 +200,29 @@ class ReadingRepository:
                 "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
                 "AND collection_key<>?",
                 (scope_key, activity_index.COMPONENT, activity_index.DIRTY),
+            )
+        )
+
+    def activity_bucket_count(self, scope_key):
+        return self._session.fetchone(
+            "SELECT COUNT(*) FROM read_item WHERE scope_key=? AND component_key=? "
+            "AND collection_key=?",
+            (scope_key, activity_index.COMPONENT, activity_index.BUCKETS),
+        )[0]
+
+    def activity_bucket_rows(self, scope_key, bucket_keys):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_item WHERE scope_key=? AND component_key=? "
+                "AND collection_key=? "
+                "AND item_id IN (SELECT value FROM json_each(?))",
+                (
+                    scope_key,
+                    activity_index.COMPONENT,
+                    activity_index.BUCKETS,
+                    canonical_json(list(bucket_keys)),
+                ),
             )
         )
 

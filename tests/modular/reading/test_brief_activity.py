@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 
 from ai_accounting_modular.contracts.public import content_digest, loads_json
 from ai_accounting_modular.reading import _brief_activity, _brief_groups, _brief_vouchers, _monthly
+from ai_accounting_modular.reading import _brief_activity_index as activity_index
 from ai_accounting_modular.reading._brief_activity_parts import business_parties
 from ai_accounting_modular.reading._brief_activity_sources import Contents
 from ai_accounting_modular.reading._context import period
@@ -188,7 +189,11 @@ def test_closed_correction_uses_old_and_new_exact_type_and_date(case):
     )
     assert result["completion"] == "complete", json.dumps(result, ensure_ascii=False)
     with case.kernel.storage.read_unit(case.company) as read:
-        assert _brief_activity.prepare(case.kernel.reading, selection(case), read) == before
+        after = _brief_activity.prepare(case.kernel.reading, selection(case), read)
+        assert after.rows == before.rows
+        assert activity_index.semantic(loads_json(after.payload_json)) == activity_index.semantic(
+            loads_json(before.payload_json)
+        )
     capture(case, "2026-02")
     groups = activity(case, "2026-02")["items"]
     assert {(item["title"], item["amount_fen"]) for item in groups} == {

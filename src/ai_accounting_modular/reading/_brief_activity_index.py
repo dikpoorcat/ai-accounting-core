@@ -1,183 +1,244 @@
-"""BriefActivity's current root dependencies and checked reusable display rows."""
+"""Activity's current directory factory and exact publication guard."""
 
-from dataclasses import dataclass, replace
-from types import MappingProxyType
+from collections import defaultdict
+from copy import deepcopy
+from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    ReadInputs,
+    canonical_json,
     content_digest,
     loads_json,
-    validate_contract,
 )
 
-from . import _dependencies
-from ._collections import IndexItem, PreparedItems, _decode, read_items
+from . import _brief_activity_dependencies as dependencies
+from . import _brief_activity_totals as totals
+from . import _item_buckets as buckets
+from ._brief_activity_dependencies import BUSINESSES as BUSINESSES
+from ._brief_activity_dependencies import OBJECTS as OBJECTS
+from ._brief_activity_dependencies import ROOTS as ROOTS
+from ._brief_activity_dependencies import corrupt as corrupt
+from ._brief_activity_dependencies import root_item as root_item
+from ._collections import PreparedModel, _decode, prepare_items
 
 COMPONENT = "brief_activity"
-FORMAT_VERSION = 8
-ROOTS = "activity_roots"
+FORMAT_VERSION = 9
+NAMESPACE = "ai-accounting-reading-activity-bucket/1"
 DIRTY = "activity_pending"
-COLLECTIONS = ("activity", "activity_members", "brief_vouchers", ROOTS)
+BUCKETS = "_activity_buckets"
+PUBLIC = ("activity", "activity_members", "brief_vouchers")
+MIRRORS = (*PUBLIC, totals.CANDIDATES)
+KEYS = (BUSINESSES, OBJECTS)
+COLLECTIONS = (*MIRRORS, ROOTS, BUSINESSES, OBJECTS, totals.FOLDS)
 
 
-def _readonly(value):
-    if isinstance(value, dict):
-        return MappingProxyType({key: _readonly(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_readonly(item) for item in value)
-    return value
-
-
-@dataclass(frozen=True)
-class ActivityBase:
-    prepared: PreparedItems
-    items: tuple[IndexItem, ...]
-
-    def __iter__(self):
-        return iter(self.items)
-
-    def retain(self, dirty):
-        items = tuple(
-            item
-            for item in self.items
-            if item.collection != "activity" and item.business_id not in dirty
-        )
-        return ActivityBase(
-            self.prepared.select((item.collection, item.item_id) for item in items), items
-        )
-
-
-def corrupt():
-    raise ContractError("storage_corrupt", "业务活动的当前依赖或展示索引不完整。")
-
-
-def _ids(values):
-    if type(values) is not list or values != sorted(set(values)):
-        corrupt()
-    for identity in values:
-        validate_contract("core.schema.json", "Id", identity)
-
-
-def root(value):
-    if type(value) is not dict or set(value) != {"business_id", "sources", "object_ids"}:
-        corrupt()
-    validate_contract("core.schema.json", "Id", value["business_id"])
-    _ids(value["object_ids"])
-    sources = value["sources"]
-    if type(sources) is not list or not sources:
-        corrupt()
-    for source in sources:
-        validate_contract("business-facts.schema.json", "ResultSourceRef", source)
-    identities = [(source["result_id"], source["result_generation"]) for source in sources]
-    if identities != sorted(set(identities)) or not any(
-        source["business_id"] == value["business_id"] for source in sources
-    ):
-        corrupt()
-    return value
-
-
-def root_item(business_id, sources, object_ids):
-    unique = {}
-    for source in sources:
-        key = source["result_id"], source["result_generation"]
-        if key in unique and unique[key] != source:
-            corrupt()
-        unique[key] = source
-    value = root(
+def semantic(payload):
+    return content_digest(
         {
-            "business_id": business_id,
-            "sources": [unique[key] for key in sorted(unique)],
-            "object_ids": sorted(set(object_ids)),
+            key: value
+            for key, value in payload.items()
+            if key not in {"_item_epoch", "_semantic_digest"}
         }
     )
-    return IndexItem(ROOTS, business_id, business_id, value, business_id=business_id)
 
 
-def dependencies(roots):
-    return ReadInputs(
-        posted_results=True,
-        business_ids=tuple(
-            sorted({source["business_id"] for item in roots for source in item.value["sources"]})
-        ),
-        object_ids=tuple(
-            sorted({identity for item in roots for identity in item.value["object_ids"]})
-        ),
-    )
+def validate(payload, scope_key):
+    try:
+        return _validate(payload, scope_key)
+    except (ContractError, KeyError, TypeError, ValueError) as error:
+        raise ContractError("storage_corrupt", "业务活动的范围或完整目录不一致。") from error
 
 
-def _owned(item, roots):
-    if item.business_id not in roots:
+def _validate(payload, scope_key):
+    if payload["_scope"] != scope_key or payload["_semantic_digest"] != semantic(payload):
         corrupt()
-    saved = roots[item.business_id]
-    if item.collection == "activity_members":
-        scope = item.value["scope"]
-        if (
-            item.value["row"]["subject_id"] != item.business_id
-            or scope["source"] not in saved["sources"]
-        ):
-            corrupt()
-        for value in (*scope["allocations"], *scope["obligations"]):
-            if value["producer"] not in saved["sources"]:
-                corrupt()
-    else:
-        reference = item.value["reference"]
-        if item.value["template"]["subject_id"] != item.business_id or not any(
-            source["result_id"] == reference["result_id"]
-            and source["result_generation"] == reference["generation"]
-            and source["business_id"] == reference["business_id"]
-            and source["result_slot"] == reference["result_slot"]
-            for source in saved["sources"]
-        ):
-            corrupt()
-        if any(
-            identity not in saved["object_ids"]
-            for kind in ("parties", "assets")
-            for identity in item.value["display"][kind]
-        ):
-            corrupt()
+    epoch = payload["_item_epoch"]
+    if type(epoch) is not int or epoch < 0:
+        corrupt()
+    buckets.validate(payload["_buckets"], COLLECTIONS, KEYS, MIRRORS)
+    if buckets.manifest(payload["_buckets"]) != payload["_collections"]:
+        corrupt()
+    dependencies.validate_inputs(payload, payload["_buckets"])
+    categories, reviews = totals.summaries(payload["_category_folds"], payload["_review_folds"])
+    manifests = payload["_collections"]
+    if any(
+        type(payload[field]) is not int
+        for field in ("activity_count", "group_count", "voucher_count")
+    ):
+        corrupt()
+    if (
+        payload["activity_groups"] != categories
+        or payload["review_businesses"] != reviews
+        or payload["activity_count"] != manifests["activity_members"]["count"]
+        or payload["group_count"] != manifests["activity"]["count"]
+        or payload["voucher_count"] != manifests["brief_vouchers"]["count"]
+        or sum(value["event_count"] for value in categories) != payload["activity_count"]
+        or sum(value["group_count"] for value in categories) != payload["group_count"]
+        or sum(value["count"] for value in reviews) != payload["activity_count"]
+        or manifests[totals.FOLDS]["count"] != payload["group_count"]
+        or not payload["group_count"]
+        <= manifests[totals.CANDIDATES]["count"]
+        <= payload["activity_count"]
+    ):
+        corrupt()
+    return epoch
 
 
 def base(repository, state):
-    """Read and check only Reading's own complete previous small projection."""
-    if state["ready_head"] is None:
+    if state["format_version"] != FORMAT_VERSION:
         return None
     saved = repository.payload(state["scope_key"], COMPONENT)
+    if saved is None:
+        if state["ready_head"] == 0 and state["content_digest"] is None:
+            return None
+        corrupt()
     try:
-        if saved is None or saved["head"] != state["ready_head"]:
-            corrupt()
         payload = loads_json(saved["payload_json"])
-        if content_digest(payload) != state["content_digest"]:
-            corrupt()
-        rows = repository.activity_rows(state["scope_key"])
-        if any(
-            row["head"] != state["ready_head"]
-            or row["scope_key"] != state["scope_key"]
-            or row["component_key"] != COMPONENT
-            or row["collection_key"] not in COLLECTIONS
-            for row in rows
+        if (
+            saved["head"] != state["ready_head"]
+            or content_digest(payload) != state["content_digest"]
         ):
             corrupt()
-        prepared, items = read_items(rows, collections=COLLECTIONS)
-        manifest = prepared.with_summary({})["_collections"]
-        if manifest != payload["_collections"]:
-            corrupt()
-        roots = {item.item_id: root(item.value) for item in items if item.collection == ROOTS}
-        for item in items:
-            if item.collection == ROOTS:
-                if item.item_id != item.business_id or item.item_id != item.value["business_id"]:
-                    corrupt()
-            elif item.collection in {"activity_members", "brief_vouchers"}:
-                _owned(item, roots)
-        if _dependencies.inputs(payload) != dependencies(
-            [item for item in items if item.collection == ROOTS]
-        ):
-            corrupt()
-        return ActivityBase(
-            prepared, tuple(replace(item, value=_readonly(item.value)) for item in items)
-        )
+        from ._brief_activity_directory import Directory
+
+        return Directory(repository, state["scope_key"], payload)
     except (ContractError, KeyError, TypeError, ValueError) as error:
-        raise ContractError("storage_corrupt", "业务活动的当前依赖或展示索引不完整。") from error
+        raise ContractError("storage_corrupt", "业务活动的目录基底不完整。") from error
+
+
+def _prepared(entries):
+    entries = tuple(entries)
+    if len({(entry.collection, entry.item_id) for entry in entries}) != len(entries) or any(
+        entry.collection not in COLLECTIONS for entry in entries
+    ):
+        corrupt()
+    mirrored = prepare_items(entry for entry in entries if entry.collection in MIRRORS)
+    grouped = {}
+    for entry in entries:
+        if entry.collection not in MIRRORS:
+            grouped.setdefault(buckets.key(entry.collection, entry.item_id), {})[entry.item_id] = (
+                entry.value
+            )
+    for row, digest in zip(mirrored.rows, mirrored.row_digests, strict=True):
+        grouped.setdefault(buckets.key(row[0], row[1]), {})[row[1]] = row[2], digest
+    return mirrored.rows, grouped
+
+
+def _bucket(identity, values):
+    collection, bucket = identity.rsplit(":", 1)
+    descriptor, raw = buckets.prepare(
+        collection,
+        bucket,
+        values,
+        namespace=NAMESPACE,
+        private=collection not in MIRRORS,
+        keyed=collection in KEYS,
+    )
+    return descriptor, (BUCKETS, identity, identity, None, None, None, None, raw)
+
+
+def _summary(summary, directories):
+    categories, reviews = totals.summaries(summary["_category_folds"], summary["_review_folds"])
+    manifests = buckets.manifest(directories)
+    return dict(
+        summary,
+        _buckets=directories,
+        _collections=manifests,
+        activity_groups=categories,
+        review_businesses=reviews,
+        activity_count=manifests["activity_members"]["count"],
+        group_count=manifests["activity"]["count"],
+        voucher_count=manifests["brief_vouchers"]["count"],
+    )
+
+
+def seal(payload, rows, epoch):
+    payload = dict(payload, _item_epoch=epoch)
+    payload["_semantic_digest"] = semantic(payload)
+    validate(payload, payload["_scope"])
+    return PreparedModel(canonical_json(payload), content_digest(payload), tuple(rows))
+
+
+def complete(members, vouchers, roots, scope_key, epoch):
+    entries, categories, reviews = totals.complete(members)
+    owned = {item.item_id: dependencies.root(item.value) for item in roots}
+    member_ids, voucher_ids = defaultdict(set), defaultdict(set)
+    for member in members:
+        member_ids[member["row"]["subject_id"]].add(member["row"]["key"])
+    for item in vouchers:
+        voucher_ids[item.business_id].add(item.item_id)
+    for root_id, value in owned.items():
+        if (
+            value["business_id"] != root_id
+            or set(value["members"]) != member_ids[root_id]
+            or set(value["vouchers"]) != voucher_ids[root_id]
+        ):
+            corrupt()
+    for entry in (*vouchers, *(totals.member_item(member) for member in members)):
+        dependencies.owned(entry, owned)
+    dependency_items, selected = dependencies.complete(roots)
+    entries.extend((*vouchers, *roots, *dependency_items))
+    public, grouped = _prepared(entries)
+    directories = {collection: {} for collection in COLLECTIONS}
+    rows = list(public)
+    for identity, values in grouped.items():
+        collection, bucket = identity.rsplit(":", 1)
+        directories[collection][bucket], row = _bucket(identity, values)
+        rows.append(row)
+    summary = {
+        "_scope": scope_key,
+        "_inputs": selected.wire(),
+        "_category_folds": categories,
+        "_review_folds": reviews,
+    }
+    return seal(_summary(summary, directories), rows, epoch)
+
+
+@dataclass(frozen=True)
+class PreparedActivityPatch:
+    model: PreparedModel
+    deletes: tuple[tuple[str, str], ...]
+    base_ready: int
+    base_digest: str
+    item_epoch: int
+    scope_key: str
+
+
+def patch(summary, entries, deletes, directory, state):
+    public, updates = _prepared(entries)
+    deletes = set(deletes)
+    if any(collection not in COLLECTIONS for collection, _ in deletes):
+        corrupt()
+    changed = deletes | {
+        (identity.rsplit(":", 1)[0], item_id)
+        for identity, values in updates.items()
+        for item_id in values
+    }
+    keys = {buckets.key(*identity) for identity in changed}
+    directory.load(keys)
+    values = {key: dict(directory.loaded[key]) for key in keys}
+    for collection, identity in deletes:
+        values[buckets.key(collection, identity)].pop(identity, None)
+    for key, additions in updates.items():
+        values[key].update(additions)
+    directories, rows = deepcopy(directory.roots), list(public)
+    removed = {(collection, identity) for collection, identity in changed if collection in MIRRORS}
+    for identity, contents in values.items():
+        collection, bucket = identity.rsplit(":", 1)
+        removed.add((BUCKETS, identity))
+        if contents:
+            directories[collection][bucket], row = _bucket(identity, contents)
+            rows.append(row)
+        else:
+            directories[collection].pop(bucket, None)
+    return PreparedActivityPatch(
+        seal(_summary(summary, directories), rows, directory.epoch),
+        tuple(sorted(removed)),
+        state["ready_head"],
+        state["content_digest"],
+        directory.epoch,
+        directory.scope_key,
+    )
 
 
 def pending(repository, scope_key, *, wanted=None):
@@ -187,8 +248,7 @@ def pending(repository, scope_key, *, wanted=None):
     try:
         if len(rows) != 1:
             corrupt()
-        row = rows[0]
-        value = _decode(row)
+        row, value = rows[0], _decode(rows[0])
         if (
             row["item_id"] != "current"
             or set(value) != {"full", "business_ids"}
@@ -196,7 +256,7 @@ def pending(repository, scope_key, *, wanted=None):
             or (wanted is not None and row["head"] > wanted)
         ):
             corrupt()
-        _ids(value["business_ids"])
+        dependencies.ids(value["business_ids"], uuid=True)
         if value["full"] and value["business_ids"]:
             corrupt()
         return value

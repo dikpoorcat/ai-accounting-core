@@ -288,6 +288,10 @@ def _ready_collection(scope_key, component, collection, read):
         from . import _brief_open_index
 
         directory = _brief_open_index.Directory(repository, scope_key, summary)
+    elif component == "brief_activity":
+        from ._brief_activity_directory import Directory
+
+        directory = Directory(repository, scope_key, summary)
     return repository, state, manifest, directory
 
 

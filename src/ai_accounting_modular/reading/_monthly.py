@@ -112,6 +112,8 @@ def _load(repository, scope_key, component, state):
             from . import _brief_open_index
 
             _brief_open_index.validate(value)
+        elif component == BRIEF_ACTIVITY:
+            _brief_activity_index.validate(value, scope_key)
         return {key: item for key, item in value.items() if key not in {"_inputs", "_item_epoch"}}
     except (ContractError, KeyError, TypeError, ValueError) as error:
         raise _CorruptComponent(component) from error
@@ -132,7 +134,7 @@ def _ready_snapshot(reader, normalized, states, read):
             "period_status": selected["status"],
             "components": {
                 name: values[name]["_semantic_digest"]
-                if name == BRIEF_OPEN_ITEMS
+                if name in {BRIEF_OPEN_ITEMS, BRIEF_ACTIVITY}
                 else state["content_digest"]
                 for name, state in sorted(states.items())
             },
