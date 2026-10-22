@@ -1,19 +1,18 @@
 """BriefOpen's own compact indexes and publication proof; no formal accounting lives here."""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadInputs,
-    canonical_json,
     content_digest,
     loads_json,
 )
 
 from . import _brief_open_buckets as buckets
 from . import _dependencies
-from ._collections import IndexItem, PreparedModel, _decode, prepare_items
+from ._collections import IndexItem, PreparedModel, _decode, prepare_items, prepare_model
 
 COMPONENT = "brief_open_items"
 FORMAT_VERSION = 8
@@ -83,7 +82,7 @@ def seal(payload, rows, epoch):
     payload = dict(payload)
     payload["_semantic_digest"] = semantic(payload)
     payload["_item_epoch"] = epoch
-    return PreparedModel(canonical_json(payload), content_digest(payload), tuple(rows))
+    return replace(prepare_model(payload), rows=tuple(rows))
 
 
 def _prepared(entries):

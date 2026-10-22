@@ -2,11 +2,10 @@
 
 from collections import defaultdict
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    canonical_json,
     content_digest,
     loads_json,
 )
@@ -19,7 +18,7 @@ from ._brief_activity_dependencies import OBJECTS as OBJECTS
 from ._brief_activity_dependencies import ROOTS as ROOTS
 from ._brief_activity_dependencies import corrupt as corrupt
 from ._brief_activity_dependencies import root_item as root_item
-from ._collections import PreparedModel, _decode, prepare_items
+from ._collections import PreparedModel, _decode, prepare_items, prepare_model
 
 COMPONENT = "brief_activity"
 FORMAT_VERSION = 9
@@ -156,7 +155,7 @@ def seal(payload, rows, epoch):
     payload = dict(payload, _item_epoch=epoch)
     payload["_semantic_digest"] = semantic(payload)
     validate(payload, payload["_scope"])
-    return PreparedModel(canonical_json(payload), content_digest(payload), tuple(rows))
+    return replace(prepare_model(payload), rows=tuple(rows))
 
 
 def complete(members, vouchers, roots, scope_key, epoch):

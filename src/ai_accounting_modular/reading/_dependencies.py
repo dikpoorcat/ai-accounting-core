@@ -1,14 +1,14 @@
 """Route changed public inputs to the projections which declared consuming them."""
 
+from dataclasses import replace
+
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadInputs,
-    canonical_json,
-    content_digest,
     loads_json,
 )
 
-from ._collections import PreparedModel
+from ._collections import prepare_model
 
 
 def bind(model, inputs):
@@ -16,7 +16,7 @@ def bind(model, inputs):
         raise TypeError("a projection must declare its public inputs")
     payload = loads_json(model.payload_json)
     payload["_inputs"] = inputs.wire()
-    return PreparedModel(canonical_json(payload), content_digest(payload), model.rows)
+    return replace(prepare_model(payload), rows=model.rows)
 
 
 def inputs(payload):
