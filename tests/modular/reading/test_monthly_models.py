@@ -5,6 +5,12 @@ from copy import deepcopy
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.ledger import (
+    _financial_projection_bodies,
+    _financial_projection_indexes,
+    _financial_projection_model,
+    _financial_tree,
+)
 from ai_accounting_modular.reading import _financial_projection, _monthly
 from ai_accounting_modular.reading.public import MonthScope
 from tests.modular.application._working_case import case as case
@@ -96,10 +102,18 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
 ):
     case.seed()
     before = ready(case)
-    later = case.app.accounting_apply(case.request(case.expense("70000", "2026-02")))
+    with case.kernel.storage.read_unit(case.company) as read:
+        target = _financial_projection.store(read)
+        model = _financial_projection_model.Model(read, target)
+        earlier_atoms = {head["atom"] for heads in model._old_chains().values() for head in heads}
+        earlier_roles = deepcopy(model.header["roles"])
+        producer_key = target.scope_key
+    later_fact = case.expense("70000", "2026-02")
+    later = case.app.accounting_apply(case.request(later_fact))
     assert later["completion"] == "complete", later
     with case.kernel.storage.read_unit(case.company) as read:
         obj = case.kernel.identity.get_batch([case.party], read)[0]
+        producer_wanted = read.head
     changed = case.app.accounting_apply(
         case.request(
             objects=[
@@ -116,14 +130,46 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
     def unexpected(*args, **kwargs):
         pytest.fail("unrelated change rebuilt the financial month")
 
-    for method in (
-        "financial_summary",
-        "prepare_financial_projection",
-        "read_financial_projection",
-    ):
+    for method in ("financial_summary", "read_financial_projection"):
         monkeypatch.setattr(case.kernel.ledger, method, unexpected)
-    assert case.kernel.reading.run_pending(case.company) == ()
-    assert page(case).version == before.version
+    capture = _financial_projection_bodies.capture_bodies
+    body_reads = _financial_projection_indexes.BodyDirectory.get_many
+    entries, summary = _financial_tree.Tree.entries, _financial_tree.Tree.summary
+    captured = []
+
+    def capture_later(selection, heads):
+        heads = tuple(heads)
+        assert {head["business_id"] for head in heads} == {later_fact["business_id"]}
+        captured.extend(heads)
+        return capture(selection, heads)
+
+    def no_earlier_body(directory, identities):
+        identities = tuple(identities)
+        assert earlier_atoms.isdisjoint(identities)
+        return body_reads(directory, identities)
+
+    def unchanged_roles(original):
+        def guarded(tree, *args, **kwargs):
+            # Root integrity checks remain allowed; no earlier amount range is traversed.
+            assert tree.domain in ("financial-source-bodies/1", "financial-adoption-chains/1")
+            return original(tree, *args, **kwargs)
+
+        return guarded
+
+    monkeypatch.setattr(_financial_projection_bodies, "capture_bodies", capture_later)
+    monkeypatch.setattr(_financial_projection_indexes.BodyDirectory, "get_many", no_earlier_body)
+    monkeypatch.setattr(_financial_tree.Tree, "entries", unchanged_roles(entries))
+    monkeypatch.setattr(_financial_tree.Tree, "summary", unchanged_roles(summary))
+    assert page(case) == before
+    assert case.kernel.reading.run_pending(case.company) == (producer_key,)
+    assert captured
+    assert page(case) == before
+    with case.kernel.storage.read_unit(case.company) as read:
+        target = _financial_projection.store(read)
+        assert target.state()["state"] == "ready"
+        assert target.state()["ready_head"] == target.state()["wanted_head"] == producer_wanted
+        assert target.work()["pending"] == target.work()["changes"] == []
+        assert _financial_projection_model.Model(read, target).header["roles"] == earlier_roles
 
 
 def test_frozen_month_keeps_adopted_amount_after_a_later_correction(case):
