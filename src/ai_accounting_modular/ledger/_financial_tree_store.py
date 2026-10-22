@@ -8,7 +8,7 @@ from threading import Lock
 
 from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 
-from ._financial_tree import _CheckedStructure, _identity, corrupt, digest
+from ._financial_tree import _LONG_DIGITS, _BuiltNode, _CheckedStructure, _identity, corrupt, digest
 
 
 class _StructureCache:
@@ -122,6 +122,17 @@ class TreeStore:
         checked = self._check(raw, identity)
         if children != tuple(ref.digest for ref in checked.children):
             corrupt()
+        return self._stage(raw, identity, children)
+
+    def _stage_built(self, built):
+        if type(built) is not _BuiltNode or not built.capacity_ok:
+            corrupt()
+        # Policy-sensitive integers still enter through the actual raw parser.
+        if _LONG_DIGITS.search(built.payload_json) is not None:
+            return self.stage_node(built.payload_json, built.children)
+        return self._stage(built.payload_json, built.identity, built.children)
+
+    def _stage(self, raw, identity, children):
         if identity in self._staged and self._staged[identity] != raw:
             corrupt()
         self._staged[identity], self._edges[identity] = raw, children

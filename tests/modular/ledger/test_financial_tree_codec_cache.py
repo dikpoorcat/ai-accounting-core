@@ -113,6 +113,12 @@ def test_one_read_keeps_proofs_through_global_eviction_staging_publication_and_g
     monkeypatch.setattr(tree_module, "_structure", observed)
     _, store, tree = assemble(reader, max_items=4)
     assert tuple(tree.entries(root)) == tuple(values)
+    # Keep the actual raw staging path under eviction, even though Tree now
+    # constructs new nodes without decoding its own canonical output.
+    for (collection, identity), raw in reader.rows.items():
+        if collection == module.TreeStore.NODES:
+            checked = store.checked_nodes((identity,))[0]
+            store.stage_node(raw, (ref.digest for ref in checked.children))
     changed = tree.patch(root, {values[0].key: Entry(values[0].key, {"n": 999})})
     second = Tree(tree.domain, Summary(), store, max_items=4)
     assert second.get_many(changed, (values[0].key,))[0].value == {"n": 999}

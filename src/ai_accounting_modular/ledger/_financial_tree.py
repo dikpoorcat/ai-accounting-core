@@ -137,6 +137,7 @@ class _Node:
     children: tuple[_Ref, ...]
     payload_json: str
     summary_json: str
+    built: _BuiltNode | None = field(default=None, repr=False, compare=False)
 
 
 class SummaryStrategy(Protocol):
@@ -187,17 +188,9 @@ def _encode_parsed(value):
     )
 
 
-def _structure(raw, identity):
-    """Strictly decode actual bytes once, retaining ownership of fresh JSON."""
+def _validate_structure(value, size):
+    """One set of envelope rules for parsed bytes and canonical builder values."""
     try:
-        if not _identity(identity) or type(raw) is not str or digest(raw) != identity:
-            corrupt()
-        value = json.loads(
-            raw,
-            object_pairs_hook=_unique_object,
-            parse_float=_reject_number,
-            parse_constant=_reject_number,
-        )
         common = {
             "format",
             "domain",
@@ -215,8 +208,10 @@ def _structure(raw, identity):
         kind = value.get("kind") if type(value) is dict else None
         expected = common | ({"key_prefix", "entries"} if kind == "leaf" else {"children"})
         if (
-            kind not in {"leaf", "branch"}
+            type(kind) is not str
+            or kind not in {"leaf", "branch"}
             or set(value) != expected
+            or type(value["format"]) is not str
             or value["format"] != FORMAT
             or type(value["domain"]) is not str
             or not value["domain"]
@@ -229,24 +224,18 @@ def _structure(raw, identity):
             or type(value["first"]) is not str
             or type(value["last"]) is not str
             or value["first"] > value["last"]
+            or type(value["prefix"]) is not str
             or value["prefix"] != commonprefix((_route(value["first"]), _route(value["last"])))
             or type(value["oversize"]) is not bool
-            or _encode_parsed(value) != raw
         ):
             corrupt()
-        size = len(raw.encode("utf-8"))
         too_large = size > value["max_bytes"]
         if kind == "leaf":
             if (
                 type(value["entries"]) is not list
                 or len(value["entries"]) != value["count"]
-                or value["count"] > value["max_items"]
+                or type(value["key_prefix"]) is not str
                 or value["key_prefix"] != commonprefix((value["first"], value["last"]))
-                or value["oversize"]
-                # The canonical False envelope is exactly one byte longer
-                # than True, including the one-byte singleton boundary.
-                != (size + int(value["oversize"]) > value["max_bytes"])
-                or (too_large and value["count"] != 1)
             ):
                 corrupt()
             entries = []
@@ -266,6 +255,14 @@ def _structure(raw, identity):
             ):
                 corrupt()
             children = ()
+            # A builder can try an over-capacity leaf before splitting it.
+            # No strict read or staging operation accepts that candidate.
+            # False is one byte longer than True at the singleton boundary.
+            capacity_ok = (
+                value["count"] <= value["max_items"]
+                and value["oversize"] == (size + int(value["oversize"]) > value["max_bytes"])
+                and (not too_large or value["count"] == 1)
+            )
         else:
             if type(value["children"]) is not list or not 2 <= len(value["children"]) <= 17:
                 corrupt()
@@ -275,9 +272,7 @@ def _structure(raw, identity):
                 for child in children
             ]
             if (
-                value["oversize"]
-                or too_large
-                or children[0].first != value["first"]
+                children[0].first != value["first"]
                 or children[-1].last != value["last"]
                 or sum(child.count for child in children) != value["count"]
                 or sum(child.weight for child in children) != value["weight"]
@@ -295,7 +290,8 @@ def _structure(raw, identity):
             ):
                 corrupt()
             entries = []
-        return value, tuple(entries), children
+            capacity_ok = not value["oversize"] and not too_large
+        return tuple(entries), children, capacity_ok
     except (
         ContractError,
         KeyError,
@@ -308,6 +304,48 @@ def _structure(raw, identity):
         raise ContractError(
             "storage_corrupt", "财务派生树的正文、摘要、顺序或引用不完整。"
         ) from error
+
+
+def _structure(raw, identity):
+    """Strictly decode actual bytes once, retaining ownership of fresh JSON."""
+    try:
+        if not _identity(identity) or type(raw) is not str or digest(raw) != identity:
+            corrupt()
+        value = json.loads(
+            raw,
+            object_pairs_hook=_unique_object,
+            parse_float=_reject_number,
+            parse_constant=_reject_number,
+        )
+        if _encode_parsed(value) != raw:
+            corrupt()
+        rows, children, capacity_ok = _validate_structure(value, len(raw.encode("utf-8")))
+        if not capacity_ok:
+            corrupt()
+        return value, rows, children
+    except (ContractError, TypeError, ValueError, UnicodeError, RecursionError) as error:
+        raise ContractError(
+            "storage_corrupt", "财务派生树的正文、摘要、顺序或引用不完整。"
+        ) from error
+
+
+@dataclass(frozen=True, init=False)
+class _BuiltNode:
+    """Canonical construction receipt, without an Entry or decoded JSON graph."""
+
+    payload_json: str
+    identity: str
+    children: tuple[str, ...]
+    capacity_ok: bool
+
+    def __init__(self, value):
+        raw = canonical_json(value)
+        encoded = raw.encode("utf-8")
+        _, children, capacity_ok = _validate_structure(value, len(encoded))
+        object.__setattr__(self, "payload_json", raw)
+        object.__setattr__(self, "identity", sha256(encoded).hexdigest())
+        object.__setattr__(self, "children", tuple(child.digest for child in children))
+        object.__setattr__(self, "capacity_ok", capacity_ok)
 
 
 @dataclass(frozen=True, init=False)
@@ -457,22 +495,31 @@ class Tree:
             )
         else:
             value["children"] = [child.wire() for child in children]
-        raw = canonical_json(value)
-        if entries and count == 1 and len(raw.encode("utf-8")) > self.max_bytes:
+        built = _BuiltNode(value)
+        if entries and count == 1 and not built.capacity_ok:
             value["oversize"] = True
-            raw = canonical_json(value)
+            built = _BuiltNode(value)
         node = _Node(
-            TreeChild(digest(raw), first, last, count, weight, deepcopy(summary)),
+            TreeChild(built.identity, first, last, count, weight, deepcopy(summary)),
             prefix,
             entries,
             tuple(_Ref(*child.wire()) for child in children),
-            raw,
+            built.payload_json,
             _encode_parsed(value["summary"]),
+            built,
         )
         return node
 
     def _stage(self, node):
-        self.store.stage_node(node.payload_json, tuple(child.digest for child in node.children))
+        built = node.built
+        if (
+            type(built) is not _BuiltNode
+            or node.payload_json != built.payload_json
+            or node.ref.digest != built.identity
+            or tuple(child.digest for child in node.children) != built.children
+        ):
+            corrupt()
+        self.store._stage_built(built)
         self._loaded[node.ref.digest] = node
 
     def full(self, entries):
