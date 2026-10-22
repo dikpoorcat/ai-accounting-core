@@ -12,7 +12,7 @@ from ai_accounting_modular.contracts.public import CONTRACT
 from .._support import COMPANY
 from .dataset import describe, open_dataset
 from .lifecycle import submission, whole_month
-from .measurements import BUDGETS, SAMPLES, WARMUPS, summarize
+from .measurements import SAMPLES, WARMUPS, summarize
 from .portable_cases import clone_baseline, package, prepare_baseline
 from .workload import BUSINESSES_PER_MONTH, CONTRACTORS, EMPLOYEES, PEOPLE, SCALES, plan_month
 
@@ -159,10 +159,10 @@ def run(root, output_root, mode, scenario, *, probe=False):
         for record in attempts
         if record["kind"] == "sample"
     ]
-    summary = summarize(samples, BUDGETS[scenario], expected=repeats)
+    summary = summarize(samples, expected=repeats)
     report.update(
-        status=summary["status"]
-        if all(record["status"] == "complete" for record in attempts)
+        status="passed"
+        if summary["complete"] and all(record["status"] == "complete" for record in attempts)
         else "failed",
         summary=summary,
     )

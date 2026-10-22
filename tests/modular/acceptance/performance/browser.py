@@ -2,7 +2,7 @@
 
 No old kernel or launch configuration participates. The existing harness already
 validates response contracts, complete visible content and two continuous frames;
-its real 500ms refresh / 600ms interaction endpoints are reused without a copy.
+its complete refresh / interaction endpoints are reused without a copy.
 """
 
 import json
@@ -18,7 +18,7 @@ from .._support import COMPANY, ready
 from .browser_progress import recover
 from .dataset import DATABASE, NAME, PASSWORD, describe, fixed_clock
 from .ledger_variant import install_ledger_implementation
-from .measurements import BUDGETS, SAMPLES, WARMUPS, summarize
+from .measurements import SAMPLES, WARMUPS, summarize
 from .projections import PAGES, parameters
 
 WORKSPACE = Path(__file__).resolve().parents[4]
@@ -118,7 +118,7 @@ def run(
                 ],
                 "warmups": 1 if probe else WARMUPS,
                 "repeats": 1 if probe else SAMPLES,
-                "refresh_target_ms": BUDGETS["hot_refresh"]["every_lt_ms"],
+                "refresh_target_ms": None,
                 "interaction_only": interactions,
             }
             work = _concurrent_work(runtime) if _concurrent_work else nullcontext(None)
@@ -140,9 +140,8 @@ def run(
                         item for value in group.values() for item in value.get("attempts", ())
                     ]
                 concurrent_evidence["overlap"] = qualify_overlap(concurrent_evidence, attempts)
-            budget = BUDGETS["local_interaction" if interactions else "hot_refresh"]
             summaries = {
-                name: summarize(item.get("samples", []), budget, expected=1 if probe else SAMPLES)
+                name: summarize(item.get("samples", []), expected=1 if probe else SAMPLES)
                 for name, item in group.items()
             }
             complete = bool(summaries) and (
@@ -159,7 +158,7 @@ def run(
                     concurrent_evidence is None
                     or concurrent_evidence["overlap"].get("status") == "passed"
                 )
-                and all(item["status"] == "passed" for item in summaries.values())
+                and all(item["complete"] for item in summaries.values())
             )
             return {
                 "format": "modular-c14-browser/1",

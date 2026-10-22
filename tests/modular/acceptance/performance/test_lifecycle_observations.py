@@ -98,9 +98,7 @@ def test_failed_scenario_retains_observed_time_but_cannot_be_a_successful_sample
     )
 
 
-def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samples(
-    tmp_path, monkeypatch
-):
+def test_lifecycle_orchestration_keeps_the_selected_independent_samples(tmp_path, monkeypatch):
     """A pure orchestration oracle, not measured accounting or qualification evidence."""
     manifest = {
         "intended_scale_months": 12,
@@ -129,7 +127,7 @@ def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samp
         assert saved["attempts"][-1]["phase"] == "commit_and_finish"
         assert all(item["status"] == "complete" for item in saved["attempts"][:-1])
         committed.append(observation)
-        return {"elapsed_ms": 1}
+        return {"elapsed_ms": 60000}
 
     monkeypatch.setattr(scenarios, "describe", lambda root: manifest)
     monkeypatch.setattr(scenarios, "package", lambda *args: None)
@@ -144,11 +142,14 @@ def test_lifecycle_orchestration_keeps_three_warmups_and_thirty_independent_samp
     assert len(prepared) == 1
     assert prepared[0][1] == {"prior_ready": True}
     assert result["cold_reading"] == sentinel.cold_reading
-    assert len(set(copied)) == len(committed) == 33
-    assert [item["kind"] for item in result["attempts"]] == ["warmup"] * 3 + ["sample"] * 30
-    assert result["warmups"] == 3 and result["sample_count"] == 30
-    assert result["summary"]["samples"] == [1] * 30
-    assert result["summary"]["budget"] == scenarios.BUDGETS["month_archive_and_ready"]
+    assert len(set(copied)) == len(committed) == scenarios.WARMUPS + scenarios.SAMPLES
+    assert [item["kind"] for item in result["attempts"]] == ["warmup"] * scenarios.WARMUPS + [
+        "sample"
+    ] * scenarios.SAMPLES
+    assert result["warmups"] == scenarios.WARMUPS and result["sample_count"] == scenarios.SAMPLES
+    assert result["status"] == "passed"
+    assert result["summary"]["samples"] == [60000] * scenarios.SAMPLES
+    assert result["summary"]["status"] == "measured" and "budget" not in result["summary"]
     assert "one verified isolated restore and closed baseline" in result["setup_excluded"]
     assert json.loads((tmp_path / "report/lifecycle-progress.json").read_text("utf-8")) == result
 

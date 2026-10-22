@@ -3032,7 +3032,16 @@
     },
     {
       "id": "C14",
-      "name": "真实账务内部替换后旧UI和预算保持",
+      "name": "真实账务内部替换后旧UI和实际工作量保持",
+      "measurement_plan": {
+        "scale_months": [12, 48, 120],
+        "businesses_per_month": 1000,
+        "employees": 50,
+        "contractors": 5,
+        "warmup_samples": 1,
+        "samples": 3,
+        "selection": "按改动风险选用规模和次数，记录实际工作量和完整耗时；不要求运行全部组合，不以未经老板确认的耗时数字判定交付。"
+      },
       "given": [
         "common",
         "opening_bank_2000",
@@ -3085,21 +3094,9 @@
             "global_model_invalidation_count": 0,
             "existing_page_default_request_growth": 0,
             "performance_spec": "../06-dashboard-adapter.md#10-性能目标和验收",
-            "ready_refresh_max_ms_exclusive": 500,
-            "specified_interaction_max_ms_exclusive": 600,
-            "post_commit_model_ready_p95_ms_max": 2000,
-            "post_commit_model_ready_max_ms": 5000,
-            "month_archive_and_model_p95_ms_max": 10000,
-            "month_archive_and_model_max_ms": 30000,
-            "scale_months": [
-              12,
-              48,
-              120
-            ],
-            "businesses_per_month": 1000,
-            "employees": 50,
-            "warmup_samples": 3,
-            "formal_samples": 30,
+            "unrelated_history_additional_body_scan_or_recalculation": false,
+            "background_state_and_failure_resumption": true,
+            "browser_responsive_with_complete_content": true,
             "main_ui_unapproved_changes": 0
           },
           "input": {

@@ -119,7 +119,7 @@ test("S9 voucher DOM requires every native line and exact cents even when the vo
   assert.throws(() => verifyVisibleVoucherRows(rows.slice(1), voucher));
 });
 const { retainedRefreshKeys, retainedRefreshSelection, interactionScopeAllows, verifyRetainedRefreshState, readRetainedRefreshState, verifyRetainedResponseContract, retainedCollectionIdentities, verifyRetainedCollectionIdentities, verifyRetainedAuxiliaryComplete, verifyRetainedTargetBinding, verifiedFundsDetailCache } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
-const { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, verifyCollection, stage9TimingSummary, stage9RefreshTarget, stage9RefreshThresholdResults } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
+const { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, verifyCollection, stage9TimingSummary, stage9RefreshTarget, stage9MeasurementStatus, stage9InteractionStatus, stage9RefreshThresholdResults } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
 const { voucherTailDiagnosticSelection } = createRequire(import.meta.url)("./browser-stage9-hot-refresh.cjs");
 
 test("voucher tail diagnostic is explicit, narrow and cannot inherit formal sample counts", () => {
@@ -148,6 +148,25 @@ test("default refresh and other interactions use separate strict targets without
   assert.equal(interaction.median_ms, 599.9);
   assert.deepEqual(samples, before);
   assert.throws(() => stage9TimingSummary(samples, 800), /unknown Stage 9/);
+});
+
+test("measurement without an agreed target keeps slow samples and rejects incomplete work", () => {
+  const samples = [10000, 30000];
+  assert.equal(stage9RefreshTarget({ refresh_target_ms: null }), null);
+  const summary = stage9TimingSummary(samples, null);
+  assert.equal(summary.target_ms, null);
+  assert.equal(summary.over_target_count, null);
+  assert.equal(summary.max_ms, 30000);
+  assert.equal(stage9MeasurementStatus({ brief: { samples } }, 2), "passed");
+  for (const incomplete of [[], [10000], [10000, null], [10000, NaN]]) {
+    assert.equal(stage9MeasurementStatus({ brief: { samples: incomplete } }, 2), "failed");
+  }
+  assert.equal(stage9MeasurementStatus({ brief: { samples } }, 2, false), "failed");
+  assert.equal(stage9InteractionStatus({ slow: { status: "measured", over_target_count: 2 } }, null), "passed");
+  assert.equal(stage9InteractionStatus({ slow: { status: "measured", over_target_count: 2 } }, 600), "over_target");
+  for (const incomplete of [{}, { missing: { status: "unverified" } }, { failed: { status: "failed" } }]) {
+    assert.equal(stage9InteractionStatus(incomplete, null), "failed");
+  }
 });
 
 test("an incomplete interaction keeps finite slow timings and does not claim completed statistics", () => {

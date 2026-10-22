@@ -773,7 +773,7 @@ function verifyExactInteractionTarget(payload, target, selected, section, identi
 
 const percentile = (sorted, proportion) => sorted[Math.ceil(sorted.length * proportion) - 1];
 function stage9TimingSummary(timings, targetMs, complete = true) {
-  assert([500, 600, 700, 1000].includes(targetMs), "unknown Stage 9 timing target");
+  assert(targetMs === null || [500, 600, 700, 1000].includes(targetMs), "unknown Stage 9 timing target");
   if (complete) assert(timings.length > 0 && timings.every(value => Number.isFinite(value) && value >= 0), "invalid completed Stage 9 samples");
   const sorted = complete ? [...timings].sort((a, b) => a - b) : [];
   return {
@@ -781,7 +781,7 @@ function stage9TimingSummary(timings, targetMs, complete = true) {
     median_ms: complete ? percentile(sorted, .5) : null,
     p95_ms: complete ? percentile(sorted, .95) : null,
     max_ms: complete ? sorted.at(-1) : null,
-    over_target_count: timings.filter(value => Number.isFinite(value) && value >= targetMs).length,
+    over_target_count: targetMs === null ? null : timings.filter(value => Number.isFinite(value) && value >= targetMs).length,
     // Preserve the original diagnostic counter for comparison with old reports.
     over_500_ms: timings.filter(value => Number.isFinite(value) && value >= 500).length,
     over_700_ms: timings.filter(value => Number.isFinite(value) && value >= 700).length,
@@ -790,14 +790,26 @@ function stage9TimingSummary(timings, targetMs, complete = true) {
   };
 }
 function stage9RefreshTarget(config) {
+  if (config.refresh_target_ms === null) return null;
   const target = config.refresh_target_ms ?? 500;
   assert([500, 700, 1000].includes(target), "unknown Stage 9 refresh target");
   return target;
 }
-function stage9RefreshThresholdResults(pages, sampleCount, completed = true) {
+function stage9MeasurementStatus(pages, sampleCount, completed = true) {
   const values = Object.values(pages);
   const complete = completed && Number.isInteger(sampleCount) && sampleCount > 0 && values.length > 0 && values.every(page => page.samples?.length === sampleCount
     && page.samples.every(value => Number.isFinite(value) && value >= 0));
+  return complete ? "passed" : "failed";
+}
+function stage9InteractionStatus(results, targetMs) {
+  const values = Object.values(results);
+  if (values.some(value => value.status === "failed")
+    || targetMs === null && (!values.length || values.some(value => value.status !== "measured"))) return "failed";
+  return targetMs !== null && values.some(value => value.over_target_count) ? "over_target" : "passed";
+}
+function stage9RefreshThresholdResults(pages, sampleCount, completed = true) {
+  const values = Object.values(pages);
+  const complete = stage9MeasurementStatus(pages, sampleCount, completed) === "passed";
   return Object.fromEntries([500, 700, 1000].map(target => {
     const over = values.reduce((count, page) => count + (page.samples ?? []).filter(value => Number.isFinite(value) && value >= target).length, 0);
     return [target, { target_ms: target, status: complete ? over ? "over_target" : "passed" : "failed", over_target_count: over }];
@@ -1489,6 +1501,7 @@ async function run(config) {
   const quarter = config.quarter ?? `${company.period.slice(0, 4)}-Q${Math.ceil(Number(company.period.slice(5)) / 3)}`;
   const warmups = config.warmups ?? 3, samples = config.repeats ?? 30;
   const refreshTargetMs = stage9RefreshTarget(config);
+  const interactionTargetMs = refreshTargetMs === null ? null : 600;
   assert(Number.isInteger(warmups) && warmups >= (config.interaction_only ? 0 : 1));
   assert(Number.isInteger(samples) && samples >= 1);
   const { chromium } = require(config.playwright_module);
@@ -3226,10 +3239,10 @@ async function run(config) {
           }
           const timings = result.attempts.filter(item => item.kind === "sample").map(item => item.elapsed_ms);
           const complete = result.attempts.every(item => item.status === "complete");
-          Object.assign(result, { status: complete ? "measured" : "failed", samples: timings, ...stage9TimingSummary(timings, 600, complete) });
+          Object.assign(result, { status: complete ? "measured" : "failed", samples: timings, ...stage9TimingSummary(timings, interactionTargetMs, complete) });
         }
         assertNoBrowserFailures();
-        const interactionReport = { browser_environment: browserEnvironment, resource_failures: resourceFailures, status: Object.values(interactionResults).some(value => value.status === "failed") ? "failed" : Object.values(interactionResults).some(value => value.over_target_count) ? "over_target" : "passed", target_ms: 600, measurement_mode: "interaction_timing",
+        const interactionReport = { browser_environment: browserEnvironment, resource_failures: resourceFailures, status: stage9InteractionStatus(interactionResults, interactionTargetMs), target_ms: interactionTargetMs, timing_gate: interactionTargetMs !== null, measurement_mode: "interaction_timing",
           measurement_scope: retainedRefreshOnly ? "retained_refresh_state" : "existing_interaction", default_page_acceptance: false, warmups, sample_count: samples,
           interactions: interactionResults, interaction_attempts: interactionAttempts, local_actions: localActions, obsolete_cancellations: obsoleteCancellations,
           unverified: Object.entries(interactionResults).filter(([, value]) => value.status === "unverified").map(([key]) => key) };
@@ -3511,9 +3524,10 @@ async function run(config) {
       : { status: "unavailable", reason: "single_eligible_company" };
     partialNavigation.company_switch = companySwitch;
     assertNoBrowserFailures();
-    const thresholdResults = stage9RefreshThresholdResults(result, samples);
+    const thresholdResults = refreshTargetMs === null ? null : stage9RefreshThresholdResults(result, samples);
     return {
-      status: thresholdResults[refreshTargetMs].status, target_ms: refreshTargetMs, threshold_results: thresholdResults,
+      status: thresholdResults ? thresholdResults[refreshTargetMs].status : stage9MeasurementStatus(result, samples), target_ms: refreshTargetMs, timing_gate: refreshTargetMs !== null,
+      ...(thresholdResults ? { threshold_results: thresholdResults } : {}),
       browser_environment: browserEnvironment, resource_failures: resourceFailures, company_id: company.id, period: company.period, warmups, sample_count: samples, pages: result,
       refresh_attempts: refreshAttempts,
       navigation: { ...navigationBase, cold_open_ms: coldOpen, company_switch: companySwitch },
@@ -3523,7 +3537,7 @@ async function run(config) {
       browser_environment: browserEnvironment,
       status: "failed", message: sanitize(error?.message || error),
       ...(!config.interaction_only && !config.navigation_only && !config.layout_only
-        ? { target_ms: refreshTargetMs, threshold_results: stage9RefreshThresholdResults(result, samples, false) } : {}),
+        ? { target_ms: refreshTargetMs, timing_gate: refreshTargetMs !== null, ...(refreshTargetMs === null ? {} : { threshold_results: stage9RefreshThresholdResults(result, samples, false) }) } : {}),
       ...(retainedRefreshOnly ? { measurement_scope: "retained_refresh_state", default_page_acceptance: false } : {}),
       company_id: company.id, period: company.period, pages: result,
       interactions: interactionResults, interaction_attempts: interactionAttempts,
@@ -3558,7 +3572,7 @@ if (require.main === module) {
 
 module.exports = { waitForStage9, waitForStage9Frames, selectStage9Option, closeStage9Browser, localReadMatchesSelection, localReplyIsObsolete, verifyLocalActionReplies, interactionReadUrl, interactionReadMultiset, interactionReadPlanReady, verifiedRequestRecord, verifyEmployeeRootRows, verifiedReadCycleReady, resultHasVisibleContent, observeInteraction, verifyExactInteractionTarget, verifySelectedFilter, verifyBriefGroup, obsoleteLocalCancellation, diagnosticUrl, createRequestDiagnostics, waitForLater, recordRefreshAttempt, verifyLocalRead, verifyBriefState, verifyLongTermAssets, verifyCollection, verifyVoucher, verifyVisibleVoucherRows, verifyMainPayload, formatFen, sumFen, employeeOutstandingFen, captureRefreshResources, readRefreshProjection, observeHotRefresh };
 Object.assign(module.exports, { retainedRefreshKeys, retainedRefreshSelection, interactionScopeAllows, verifyRetainedRefreshState, readRetainedRefreshState, verifyRetainedResponseContract, retainedCollectionIdentities, verifyRetainedCollectionIdentities, retainedItemIdentity, verifyRetainedAuxiliaryComplete, verifyRetainedTargetBinding, verifiedFundsDetailCache });
-Object.assign(module.exports, { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, stage9TimingSummary, stage9RefreshTarget, stage9RefreshThresholdResults });
+Object.assign(module.exports, { createRetainedResponseBodies, verifyRetainedVisibleOrder, stage9RequestPageLimit, stage9TimingSummary, stage9RefreshTarget, stage9MeasurementStatus, stage9InteractionStatus, stage9RefreshThresholdResults });
 Object.assign(module.exports, { voucherTailDiagnosticSelection });
 
 Object.assign(module.exports, { verifyS9WirePayload, recordS9ActualWire });
