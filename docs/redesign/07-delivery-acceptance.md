@@ -141,7 +141,7 @@ JSON中的invoke由H包测试适配层按下表执行，不增加生产API，也
 | `start_backup_and_pause_after_snapshot_lease/resume_backup` | 调用真实备份协调，在一致DB快照及文档/来源租约已取得处暂停，然后继续真实复制和校验。比较包内DB、文档及来源；并发提交发生在协调锁已释放之后。 |
 | `restart_synthetic_host` | 结束合成子进程后用同一case的目录、公司库与资料根重启。仅修改build_label时，核算语义与结构合同不变；不能删除数据、任务或缓存来“恢复”。 |
 | `stop_synthetic_source_host` | 所有源归档/备份已ready后结束源合成实例。离线恢复/重建只读已经捕获的包或清单，不连接源目录/业务库；原件按清单受控根读取。manifest_sha256是独立读取manifest_path原字节所得；不能用set_id代替文件摘要。 |
-| `install_contract_preserving_ledger_internal_implementation/rerun_core_and_five_page_acceptance` | 注入或部署另一种真实ledger私有实现，公开合同与核算语义不变；用它重新运行C01–C13和06完整矩阵，不递归运行C14自身。替换前后都使用真实事务、存储与计算。 |
+| `install_contract_preserving_ledger_internal_implementation/rerun_core_and_five_page_acceptance` | 注入或部署另一种真实ledger私有实现，公开合同与核算语义不变；用它重新运行C01–C13，并按06选择有代表性的功能、体验和工作量检查，不递归运行C14自身。替换前后都使用真实事务、存储与计算。 |
 
 `expect`里的列表按明确业务排序比较；身份集合按集合比较且不能有重复；金额按规范分字符串比较，不能先转浮点。文档/包摘要用读取的真实字节独立计算；这些摘要可以是运行时值，金额oracle不可以。
 
