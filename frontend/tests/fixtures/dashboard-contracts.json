@@ -449,7 +449,7 @@
   "funds_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
@@ -474,7 +474,7 @@
   "first_account_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
@@ -2369,7 +2369,7 @@
   "cash_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2498,7 +2498,8 @@
                 "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               },
               {
                 "id": "000000000003:c_27fda8e39b2e89cb9b7dba8b9a4f822e1f887eee3c078cbf31053031afc390be:000000",
@@ -2516,7 +2517,8 @@
                 "display_summary": "付款（2026-01） · 合成办公用品商店",
                 "list_summary": "付款",
                 "party": "合成办公用品商店",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -2564,7 +2566,7 @@
   "first_account_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2696,7 +2698,8 @@
                 "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               },
               {
                 "id": "000000000003:c_27fda8e39b2e89cb9b7dba8b9a4f822e1f887eee3c078cbf31053031afc390be:000000",
@@ -2714,7 +2717,8 @@
                 "display_summary": "付款（2026-01） · 合成办公用品商店",
                 "list_summary": "付款",
                 "party": "合成办公用品商店",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -2762,7 +2766,7 @@
   "deferred_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2891,7 +2895,8 @@
                 "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               },
               {
                 "id": "000000000003:c_27fda8e39b2e89cb9b7dba8b9a4f822e1f887eee3c078cbf31053031afc390be:000000",
@@ -2909,7 +2914,8 @@
                 "display_summary": "付款（2026-01） · 合成办公用品商店",
                 "list_summary": "付款",
                 "party": "合成办公用品商店",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -2957,7 +2963,7 @@
   "page_accounts": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -3075,7 +3081,7 @@
   "page_movements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -3164,7 +3170,8 @@
                 "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -3182,7 +3189,7 @@
   "page_statements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -3270,7 +3277,7 @@
   "page_investment_products": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -3358,7 +3365,7 @@
   "page_investment_events": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -3446,7 +3453,7 @@
   "account_filter": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -3578,7 +3585,8 @@
                 "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -6562,7 +6570,7 @@
   "bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "e3ef83b0e5622d5973c0cbec485cf54ecb34d7c035ebecb99df528613f64adad",
       "selected_period": {
         "key": "2026-09",
@@ -6751,7 +6759,8 @@
                 "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               },
               {
                 "id": "000000000002:c_aa9781155ba9ef00308f4154da8a9d4b6dacf3ed607f05e9966ea45ad894261d:000000",
@@ -6769,7 +6778,8 @@
                 "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -6842,7 +6852,7 @@
   "filtered_bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "e3ef83b0e5622d5973c0cbec485cf54ecb34d7c035ebecb99df528613f64adad",
       "selected_period": {
         "key": "2026-09",
@@ -6974,7 +6984,8 @@
                 "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -7035,7 +7046,7 @@
   "frozen_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "2c63c1f17b2fa59e1c29af4f0d69419f6d8a28f85b5410fb65808586a104da93",
       "selected_period": {
         "key": "2026-09",
@@ -7224,7 +7235,8 @@
                 "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               },
               {
                 "id": "000000000002:c_77aba3f34db888556c9afea9ff8bc4eed760a19d829738d017764d0650ccedbf:000000",
@@ -7242,7 +7254,8 @@
                 "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
-                "internal_transfer": false
+                "internal_transfer": false,
+                "has_business_progress": true
               }
             ],
             "page": {
@@ -7327,7 +7340,7 @@
   "first_frozen_account_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "2c63c1f17b2fa59e1c29af4f0d69419f6d8a28f85b5410fb65808586a104da93",
       "selected_period": {
         "key": "2026-09",
@@ -7952,7 +7965,7 @@
   "wage_mapping_missing": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "20c3685a8afd8b33505dc3a78600445ba883201ba073afeb5d0e67c76111b571",
       "selected_period": {
         "key": "2026-01",
@@ -8080,7 +8093,7 @@
   "wage_mapping_unsupported": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "b5b872984bf0768fb0c2bfc964b8cb1ada083514babbb81d211333d9a44f0de0",
       "selected_period": {
         "key": "2026-01",
@@ -8208,7 +8221,7 @@
   "late_closed_missing_material": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 9,
+      "schema_version": 10,
       "snapshot_version": "5aa1db1d20ff043f61c875d5043c1b9cc4d9cb98f94eff6951d6f61e67ccef68",
       "selected_period": {
         "key": "2026-02",

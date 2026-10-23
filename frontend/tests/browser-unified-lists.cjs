@@ -53,7 +53,7 @@ async function run(config) {
     const response = scope(clone(fixtures.first_account_funds.response), url), data = response.data, period = response.selected_period.key;
     const account = data.collections.accounts.items[0]; account.name = "演示现金账户";
     const movement = data.collections.movements.items[0];
-    const items = [0, 1].map(index => ({ ...clone(movement), id: `unified-movement-${index}`, subject_id: `unified-business-${index}`, date: `${period}-${index ? "02" : "28"}`, list_summary: "演示资金用途较长用于自然换行检查", display_summary: "演示资金完整业务用途", party: "演示往来对象", direction: "outflow", amount_fen: "9007199254740993", signed_amount_fen: "-9007199254740993", correction: false }));
+    const items = [0, 1].map(index => ({ ...clone(movement), id: `unified-movement-${index}`, subject_id: `unified-business-${index}`, has_business_progress: true, date: `${period}-${index ? "02" : "28"}`, list_summary: "演示资金用途较长用于自然换行检查", display_summary: "演示资金完整业务用途", party: "演示往来对象", direction: "outflow", amount_fen: "9007199254740993", signed_amount_fen: "-9007199254740993", correction: false }));
     data.selected_movement_account = { type: account.type, account_id: account.account_id };
     data.collections.movements = { items, page: pageInfo(items) }; data.movement_count = 2;
     const section = url.searchParams.get("section"); if (section) data.collections = { [section]: data.collections[section] };

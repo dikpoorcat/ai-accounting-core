@@ -230,13 +230,13 @@ function selectMovementAccount(value: string) {
 }
 
 function toggleMovement(item: FundMovement, event?: Event) {
-  if (!item.subject_id || (event?.target instanceof Element && event.target.closest("button,a,details,.business-status-details"))) return;
+  if (!item.subject_id || !item.has_business_progress || (event?.target instanceof Element && event.target.closest("button,a,details,.business-status-details"))) return;
   expandedMovementId.value = expandedMovementId.value === item.id ? "" : item.id;
   if (expandedMovementId.value) openedMovementIds.value.add(item.id);
 }
 
 function handleMovementKey(item: FundMovement, event: KeyboardEvent) {
-  if (event.target !== event.currentTarget || !item.subject_id || !["Enter", " "].includes(event.key)) return;
+  if (event.target !== event.currentTarget || !item.subject_id || !item.has_business_progress || !["Enter", " "].includes(event.key)) return;
   event.preventDefault();
   toggleMovement(item);
 }
@@ -1237,13 +1237,13 @@ onBeforeUnmount(() => {
               </div>
               <ol class="book-activity-list">
                 <li v-for="item in visibleMovements" :key="item.id"
-                  v-memo="[item, item.id, item.subject_id, item.date, item.account_id, item.account_code, item.account_name, item.account_type,
+                  v-memo="[item, item.id, item.subject_id, item.has_business_progress, item.date, item.account_id, item.account_code, item.account_name, item.account_type,
                     item.direction, item.correction, item.amount_fen, item.signed_amount_fen, item.type, item.display_summary, item.list_summary, item.party, item.internal_transfer,
                     expandedMovementId === item.id, openedMovementIds.has(item.id), route.query.company_id, selectedPeriod, snapshotVersion]"
                   class="book-activity-row business-list-row"
-                  :class="{ expandable: item.subject_id, expanded: expandedMovementId === item.id }"
-                  :role="item.subject_id ? 'button' : undefined" :tabindex="item.subject_id ? 0 : undefined"
-                  :aria-expanded="item.subject_id ? expandedMovementId === item.id : undefined"
+                  :class="{ expandable: item.subject_id && item.has_business_progress, expanded: item.has_business_progress && expandedMovementId === item.id }"
+                  :role="item.subject_id && item.has_business_progress ? 'button' : undefined" :tabindex="item.subject_id && item.has_business_progress ? 0 : undefined"
+                  :aria-expanded="item.subject_id && item.has_business_progress ? expandedMovementId === item.id : undefined"
                   @click="toggleMovement(item, $event)" @keydown="handleMovementKey(item, $event)">
                   <time class="business-list-date" :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
                   <div class="book-movement-copy business-list-object"><strong>{{ item.party || "无需往来对象" }}</strong></div>
@@ -1252,8 +1252,8 @@ onBeforeUnmount(() => {
                     {{ item.correction ? "更正原业务" : item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
                   </span>
                   <div class="book-movement-end business-list-money"><strong class="book-movement-amount" :class="item.correction ? 'correction' : item.direction">{{ item.correction ? formatFen(item.signed_amount_fen) : movementAmount(item.direction, item.amount_fen) }}</strong></div>
-                  <svg v-if="item.subject_id" class="book-expand-arrow business-list-arrow" :class="{ expanded: expandedMovementId === item.id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
-                  <BusinessStatusDetails v-if="item.subject_id && openedMovementIds.has(item.id)" :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical"
+                  <svg v-if="item.subject_id && item.has_business_progress" class="book-expand-arrow business-list-arrow" :class="{ expanded: expandedMovementId === item.id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg><span v-else class="business-list-arrow-space" aria-hidden="true"></span>
+                  <BusinessStatusDetails v-if="item.subject_id && item.has_business_progress && openedMovementIds.has(item.id)" :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical"
                     presentation="funds" :funds-context="item" :expanded="expandedMovementId === item.id" hide-summary
                     @click.stop @keydown.stop @changed="refreshChanged" />
                 </li>

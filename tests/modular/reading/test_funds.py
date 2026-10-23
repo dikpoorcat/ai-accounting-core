@@ -70,9 +70,9 @@ def capture(case, month="2026-01"):
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repo = unit.repository("reading")
         scope_key = _monthly.key(scope)
-        repo.register(scope_key, "funds", unit.head, _monthly.FORMAT_VERSION)
+        repo.register(scope_key, "funds", unit.head, _monthly.version("funds"))
         repo.mark(scope_key, "funds", unit.head)
-        assert repo.publish(scope_key, "funds", unit.head, _monthly.FORMAT_VERSION, model)
+        assert repo.publish(scope_key, "funds", unit.head, _monthly.version("funds"), model)
     return model
 
 

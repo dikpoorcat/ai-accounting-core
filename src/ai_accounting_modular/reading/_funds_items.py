@@ -8,6 +8,7 @@ from ai_accounting_modular.contracts.public import (
     parse_fen,
 )
 
+from . import _funds_progress
 from ._collections import IndexItem
 from ._funds_accounts import amount
 
@@ -62,7 +63,7 @@ def party_name(party_id, objects):
     return objects[party_id]["name"] if party_id is not None else ""
 
 
-def movements(activity, accounts, objects, sources):
+def movements(activity, accounts, objects, sources, presence):
     result = []
     for view in activity.movements:
         actual = view["movement"]
@@ -98,6 +99,9 @@ def movements(activity, accounts, objects, sources):
             "party": party,
             "internal_transfer": internal,
         }
+        value["has_business_progress"] = _funds_progress.available(
+            value, view, sources.contents[view["source"]["result_id"]], presence,
+        )
         result.append(
             IndexItem(
                 "movements",

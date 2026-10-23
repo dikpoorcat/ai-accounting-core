@@ -19,7 +19,7 @@ def test_empty_month_is_a_valid_ready_page_without_invented_amounts(case):
     assert status == 200 and body["state"] == "ready"
     assert body["period"] is None and body["model_version"] is None
     response = body["response"]
-    assert response["schema_version"] == 9
+    assert response["schema_version"] == 10
     assert response["snapshot_version"] is None
     assert response["selected_period"] is None and response["data"] is None
     assert response["read_context"]["company_id"] == case.company
@@ -54,7 +54,7 @@ def test_real_month_prepares_then_uses_the_frozen_funds_envelope_and_raw_section
         ("section", "accounts"),
         ("expected_version", version),
     )
-    assert status == 200 and raw["schema_version"] == 9 and "response" not in raw
+    assert status == 200 and raw["schema_version"] == 10 and "response" not in raw
     assert raw["snapshot_version"] == version
     assert raw["read_semantics"]["business_basis"] == "current_known"
 

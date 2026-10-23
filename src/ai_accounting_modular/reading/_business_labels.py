@@ -56,6 +56,23 @@ def origin_fields(content):
     return content.target, content.basis
 
 
+def business_fund_accounts(content):
+    """Exact accounts displayed by whole-business progress, from its adopted input."""
+    target, basis = origin_fields(content)
+    kind, data = target["kind"], basis.get("input", {})
+    if kind in {
+        "money.movement",
+        "financing.owner_funding",
+        "financing.loan_drawdown",
+        "investment.cooperation_funding",
+        "investment.cooperation_distribution",
+    }:
+        return {data["funds_account_id"]} if "funds_account_id" in data else set()
+    if kind == "money.transfer" and data["type"] == "physical":
+        return {data["from_account_id"], data["to_account_id"]}
+    return set()
+
+
 def business_matter(
     content: AdoptedContent | AdoptedOriginProjection,
     resource: ResourceDefinition | ObligationDirectoryItem | ObligationFields | None = None,

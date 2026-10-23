@@ -71,7 +71,7 @@ async function run(config) {
     assert(validateFunds(realFunds), "real funds failed generated contract"); await idle();
     await nav("资金明细").click(); await rows().first().waitFor();
     assert.equal(detailCount(), 0, "default page requested business details");
-    const firstMovement = realFunds.data.collections.movements.items.find(item => item.subject_id);
+    const firstMovement = realFunds.data.collections.movements.items.find(item => item.subject_id && item.has_business_progress);
     assert(firstMovement, "existing month has no expandable first-page movement");
     const realIndex = realFunds.data.collections.movements.items.findIndex(item => item.id === firstMovement.id);
     const realRow = rows().nth(realIndex), realPanel = realRow.locator(".business-detail-panel");
@@ -92,19 +92,17 @@ async function run(config) {
     const nextPeriod = config.period.endsWith("-12") ? `${Number(config.period.slice(0, 4)) + 1}-01` : `${config.period.slice(0, 4)}-${String(Number(config.period.slice(5)) + 1).padStart(2, "0")}`;
     const otherCompany = "synthetic-funds-company";
     let snapshot = "synthetic-funds-v1", failInitial = true, failMore = true, holdMode = null;
-    const baseFunds = clone(fixtures.first_frozen_account_funds.response);
+    const baseFunds = clone(fixtures.frozen_funds.response);
     const baseDetail = clone(fixtures.business_status.response);
     const pageInfo = (count, total = count, more = false) => ({ total_count: total, filtered_count: total, returned_count: count, has_more: more, next_cursor: more ? "synthetic-next" : null });
-    const profile = (id, name, purpose = null, note = null) => ({ entity_id: id, values: {
-      display_name: name, display_number: null, purpose, note, employment_start: null, employment_end: null,
-      employment_status: null, active: null, category_label: null, rights_description: null,
-    } });
-    const accounts = baseFunds.data.collections.accounts.items.map((item, i) => ({ ...item,
+    const profileValues = Object.fromEntries(Object.keys(baseDetail.data.display_profiles.business.values).map(key => [key, null]));
+    const profile = (id, name, purpose = null, note = null) => ({ entity_id: id, values: { ...profileValues, display_name: name, purpose, note } });
+    const accounts = baseFunds.data.collections.accounts.items.filter(item => item.type === "bank").map((item, i) => ({ ...item,
       account_id: `synthetic-account-${i}`, name: "演示同名账户", code: `演示账户${i + 1}`,
       statement: { ...item.statement, account_code: `演示账户${i + 1}`, account_name: "演示同名账户" },
     }));
     const seed = baseFunds.data.collections.movements.items[0];
-    const movement = (id, overrides = {}) => ({ ...seed, id: `synthetic-${id}`, subject_id: `synthetic-${id}`,
+    const movement = (id, overrides = {}) => ({ ...seed, id: `synthetic-${id}`, subject_id: `synthetic-${id}`, has_business_progress: true,
       date: `${config.period}-01`, account_id: accounts[0].account_id, account_code: accounts[0].code,
       account_name: accounts[0].name, account_type: "bank", direction: "outflow", correction: false,
       amount_fen: "600000", signed_amount_fen: "-600000", type: "工资付款", party: "演示员工张某",

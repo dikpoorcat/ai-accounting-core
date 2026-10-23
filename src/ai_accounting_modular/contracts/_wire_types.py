@@ -6305,6 +6305,7 @@ class DashboardFundsDelivery__FundMovement(TypedDict):
     list_summary: str
     party: str
     internal_transfer: bool
+    has_business_progress: bool
 
 class DashboardFundsDelivery__FundsCollections(TypedDict):
     accounts: NotRequired[DashboardFundsDelivery__Collection_FundAccount_]
@@ -6314,7 +6315,7 @@ class DashboardFundsDelivery__FundsCollections(TypedDict):
     investment_events: NotRequired[DashboardFundsDelivery__Collection_InvestmentEvent_]
 
 class DashboardFundsDelivery__FundsDashboardResponse(TypedDict):
-    schema_version: Literal[9]
+    schema_version: Literal[10]
     snapshot_version: str | None
     selected_period: DashboardFundsDelivery__DashboardPeriod | None
     read_semantics: DashboardFundsDelivery__ReadSemantics
@@ -8407,6 +8408,7 @@ class DashboardFunds__FundMovement(TypedDict):
     list_summary: str
     party: str
     internal_transfer: bool
+    has_business_progress: bool
 
 class DashboardFunds__FundsCollections(TypedDict):
     accounts: NotRequired[DashboardFunds__Collection_FundAccount_]
@@ -8481,7 +8483,7 @@ class DashboardFunds__SelectedMovementAccount(TypedDict):
     account_id: str
 
 class DashboardFundsWire(TypedDict):
-    schema_version: Literal[9]
+    schema_version: Literal[10]
     snapshot_version: str | None
     selected_period: DashboardFunds__DashboardPeriod | None
     read_semantics: DashboardFunds__ReadSemantics

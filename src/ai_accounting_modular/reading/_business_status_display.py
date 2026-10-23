@@ -4,7 +4,7 @@ from ._brief_activity_amounts import amount
 from ._brief_activity_parts import business_parties
 from ._brief_activity_sources import identities
 from ._brief_vouchers import assets
-from ._business_labels import business_label, business_matter
+from ._business_labels import business_fund_accounts, business_label, business_matter
 
 
 def profile(identifier, name, obj=None, *, note=None):
@@ -56,18 +56,7 @@ def profiles(reader, selected, settlements, events, read):
         if meaning.party_id:
             counterparties.add(meaning.party_id)
     if content is not None:
-        kind, data = content.target["kind"], content.basis.get("input", {})
-        if kind in {
-            "money.movement",
-            "financing.owner_funding",
-            "financing.loan_drawdown",
-            "investment.cooperation_funding",
-            "investment.cooperation_distribution",
-        }:
-            if "funds_account_id" in data:
-                accounts.add(data["funds_account_id"])
-        elif kind == "money.transfer" and data["type"] == "physical":
-            accounts.update((data["from_account_id"], data["to_account_id"]))
+        accounts.update(business_fund_accounts(content))
     accounts.update(
         event["funds_account_id"] for event in events if event["funds_account_id"] is not None
     )

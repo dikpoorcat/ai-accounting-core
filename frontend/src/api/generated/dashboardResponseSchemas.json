@@ -6363,6 +6363,10 @@
           "internal_transfer": {
             "title": "Internal Transfer",
             "type": "boolean"
+          },
+          "has_business_progress": {
+            "title": "Has Business Progress",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6381,7 +6385,8 @@
           "display_summary",
           "list_summary",
           "party",
-          "internal_transfer"
+          "internal_transfer",
+          "has_business_progress"
         ],
         "title": "FundMovement",
         "type": "object"
@@ -6412,7 +6417,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 9,
+            "const": 10,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -20858,6 +20863,10 @@
           "internal_transfer": {
             "title": "Internal Transfer",
             "type": "boolean"
+          },
+          "has_business_progress": {
+            "title": "Has Business Progress",
+            "type": "boolean"
           }
         },
         "required": [
@@ -20876,7 +20885,8 @@
           "display_summary",
           "list_summary",
           "party",
-          "internal_transfer"
+          "internal_transfer",
+          "has_business_progress"
         ],
         "title": "FundMovement",
         "type": "object"
@@ -21403,7 +21413,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 9,
+        "const": 10,
         "title": "Schema Version",
         "type": "integer"
       },

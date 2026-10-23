@@ -2,7 +2,14 @@
 
 from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
 
-from . import _funds_accounts, _funds_items, _funds_sources, _funds_statements, _monthly
+from . import (
+    _funds_accounts,
+    _funds_items,
+    _funds_progress,
+    _funds_sources,
+    _funds_statements,
+    _monthly,
+)
 from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_model, wire_page
 from ._dependencies import bind
 
@@ -17,6 +24,15 @@ def prepare(reader, scope, read):
     objects = _funds_items.identities(reader, activity, read)
     cards = _funds_accounts.cards(activity, balances, objects)
     sources = _funds_sources.load(reader, activity, scope, read)
+    movement_sources = {
+        view["source"]["business_id"]: view["source"]
+        for view in activity.movements
+        if not sources.entries[view["source"]["result_id"]].business_kind.startswith(
+            "investment.cooperation_"
+        )
+    }
+    business_ids = tuple(sorted(movement_sources))
+    presence = _funds_progress.capture(reader, scope, movement_sources, read)
     items = [
         IndexItem(
             "accounts",
@@ -32,7 +48,7 @@ def prepare(reader, scope, read):
     ]
     ordered = sorted(items, key=lambda item: (item.sort_key, item.item_id))
     accounts = {card["account_id"]: card for _, card in cards}
-    items.extend(_funds_items.movements(activity, accounts, objects, sources))
+    items.extend(_funds_items.movements(activity, accounts, objects, sources, presence))
     matched = _funds_statements.batches(activity, sources, objects)
     items.extend(_funds_statements.statements(activity, accounts, matched))
     investments, fund_items = _funds_items.investment(funds)
@@ -60,6 +76,7 @@ def prepare(reader, scope, read):
                     sorted({entry.reference["business_id"] for entry in sources.entries.values()})
                 ),
                 object_ids=tuple(sorted(objects)),
+                current_business_ids=business_ids,
             ),
         ),
     )

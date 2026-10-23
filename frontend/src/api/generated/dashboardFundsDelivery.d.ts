@@ -7,7 +7,7 @@ export namespace DashboardFundsDeliveryContract {
   export type Period = string | null;
   export type ModelVersion = string | null;
   export type State = "ready";
-  export type SchemaVersion1 = 9;
+  export type SchemaVersion1 = 10;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -114,6 +114,7 @@ export namespace DashboardFundsDeliveryContract {
   export type ListSummary = string;
   export type Party = string;
   export type InternalTransfer = boolean;
+  export type HasBusinessProgress = boolean;
   export type Items1 = FundMovement[];
   export type Id1 = string;
   export type Date1 = string;
@@ -328,6 +329,7 @@ export namespace DashboardFundsDeliveryContract {
     list_summary: ListSummary;
     party: Party;
     internal_transfer: InternalTransfer;
+    has_business_progress: HasBusinessProgress;
   }
   export interface Collection2 {
     items: Items2;

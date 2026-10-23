@@ -98,7 +98,7 @@ async function mount(server, name, { eager = false, section = "activity", withou
   }
   return { ...env, get unmounted() { return env.unmounted; }, props, state, initial, root, nodes, close: () => app.unmount() };
 }
-const movement = index => ({ id: `movement-${index}`, subject_id: `business-${index}`, account_id: "bank-a", account_type: "bank", list_summary: `记录 ${index}`, display_summary: `记录 ${index}`, type: "付款", party: "对象", date: "2026-01-02", direction: "outflow", amount_fen: "100", signed_amount_fen: "-100", correction: false, internal_transfer: false });
+const movement = index => ({ id: `movement-${index}`, subject_id: `business-${index}`, has_business_progress: true, account_id: "bank-a", account_type: "bank", list_summary: `记录 ${index}`, display_summary: `记录 ${index}`, type: "付款", party: "对象", date: "2026-01-02", direction: "outflow", amount_fen: "100", signed_amount_fen: "-100", correction: false, internal_transfer: false });
 function voucherContinuation(start, count, cursor) {
   const response = structuredClone(samples.brief_vouchers.response), collection = response.data.collections.vouchers;
   const original = collection.items[0];
@@ -299,6 +299,36 @@ test("real hidden business detail instances grow only with explicit opens and pr
   globalThis.Element = class {};
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
+    const unavailable = await mount(server, "FundsView");
+    try {
+      unavailable.state.funds.value.collections.movements.items.push(
+        { ...movement(0), has_business_progress: false },
+        { ...movement(1), subject_id: "" },
+        { ...movement(2), list_summary: "有补充备注的业务" },
+        { ...movement(3), internal_transfer: true, list_summary: "账户互转" },
+      );
+      await flush();
+      const rows = unavailable.nodes().filter(node => node.props.class?.split(" ").includes("book-activity-row"));
+      const visit = node => [node, ...node.children.flatMap(visit)];
+      for (const row of rows.slice(0, 2)) {
+        for (const attribute of ["role", "tabindex", "aria-expanded"]) assert.equal(row.props[attribute], undefined, attribute);
+        const marker = visit(row).find(node => node.props.class?.split(" ").includes("business-list-arrow-space"));
+        assert.equal(marker?.props["aria-hidden"], "true"); assert.equal(marker.props["aria-label"], undefined); assert.equal(marker.text, "");
+        assert(!visit(row).some(node => node.props.class?.split(" ").includes("book-expand-arrow")));
+        row.props.onClick({});
+        for (const key of ["Enter", " "]) row.props.onKeydown({ key, target: row, currentTarget: row, preventDefault() { assert.fail("unavailable detail captured keyboard input"); } });
+      }
+      await flush();
+      assert.equal(unavailable.state.expandedMovementId.value, "");
+      assert.equal(unavailable.details.length, 0, "unavailable progress never mounts a detail instance");
+      assert.equal(unavailable.detailCalls.length, 0, "unavailable progress never reads business details");
+      for (const row of rows.slice(2)) {
+        assert.equal(row.props.role, "button"); assert.equal(row.props.tabindex, 0);
+        row.props.onClick({}); await flush();
+      }
+      assert.equal(unavailable.details.length, 2, "remarks and transfers remain expandable when progress is available");
+      assert.equal(unavailable.detailCalls.length, 2);
+    } finally { unavailable.close(); }
     for (const name of ["FundsView", "BriefGroupMembers"]) for (const eager of [true, false]) {
       const h = await mount(server, name, { eager });
       try {
@@ -432,6 +462,11 @@ test("real Vue row work on continuation and final-page state", async t => {
           first.party = "更新对象"; first.list_summary = "完整更新用途"; first.amount_fen = "7654321"; first.subject_id = "changed-business";
           await update(); assert(text(originalNode).includes("更新对象")); assert(text(originalNode).includes("完整更新用途")); assert(text(originalNode).includes("−¥76,543.21"));
           first.correction = true; first.signed_amount_fen = "-12345"; await update(); assert(text(originalNode).includes("更正原业务")); assert(text(originalNode).includes("−¥123.45"));
+          first.has_business_progress = false; await update();
+          assert.equal(originalNode.props.role, undefined); assert.equal(originalNode.props.tabindex, undefined); assert.equal(originalNode.props["aria-expanded"], undefined);
+          assert(originalNode.children.some(node => node.props.class === "business-list-arrow-space" && node.text === ""));
+          originalNode.props.onClick({}); await flush(); assert.equal(h.detailCalls.length, 0);
+          first.has_business_progress = true; await update(); assert.equal(originalNode.props.role, "button"); assert.equal(originalNode.props["aria-expanded"], false);
           originalNode.props.onClick({}); await flush(); assert.equal(h.detailCalls.at(-1).args[1], "changed-business", "cached handler sees same-object identity changes");
           const pending = h.detailCalls.at(-1);
           h.state.selectedAccount.value = "bank:changed-account"; await flush(); assert.equal(pending.args[2].aborted, true);

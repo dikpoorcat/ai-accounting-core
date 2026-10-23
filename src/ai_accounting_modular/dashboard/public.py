@@ -14,7 +14,7 @@ __all__ = ["Dashboard", "HttpResponse", "create_dashboard"]
 LOCAL_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 _MONTH_PAGES = {
     "/api/dashboard/brief": ("brief", 19),
-    "/api/dashboard/funds": ("funds", 9),
+    "/api/dashboard/funds": ("funds", 10),
     "/api/dashboard/assets": ("assets", 10),
     "/api/dashboard/employees": ("employees", 13),
 }

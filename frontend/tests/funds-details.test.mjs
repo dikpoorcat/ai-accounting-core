@@ -15,7 +15,7 @@ import { appendDashboardCollection, prepareDashboardCollections } from "./helper
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
-const movement = (changes = {}) => ({ id: "salary-payment", subject_id: "salary-business", account_id: "bank-a", account_type: "bank", list_summary: "9月工资付款", display_summary: "9月工资付款", type: "工资付款", party: "张某", date: "2026-09-15", direction: "outflow", amount_fen: "600000", signed_amount_fen: "-600000", correction: false, internal_transfer: false, ...changes });
+const movement = (changes = {}) => ({ id: "salary-payment", subject_id: "salary-business", has_business_progress: true, account_id: "bank-a", account_type: "bank", list_summary: "9月工资付款", display_summary: "9月工资付款", type: "工资付款", party: "张某", date: "2026-09-15", direction: "outflow", amount_fen: "600000", signed_amount_fen: "-600000", correction: false, internal_transfer: false, ...changes });
 function scenario(items = [obligation()]) {
   const data = structuredClone(samples.business_status.response.data);
   data.identity.kind = "payroll";
