@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,9 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const loader = await createServer({ root, configFile: false, optimizeDeps: { noDiscovery: true },
   server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 after(() => loader.close());
-const { localApiProxy, readLocalServiceMetadata } = await loader.ssrLoadModule("/local-api-proxy.ts");
+const { localApiProxy, localServiceStatePath, readLocalServiceMetadata } = await loader.ssrLoadModule("/local-api-proxy.ts");
+const serviceProtocol = "ai-accounting-modular-service/1";
+const fingerprint = value => createHash("sha256").update(value).digest("hex");
 
 async function listen(server, port = 0) {
   await new Promise((resolve, reject) => {
@@ -28,7 +31,7 @@ async function close(server) {
 }
 async function fixture(t, handler) {
   const directory = await mkdtemp(join(tmpdir(), "finance-proxy-test-"));
-  const statePath = join(directory, ".service.json");
+  const statePath = localServiceStatePath(join(directory, "catalog.sqlite3"));
   const requests = [];
   const backends = [];
   const startBackend = async (custom = handler, port = 0) => {
@@ -38,6 +41,11 @@ async function fixture(t, handler) {
       requests.push({ path: req.url, headers: req.headers, body });
       if (custom) return custom(req, res, body);
       res.setHeader("Content-Type", "application/json");
+      if (req.url === "/private/browser-ticket") {
+        res.end(JSON.stringify({ protocol: serviceProtocol, catalog_id: current.catalogId,
+          result: { url: `http://${req.headers.host}/#ticket=synthetic-browser-ticket` } }));
+        return;
+      }
       res.end(JSON.stringify({ path: req.url, body }));
     });
     backends.push(backend);
@@ -53,7 +61,7 @@ async function fixture(t, handler) {
     discoveryCount++;
     if (gate) await gate;
     if (unavailable) throw new Error(`offline ${current.capability}`);
-    return { ...current };
+    return { ...current, stateFingerprint: fingerprint(current.stateText) };
   };
   const plugin = await localApiProxy(statePath, discover);
   const vite = await createServer({ root, configFile: false, plugins: [plugin],
@@ -61,14 +69,18 @@ async function fixture(t, handler) {
   vite.middlewares.use((_req, res) => { res.end("frontend-page"); });
   const frontend = createHttpServer(vite.middlewares);
   const port = await listen(frontend);
-  const request = (path = "/api/dashboard/context", options = {}) => fetch(`http://127.0.0.1:${port}${path}`, options);
+  const origin = `http://127.0.0.1:${port}`;
+  const rawRequest = (path = "/api/dashboard/context", options = {}) => fetch(`${origin}${path}`, options);
+  const request = (path, options = {}) => rawRequest(path, {
+    ...options, headers: { Origin: origin, ...options.headers },
+  });
   t.after(async () => {
     await close(frontend);
     await vite.close();
     for (const backend of backends) if (backend.listening) await close(backend);
     await rm(directory, { recursive: true, force: true });
   });
-  return { first, requests, startBackend, request, statePath,
+  return { first, requests, startBackend, request, rawRequest, origin, statePath,
     count: () => discoveryCount,
     setUnavailable: value => { unavailable = value; },
     setGate: value => { gate = value; },
@@ -83,28 +95,93 @@ async function unavailable(response, capability) {
   assert.ok(!text.includes(capability));
 }
 
-test("changed state discovers the new port before sending and updates Origin and ticket capability", async t => {
+test("changed state discovers the new port and bridges only the ticket request with private capability", async t => {
   const f = await fixture(t);
   assert.equal((await f.request()).status, 200);
   const second = await f.startBackend();
   await f.change({ port: second.port, capability: "private-test-capability-two", stateText: "state-two" });
   const response = await f.request("/api/browser-ticket?development=1", {
-    method: "POST", headers: { Origin: "http://127.0.0.1:5173", "X-Local-Capability": "user-supplied" }, body: "{}",
+    method: "POST", headers: { "X-Modular-Capability": "user-supplied", Cookie: "browser-cookie=untrusted" }, body: "{}",
   });
   assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { url: `http://127.0.0.1:${second.port}/#ticket=synthetic-browser-ticket` });
   const received = f.requests.at(-1);
+  assert.equal(received.path, "/private/browser-ticket");
+  assert.equal(received.body, "{}");
   assert.equal(received.headers.host, `127.0.0.1:${second.port}`);
-  assert.equal(received.headers.origin, `http://127.0.0.1:${second.port}`);
-  assert.equal(received.headers["x-local-capability"], "private-test-capability-two");
-  await f.request("/api/dashboard/context", { headers: { "X-Local-Capability": "user-supplied" } });
+  assert.equal(received.headers.origin, undefined);
+  assert.equal(received.headers.cookie, undefined);
+  assert.equal(received.headers["x-modular-capability"], "private-test-capability-two");
+  await f.request("/api/dashboard/context?company_id=synthetic", { headers: {
+    "X-Local-Capability": "old-user-supplied", "X-Modular-Capability": "user-supplied", Cookie: "catalog-scope-session=synthetic",
+  } });
+  assert.equal(f.requests.at(-1).path, "/api/dashboard/context?company_id=synthetic");
+  assert.equal(f.requests.at(-1).headers.origin, `http://127.0.0.1:${second.port}`);
+  assert.equal(f.requests.at(-1).headers.cookie, "catalog-scope-session=synthetic");
   assert.equal(f.requests.at(-1).headers["x-local-capability"], undefined);
+  assert.equal(f.requests.at(-1).headers["x-modular-capability"], undefined);
 });
 
 test("changed capability on the same port is refreshed", async t => {
   const f = await fixture(t);
   await f.change({ capability: "same-port-new-capability", stateText: "same-port-restarted" });
   assert.equal((await f.request("/api/browser-ticket", { method: "POST", body: "{}" })).status, 200);
-  assert.equal(f.requests.at(-1).headers["x-local-capability"], "same-port-new-capability");
+  assert.equal(f.requests.at(-1).headers["x-modular-capability"], "same-port-new-capability");
+});
+
+test("ticket bridge rejects missing or foreign origins, a foreign Host, and non-POST requests", async t => {
+  const f = await fixture(t);
+  for (const options of [
+    { method: "POST", body: "{}" },
+    { method: "POST", headers: { Origin: "https://foreign.example" }, body: "{}" },
+    { headers: { Origin: f.origin } },
+  ]) {
+    const response = await f.rawRequest("/api/browser-ticket", options);
+    assert.equal(response.status, 403, JSON.stringify(options));
+  }
+  const foreignHostStatus = await new Promise((resolve, reject) => {
+    const request = httpRequest(`${f.origin}/api/browser-ticket`, { method: "POST", headers: {
+      Host: "foreign.example", Origin: f.origin, "Content-Length": "2",
+    } }, response => { response.resume(); resolve(response.statusCode); });
+    request.on("error", reject);
+    request.end("{}");
+  });
+  assert.equal(foreignHostStatus, 403);
+  assert.equal((await f.request("/api/dashboard/context", { headers: { Origin: "https://foreign.example" } })).status, 403);
+  assert.equal(f.requests.length, 0);
+  assert.equal(await (await f.request("/private/info")).text(), "frontend-page");
+  assert.equal(await (await f.request("/apiary")).text(), "frontend-page");
+});
+
+test("ticket bridge validates private identity and URL, and never exposes the private envelope", async t => {
+  let envelope;
+  let status = 200;
+  const f = await fixture(t, (_req, res) => {
+    res.writeHead(status, { "Content-Type": "application/json", "Set-Cookie": "private-cookie=discarded" });
+    res.end(JSON.stringify(envelope));
+  });
+  const url = `http://127.0.0.1:${f.first.port}/#ticket=synthetic-safe-ticket`;
+  const valid = { protocol: serviceProtocol, catalog_id: f.metadata().catalogId,
+    result: { url, capability: f.metadata().capability }, capability: f.metadata().capability };
+  for (const invalid of [
+    { ...valid, protocol: "old-service-protocol" },
+    { ...valid, catalog_id: "foreign-catalog" },
+    { ...valid, result: { url: "https://foreign.example/#ticket=unsafe" } },
+    { ...valid, result: { url: `http://127.0.0.1:${f.first.port}/private/stop#ticket=unsafe` } },
+    { ...valid, result: { url: `http://127.0.0.1:${f.first.port}/#ticket=unsafe&capability=secret` } },
+    { ...valid, result: { url: `http://127.0.0.1:${f.first.port}/#ticket=` } },
+    { ...valid, private_error: f.metadata().capability, result: null },
+  ]) {
+    envelope = invalid;
+    await unavailable(await f.request("/api/browser-ticket", { method: "POST", body: "{}" }), f.metadata().capability);
+  }
+  status = 401;
+  envelope = valid;
+  await unavailable(await f.request("/api/browser-ticket", { method: "POST", body: "{}" }), f.metadata().capability);
+  status = 200;
+  const response = await f.request("/api/browser-ticket", { method: "POST", body: "{}" });
+  assert.deepEqual(await response.json(), { url });
+  assert.equal(response.headers.get("set-cookie"), null);
 });
 
 test("connection failure rediscovers without replaying and the next request uses the new service", async t => {
@@ -158,6 +235,29 @@ test("concurrent requests share a discovery while state is changing", async t =>
   assert.equal(f.count(), before + 1);
 });
 
+test("a request cancelled during discovery is not sent to the replacement service", async t => {
+  const f = await fixture(t);
+  const before = f.count();
+  let release;
+  f.setGate(new Promise(resolve => { release = resolve; }));
+  await f.change({ stateText: "discovery-pending" });
+  const controller = new AbortController();
+  const pending = f.request("/api/cancel-before-send", { signal: controller.signal });
+  const aborted = assert.rejects(pending, error => error.name === "AbortError");
+  for (let index = 0; index < 100 && f.count() === before; index++) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(f.count(), before + 1);
+  controller.abort();
+  await aborted;
+  // The server must observe the closed client before discovery completes.
+  await new Promise(resolve => setTimeout(resolve, 30));
+  release();
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].path, "/api/dashboard/context");
+});
+
 test("a POST whose backend disconnects after receipt is never sent again", async t => {
   const f = await fixture(t, (req) => req.socket.destroy());
   const response = await f.request("/api/security-request", { method: "POST", body: JSON.stringify({ operation: "request" }) });
@@ -178,75 +278,81 @@ test("malformed or missing state fails closed without disclosing private state",
 });
 
 
-test("real service-info verifies a synthetic catalog and rejects identity or state races", {
+test("real V3 discovery decrypts synthetic state and rejects catalog, protocol and state races", {
   skip: process.platform !== "win32", timeout: 60_000,
 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), "finance-service-info-test-"));
-  const dataRoot = join(directory, "root");
-  const statePath = join(dataRoot, ".service.json");
-  const capability = "synthetic-private-cli-capability";
+  const directory = await mkdtemp(join(tmpdir(), "finance-modular-discovery-test-"));
+  const catalogPath = join(directory, "catalog.sqlite3");
+  const statePath = localServiceStatePath(catalogPath);
+  const capability = "synthetic-private-cli-capability-with-32-characters";
   let identity;
-  let healthOverrides = {};
-  let alterDuringHealth = false;
-  let healthRequests = 0;
+  let infoOverrides = {};
+  let alterDuringInfo = false;
+  let infoRequests = 0;
+  let baseline;
   const backend = createHttpServer(async (req, res) => {
-    healthRequests++;
-    assert.equal(req.url, "/api/health");
-    assert.equal(req.headers["x-local-capability"], capability);
-    if (alterDuringHealth) {
-      // Both texts parse to the same valid metadata. A restart race must still fail closed.
-      await writeFile(statePath, `${await readFile(statePath, "utf8")}\n`);
-    }
+    infoRequests++;
+    assert.equal(req.url, "/private/info");
+    assert.equal(req.method, "POST");
+    assert.equal(req.headers["x-modular-capability"], capability);
+    assert.equal(req.headers.origin, undefined);
+    if (alterDuringInfo) await writeFile(statePath, Buffer.concat([baseline, Buffer.from([0])]));
     res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ status: "ready", protocol: 2, ...identity,
-      execution_mode: "normal", replay_scope_digest: null, ...healthOverrides }));
+    res.end(JSON.stringify({ protocol: serviceProtocol, catalog_id: identity.catalog_id,
+      result: identity, ...infoOverrides }));
   });
   const port = await listen(backend);
   t.after(async () => { await close(backend); await rm(directory, { recursive: true, force: true }); });
   const script = `
-import json, os, sys
+import json, sys
 from pathlib import Path
-from ai_accounting.kernel.catalog import Catalog
-from ai_accounting.kernel.security.windows import write_protected_json
-catalog = Catalog(Path(sys.argv[1]))
-with catalog.connection(read_only=True) as connection:
-    catalog_id = connection.execute("SELECT instance_id FROM catalog_identity WHERE id=1").fetchone()[0]
-identity = {"catalog_id": catalog_id, "database_format": catalog.database_format(), "build_id": "synthetic-cli-build"}
-metadata = {**identity, "protocol": 2, "pid": os.getpid(), "port": int(sys.argv[2]), "capability": "synthetic-private-cli-capability"}
-write_protected_json(catalog.root / ".service.json", metadata)
+from uuid import uuid4
+from ai_accounting_modular.storage.public import OwnerProfile, Storage, create_catalog
+from ai_accounting_modular.host.runtime import _state
+catalog = Path(sys.argv[1]).absolute()
+if not catalog.exists():
+    create_catalog(catalog, OwnerProfile(str(uuid4()), "Synthetic owner", "synthetic-password-hash"))
+identity = {"catalog_id": Storage(catalog).catalog_identity(), "catalog_path": str(catalog),
+            "protocol": _state.PROTOCOL, "port": int(sys.argv[2])}
+metadata = {**identity, "capability": "synthetic-private-cli-capability-with-32-characters", **json.loads(sys.argv[3])}
+_state.publish(catalog, metadata)
 print(json.dumps(identity))
 `;
-  const { stdout } = await promisify(execFile)(join(root, "..", ".tmp-kernel-venv", "Scripts", "python.exe"),
-    ["-I", "-X", "utf8", "-c", script, dataRoot, String(port)],
-    { cwd: join(root, ".."), encoding: "utf8", timeout: 20_000, windowsHide: true });
-  assert.ok(!stdout.includes(capability));
-  identity = JSON.parse(stdout);
-  const baseline = await readFile(statePath, "utf8");
   const repositoryRoot = join(root, "..");
-  const verified = await readLocalServiceMetadata(repositoryRoot, dataRoot);
-  assert.deepEqual(verified, { port, capability, catalogId: identity.catalog_id, stateText: baseline });
-  const rejectSafely = async () => assert.rejects(readLocalServiceMetadata(repositoryRoot, dataRoot), error => {
+  const publish = async (overrides = {}) => {
+    const { stdout } = await promisify(execFile)(join(repositoryRoot, ".tmp-kernel-venv", "Scripts", "python.exe"),
+      ["-I", "-X", "utf8", "-c", script, catalogPath, String(port), JSON.stringify(overrides)],
+      { cwd: repositoryRoot, encoding: "utf8", timeout: 20_000, windowsHide: true });
+    assert.ok(!stdout.includes(capability));
+    return JSON.parse(stdout);
+  };
+  identity = await publish();
+  baseline = await readFile(statePath);
+  assert.ok(!baseline.includes(Buffer.from(capability)), "Windows service state must remain encrypted");
+  const verified = await readLocalServiceMetadata(repositoryRoot, catalogPath);
+  assert.deepEqual(verified, { port, capability, catalogId: identity.catalog_id, stateFingerprint: fingerprint(baseline) });
+  const rejectSafely = async () => assert.rejects(readLocalServiceMetadata(repositoryRoot, catalogPath), error => {
     assert.ok(!String(error).includes(capability));
-    assert.ok(!String(error).includes("synthetic-cli-build"));
     return /本地会计服务不可用/.test(error.message);
   });
-  const before = healthRequests;
-  await writeFile(statePath, JSON.stringify({ ...JSON.parse(baseline), protocol: 1 }));
-  await rejectSafely();
-  assert.equal(healthRequests, before, "invalid metadata protocol must fail before contacting the port");
-  await writeFile(statePath, JSON.stringify({ ...JSON.parse(baseline), build_id: "changed-state-build" }));
-  await rejectSafely();
+  for (const overrides of [{ protocol: "ai-accounting-kernel/2" }, { catalog_id: "different-catalog" },
+    { catalog_path: join(directory, "other.sqlite3") }]) {
+    const before = infoRequests;
+    await publish(overrides);
+    await rejectSafely();
+    assert.equal(infoRequests, before, "invalid state must fail before contacting its port");
+  }
   await writeFile(statePath, baseline);
-  for (const overrides of [{ protocol: 1 }, { build_id: "different-health-build" }, { catalog_id: "different-health-catalog" }]) {
-    healthOverrides = overrides;
+  for (const overrides of [{ protocol: "different-protocol" }, { catalog_id: "different-live-catalog" }, { result: undefined }]) {
+    infoOverrides = overrides;
     await rejectSafely();
   }
-  healthOverrides = {};
-  alterDuringHealth = true;
+  infoOverrides = {};
+  alterDuringInfo = true;
   await rejectSafely();
-  alterDuringHealth = false;
+  alterDuringInfo = false;
   await writeFile(statePath, baseline);
-  assert.equal((await readLocalServiceMetadata(repositoryRoot, dataRoot)).catalogId, identity.catalog_id);
+  assert.equal((await readLocalServiceMetadata(repositoryRoot, catalogPath)).catalogId, identity.catalog_id);
 });
 
 test("streamed binary chunks, multiple cookies and business errors pass through without discovery", async t => {

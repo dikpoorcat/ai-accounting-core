@@ -32,9 +32,17 @@
 
 安装、公司接入、CLI、MCP 及离线恢复／重建统一见[安装、运行与会计 AI 接入](docs/redesign/09-runtime-and-ai.md)，当前账套与验证结果见[交付结果](docs/redesign/10-delivery-status.md)。普通启动只打开现有环境，不自行换库或重放。
 
+开发看板需要实时看到前端修改时，在上述 V3 后台运行后执行：
+
+```powershell
+npm --prefix frontend run dev
+```
+
+打开 `http://127.0.0.1:5173/`。开发页面默认连接同一个 `data/accounting/catalog.sqlite3` 后台，复用负责人身份及公司库；修改 Vue、TypeScript 或样式后由 Vite 热更新。需要指定其他 V3 目录库时，在启动 Vite 前设置 `FINANCE_MODULAR_CATALOG` 为目录库文件路径。开发代理不启动、迁移或替换数据库；后端源码变化仍需单独重启 V3 后台。
+
 ## 旧版资料
 
-`finance-local`、5173 开发页面及 `data/kernel-released` 等属于旧体系 `ai-accounting-kernel/2`，与当前模块化体系的数据和备份格式不同。旧版内核、账本及保全资料仍独立存放，不能用旧入口办理当前账套。旧版说明见[运行入口](docs/local-kernel-startup.md)、[会计操作](docs/local-kernel.md)和[独立打包](docs/local-kernel-packaging.md)。
+`finance-local` 及 `data/kernel-released` 等属于旧体系 `ai-accounting-kernel/2`，与当前模块化体系的数据和备份格式不同。旧版内核、账本及保全资料仍独立存放，不能用旧入口办理当前账套。5173 开发页面现已连接 V3。旧版说明见[运行入口](docs/local-kernel-startup.md)、[会计操作](docs/local-kernel.md)和[独立打包](docs/local-kernel-packaging.md)。
 
 ## 开发与验证
 

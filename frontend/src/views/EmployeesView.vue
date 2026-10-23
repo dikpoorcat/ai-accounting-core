@@ -605,7 +605,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .employees-content { min-width: 0; }
 .people-hero { display: grid; gap: 24px; padding: 25px 28px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); }
 .people-hero > .dashboard-hero-eyebrow { margin: 0 0 -12px; }
-.people-headline-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px 40px; }
+.people-headline-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px 28px; }
 .people-headline-grid > div { min-width: 0; }
 .people-headline-grid > div > span { color: var(--muted); font-size: 12px; font-weight: 750; }
 .people-headline-grid strong { color: var(--accent); }

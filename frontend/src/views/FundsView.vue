@@ -1437,7 +1437,7 @@ onBeforeUnmount(() => {
 .funds-hero {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px 40px;
+  gap: 24px 28px;
   min-height: 198px;
   padding: 25px 28px;
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));

@@ -6,7 +6,7 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 import packageMetadata from "./package.json";
-import { localApiProxy, readLocalServiceMetadata } from "./local-api-proxy";
+import { localApiProxy, localServiceStatePath, readLocalServiceMetadata } from "./local-api-proxy";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -33,9 +33,9 @@ function dashboardVersion() {
 }
 
 export default defineConfig(async ({ command, mode }) => {
-  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-released");
+  const catalogPath = resolve(repositoryRoot, process.env.FINANCE_MODULAR_CATALOG || "data/accounting/catalog.sqlite3");
   const api = command === "serve" ? await localApiProxy(
-    resolve(dataRoot, ".service.json"), () => readLocalServiceMetadata(repositoryRoot, dataRoot),
+    localServiceStatePath(catalogPath), () => readLocalServiceMetadata(repositoryRoot, catalogPath),
   ) : undefined;
   return {
     plugins: [vue(), api],
