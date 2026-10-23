@@ -16,21 +16,6 @@ from ._client import request
 from ._security import new_credentials
 from ._state import _checked
 
-_TITLES = {
-    "login": "负责人登录",
-    "change_password": "修改负责人密码",
-    "recover": "通过恢复码恢复访问",
-    "replace_recovery_code": "更换恢复码",
-    "bootstrap_owner": "首次设置负责人",
-}
-_LABELS = {
-    "display_name": "负责人姓名",
-    "password": "当前密码",
-    "new_password": "新密码",
-    "repeat_password": "再次输入新密码",
-    "recovery_code": "恢复码",
-}
-
 
 def _desktop_available():
     if os.name != "nt":
@@ -97,79 +82,13 @@ def launch(request_id, *, port, capability, catalog_id):
     return process
 
 
-def _form(kind, display_name, submit, cancel):
+def _form(kind, display_name, submit, cancel, *, status=None):
     import tkinter as tk
-    from tkinter import ttk
+
+    from ._native_form import SecurityForm
 
     window = tk.Tk()
-    window.title("AI 记账 - " + _TITLES[kind])
-    window.resizable(False, False)
-    panel = ttk.Frame(window, padding=24)
-    panel.grid()
-    ttk.Label(panel, text=_TITLES[kind], font=("Microsoft YaHei UI", 14)).grid(sticky="w")
-    ttk.Label(panel, text=display_name or "密码只在此本机窗口处理").grid(sticky="w", pady=(8, 16))
-    fields = {
-        "login": ("password",),
-        "change_password": ("password", "new_password", "repeat_password"),
-        "recover": ("recovery_code", "new_password", "repeat_password"),
-        "replace_recovery_code": (),
-        "bootstrap_owner": ("display_name", "new_password", "repeat_password"),
-    }[kind]
-    entries = {}
-    for name in fields:
-        ttk.Label(panel, text=_LABELS[name]).grid(sticky="w", pady=(8, 2))
-        entry = ttk.Entry(panel, width=44, show="" if name == "display_name" else "•")
-        entry.grid(sticky="ew")
-        entries[name] = entry
-    message = ttk.Label(panel, text="", wraplength=360)
-    message.grid(sticky="w", pady=12)
-
-    def close():
-        try:
-            cancel()
-        finally:
-            window.destroy()
-
-    def execute():
-        button.configure(state="disabled")
-        try:
-            result = submit({name: entry.get() for name, entry in entries.items()})
-            for entry in entries.values():
-                entry.delete(0, tk.END)
-            code = result.get("recovery_code")
-            if code:
-                for child in panel.winfo_children():
-                    child.destroy()
-                ttk.Label(panel, text="请保存新的恢复码；旧恢复码已失效。", wraplength=360).grid()
-                value = ttk.Entry(panel, width=44)
-                value.insert(0, code)
-                value.configure(state="readonly")
-                value.grid(pady=16)
-
-                def acknowledge():
-                    try:
-                        submit(None)
-                        window.destroy()
-                    except ContractError:
-                        messagebox.showerror("恢复码确认未完成", "请保持本机后台运行后重试。")
-
-                ttk.Button(panel, text="我已保存恢复码", command=acknowledge).grid()
-            else:
-                window.destroy()
-        except ContractError as error:
-            message.configure(text=error.message)
-            button.configure(state="normal")
-        except Exception:
-            message.configure(text="本机窗口未能完成操作，请检查后台连接后重试。")
-            button.configure(state="normal")
-
-    from tkinter import messagebox
-
-    button = ttk.Button(panel, text="确认", command=execute)
-    button.grid(sticky="ew")
-    window.protocol("WM_DELETE_WINDOW", close)
-    if entries:
-        next(iter(entries.values())).focus_set()
+    SecurityForm(window, kind, display_name, submit, cancel, status=status)
     window.mainloop()
 
 
@@ -233,6 +152,13 @@ def main():
                 metadata,
                 "/private/security",
                 {"operation": "cancel", "payload": {"request_id": request_id}},
+                timeout=2,
+            ),
+            status=lambda: request(
+                metadata,
+                "/private/security",
+                {"operation": "status", "payload": {"request_id": request_id}},
+                timeout=2,
             ),
         )
     except Exception:
