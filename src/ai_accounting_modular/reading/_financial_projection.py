@@ -211,7 +211,7 @@ def blocked(reader, scope, kind, read):
         return True
 
 
-def retry(reader, scope, kind, scope_key, version, unit):
+def retry(reader, scope, kind, scope_key, version, unit, *, format_upgrade=False):
     repository, target = unit.repository("reading"), store(unit)
     state = repository.state(scope_key, "financial")
     if state is None:
@@ -225,7 +225,8 @@ def retry(reader, scope, kind, scope_key, version, unit):
         # A consumer waiting on a failed dependency is still technically preparing.
         if waiting(reader, scope, kind, unit) is None:
             return
-    full |= state["error_code"] == "storage_corrupt"
+    # An obsolete consumer error does not prove that the shared producer is corrupt.
+    full |= state["error_code"] == "storage_corrupt" and not format_upgrade
     queue(reader, request(reader, scope, kind, unit), unit, retry=True, rebuild=full)
     if full:
         target.mark_consumer(scope_key, unit.head)

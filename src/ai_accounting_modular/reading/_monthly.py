@@ -40,6 +40,10 @@ def version(component):
     return _brief_activity_index.FORMAT_VERSION if component == BRIEF_ACTIVITY else FORMAT_VERSION
 
 
+def _outdated(component, state):
+    return state is not None and state["format_version"] < version(component)
+
+
 def normalize(scope):
     validate_contract("core.schema.json", "LedgerScope", scope)
     month = scope["period_to"]
@@ -109,7 +113,10 @@ def _load(scope_key, component, state, read):
 
 
 def _ready_snapshot(reader, normalized, states, read):
-    if any(state is None or state["state"] != "ready" for state in states.values()):
+    if any(
+        state is None or state["state"] != "ready" or _outdated(name, state)
+        for name, state in states.items()
+    ):
         return None
     scope_key = key(normalized)
     values = {name: _load(scope_key, name, state, read) for name, state in states.items()}
@@ -166,7 +173,7 @@ def deliver(reader, scope, components, build):
         or any(name not in COMPONENTS for name in components)
     ):
         raise ContractError("invalid_input", "月页须选择已装配且不重复的组件。")
-    missing, corrupt = (), None
+    missing, outdated, corrupt = (), (), None
     with reader.storage.read_unit(company_id) as read:
         if normalized is None:
             month = last_period(reader, read)
@@ -200,11 +207,12 @@ def deliver(reader, scope, components, build):
         repository = read.repository("reading")
         states = {name: repository.state(scope_key, name) for name in components}
         missing = tuple(name for name, state in states.items() if state is None)
+        outdated = tuple(name for name, state in states.items() if _outdated(name, state))
         failed = next(
             (
                 state
-                for state in states.values()
-                if state is not None and state["state"] == "failed"
+                for name, state in states.items()
+                if state is not None and state["state"] == "failed" and name not in outdated
             ),
             None,
         )
@@ -216,10 +224,11 @@ def deliver(reader, scope, components, build):
                 if failed["error_code"] == "storage_corrupt"
                 else "production_failed",
             )
-        elif missing or any(state["state"] != "ready" for state in states.values()):
+        elif missing or outdated or any(state["state"] != "ready" for state in states.values()):
             reason = (
                 _financial_projection.waiting(reader, normalized, "summary_values", read)
                 if FINANCIAL in states
+                and FINANCIAL not in outdated
                 and states[FINANCIAL] is not None
                 and states[FINANCIAL]["state"] == "preparing"
                 else None
@@ -238,7 +247,7 @@ def deliver(reader, scope, components, build):
             except _CorruptComponent as error:
                 corrupt = error.component
                 result = ModelDelivery("failed", normalized, reason="corrupt")
-    if missing or corrupt is not None:
+    if missing or outdated or corrupt is not None:
         with reader.storage.maintenance_unit(company_id) as unit:
             repository = unit.repository("reading")
             for component in missing:
@@ -248,6 +257,8 @@ def deliver(reader, scope, components, build):
                     )
                 else:
                     repository.register(scope_key, component, unit.head, version(component))
+            for component in outdated:
+                _retry_component(reader, normalized, component, unit, outdated_only=True)
             if corrupt is not None:
                 state = states[corrupt]
                 repository.fail(
@@ -313,27 +324,40 @@ def retry(reader, scope, components):
     if not components or any(component not in COMPONENTS for component in components):
         raise ContractError("invalid_input", "月页重试须选择已装配的组件。")
     with reader.storage.maintenance_unit(scope["company_id"]) as unit:
-        repository = unit.repository("reading")
         for component in components:
-            if component == FINANCIAL:
-                _financial_projection.retry(
-                    reader, normalized, "summary_values", key(normalized), version(component), unit
-                )
-                continue
-            state = repository.state(key(normalized), component)
-            full = (
-                component in {BRIEF_OPEN_ITEMS, BRIEF_ACTIVITY}
-                and state is not None
-                and (state["state"] == "failed" or state["format_version"] != version(component))
-            )
-            if full:
-                if component == BRIEF_ACTIVITY:
-                    repository.activity_mark(key(normalized), unit.head, full=True)
-                else:
-                    from ._open_store import reset
+            _retry_component(reader, normalized, component, unit)
 
-                    reset(repository, unit.head, version(component))
-                    continue
-            repository.retry(key(normalized), component, format_version=version(component))
-            if full:
-                repository.mark(key(normalized), component, unit.head)
+
+def _retry_component(reader, normalized, component, unit, *, outdated_only=False):
+    """Use one retry policy, rechecking automatic upgrades inside their write transaction."""
+    repository, scope_key = unit.repository("reading"), key(normalized)
+    state = repository.state(scope_key, component)
+    if outdated_only and not _outdated(component, state):
+        return
+    if component == FINANCIAL:
+        _financial_projection.retry(
+            reader,
+            normalized,
+            "summary_values",
+            scope_key,
+            version(component),
+            unit,
+            format_upgrade=outdated_only,
+        )
+        return
+    full = (
+        component in {BRIEF_OPEN_ITEMS, BRIEF_ACTIVITY}
+        and state is not None
+        and (state["state"] == "failed" or state["format_version"] != version(component))
+    )
+    if full:
+        if component == BRIEF_ACTIVITY:
+            repository.activity_mark(scope_key, unit.head, full=True)
+        else:
+            from ._open_store import reset
+
+            reset(repository, unit.head, version(component))
+            return
+    repository.retry(scope_key, component, format_version=version(component))
+    if full:
+        repository.mark(scope_key, component, unit.head)

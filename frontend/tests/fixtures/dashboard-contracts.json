@@ -1565,7 +1565,8 @@
                     ],
                     "party_state": "known"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               },
               {
                 "number": "2",
@@ -1620,7 +1621,8 @@
                     ],
                     "party_state": "known"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               },
               {
                 "number": "3",
@@ -1675,7 +1677,8 @@
                     "parties": [],
                     "party_state": "not_applicable"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -1814,7 +1817,8 @@
                     ],
                     "party_state": "known"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -1953,7 +1957,8 @@
                     "parties": [],
                     "party_state": "not_applicable"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -2092,7 +2097,8 @@
                     ],
                     "party_state": "known"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -8615,7 +8621,8 @@
                     "parties": [],
                     "party_state": "not_applicable"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -11399,7 +11406,8 @@
                     "parties": [],
                     "party_state": "not_applicable"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -12082,7 +12090,8 @@
                     "parties": [],
                     "party_state": "not_applicable"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {
@@ -12525,7 +12534,8 @@
                     "parties": [],
                     "party_state": "not_applicable"
                   }
-                ]
+                ],
+                "business_amount_state": "known"
               }
             ],
             "page": {

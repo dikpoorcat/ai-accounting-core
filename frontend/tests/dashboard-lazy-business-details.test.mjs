@@ -437,9 +437,17 @@ test("real Vue row work on continuation and final-page state", async t => {
           h.state.selectedAccount.value = "bank:changed-account"; await flush(); assert.equal(pending.args[2].aborted, true);
           pending.resolve(detailResponse(h.initial.snapshot_version)); await flush();
         } else {
+          const visit = node => [node, ...node.children.flatMap(visit)];
+          const amountText = () => text(visit(originalNode).find(node => node.props.class === "voucher-row-amount"));
           first.summary = "完整更新摘要"; first.type = "更新类型"; first.state = "冲正"; first.reverses_version_id = "original"; first.business_amount_label = "更新金额"; first.business_amount_fen = "7654321"; first.recognition.label = "更新月确认";
           await update();
           for (const value of ["完整更新摘要", "更新类型", "冲正", "更新金额", "¥76,543.21", "本凭证用于冲销原记录"]) assert(text(originalNode).includes(value), value);
+          first.business_amount_fen = null; first.business_amount_state = "unknown"; await update();
+          assert.equal(amountText(), "更新金额待核实");
+          first.business_amount_state = "not_applicable"; await update();
+          assert.equal(amountText(), "更新金额—", "changing only the explicit state invalidates the memoized amount");
+          first.business_amount_state = "known"; first.business_amount_fen = "0"; await update();
+          assert.equal(amountText(), "更新金额¥0.00");
           first.has_business_progress = false; await update();
           assert(!originalNode.children.some(node => node.props.class === "voucher-progress-button"));
           assert(text(originalNode).includes("—"));
@@ -455,7 +463,6 @@ test("real Vue row work on continuation and final-page state", async t => {
           const replacement = { ...first, summary: "相同凭证身份的新行", lines: structuredClone(first.lines) };
           items[0] = replacement; await update(); assert(text(originalNode).includes("相同凭证身份的新行"));
           replacement.has_business_progress = true; await update(); h.state.progressVoucher.value = replacement; await flush();
-          const visit = node => [node, ...node.children.flatMap(visit)];
           const progressButton = visit(originalNode).find(node => node.props.class === "voucher-progress-button");
           assert.equal(progressButton.props["aria-expanded"], true);
           h.state.closeProgress(); await flush(); assert.equal(progressButton.props["aria-expanded"], false);

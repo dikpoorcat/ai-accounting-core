@@ -1465,6 +1465,7 @@ class _Snapshot:
             "amount_fen": row["total"],
             "business_amount_fen": row["sign"] * amount if amount is not None else None,
             "business_amount_label": label,
+            "business_amount_state": "known" if amount is not None else "unknown",
             "asset": owner_asset(asset) if asset is not None else None,
             "asset_members": [owner_asset(member) for member in members],
             "lines": [

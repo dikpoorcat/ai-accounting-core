@@ -1015,6 +1015,7 @@ class OwnerBriefVoucher(ResponseObject):
     amount_fen: WireFen
     business_amount_fen: WireFen | None
     business_amount_label: str
+    business_amount_state: Literal["known", "not_applicable", "unknown"]
     has_business_progress: bool
     asset: OwnerVoucherAsset | None
     asset_members: list[OwnerVoucherAssetMember]

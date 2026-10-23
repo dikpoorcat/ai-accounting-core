@@ -13,7 +13,7 @@ async function renderMembers(server, members, { hasMore = false, expandedPart = 
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=a");
   const data = { section: "open_items", group_key: "employee", collections: { members: { items: members, page: { has_more: hasMore } }, vouchers: { items: [] } } };
   const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; for (const item of members) assert.equal(state.openContext(item).contributionComponent, item.contribution_component); return state; } };
-  const voucher = (id, number) => ({ voucher_version_id: id, number, date: null, recognition: { label: "2026-07 · 按月确认" }, list_summary: "社保计提", state: "已入账", business_amount_label: "社保金额", business_amount_fen: "52500", lines: [] });
+  const voucher = (id, number) => ({ voucher_version_id: id, number, date: null, recognition: { label: "2026-07 · 按月确认" }, list_summary: "社保计提", state: "已入账", business_amount_label: "社保金额", business_amount_fen: "52500", business_amount_state: "known", lines: [] });
   const app = createSSRApp(wrapped, { section: "open_items", groupKey: "employee", expanded: true, period: "2026-07", openSummary: { cutoff_period: "2026-07", current_cutoff_period: "2026-09", categories: [] }, direction: "payable", periodClosed: true, voucherIndex: new Map([["exact-88", voucher("exact-88", "88")], ["exact-89", voucher("exact-89", "89")]]) }); app.use(router);
   return renderToString(app);
 }
@@ -86,15 +86,16 @@ test("group member lists preserve monthly contribution breakdowns without whole-
   } finally { await server.close(); }
 });
 
-test("shared voucher preview retains all entries and exact unknown or huge business amounts", async () => {
+test("shared voucher preview distinguishes inapplicable and unknown amounts while retaining exact values and entries", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
     const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefVoucherPreview.vue");
-    for (const amount of [null, "0", "9007199254740993"]) {
-      const voucher = { voucher_version_id: "exact", number: "21", date: null, recognition: { label: "2026-09 · 按月确认" }, list_summary: "代收押金", state: "更正原业务", business_amount_label: "代收金额", business_amount_fen: amount, lines: [{ line_number: 1, account: "银行存款", debit_fen: "100", credit_fen: "0" }, { line_number: 2, account: "其他应付款", debit_fen: "0", credit_fen: "100" }] };
+    for (const [state, amount, expected] of [["not_applicable", null, "—"], ["unknown", null, "待核实"], ["known", "0", "¥0.00"], ["known", "9007199254740993", "¥90,071,992,547,409.93"], ["known", "-12345", "−¥123.45"]]) {
+      const voucher = { voucher_version_id: "exact", number: "21", date: null, recognition: { label: "2026-09 · 按月确认" }, list_summary: "代收押金", state: "更正原业务", business_amount_label: "代收金额", business_amount_fen: amount, business_amount_state: state, lines: [{ line_number: 1, account: "银行存款", debit_fen: "100", credit_fen: "0" }, { line_number: 2, account: "其他应付款", debit_fen: "0", credit_fen: "100" }] };
       const html = await renderToString(createSSRApp(component, { voucher, active: true }));
       assert.equal((html.match(/role="tooltip"/g) ?? []).length, 1); assert.match(html, /凭证 21/); assert.match(html, /银行存款/); assert.match(html, /其他应付款/); assert.match(html, /更正原业务/);
-      assert(html.includes(amount === null ? "暂无法确定" : amount === "0" ? "¥0.00" : "¥90,071,992,547,409.93"));
+      assert.equal(html.match(/class="amount"[\s\S]*?<b[^>]*>(.*?)<\/b>/)?.[1], expected);
+      assert.doesNotMatch(html, /暂无法确定/);
     }
   } finally { await server.close(); }
 });

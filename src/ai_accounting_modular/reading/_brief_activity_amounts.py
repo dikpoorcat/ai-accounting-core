@@ -1,6 +1,7 @@
 """Display an explicitly defined business amount, never an arbitrary journal total."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 from ai_accounting_modular.contracts.public import format_fen, parse_fen
 
@@ -9,6 +10,7 @@ from ai_accounting_modular.contracts.public import format_fen, parse_fen
 class BusinessAmount:
     amount_fen: str | None
     label: str
+    state: Literal["known", "not_applicable", "unknown"] = "known"
 
 
 # These are actual business events; contracts, projections and evidence-only profiles are not.
@@ -64,6 +66,8 @@ def amount(content):
             value, label = values["amount_fen"], "业务金额"
         case "operations.expense_recovery" | "operations.pass_through_return":
             value, label = values["amount_fen"], "退回金额"
+        case "operations.tax_release":
+            value, label = values["vat_fen"], "转入应交增值税金额"
         case "operations.pass_through" | "operations.reimbursement" | "operations.overpayment":
             value, label = values["amount_fen"], "业务金额"
         case "people.remuneration":
@@ -72,6 +76,9 @@ def amount(content):
             value, label = values["amount_fen"], "成本金额"
         case "assets.acquisition":
             value, label = values["total_cost_fen"], "购置成本"
+        case "assets.activation":
+            value = format_fen(sum(parse_fen(item["cost_fen"]) for item in values["assets"]))
+            label = "启用资产成本"
         case "assets.disposal":
             value, label = values["gross_proceeds_fen"], "处置价款"
         case "assets.consumption":
@@ -91,7 +98,9 @@ def amount(content):
         case "investment.cooperation_distribution":
             value, label = values["amount_fen"], "实际金额"
         case "investment.cooperation_operator_transfer":
-            return BusinessAmount(None, "无单一公司金额")
+            return BusinessAmount(None, "无单一公司金额", "not_applicable")
+        case "investment.cooperation_position" | "investment.cooperation_exit" | "opening.package":
+            return BusinessAmount(None, "无单一业务金额", "not_applicable")
         case "money.movement" | "money.transfer":
             value, label = values["amount_fen"], "实际金额"
         case "taxes.assessment":
@@ -108,7 +117,7 @@ def amount(content):
             )
             label = "税费退抵金额"
         case _:
-            return BusinessAmount(None, "无单一业务金额")
+            return BusinessAmount(None, "业务金额", "unknown")
     return BusinessAmount(value, label)
 
 

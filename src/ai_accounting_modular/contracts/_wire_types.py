@@ -6075,6 +6075,7 @@ class DashboardBriefDelivery__OwnerBriefVoucher(TypedDict):
     amount_fen: str
     business_amount_fen: str | None
     business_amount_label: str
+    business_amount_state: Literal['known', 'not_applicable', 'unknown']
     has_business_progress: bool
     asset: DashboardBriefDelivery__OwnerVoucherAsset | None
     asset_members: list[DashboardBriefDelivery__OwnerVoucherAssetMember]
@@ -8023,6 +8024,7 @@ class DashboardBrief__OwnerBriefVoucher(TypedDict):
     amount_fen: str
     business_amount_fen: str | None
     business_amount_label: str
+    business_amount_state: Literal['known', 'not_applicable', 'unknown']
     has_business_progress: bool
     asset: DashboardBrief__OwnerVoucherAsset | None
     asset_members: list[DashboardBrief__OwnerVoucherAssetMember]
@@ -8208,6 +8210,7 @@ class DashboardBriefGroup__OwnerBriefVoucher(TypedDict):
     amount_fen: str
     business_amount_fen: str | None
     business_amount_label: str
+    business_amount_state: Literal['known', 'not_applicable', 'unknown']
     has_business_progress: bool
     asset: DashboardBriefGroup__OwnerVoucherAsset | None
     asset_members: list[DashboardBriefGroup__OwnerVoucherAssetMember]

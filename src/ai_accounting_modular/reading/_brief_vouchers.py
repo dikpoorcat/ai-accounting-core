@@ -76,6 +76,17 @@ def descriptor(entry, content, members, *, reverses=None, party_ids=()):
     label, value = business_label(content), amount(content)
     titles = list(dict.fromkeys(item["row"]["title"] for item in members))
     summary = "、".join(titles) or label.title
+    voucher_summary = entry.summary
+    if content.target["kind"] == "assets.activation":
+        cards = content.target["values"]["assets"]
+        voucher_summary = (
+            "、".join(
+                f"{count}项{name}"
+                for kind, name in (("fixed", "固定资产"), ("intangible", "无形资产"))
+                if (count := sum(card["asset_type"] == kind for card in cards))
+            )
+            + "启用"
+        )
     sign = -1 if entry.role == "reversal" else 1
     group = (
         members[0]["row"]["group"]
@@ -98,10 +109,11 @@ def descriptor(entry, content, members, *, reverses=None, party_ids=()):
             "kind": content.target["kind"],
             "state": "冲正" if entry.role == "reversal" else "已入账",
             "group": group,
-            "summary": entry.summary,
+            "summary": voucher_summary,
             "list_summary": summary,
             "business_amount_fen": signed(value.amount_fen, sign),
             "business_amount_label": value.label,
+            "business_amount_state": value.state,
             "has_business_progress": any(item["row"]["detail_scope_key"] for item in members),
         },
         "assets": assets(content),

@@ -375,7 +375,7 @@ watch(() => props.focusedActivity, async item => {
       <div class="voucher-list" aria-label="凭证清单" data-section-focus tabindex="-1">
         <article v-for="voucher in visibleVouchers" :key="voucher.voucher_version_id"
           v-memo="[voucher, voucher.voucher_version_id, voucher.number, voucher.subject_id, voucher.reverses_version_id, voucher.date, voucher.recognition.label,
-            voucher.type, voucher.state, voucher.summary, voucher.business_amount_label, voucher.business_amount_fen, voucher.has_business_progress,
+            voucher.type, voucher.state, voucher.summary, voucher.business_amount_label, voucher.business_amount_fen, voucher.business_amount_state, voucher.has_business_progress,
             selectedVoucher === voucher.voucher_version_id, focusedVoucher?.voucher_version_id === voucher.voucher_version_id, progressVoucher?.voucher_version_id === voucher.voucher_version_id,
             route.query.company_id, period, snapshotVersion, refreshing, refreshGeneration,
             selectedVoucher === voucher.voucher_version_id ? JSON.stringify([voucher.lines, voucher.asset, voucher.asset_members]) : null]"
@@ -387,7 +387,7 @@ watch(() => props.focusedActivity, async item => {
               <span class="voucher-copy"><strong>{{ voucher.summary }}</strong><span v-if="voucher.reverses_version_id" class="voucher-correction">本凭证用于冲销原记录。</span></span>
               <small class="voucher-type">{{ voucher.type }}</small>
               <span :class="['state', { correction: voucher.state.includes('冲正') }]">{{ voucher.state }}</span>
-              <span class="voucher-row-amount"><small>{{ voucher.business_amount_label }}</small><strong>{{ formatFen(voucher.business_amount_fen) }}</strong></span>
+              <span class="voucher-row-amount"><small>{{ voucher.business_amount_label }}</small><strong>{{ voucher.business_amount_state === 'not_applicable' ? '—' : voucher.business_amount_state === 'unknown' ? '待核实' : formatFen(voucher.business_amount_fen) }}</strong></span>
               <svg class="voucher-chevron business-list-arrow" :class="{ expanded: selectedVoucher === voucher.voucher_version_id }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
             </button>
             <button v-if="voucher.subject_id && voucher.has_business_progress" type="button" class="voucher-progress-button" aria-haspopup="dialog"

@@ -24,7 +24,7 @@ function hide() { generation++; emit("preview", false); }
     <button ref="anchor" class="event-voucher-button" type="button" :disabled="!voucher" :aria-describedby="active && voucher ? `preview-${voucher.voucher_version_id}` : undefined" @focus="show" @blur="hide" @click.stop="voucher && (hide(), emit('open', voucher.voucher_version_id))">{{ voucher ? '凭证 ' + voucher.number : '—' }}</button>
     <span v-if="active && voucher" :id="`preview-${voucher.voucher_version_id}`" ref="panel" class="preview event-voucher-preview dashboard-hover-preview" data-side="left" :style="{ '--offset': `${offset}px`, '--preview-arrow': arrow }" role="tooltip">
       <span class="heading"><small>凭证 {{ voucher.number }} · {{ voucher.date || voucher.recognition.label }}</small><strong>{{ voucher.list_summary }}</strong></span>
-      <span class="amount"><small>{{ voucher.business_amount_label }}</small><b>{{ formatFen(voucher.business_amount_fen) }}</b></span>
+      <span class="amount"><small>{{ voucher.business_amount_label }}</small><b>{{ voucher.business_amount_state === 'not_applicable' ? '—' : voucher.business_amount_state === 'unknown' ? '待核实' : formatFen(voucher.business_amount_fen) }}</b></span>
       <span class="lines"><span v-for="line in voucher.lines" :key="line.line_number"><span>{{ line.account }}</span><strong>{{ fen(line.debit_fen) ? '借 ' + formatFen(line.debit_fen) : '贷 ' + formatFen(line.credit_fen) }}</strong></span></span>
       <span class="footer"><span>{{ voucher.state }}</span><small>点击打开凭证详情</small></span>
     </span>

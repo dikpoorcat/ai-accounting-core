@@ -834,6 +834,10 @@ def test_derived_tax_release_voucher_uses_its_exact_main_party_without_a_new_sal
         if item["kind"] == "operations.tax_release"
     )
     assert released["list_summary"] == "确认本月已到税点税额"
+    assert released["business_amount_state"] == "known"
+    assert released["business_amount_label"] == "转入应交增值税金额"
+    assert released["business_amount_fen"] == "100"
+    assert released["business_amount_fen"] != advance["data"]["amount_fen"]
     assert {party["id"] for line in released["lines"] for party in line["parties"]} == {case.party}
     validate("OwnerBriefVoucher", released)
 

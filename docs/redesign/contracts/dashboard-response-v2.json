@@ -4809,6 +4809,15 @@
             "title": "Business Amount Label",
             "type": "string"
           },
+          "business_amount_state": {
+            "enum": [
+              "known",
+              "not_applicable",
+              "unknown"
+            ],
+            "title": "Business Amount State",
+            "type": "string"
+          },
           "has_business_progress": {
             "title": "Has Business Progress",
             "type": "boolean"
@@ -4854,6 +4863,7 @@
           "amount_fen",
           "business_amount_fen",
           "business_amount_label",
+          "business_amount_state",
           "has_business_progress",
           "asset",
           "asset_members",
@@ -18265,6 +18275,15 @@
             "title": "Business Amount Label",
             "type": "string"
           },
+          "business_amount_state": {
+            "enum": [
+              "known",
+              "not_applicable",
+              "unknown"
+            ],
+            "title": "Business Amount State",
+            "type": "string"
+          },
           "has_business_progress": {
             "title": "Has Business Progress",
             "type": "boolean"
@@ -18310,6 +18329,7 @@
           "amount_fen",
           "business_amount_fen",
           "business_amount_label",
+          "business_amount_state",
           "has_business_progress",
           "asset",
           "asset_members",
@@ -19528,6 +19548,15 @@
             "title": "Business Amount Label",
             "type": "string"
           },
+          "business_amount_state": {
+            "enum": [
+              "known",
+              "not_applicable",
+              "unknown"
+            ],
+            "title": "Business Amount State",
+            "type": "string"
+          },
           "has_business_progress": {
             "title": "Has Business Progress",
             "type": "boolean"
@@ -19573,6 +19602,7 @@
           "amount_fen",
           "business_amount_fen",
           "business_amount_label",
+          "business_amount_state",
           "has_business_progress",
           "asset",
           "asset_members",

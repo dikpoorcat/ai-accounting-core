@@ -257,7 +257,8 @@ def test_only_financial_formats_upgrade_and_explicit_retry_keeps_other_models(fi
             "WHERE component_key='financial'",
             (_monthly.key(scope(case)),),
         )
-    assert page(case).state == quarter(case).state == "failed"
+    assert page(case).state == "preparing"
+    assert quarter(case).state == "failed"
     assert reader.page("funds", MonthScope(case.company, "2026-01"), {}) == before
     _monthly.retry(reader, scope(case), ("financial",))
     reader.retry(

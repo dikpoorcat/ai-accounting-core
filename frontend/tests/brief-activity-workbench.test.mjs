@@ -11,7 +11,7 @@ const voucher = number => ({
   number: String(number), voucher_version_id: `voucher-${number}`, subject_id: `business-${number}`,
   reverses_version_id: null, date: null, recognition: { period: "2026-03", label: "2026-03 · 按月确认" },
   type: "收款", kind: "collection", state: "已入账", group: "funds", summary: "收到经营款", list_summary: "经营收款",
-  amount_fen: "9007199254740993", business_amount_fen: "9007199254740993", business_amount_label: "收款金额",
+  amount_fen: "9007199254740993", business_amount_fen: "9007199254740993", business_amount_label: "收款金额", business_amount_state: "known",
   has_business_progress: true,
   asset: null, asset_members: [], lines: [
     { line_number: 1, code: "1002", account: "银行存款", debit_fen: "9007199254740993", credit_fen: "0", party: "", source_label: "", parties: [], party_state: "not_applicable" },
@@ -74,6 +74,15 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
       assert.ok(main); assert.match(main, /class="voucher-progress-empty" aria-label="暂无业务进展"[^>]*>—<\/span>/);
       assert.doesNotMatch(main, /voucher-progress-button|aria-haspopup/);
       assert.match(main, /class="voucher-row"[^>]*aria-expanded="true"/);
+    });
+    await t.test("voucher main amounts use explicit states rather than guessing from the amount label", async () => {
+      for (const [state, amount, expected] of [["not_applicable", null, "—"], ["unknown", null, "待核实"], ["known", "0", "¥0.00"], ["known", "9007199254740993", "¥90,071,992,547,409.93"], ["known", "-12345", "−¥123.45"]]) {
+        const focused = { ...voucher(999), business_amount_state: state, business_amount_fen: amount };
+        const app = createSSRApp(component, { ...baseProps(), vouchers: [], focusedVoucher: focused }); app.use(await router());
+        const html = await renderToString(app);
+        assert.equal(html.match(/class="voucher-row-amount"[\s\S]*?<strong[^>]*>(.*?)<\/strong>/)?.[1], expected);
+        assert.doesNotMatch(html, /暂无法确定/);
+      }
     });
     await t.test("next page waits for actual rows, retains a failed target, and all mode requests full loading", async () => {
       const events = [];

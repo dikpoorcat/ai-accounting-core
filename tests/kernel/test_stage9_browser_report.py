@@ -793,6 +793,7 @@ const amount = '900719925474099301';
 const voucher = {number: '120', voucher_version_id: 'version', subject_id: 'subject',
   type: '销售', kind: 'sale', summary: '完整业务摘要', list_summary: '销售收款',
   business_amount_label: '业务金额', business_amount_fen: '-101', amount_fen: amount,
+  business_amount_state: 'known',
   state: '已入账', date: null,
   recognition: {precision: 'month', period: '2016-12', date: null, label: '按月确认'},
   asset: null, asset_members: [],

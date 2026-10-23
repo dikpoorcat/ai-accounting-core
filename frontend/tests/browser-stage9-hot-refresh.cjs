@@ -1328,7 +1328,9 @@ function verifyVoucher(voucher) {
   assert(voucher.date === null || /^\d{4}-\d{2}-\d{2}$/.test(voucher.date), "voucher: invalid actual date");
   assert.equal(voucher.date, voucher.recognition.date, "voucher: recognition date differs");
   assert(voucher.recognition.precision !== "month" || voucher.date === null, "voucher: month precision invented an actual date");
-  wireFen(voucher.business_amount_fen, "voucher business amount", true);
+  assert(["known", "not_applicable", "unknown"].includes(voucher.business_amount_state), "voucher: invalid business amount state");
+  wireFen(voucher.business_amount_fen, "voucher business amount", voucher.business_amount_state !== "known");
+  assert.equal(voucher.business_amount_fen === null, voucher.business_amount_state !== "known", "voucher: business amount differs from its explicit state");
   const amount = wireFen(voucher.amount_fen, "voucher amount");
   assert(Array.isArray(voucher.lines) && voucher.lines.length >= 2, "voucher: missing complete entry lines");
   let debit = 0n, credit = 0n;
@@ -2193,7 +2195,7 @@ async function run(config) {
       assert(previewBounds && previewBounds.y >= 11 && previewBounds.y + previewBounds.height <= page.viewportSize().height - 11,
         "activity: voucher popover is clipped by the viewport");
       assert.equal((await tooltip.locator(".heading strong").textContent()).trim(), voucher.list_summary);
-      assert.equal((await tooltip.locator(".amount b").textContent()).trim(), formatFen(voucher.business_amount_fen));
+      assert.equal((await tooltip.locator(".amount b").textContent()).trim(), voucher.business_amount_state === "not_applicable" ? "—" : voucher.business_amount_state === "unknown" ? "待核实" : formatFen(voucher.business_amount_fen));
       const lines = tooltip.locator(".lines > span");
       assert.equal(await lines.count(), voucher.lines.length);
       for (let index = 0; index < voucher.lines.length; index++) {
