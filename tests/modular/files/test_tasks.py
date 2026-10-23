@@ -36,6 +36,8 @@ def test_real_bytes_success_idempotency_and_no_business_head_change(file_case, k
     assert done["state"] == "succeeded" and done["attempts"] == 1
     if kind == "backup":
         assert not (company.company_root / "runtime/tasks" / plan["capture_id"]).exists()
+        files.cleanup(company.company_id)
+        assert (company.company_root / "runtime/file-tasks" / first["task_id"]).is_dir()
     assert files.ensure_current(plan, plan["scope_head"], "third client") == done
     with files.verified_download(company.company_id, first["task_id"]) as download:
         data = download.stream.read()

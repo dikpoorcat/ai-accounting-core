@@ -43,6 +43,10 @@ def test_captured_point_survives_new_business_and_is_downloadable_after_capture_
         delivered = case.kernel.files.run(case.company, pending["task_id"])
         assert delivered["state"] == "succeeded", delivered
         assert not capture.exists()
+        task_root = metadata.company_root / "runtime/file-tasks" / delivered["task_id"]
+        assert not task_root.exists()
+    case.kernel.files.cleanup(case.company)
+    assert case.kernel.files.get(case.company, delivered["task_id"]) == delivered
     with case.kernel.files.verified_download(case.company, delivered["task_id"]) as download:
         manifest = create_offline_application().backup_verifier(download.stream)
         assert manifest["database_head"] == plan["manifest"]["database_head"]

@@ -22,21 +22,19 @@
 
 ## 模块化体系运行
 
-安装、独立启动、完整新建公司／登记 JSON、真实 CLI `call` 形式、MCP 接入及离线恢复／重建，统一见[安装、运行与会计 AI 接入](docs/redesign/09-runtime-and-ai.md)。该说明随安装包按需提供；新入口不自动搬移真实资料、替换数据库或接替现有服务。
+当前使用重构后的 3.0 模块化体系，正式运行资料统一放在 `data/accounting`。项目 MCP、记账 Skill 和看板共用 `data/accounting/catalog.sqlite3`，每家公司有独立的业务库、原件、当前标准业务文档及备份。
 
-## 现有运行入口
-
-`finance-local`、仓库记账 Skill 和现有 5173 开发页面仍属于 `ai-accounting-kernel/2`。其目录库、公司库为 `draft / 0`，备份格式为 2；它与上述模块化体系使用不同协议和数据结构，不能互换数据库或备份。
-
-现有页面的启动方式保留：
+打开当前看板：
 
 ```powershell
-$env:FINANCE_DATA_ROOT = Join-Path $PWD 'data/kernel-released'
-.\deploy\windows\start_accounting.ps1 -DataRoot $env:FINANCE_DATA_ROOT -NoBrowser
-npm run dev
+& '.tmp-kernel-venv/Scripts/python.exe' -I -B -X utf8 -m ai_accounting_modular.host.runtime.cli --catalog 'D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3' serve
 ```
 
-页面地址为 `http://127.0.0.1:5173/`，已经运行时直接使用。现有体系的命令、记账流程、原生登录和 Windows 独立包分别见 [运行入口](docs/local-kernel-startup.md)、[会计操作](docs/local-kernel.md) 和 [独立打包](docs/local-kernel-packaging.md)。这些运行规则不替代模块化体系的合同。真实数据库、原件、负责人身份和备份继续保全。
+安装、公司接入、CLI、MCP 及离线恢复／重建统一见[安装、运行与会计 AI 接入](docs/redesign/09-runtime-and-ai.md)，当前账套与验证结果见[交付结果](docs/redesign/10-delivery-status.md)。普通启动只打开现有环境，不自行换库或重放。
+
+## 旧版资料
+
+`finance-local`、5173 开发页面及 `data/kernel-released` 等属于旧体系 `ai-accounting-kernel/2`，与当前模块化体系的数据和备份格式不同。旧版内核、账本及保全资料仍独立存放，不能用旧入口办理当前账套。旧版说明见[运行入口](docs/local-kernel-startup.md)、[会计操作](docs/local-kernel.md)和[独立打包](docs/local-kernel-packaging.md)。
 
 ## 开发与验证
 

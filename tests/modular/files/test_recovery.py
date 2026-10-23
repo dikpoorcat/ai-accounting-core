@@ -3,11 +3,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from shutil import copyfile
 from threading import Barrier
 
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.files import _paths
 from ai_accounting_modular.files._repository import FilesRepository
 from ai_accounting_modular.files.public import ExpireTask, ProductionError
 
@@ -214,3 +216,49 @@ def test_successful_capture_cleanup_failure_keeps_delivery_and_can_resume(file_c
     assert files.get(company.company_id, task["task_id"]) == done
     with files.verified_download(company.company_id, task["task_id"]) as download:
         assert download.byte_size == done["byte_size"]
+
+
+@pytest.mark.parametrize("resume", ["cleanup", "restart"])
+def test_successful_external_backup_cleanup_retries_locked_work_without_changing_delivery(
+    file_case, monkeypatch, resume
+):
+    storage, (company, _), producer, files = file_case
+    plan = backup_plan(storage, company)
+    task = files.ensure_current(plan, plan["scope_head"], "creator")
+    task_root = company.company_root / "runtime/file-tasks" / task["task_id"]
+
+    def publish(plan, artifact, context):
+        destination = company.backup_directory / producer.describe(plan).file_name
+        destination.parent.mkdir(exist_ok=True)
+        copyfile(context.task_root / artifact.relative_path, destination)
+        return destination
+
+    def locked_work(path):
+        assert path == task_root
+        raise PermissionError("synthetic candidate file is temporarily locked")
+
+    producer.publish_hook = publish
+    with monkeypatch.context() as patch:
+        patch.setattr(_paths, "remove_task_root", locked_work)
+        done = files.run(company.company_id, task["task_id"])
+        assert done["state"] == "succeeded" and "error_code" not in done
+        assert task_root.exists()
+        assert not (company.company_root / "runtime/tasks" / plan["capture_id"]).exists()
+        with files.verified_download(company.company_id, task["task_id"]) as download:
+            delivered = download.stream.read()
+
+    active = files
+    try:
+        if resume == "restart":
+            files.close()
+            active = service(storage, producer)
+            active.recover(company.company_id)
+        else:
+            active.cleanup(company.company_id)
+        assert not task_root.exists()
+        assert active.get(company.company_id, task["task_id"]) == done
+        with active.verified_download(company.company_id, task["task_id"]) as download:
+            assert download.stream.read() == delivered
+    finally:
+        if active is not files:
+            active.close()

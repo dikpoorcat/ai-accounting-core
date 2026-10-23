@@ -236,17 +236,21 @@ class Files:
             return True
 
     def _cleanup_capture(self, metadata, row):
-        """A confirmed package no longer needs its capture input copy."""
+        """Keep the confirmed delivery, removing its capture and redundant work copy."""
         live = self._live(metadata)
         live.release(row["task_id"])
         try:
+            context = self._context(metadata, row["task_id"], row["capture_id"])
+            output = self._output_path(context, row["kind"], Path(row["output_path"]))
             self._producer("backup").cleanup(
-                self._context(metadata, row["task_id"], row["capture_id"]),
+                context,
                 keep_capture=live.capture_pinned(row["capture_id"]),
             )
+            if not output.is_relative_to(context.task_root):
+                _paths.remove_task_root(context.task_root)
         except (OSError, ContractError):
-            # The validated delivered package remains successful. capture_id
-            # retains the exact temporary root for startup/explicit maintenance.
+            # Delivery remains successful; saved capture_id/task_id locate any
+            # remaining temporaries for startup or explicit maintenance to retry.
             return False
         return True
 
