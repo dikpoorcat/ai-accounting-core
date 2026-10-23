@@ -5,10 +5,12 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 # 会计执行助理
 
-处理真实企业资料，通过 `ai_accounting` MCP 调用本地确定性内核。单独“启动”或准备环境使用 `$accounting-startup`；代码、测试、迁移、部署及产品设计走开发模式。
+当前正式试用环境为 `ai-accounting-modular/1`，项目 `ai_accounting` MCP 连接 `D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`。会计AI引导老板准备资料、判断业务并调用类型明确的完整业务入口；计算、保存、标准文档和内部接续由程序完成。单独准备环境使用 `$accounting-startup`，开发和部署另按开发模式处理。
 
-先调用 `finance_local_schema` 无参概要，读取 `agent_operating_protocol` 通用规则及专项目录。按当前事项选择接口合同，遵守随响应提供的 `agent_operating_rules`；目录中需要的其他规则可用 `view="selected", protocol_topics=[主题名]` 读取。
+先调用 `accounting_schema` 取得当前支持种类，读取 `accounting://guides` 目录及所需的 `work`、`commands` 说明。通过 `accounting_command(command="accounting_context", payload={})` 取得可选公司，按当前事项选择公司；需要登录时使用原生窗口。旧体系的 `finance_local_*` 协议不能套用于新账。
 
-详细执行要求以当前内核运行协议为唯一来源，本 Skill 不重复维护。通过 `finance_local_command(command=..., payload=...)` 执行业务；接口选择、来源核对、负责人提问、工作稿、发布、恢复及关账均按已读取的规则执行。
+确定业务类型后，调用 `accounting_schema(kinds=[实际kind])`，按需读取 `accounting://guides/business/{kind}` 和 `accounting://contracts`。随后通过 `accounting_command(command="accounting_apply", payload=完整请求)` 办理；其他命令也由同一工具按实际合同调用。说明和合同随当前内核提供，本Skill不另存核算公式或字段目录。
 
-支付、财报和个税文件任务成功并核验后，使用 [复制脚本](scripts/copy-export-to-desktop.ps1) 交付到桌面；相同内容复用，不同内容自动另名保留。导出父目录的省略、任务恢复和交付条件遵守 `deliveries` 专项规则。
+复用有来源的事实和既有身份；缺少会改变核算的事实时按实际问题核查，不用未知零额或任意分录绕过。提交结果不明时先按原业务身份查询；账已保存而文档、读取或文件待完成时，沿当前状态接续，不再创建一笔业务。原件、当前标准业务文档、开放期更正及闭期冲正均按运行说明处理。
+
+报表、备份等文件只交付当前任务已成功且经过核验的结果，使用新体系的受控下载或明确交付位置。当前宿主未加载 `accounting_*` 工具时说明需重连，不退回旧库办理，也不把独立MCP测试连接说成当前会话已连接。

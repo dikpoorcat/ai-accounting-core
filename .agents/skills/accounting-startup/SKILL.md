@@ -5,15 +5,18 @@ description: Prepare the installed local SQLite accounting service and native ow
 
 # 记账环境准备
 
-“启动”授权准备已有环境并打开页面。执行 `deploy/windows/start_accounting.ps1`，使用已安装包或仓库受控运行时，复用每个资料根目录唯一的本地服务。脚本默认打开页面；无需 Docker 或 PostgreSQL。参数和安装说明见 [本地运行入口](../../../docs/local-kernel-startup.md)。
+当前正式试用环境是 `ai-accounting-modular/1`，目录库为 `D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`。项目MCP和看板共用该目录；`finance-local` 及其启动脚本属于旧体系，不用于这套账。
 
-1. 通过宿主工具发现 `ai_accounting`，调用 `finance_local_schema`，遵守返回的 `agent_operating_protocol`。调用 `finance_local_command(command="companies", payload={})` 验证实际 MCP 连接和负责人会话。仅页面可访问、进程存在或工具名称可见，都不算准备完成。
-2. 需要登录时，调用 `finance_local_security(action="request", payload={"kind":"login"})`，再用 `action="status"` 和返回的 `request_id` 检查安全窗口。仅 `waiting_for_user` 表示窗口已显示。负责人输入原独立密码后，重试公司列表，以实际成功响应确认登录有效。密码、恢复码、会话令牌不进入聊天、业务载荷、命令行或临时文件。
-3. 新安装尚无负责人时，按明确安装授权请求 `kind="bootstrap_owner"`，省略 `login_name`，由负责人在原生窗口自行填写登录名并设置密码、保存恢复码；不从旧目录预填，也不在聊天索取。已有目录身份异常不能通过重建负责人或数据库绕过。窗口取消时结束该登录尝试，不循环弹窗。
-   启动只复用或恢复登录。单月关账批准在业务资料和同版月度核对准备好后请求，不在启动时提前弹出关账密码窗口；已有安全请求先查询持久状态，避免中断后重复要求密码。
-4. 页面通过启动器的一次性票据打开，票据兑换后移出地址栏。不要构造令牌 URL；需要再开页面可执行 `finance-local --root <资料根目录> serve`。已有页面可复用。
-5. 单独“启动”不选公司、不读取账务、不创建企业。成功后简短说明环境和页面已就绪。若用户同时要求开始记账或提供业务资料，继续使用 `$accounting-operator`。
+使用仓库受控运行时准备后台并打开看板：
 
-MCP 由宿主管理，配置使用同一资料根目录和 `finance-local ... mcp`。若当前会话未加载新工具，报告服务状态与 MCP 尚未连接的区别，使用宿主已有重连能力；无法重连时说明需重新打开项目会话。不得另起后台 stdio 进程冒充当前会话已连接。
+```powershell
+& 'D:/GitHub/ai-accounting-core/.tmp-kernel-venv/Scripts/python.exe' -I -B -X utf8 -m ai_accounting_modular.host.runtime.cli --catalog 'D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3' serve
+```
 
-日常启动不包含重新安装、清库、导入旧账、回放或正式账务写入。结构指纹、运行时或公司身份不匹配时报告实际错误，保留当前库及负责人身份，不能重新建表掩盖问题。当前 Windows 默认资料根为 `data/kernel-released`，名称不代表合同已发布；实际目录以配置及只读 `service-info` 为准，只接受新系统当前精确结构。普通启动不执行结构升级；已有授权的结构调整转开发模式，按[显式开发库升级](../../../docs/development-database-upgrades.md)完成备份、精确合同及数据保留核验。空库重放仅由用户明确指定，持久任务只在目录库确认有效后恢复。
+`serve` 复用该目录的后台，通过一次性票据打开页面，不自行拼接登录令牌。详细入口见[新体系运行说明](../../../docs/redesign/09-runtime-and-ai.md)。
+
+通过宿主的 `ai_accounting` 连接调用 `accounting_schema`，以 `accounting_security(operation="session_status", payload={})` 查询负责人会话。需要登录时调用 `accounting_security(operation="request", payload={"kind":"login"})`，再用 `operation="status"` 和原 `request_id` 核对窗口状态。密码及恢复码只由老板在原生窗口输入；已有身份不重新建立，窗口取消后不循环弹窗。
+
+登录后调用 `accounting_command(command="accounting_context", payload={})`，以实际成功返回核对连接和公司列表。页面能打开与当前聊天已连接MCP分别说明；宿主尚未加载新的 `accounting_*` 工具时，使用宿主重连能力，或请用户重新打开项目会话，不能把另起的stdio测试进程冒充本会话连接。
+
+单独启动只准备现有环境，不创建公司、换库、重放或写账。用户继续提供业务资料时使用 `$accounting-operator`。
