@@ -55,7 +55,8 @@
 - [安装包](../../.tmp/final-wheel-source-retirement-20261022-01/attempt-final-20261023-01/ai_accounting_core-0.1.0-py3-none-any.whl)
 - [最终证据索引](../../.tmp/modular-delivery-20261023-01/index.json)
 - [本轮完整重放证据索引](../../.tmp/modular-document-replay-20261023-8r84163r/index.json)
+- [流水文字与看板取数核验](../../.tmp/statement-display-review-20261023-gifcwipx/index.json)
 
-经过重放核验的完整标准资料位于本机 `data/reconstruction-sources/modular-standard-20261023`，各家公司独立保存原件、最终事实和阅读索引。测试库与原始验证证据位于 `.tmp/modular-document-replay-20261023-8r84163r`。它们包含实际公司资料，不进入源码或安装包。
+经过重放核验的完整标准资料位于本机 `data/reconstruction-sources/modular-standard-20261023`，各家公司独立保存原件、最终事实和阅读索引。银行流水的用途与对方按原件分栏，独立追踪号等技术列不再拼入用途，真实缺名和批量汇总仍如实保留；239条原行已通过实际看板取数核验，472个财务金额格与整理前一致。各轮测试库与原始证据见上方索引。它们包含实际公司资料，不进入源码或安装包。
 
 本轮没有改动现有公司库、负责人身份、服务或MCP配置。标准资料整理、隔离重放与测试关账均已完成；备份恢复、文档重建和现有入口切换是不同操作，不能互相替代。
