@@ -128,11 +128,17 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
     async def check_mcp():
         params = StdioServerParameters(command=sys.executable, args=command[1:] + ["mcp"])
         async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-            await session.initialize()
+            initialized = await session.initialize()
+            assert "月度办事清单" in initialized.instructions
+            assert "等待资料或没有推进时也展示进度" in initialized.instructions
             resource = await session.read_resource("accounting://contracts")
             catalog = json.loads(resource.contents[0].text)
+            assert catalog["instructions"] == initialized.instructions
             guides = await session.read_resource("accounting://guides")
             assert len(json.loads(guides.contents[0].text)["topics"]) == 5
+            work = await session.read_resource("accounting://guides/work")
+            assert "## 给老板看的办理清单" in work.contents[0].text
+            assert "先展示已经查明的原有基准" in work.contents[0].text
             expense_guide = await session.read_resource(
                 "accounting://guides/business/operations.expense"
             )

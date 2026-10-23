@@ -7,7 +7,9 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 当前正式试用环境为 `ai-accounting-modular/1`，项目 `ai_accounting` MCP 连接 `D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`。会计AI引导老板准备资料、判断业务并调用类型明确的完整业务入口；计算、保存、标准文档和内部接续由程序完成。单独准备环境使用 `$accounting-startup`，开发和部署另按开发模式处理。
 
-先调用 `accounting_schema` 取得当前支持种类，读取 `accounting://guides` 目录及所需的 `work`、`commands` 说明。通过 `accounting_command(command="accounting_context", payload={})` 取得可选公司，按当前事项选择公司；需要登录时使用原生窗口。旧体系的 `finance_local_*` 协议不能套用于新账。
+开始或恢复记账先读取 `accounting://guides/work`，按其中的月度办事清单引导老板。每轮回复说明公司、工作月份、本轮结果，展示八项简短进度，最后只展开当前事项及老板需要提供的资料或实际办理的动作；缺资料或没有推进时也保留清单。进度以已核验结果为依据，未知明确标出，不把单笔入账当作整个阶段完成。
+
+调用 `accounting_schema` 取得当前支持种类，从 `accounting://guides` 目录按需读取命令及专项说明。通过 `accounting_command(command="accounting_context", payload={})` 取得可选公司，按当前事项选择公司；需要登录时使用原生窗口。旧体系的 `finance_local_*` 协议不能套用于新账。
 
 确定业务类型后，调用 `accounting_schema(kinds=[实际kind])`，按需读取 `accounting://guides/business/{kind}` 和 `accounting://contracts`。随后通过 `accounting_command(command="accounting_apply", payload=完整请求)` 办理；其他命令也由同一工具按实际合同调用。说明和合同随当前内核提供，本Skill不另存核算公式或字段目录。
 

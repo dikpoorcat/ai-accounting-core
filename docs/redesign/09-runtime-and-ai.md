@@ -117,11 +117,11 @@ $company.database_id
 }
 ```
 
-连接后先读 `accounting://guides` 小目录，再按需读取：
+开始或恢复记账先读 `accounting://guides/work`，按月度办事清单引导老板并展示实际进度；其他说明从 `accounting://guides` 小目录按需读取：
 
 | 资源 | 内容 |
 | --- | --- |
-| `accounting://guides/work` | 引导老板、复用资料、当前待办、更正和三种完成状态。 |
+| `accounting://guides/work` | 月度办事清单、每轮进度、资料引导、当前待办、更正和完成状态。 |
 | `accounting://guides/commands` | 公开请求、身份、防重、错误接续及标准业务文档。 |
 | `accounting://guides/business/{kind}` | 指定事实种类的实际业务规则；例如 `accounting://guides/business/operations.expense`。 |
 | `accounting://guides/reporting` | 共享报表的期间、实际采用、未知和取数含义。 |

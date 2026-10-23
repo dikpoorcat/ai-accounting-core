@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -31,8 +32,7 @@ def test_all_actual_fact_inputs_have_exact_guides_and_generated_bytes():
     document = schema_document("business-facts.schema.json")
     generated = module.guide_outputs(ROOT, document)
     assert all(
-        path.read_bytes().replace(b"\r\n", b"\n") == content
-        for path, content in generated.items()
+        path.read_bytes().replace(b"\r\n", b"\n") == content for path, content in generated.items()
     )
     book = json.loads(next(iter(generated.values())))
     assert set(book["business"]["kinds"]) == module.fact_kinds(document)
@@ -79,6 +79,32 @@ def test_shipped_material_guidance_separates_owner_facts_from_dialogue_and_clean
     assert "SourcesCommandResult" in commands and "SourceDiscardResult" in commands
     assert "登记已退出但文件清理尚待程序接续" in commands
     assert "call accounting-sources" in read_guide("runtime")
+
+
+def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries():
+    work = read_guide("work")
+    checklist = generator().markdown_section(work, "## 给老板看的办理清单")
+    stages = (
+        "流水与基础资料",
+        "工资、劳务与个税",
+        "社保、公积金",
+        "银行代发表",
+        "账务补齐与报表准备",
+        "财务报表报送",
+        "所得税及其他适用申报",
+        "收尾核对与关账",
+    )
+    assert re.findall(r"^\| (\d+)\. (.+?) \|", checklist, re.MULTILINE) == [
+        (str(number), stage) for number, stage in enumerate(stages, 1)
+    ]
+    assert "每轮会计办理回复" in checklist and "没有推进时也保留" in checklist
+    assert "一次保存成功" in checklist and "不能代替整项完成" in checklist
+    assert "不为展示清单反复查全库" in checklist
+    assert "note_scopes" in checklist and "issue_scopes" in checklist
+    assert "ready" in checklist and "不证明所有现实业务" in checklist
+    assert "接续位置" in checklist and "不增加逐项批准" in checklist
+    assert "先展示已经查明的原有基准" in work
+    assert "资料从哪里取得" in work
 
 
 def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
@@ -152,6 +178,8 @@ assert 'ai_accounting_modular.application.public' not in sys.modules
 assert '实际收付款另记' in read_guide('business', kind='operations.expense')
 assert 'company-create' in read_guide('runtime')
 assert 'owner_statement' in read_guide('work')
+assert '## 给老板看的办理清单' in read_guide('work')
+assert '一次保存成功' in read_guide('work')
 assert 'SourceDiscardResult' in read_guide('commands')
 assert 'call accounting-sources' in read_guide('runtime')
 print(json.dumps(guide_index(), ensure_ascii=False))

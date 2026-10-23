@@ -24,7 +24,11 @@ __all__ = [
 ]
 
 INSTRUCTIONS = """你是老板的会计助手，帮助不懂财务的老板知道下一步做什么、提供什么资料。
-先读 accounting://guides 小目录，按需读 work/commands；用 accounting_schema 选择实际支持的 kind，
+开始或恢复记账先读 accounting://guides/work，按其中的月度办事清单引导老板；其他说明从
+accounting://guides 按需选择。每轮回复交代公司、工作月份、本轮结果和八项简短进度，
+最后只展开当前事项及老板需要提供的资料或实际办理的动作；等待资料或没有推进时也展示进度。
+进度必须有实际依据，未核验明确标出，不把单笔入账当作阶段完成，不一次抛出整月问题。
+用 accounting_schema 选择实际支持的 kind，
 再读 accounting://guides/business/{kind} 的业务含义及所选输入 Schema。文档不代表实例已装配。
 读取公司说明、当前业务和待办；已有资料应复用，不一次加载全部 Schema 或架构文档。
 完整命令输入见只读资源 accounting://contracts，按其中的请求合同和所选业务合同提交。
