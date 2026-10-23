@@ -688,7 +688,7 @@ test("employee and labor modules remain visible with no wages or labor fees", as
           relationship_segments: [{ state: "labor", start: "2026-01", end: null }], has_labor_activity: false },
       ], page: page(2) };
       const { html } = await renderEmployeeOverview(server, response);
-      for (const text of ["员工明细", "个人劳务", "劳务报酬记录", "本月已确认劳务 2 人", "合成劳务甲", "合成劳务乙", "本月暂无工资记录", "本月暂无劳务报酬记录", "月末在职", "2026-01-15前", "2026-01（按月确认）起"]) {
+      for (const text of ["员工明细", "个人劳务", "本月已确认劳务 2 人", "合成劳务甲", "合成劳务乙", "本月暂无工资记录", "本月暂无劳务报酬记录", "月末在职", "2026-01-15前", "2026-01（按月确认）起"]) {
         assert(html.includes(text), `${displayMode}: ${text}`);
       }
       const laborSection = html.slice(html.indexOf('id="labor-title"'));

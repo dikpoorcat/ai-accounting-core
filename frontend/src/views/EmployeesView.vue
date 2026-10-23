@@ -137,11 +137,6 @@ const filterLabel = computed(
       unknown: "在册状态未确认",
     })[filter.value],
 );
-const laborFilterLabel = computed(() => focusedEmployeeId.value ? "已定位人员" : ({
-  all: "全部劳务人员", employment_active: "当月在职劳务人员", employment_unpaid_leave: "停薪留职劳务人员",
-  employment_departed: "劳务已结束人员", employment_unknown: "用工状态未确认",
-  in_period: "已确认在册劳务人员", ended: "已确认不在册劳务人员", unknown: "在册状态未确认",
-})[filter.value]);
 
 function employmentStateLabel(state: EstablishedEmployeeItem["employment_state"]) {
   return {
@@ -545,8 +540,6 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <div class="section-heading">
             <div><h2 id="labor-title" tabindex="-1">个人劳务</h2><p class="muted">本月已确认劳务 {{ employees.labor_worker_count }} 人 · 本月费用 {{ formatFen(workforce?.personal_labor_fen) }} · 资产或项目 {{ formatFen(workforce?.capitalized_labor_fen) }}</p></div>
           </div>
-          <h3 class="labor-subheading">劳务报酬记录</h3>
-          <p class="muted">{{ laborFilterLabel }} · 已加载 {{ laborWorkers.length }} 人</p>
           <p v-if="pageLoading[pageKey('labor_workers')] && !laborWorkers.length" class="muted" role="status">正在读取所选劳务人员…</p>
           <p v-else-if="!laborWorkers.length && !pageErrors[pageKey('labor_workers')]" class="muted">当前范围没有劳务人员。</p>
           <div v-if="laborWorkers.length" class="employee-results" :class="{ 'list-results': displayMode === 'list' }" :tabindex="displayMode === 'list' ? 0 : undefined" aria-label="个人劳务明细记录">
@@ -698,7 +691,6 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .labor-source-record .section-heading h3 { margin: 0; font-size: 13px; }
 .labor-source-payments { margin-top: 12px; }
 .labor-source-payments > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-.labor-subheading { margin: 24px 0 8px; font-size: 15px; }
 article.workforce-worker { cursor: default; }
 .workforce-worker h3 { margin: 0; font-size: 16px; }
 .workforce-worker p { margin-bottom: 0; }
