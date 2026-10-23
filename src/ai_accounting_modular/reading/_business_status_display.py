@@ -31,7 +31,14 @@ def profiles(reader, selected, settlements, events, read):
     counterparties, employees, cards, accounts = set(), set(), set(), set()
     content = selected.content
     if content is not None and content.target["kind"] != "system.withdrawal":
-        counterparties.update(business_parties(content, selected.cache))
+        if selected.detail is not None and selected.range.get("allocations"):
+            for allocation in selected.range["allocations"]:
+                if allocation.get("recipient_id"):
+                    counterparties.add(allocation["recipient_id"])
+                if allocation.get("person_id"):
+                    employees.add(allocation["person_id"])
+        else:
+            counterparties.update(business_parties(content, selected.cache))
         cards.update(item["asset_id"] for item in assets(content))
         matter = business_matter(content)
         cards.update(

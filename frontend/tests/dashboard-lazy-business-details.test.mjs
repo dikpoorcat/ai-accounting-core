@@ -461,6 +461,11 @@ test("real Vue row work on continuation and final-page state", async t => {
         if (name === "FundsView") {
           first.party = "更新对象"; first.list_summary = "完整更新用途"; first.amount_fen = "7654321"; first.subject_id = "changed-business";
           await update(); assert(text(originalNode).includes("更新对象")); assert(text(originalNode).includes("完整更新用途")); assert(text(originalNode).includes("−¥76,543.21"));
+          first.party = ""; await update();
+          assert(text(originalNode).includes("对象名称未提供")); assert(!text(originalNode).includes("无需往来对象"));
+          for (const party of ["多人银行批次", "公司内部账户", "无需往来对象"]) {
+            first.party = party; await update(); assert(text(originalNode).includes(party));
+          }
           first.correction = true; first.signed_amount_fen = "-12345"; await update(); assert(text(originalNode).includes("更正原业务")); assert(text(originalNode).includes("−¥123.45"));
           first.has_business_progress = false; await update();
           assert.equal(originalNode.props.role, undefined); assert.equal(originalNode.props.tabindex, undefined); assert.equal(originalNode.props["aria-expanded"], undefined);

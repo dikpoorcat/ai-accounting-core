@@ -77,6 +77,14 @@ def movements(activity, accounts, objects, sources, presence):
             )
         )
         party = party_name(actual.get("party_id"), objects) or "、".join(parties)
+        if not party:
+            party = (
+                "公司内部账户划转"
+                if internal
+                else "收款方未提供"
+                if actual["direction"] == "outflow"
+                else "付款方未提供"
+            )
         value = {
             "id": actual["movement_id"],
             "subject_id": ""
@@ -100,7 +108,10 @@ def movements(activity, accounts, objects, sources, presence):
             "internal_transfer": internal,
         }
         value["has_business_progress"] = _funds_progress.available(
-            value, view, sources.contents[view["source"]["result_id"]], presence,
+            value,
+            view,
+            sources.contents[view["source"]["result_id"]],
+            presence,
         )
         result.append(
             IndexItem(

@@ -46,7 +46,9 @@ def batches(activity, sources, objects):
                 continue
             items.extend(
                 {
-                    "party": party_name(part.party_id, objects) or "交易方未提供",
+                    "party": party_name(part.party_id, objects)
+                    or party_name(actual.get("party_id"), objects)
+                    or "交易方未提供",
                     "amount_fen": format_fen(part.amount_fen),
                 }
                 for part in parts

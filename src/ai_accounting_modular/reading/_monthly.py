@@ -34,7 +34,7 @@ COMPONENTS = (FINANCIAL, FUNDS, ASSETS, EMPLOYEES, BRIEF_ACTIVITY, BRIEF_OPEN_IT
 
 def version(component):
     if component == FUNDS:
-        return 8
+        return 9
     if component == FINANCIAL:
         return 8
     if component == BRIEF_OPEN_ITEMS:

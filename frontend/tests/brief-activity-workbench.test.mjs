@@ -84,6 +84,26 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
         assert.doesNotMatch(html, /暂无法确定/);
       }
     });
+    await t.test("voucher objects distinguish missing names from inapplicable and unresolved relations", async () => {
+      const cases = [
+        { party: "甲客户", party_state: "known", parties: [] },
+        { party: "", party_state: "known", parties: [{ id: "known-id", name: "", amount_fen: "100" }] },
+        { party: "", party_state: "name_missing", parties: [{ id: "missing-id", name: "", amount_fen: "100" }] },
+        { party: "", party_state: "not_applicable", parties: [] },
+        { party: "", party_state: "unresolved", parties: [] },
+        { party: "", party_state: "multiple", parties: [] },
+        { party: "", party_state: "multiple", parties: [{ id: "a", name: "甲客户", amount_fen: "100" }, { id: "b", name: "", amount_fen: "200" }] },
+      ];
+      const focused = voucher(999), baseLine = focused.lines[0];
+      focused.lines = cases.map((item, index) => ({ ...baseLine, ...item, line_number: index + 1, debit_fen: index === cases.length - 1 ? "300" : "100", credit_fen: "0" }));
+      focused.lines.push({ ...baseLine, line_number: cases.length + 1, debit_fen: "0", credit_fen: "900" });
+      const app = createSSRApp(component, { ...baseProps(), vouchers: [], focusedVoucher: focused }); app.use(await router());
+      const html = await renderToString(app);
+      const cells = [...html.matchAll(/<td data-label="往来对象"[^>]*>([\s\S]*?)<\/td>/g)].map(match => match[1].replace(/<[^>]*>/g, "").trim());
+      assert.deepEqual(cells.slice(0, 6), ["甲客户", "对象名称未提供", "对象名称未提供", "—", "见凭证业务说明", "多个往来对象"]);
+      assert.equal(cells[6], "甲客户 · ¥1.00对象名称未提供 · ¥2.00");
+      assert.equal(cells[7], "—");
+    });
     await t.test("next page waits for actual rows, retains a failed target, and all mode requests full loading", async () => {
       const events = [];
       const props = reactive({ ...baseProps(), onMoreVouchers: () => events.push("more"), onAllVouchers: () => events.push("all") });
@@ -132,6 +152,17 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
       for (const amount of ["¥0.00", "待核对", "−¥8,000.00", "¥6,000.00", "¥90,071,992,547,409.93"]) assert(html.includes(amount));
       assert.match(html, /class="state business-list-state correction"[^>]*>更正原业务/);
       assert.doesNotMatch(html, /owner-activity-summary/);
+    });
+    await t.test("business objects preserve backend descriptions without treating an empty name as inapplicable", async () => {
+      const parties = ["", "多人银行批次", "公司内部账户", "无需往来对象"];
+      const items = parties.map((party, index) => ({ ...activity(index + 1), party, title: "支付单位承担社保费" }));
+      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "资金收付", event_count: items.length, group_count: items.length, type_counts: [] }], items }); app.use(await router());
+      const html = await renderToString(app);
+      const cells = [...html.matchAll(/class="event-copy business-list-object"[^>]*><strong[^>]*>(.*?)<\/strong>/g)].map(match => match[1]);
+      assert.deepEqual(cells, ["对象名称未提供", ...parties.slice(1)]);
+      const matters = [...html.matchAll(/class="event-matter business-list-matter"[^>]*>([\s\S]*?)<\/span>/g)].map(match => match[1].replace(/<[^>]*>/g, "").trim());
+      assert.equal(matters.length, items.length);
+      for (const matter of matters) assert(matter.startsWith("支付单位承担社保费"));
     });
     await t.test("business categories show complete type counts independently of the loaded rows", async () => {
       const groups = [{ key: "funds", label: "收入与客户", group_count: 2, event_count: 4,

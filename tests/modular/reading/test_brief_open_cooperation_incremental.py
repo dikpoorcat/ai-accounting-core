@@ -339,7 +339,7 @@ def test_provider_current_fact_and_fixed_object_inputs_are_replaced_without_full
     assert not private(case, index.OBJECTS, [BANK])
 
 
-def test_only_open_format_upgrades_through_explicit_retry_without_changing_other_ready_models(case):
+def test_only_open_format_upgrades_on_read_without_changing_other_ready_models(case):
     case.seed()
     publish(case)
     reader = case.kernel.reading
@@ -361,9 +361,8 @@ def test_only_open_format_upgrades_through_explicit_retry_without_changing_other
         (index.COMPONENT,),
         lambda value, read: value.components[index.COMPONENT],
     )
-    assert result.state == "failed" and result.reason == "corrupt"
+    assert (result.state, result.reason) == ("preparing", None)
     assert reader.page("funds", month, {}) == funds
-    _monthly.retry(reader, scope(case), (index.COMPONENT,))
     assert reader.run_pending(case.company)
     assert snapshot(case) is not None
     assert reader.page("funds", month, {}) == funds

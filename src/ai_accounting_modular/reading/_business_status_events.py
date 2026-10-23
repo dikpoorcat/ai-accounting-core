@@ -82,11 +82,28 @@ def capture(reader, selected, settlements, view, read):
             if event.movement is not None
             else None,
         }
-        picked.append((value, quantity.get("party_id")))
-    objects = identities(reader.identity, [party for _, party in picked if party is not None], read)
+        actual = event.movement.value if event.movement is not None else {}
+        party = actual.get("party_id") or quantity.get("party_id")
+        missing = (
+            "收款方未提供"
+            if actual.get("direction") == "outflow"
+            else "付款方未提供"
+            if actual.get("direction") == "inflow"
+            else "对象未提供"
+        )
+        picked.append((value, party, missing))
+    objects = identities(
+        reader.identity, [party for _, party, _ in picked if party is not None], read
+    )
     rows = []
-    for row, party in picked:
-        row["party"] = objects[party]["name"] if party in objects else ""
+    for row, party, missing in picked:
+        row["party"] = (
+            objects[party]["name"]
+            if party in objects
+            else "对象名称未提供"
+            if party is not None
+            else missing
+        )
         rows.append(row)
     rows.sort(key=lambda row: date_key(row["posting_period"], row["actual_on"], "", row["id"]))
     if len({row["id"] for row in rows}) != len(rows):

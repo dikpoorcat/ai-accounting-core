@@ -48,6 +48,30 @@ _COMPONENTS = {
 }
 
 
+def _individual_party(content):
+    """Only an individual settlement proves that all allocations share one actual party."""
+    target, basis = origin_fields(content)
+    data = basis.get("input", {})
+    if (
+        target["kind"] != "money.movement"
+        or data.get("type") != "settlement"
+        or data.get("payment_method") != "individual"
+    ):
+        return None
+    known = {
+        item["party_id"]
+        for item in basis["adopted_quantities"]
+        if item["type"] == "obligation" and item.get("party_id") is not None
+    }
+    if len(known) > 1:
+        raise ContractError("storage_corrupt", "普通收付的正式来源存在不同实际交易方。")
+    inherited = next(iter(known), None)
+    party = data.get("counterparty_id", inherited)
+    if inherited is not None and party != inherited:
+        raise ContractError("storage_corrupt", "普通收付交易方与正式采用义务不一致。")
+    return party
+
+
 def business_parties(content, cache):
     """Actual typed participants in this business, without assuming one party per result."""
     target, basis = origin_fields(content)
@@ -105,6 +129,17 @@ def business_parties(content, cache):
         case "investment.money_fund_purchase" | "investment.money_fund_redemption":
             return (data["counterparty_id"],)
         case "money.movement":
+            if data.get("payment_method") == "individual" and data["type"] == "settlement":
+                party = _individual_party(content)
+                return (party,) if party is not None else ()
+            if data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve":
+                return tuple(
+                    dict.fromkeys(
+                        item["party_id"]
+                        for item in basis["adopted_quantities"]
+                        if item["type"] == "obligation" and item.get("party_id") is not None
+                    )
+                )
             return (data["counterparty_id"],) if "counterparty_id" in data else ()
         case "investment.cooperation_collection" | "investment.cooperation_payment":
             return tuple(
@@ -137,7 +172,7 @@ def business_parties(content, cache):
             return ()
 
 
-def allocation_source(content, allocation, cache):
+def allocation_source(content, allocation, cache, *, payment_party=None):
     source = allocation["source"]
     producer = cache.source(content, source["business_id"])
     kind, slot = producer.target["kind"], source["slot"]
@@ -150,8 +185,15 @@ def allocation_source(content, allocation, cache):
     if len(adopted) != 1:
         raise ContractError("storage_corrupt", "实际分配缺少唯一的正式采用义务。")
     person, recipient, payroll, component = None, adopted[0].get("party_id"), None, None
+    data = content.basis.get("input", {})
+    if (
+        content.target["kind"] == "money.movement"
+        and data["type"] == "settlement"
+        and data["payment_method"] == "individual"
+    ):
+        recipient = payment_party
     if allocation.get("recipient_id", recipient) != recipient:
-        raise ContractError("storage_corrupt", "实际分配收款人与正式采用义务不一致。")
+        raise ContractError("storage_corrupt", "实际分配对象与正式收付对象不一致。")
     if kind == "people.remuneration":
         person, payroll, component = (
             producer.target["values"]["person_id"],
@@ -213,8 +255,11 @@ def parts(content, cache):
         batch = data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve"
         grouped = defaultdict(list)
         labels = {}
+        payment_party = _individual_party(content)
         for allocation in data["allocations"]:
-            label, actual = allocation_source(content, allocation, cache)
+            label, actual = allocation_source(
+                content, allocation, cache, payment_party=payment_party
+            )
             parties = () if batch else tuple(x for x in (actual["recipient_id"],) if x)
             group = label.code, parties, tuple(sorted(actual["matter"].items()))
             grouped[group].append(actual)
@@ -262,7 +307,13 @@ def parts(content, cache):
                 business_label(content),
                 value.amount_fen,
                 "抵销金额",
-                (),
+                tuple(
+                    dict.fromkeys(
+                        item["recipient_id"]
+                        for item in allocations
+                        if item["recipient_id"] is not None
+                    )
+                ),
                 "offset",
                 False,
                 base_scope(content, allocations=allocations),
@@ -404,6 +455,19 @@ def rows(event, content, objects, *, prepared, obligations=()):
         progress = bool(part.scope["allocations"] or obligations) and not content.target[
             "kind"
         ].startswith(("investment.cooperation_", "opening.", "reports."))
+        if part.batch:
+            party = "银行批量付款"
+        elif part.parties:
+            party = "、".join(
+                objects[ident]["name"] if ident in objects else "对象名称未提供"
+                for ident in part.parties
+            )
+        else:
+            party = {
+                "outflow": "收款方未提供",
+                "inflow": "付款方未提供",
+                "internal_transfer": "公司内部账户划转",
+            }.get(part.phase, "—")
         result.append(
             {
                 "row": {
@@ -420,10 +484,7 @@ def rows(event, content, objects, *, prepared, obligations=()):
                     "amount_fen": signed(part.amount_fen, sign),
                     "amount_label": part.amount_label,
                     "state": "更正原业务" if correction else "已入账",
-                    "party": "、".join(
-                        objects[x]["name"] if x in objects else "对象名称未取得"
-                        for x in part.parties
-                    ),
+                    "party": party,
                     "group": group,
                 },
                 "scope": actual_scope,

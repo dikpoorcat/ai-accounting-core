@@ -1246,7 +1246,7 @@ onBeforeUnmount(() => {
                   :aria-expanded="item.subject_id && item.has_business_progress ? expandedMovementId === item.id : undefined"
                   @click="toggleMovement(item, $event)" @keydown="handleMovementKey(item, $event)">
                   <time class="business-list-date" :datetime="item.date || undefined">{{ formatDate(item.date) }}</time>
-                  <div class="book-movement-copy business-list-object"><strong>{{ item.party || "无需往来对象" }}</strong></div>
+                  <div class="book-movement-copy business-list-object"><strong>{{ item.party || "对象名称未提供" }}</strong></div>
                   <span class="book-movement-matter business-list-matter">{{ item.list_summary || item.type }}<small v-if="item.internal_transfer && item.list_summary !== '账户互转'">账户互转</small></span>
                   <span class="direction business-list-state" :class="item.correction ? 'correction' : item.direction">
                     {{ item.correction ? "更正原业务" : item.internal_transfer ? (item.direction === "inflow" ? "转入" : "转出") : item.direction === "inflow" ? "流入" : "流出" }}
