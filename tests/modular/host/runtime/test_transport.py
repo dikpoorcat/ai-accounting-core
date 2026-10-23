@@ -131,6 +131,9 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
             initialized = await session.initialize()
             assert "月度办事清单" in initialized.instructions
             assert "等待资料或没有推进时也展示进度" in initialized.instructions
+            assert "✅ / 🔄 / ⬜ / ⏰ / ➖" in initialized.instructions
+            assert "当前步骤用 🔄，即使等待资料也保留" in initialized.instructions
+            assert "清单图标和下一步共用该结论" in initialized.instructions
             resource = await session.read_resource("accounting://contracts")
             catalog = json.loads(resource.contents[0].text)
             assert catalog["instructions"] == initialized.instructions
@@ -139,6 +142,10 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
             work = await session.read_resource("accounting://guides/work")
             assert "## 给老板看的办理清单" in work.contents[0].text
             assert "先展示已经查明的原有基准" in work.contents[0].text
+            current_row = "1. 🔄 流水与基础资料：当前待补本月完整流水。"
+            assert current_row in work.contents[0].text
+            assert "同时决定图标与接续位置" in work.contents[0].text
+            assert "保留其他仍未解决的事项" in work.contents[0].text
             expense_guide = await session.read_resource(
                 "accounting://guides/business/operations.expense"
             )

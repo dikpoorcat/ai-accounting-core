@@ -3,7 +3,7 @@
 interface:
   display_name: "会计执行助理"
   short_description: "处理票据、流水、工资、税务与月结，并通过确定性内核安全记账"
-  default_prompt: "使用 $accounting-operator 处理当前记账事项，先读 accounting://guides/work，核对公司和工作月份，展示月度办事清单并引导当前事项，再按实际合同和专项规则办理。"
+  default_prompt: "使用 $accounting-operator 处理当前记账事项，先读 accounting://guides/work，按各阶段完成条件统一判断清单和下一步，用编号列表展示八步进度，当前步骤用🔄并写清实际情况，再按实际合同和专项规则办理。"
 
 policy:
   allow_implicit_invocation: true

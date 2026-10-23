@@ -94,7 +94,7 @@ def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries(
         "所得税及其他适用申报",
         "收尾核对与关账",
     )
-    assert re.findall(r"^\| (\d+)\. (.+?) \|", checklist, re.MULTILINE) == [
+    assert re.findall(r"^(\d+)\. \*\*(.+?)\*\*：", checklist, re.MULTILINE) == [
         (str(number), stage) for number, stage in enumerate(stages, 1)
     ]
     assert "每轮会计办理回复" in checklist and "没有推进时也保留" in checklist
@@ -102,9 +102,41 @@ def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries(
     assert "不为展示清单反复查全库" in checklist
     assert "note_scopes" in checklist and "issue_scopes" in checklist
     assert "ready" in checklist and "不证明所有现实业务" in checklist
-    assert "接续位置" in checklist and "不增加逐项批准" in checklist
+    assert "接续位置" in checklist and "逐项批准" in checklist
     assert "先展示已经查明的原有基准" in work
     assert "资料从哪里取得" in work
+    assert all(icon in checklist for icon in ("✅", "🔄", "⬜", "⏰", "➖"))
+    assert "1. 🔄 流水与基础资料：当前待补本月完整流水。" in checklist
+    assert "八行编号列表" in checklist and "不用表格" in checklist
+    assert "图标后保留直白文字" in checklist and "加粗标记成对" in checklist
+    assert "已有明确期限且确实到期未办" in checklist
+    assert "当前缺资料仍保留🔄" in checklist
+    assert "**⬜ 待补本月完整流水**" not in checklist
+
+
+def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_step():
+    work = read_guide("work")
+    checklist = generator().markdown_section(work, "## 给老板看的办理清单")
+    stages = dict(re.findall(r"^([1-8])\. \*\*.+?\*\*：(.*)$", checklist, re.MULTILINE))
+    assert set(stages) == set("12345678")
+    assert "不要求每笔正式入账" in stages["1"]
+    assert "后阶段专属资料" in stages["1"] and "第8项正式整月核对" in stages["1"]
+    assert "性质完全未知" in stages["1"] and "渠道或流水有缺口" in stages["1"]
+    assert "第3项" in stages["2"] and "第4项" in stages["2"]
+    assert "尚未发生不自动成为本项缺口" in stages["2"]
+    assert "允许政策估算时不强求" in stages["3"]
+    assert "不需代发表也不能漏掉必要核算" in stages["4"]
+    assert "文档已完成" in stages["4"] and "文件不代表银行已付" in stages["4"]
+    assert "文件已生成" in stages["6"] and "不能称为已报送" in stages["6"]
+    assert "后月份付款不强行登记在本期" in stages["7"]
+    assert "实际关账后完成" in stages["8"] and "检查通过不等于已经关账" in stages["8"]
+    assert "同时决定图标与接续位置" in checklist
+    assert "同阶段条件满足的独立事项" in checklist and "不据此跳步" in checklist
+    assert "原项保持未完成" in checklist and "先保全归期" in checklist
+    assert "后期办理安排" in checklist and "原项保持🔄" in checklist
+    assert "现实资料缺口也不能改称后期待办绕过" in checklist
+    assert "保留其他仍未解决的事项" in work
+    assert "工资一人的核算资料不足，不阻止无关的银行对账" not in work
 
 
 def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
@@ -180,6 +212,8 @@ assert 'company-create' in read_guide('runtime')
 assert 'owner_statement' in read_guide('work')
 assert '## 给老板看的办理清单' in read_guide('work')
 assert '一次保存成功' in read_guide('work')
+assert '当前缺资料仍保留🔄' in read_guide('work')
+assert '同时决定图标与接续位置' in read_guide('work')
 assert 'SourceDiscardResult' in read_guide('commands')
 assert 'call accounting-sources' in read_guide('runtime')
 print(json.dumps(guide_index(), ensure_ascii=False))

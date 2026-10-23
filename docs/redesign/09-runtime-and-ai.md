@@ -121,7 +121,7 @@ $company.database_id
 
 | 资源 | 内容 |
 | --- | --- |
-| `accounting://guides/work` | 月度办事清单、每轮进度、资料引导、当前待办、更正和完成状态。 |
+| `accounting://guides/work` | 月度清单、各阶段完成条件与推进、资料引导、当前待办、更正和完成状态。 |
 | `accounting://guides/commands` | 公开请求、身份、防重、错误接续及标准业务文档。 |
 | `accounting://guides/business/{kind}` | 指定事实种类的实际业务规则；例如 `accounting://guides/business/operations.expense`。 |
 | `accounting://guides/reporting` | 共享报表的期间、实际采用、未知和取数含义。 |
