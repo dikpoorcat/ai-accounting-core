@@ -16,6 +16,8 @@ from ai_accounting_modular.domains.taxes.public import create_taxes
 from ai_accounting_modular.domains.taxes.public import repository_factory as taxes_repository
 from ai_accounting_modular.identity.public import create_identity
 from ai_accounting_modular.identity.public import repository_factory as identity_repository
+from ai_accounting_modular.ledger.opening.public import create_opening
+from ai_accounting_modular.ledger.opening.public import repository_factory as opening_repository
 from ai_accounting_modular.ledger.public import create_ledger
 from ai_accounting_modular.ledger.public import repository_factory as ledger_repository
 from ai_accounting_modular.money.public import create_money
@@ -35,6 +37,7 @@ def system(tmp_path):
             application_repository(),
             identity_repository(),
             ledger_repository(),
+            opening_repository(),
             records_repository(),
             operations_repository(),
             money_repository(),
@@ -59,7 +62,7 @@ def system(tmp_path):
         identity=identity,
         ledger=ledger,
         records=create_records(root_for=lambda read: storage.company_metadata(read).company_root),
-        domains=[create_operations(), create_taxes(), money],
+        domains=[create_operations(), create_taxes(), create_opening(), money],
         money=money,
     )
     ids = {key: str(uuid4()) for key in ("source", "party", "beneficiary", "bank")}

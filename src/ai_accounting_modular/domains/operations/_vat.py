@@ -6,7 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from ai_accounting_modular.contracts.public import ContractError, format_fen, parse_rate
 
-from ._common import adopt_source, checked_amount, issue, reject, sum_amounts
+from ._common import adopt_source, checked_amount, issue, reject, resolve_vat_choices, sum_amounts
 
 
 def _policy_reference(fact, context, vat):
@@ -40,6 +40,7 @@ def covers_month(parameters, month):
 
 
 def _policy(fact, context, vat, tax_point, *, day_field="data/tax_point/tax_on", day_fact=None):
+    vat = resolve_vat_choices(vat)
     if tax_point["type"] != "explicit":
         reject("详细税点须接入税费领域公开结果后办理。", "unsupported_business")
     policy = _policy_reference(fact, context, vat)
@@ -80,6 +81,7 @@ def _policy(fact, context, vat, tax_point, *, day_field="data/tax_point/tax_on",
 
 
 def _rates(params, vat):
+    vat = resolve_vat_choices(vat)
     if vat["waive_rate_reduction"]:
         return params["nominal_rate"], params["nominal_rate"]
     return params["tax_base_rate"], params["payable_rate"]
@@ -128,6 +130,7 @@ def _adopt_policy(plan, policy, context):
 
 
 def tax_sale_values(business_id, period, params, vat, net, tax, gross):
+    vat = resolve_vat_choices(vat)
     base, payable = _rates(params, vat)
     return {
         "source_business_id": business_id,

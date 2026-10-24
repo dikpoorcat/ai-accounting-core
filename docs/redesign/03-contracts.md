@@ -78,7 +78,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | 入口 | 输入 | 返回及作用 |
 | --- | --- | --- |
 | `accounting_schema` | SchemaRequest：可选 kinds、contract | SchemaResult：默认仅合同及支持目录，指定 kinds 才返回对应输入 Schema 的自包含依赖闭包，不返回旧接口或内部 PostingPlan。未知 kind 拒绝，不偷偷省略。 |
-| `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head，并给出 work_defaults.payroll 的通用工资安排。省略范围默认公司说明和当前开放月；不全库加载档案。 |
+| `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head，并给出 work_defaults.payroll 和 service_revenue 的通用办理安排。省略范围默认公司说明和当前开放月；不全库加载档案。 |
 | `accounting_objects` | ObjectsRequest：get 指定 IDs；find 指定 kind、可选 name_contains、limit/cursor | CurrentObject 含 seq/digest 和完整当前档案；检索名称只供选择，不自动绑定同名人。 |
 | `accounting_get` | company_id、1–500 business_ids；可选 result_id+generation、include=facts/results/sources | 当前事实、序号、结果槽及其必要来源；成对指定 result_id/generation 精确查询正式保留结果，开放旧代已替换则 conflict。不得声称能读取已经删除的开放期旧正文。 |
 | `accounting_remuneration` | company_id、period、1–500个明确报酬business_ids；view可选current/as_posted，缺省current | 仅查指定报酬截至该月的完整组成、原工资及后续税目标精确来源、正式未付额和当前可付额；不加载整月人员或其他历史工资。正式撤去结果返回withdrawn；不存在、错误类型、该月尚无结果或开放误记已撤去且不保留正式结果时明确报错，不静默漏人或伪装有效零工资。当前身份仍可用accounting_get查阅。 |
@@ -97,7 +97,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 
 discard 不改账务和已有来源正文。SourceDiscardResult 固定包含company_id、discarded_source_ids、missing_source_ids和file_cleanup:{state,issues}；issues每项只有code、message。state=complete表示本批清理已完成，pending表示登记已退出但文件清理尚待程序接续，不能当作全部办结；原source_ids可重复提交，已退出的身份列入missing_source_ids，程序仍接续待清理文件。资料整理和退出选择见[资料如何进入系统](08-ai-work-and-materials.md#资料如何进入系统)。
 
-ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。work_defaults 是内核通用办理默认，不是公司的实际业务事实或税额依据；老板明确的安排和公司说明优先，实际付款仍由真实资金事实承接。字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
+ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。work_defaults 提供工资及常规服务的通用办理安排，不证明实际收付款、合同条款、优惠资格或税期；老板明确的安排和公司说明优先。VatTreatment 的两项放弃选择省略时按不主动放弃计算，正式采用依据保存明确布尔值，具体规则见05。字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
 
 同源 HTTP 页面只有只读业务能力及报表文件生成/下载，不提供业务修改或审批。会话保护属于本机入口安全：沿用单老板身份与原登录体验，不新增角色授权管理；专业顾问通过只读页面查看。AI 的业务入口由本机 MCP/CLI 接入程序，只接受上述类型化命令，不接收 SQL、脚本或自由分录；来源读取只用登记身份和受控公司相对路径，离线恢复/重建仅接受显式选定包及经过独立路径核验的新目标。
 

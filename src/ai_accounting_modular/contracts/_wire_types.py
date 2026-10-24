@@ -647,6 +647,13 @@ class PaymentExportResult(TypedDict):
     inspection: PaymentExportInspection
     task: NotRequired[TaskReceipt]
 
+class ServiceRevenueWorkDefaults(TypedDict):
+    recognition_period: Literal['business_month']
+    planned_receipt_period: Literal['following_month']
+    receipt_action: Literal['settle_existing_receivable']
+    vat_period_basis: Literal['verified_settlement_terms']
+    vat_preference: Literal['retain_applicable_reliefs']
+
 type NoteFormat = Literal['plain_text', 'markdown']
 
 class CompanyNoteQuery(TypedDict):
@@ -775,8 +782,8 @@ class VatTreatment(TypedDict):
     policy_id: Id
     exemption_eligible: bool
     invoice_kind: Literal['ordinary', 'special', 'uninvoiced', 'unestablished']
-    waive_exemption: bool
-    waive_rate_reduction: bool
+    waive_exemption: NotRequired[bool]
+    waive_rate_reduction: NotRequired[bool]
 
 class ExplicitTaxPoint(TypedDict):
     type: Literal['explicit']
@@ -10088,6 +10095,7 @@ class IsolatedTargetResultChecksItem(TypedDict):
 
 class CompanyContextWorkDefaults(TypedDict):
     payroll: PayrollWorkDefaults
+    service_revenue: ServiceRevenueWorkDefaults
 
 class EmptyContextAvailableCompaniesItem(TypedDict):
     company_id: Id
@@ -11510,6 +11518,7 @@ __all__ = [
     'PaymentExportInspection',
     'PaymentExportPlan',
     'PaymentExportResult',
+    'ServiceRevenueWorkDefaults',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',

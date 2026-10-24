@@ -15,6 +15,7 @@ from ._common import (
     obligation,
     referenced_result,
     reject,
+    resolve_vat_choices,
     sum_amounts,
 )
 from ._cumulative import AmountRange, adopt_position, position
@@ -95,8 +96,10 @@ def _parts(original, positions):
 
 
 def _check_inherited_vat(fact, original):
-    if "vat" in fact["data"] and fact["data"]["vat"] != original.basis["input"].get("vat"):
-        reject("已采用预收税务资料不能另换税率。", "invalid_input")
+    if "vat" in fact["data"]:
+        original_vat = original.basis["input"].get("vat")
+        if original_vat is None or resolve_vat_choices(fact["data"]["vat"]) != original_vat:
+            reject("已采用预收税务资料不能另换税率。", "invalid_input")
 
 
 def _inherit_resolution(fact, original, positions, unresolved, resolved):
@@ -151,7 +154,7 @@ def _untaxed_terms(fact, original_fact):
         raise ContractError(
             "needs_information", "预收履约缺少会影响核算的税务事实。", fact_issues=missing
         )
-    return vat, point
+    return resolve_vat_choices(vat), point
 
 
 def _positions(fact, members, capacity):
@@ -230,7 +233,9 @@ def advance_fulfillment(fact, context):
             member
             for member in members
             if member["kind"] == fact["kind"]
-            and member["data"].get("vat", original_fact["data"].get("vat")) == vat
+            and (member_vat := member["data"].get("vat", original_fact["data"].get("vat")))
+            is not None
+            and resolve_vat_choices(member_vat) == vat
         ]
         tax_span = position(
             fact, same_basis, "gross_fen", amount(original.target["values"], "gross_fen")

@@ -5427,10 +5427,14 @@
           "properties": {
             "payroll": {
               "$ref": "#/$defs/PayrollWorkDefaults"
+            },
+            "service_revenue": {
+              "$ref": "#/$defs/ServiceRevenueWorkDefaults"
             }
           },
           "required": [
-            "payroll"
+            "payroll",
+            "service_revenue"
           ],
           "additionalProperties": false
         }
@@ -5923,6 +5927,35 @@
         "inspection"
       ],
       "additionalProperties": false
+    },
+    "ServiceRevenueWorkDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "常规服务按业务月确认收入和应收，计划次月到账并核销已有应收。税期按已核实的长期条款及真实事件确定，优惠默认不主动放弃；不生成实际收款、合同付款日、免税资格或税期，已明确的其他安排优先。",
+      "properties": {
+        "recognition_period": {
+          "const": "business_month"
+        },
+        "planned_receipt_period": {
+          "const": "following_month"
+        },
+        "receipt_action": {
+          "const": "settle_existing_receivable"
+        },
+        "vat_period_basis": {
+          "const": "verified_settlement_terms"
+        },
+        "vat_preference": {
+          "const": "retain_applicable_reliefs"
+        }
+      },
+      "required": [
+        "recognition_period",
+        "planned_receipt_period",
+        "receipt_action",
+        "vat_period_basis",
+        "vat_preference"
+      ]
     }
   }
 }

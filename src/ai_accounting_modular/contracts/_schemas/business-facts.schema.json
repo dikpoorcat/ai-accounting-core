@@ -157,18 +157,20 @@
           ]
         },
         "waive_exemption": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false,
+          "description": "省略时采用内核默认不主动放弃；明确的不同选择仍按实际事实提供，不代表自动具备优惠资格。"
         },
         "waive_rate_reduction": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false,
+          "description": "省略时采用内核默认不主动放弃；明确的不同选择仍按实际事实提供，不代表自动具备优惠资格。"
         }
       },
       "required": [
         "policy_id",
         "exemption_eligible",
-        "invoice_kind",
-        "waive_exemption",
-        "waive_rate_reduction"
+        "invoice_kind"
       ]
     },
     "ExplicitTaxPoint": {
@@ -5824,10 +5826,14 @@
           ]
         },
         "waive_exemption": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false,
+          "description": "省略时采用内核默认不主动放弃；明确的不同选择仍按实际事实提供，不代表自动具备优惠资格。"
         },
         "waive_rate_reduction": {
-          "type": "boolean"
+          "type": "boolean",
+          "default": false,
+          "description": "省略时采用内核默认不主动放弃；明确的不同选择仍按实际事实提供，不代表自动具备优惠资格。"
         }
       }
     },

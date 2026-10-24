@@ -96,7 +96,14 @@ def context(application, request, read_context=None):
                 "payroll": {
                     "accrual_period": "service_month",
                     "planned_payment_period": "following_month",
-                }
+                },
+                "service_revenue": {
+                    "recognition_period": "business_month",
+                    "planned_receipt_period": "following_month",
+                    "receipt_action": "settle_existing_receivable",
+                    "vat_period_basis": "verified_settlement_terms",
+                    "vat_preference": "retain_applicable_reliefs",
+                },
             },
             "document_state": status["state"],
             "document_set_id": status["set_id"],
