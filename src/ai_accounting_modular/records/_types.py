@@ -96,6 +96,7 @@ class PlannedRecord:
     before_digest: str | None
     target_json: str
     changed: bool
+    source_uses_changed: bool = False
 
 
 @dataclass(frozen=True)
@@ -138,7 +139,9 @@ class RecordsPlan:
     def changed_scopes(self) -> tuple[str, ...]:
         result = ["sources"] if self.changed_source_ids else []
         if any(item.changed for item in self._notes):
-            result.extend(("notes", "sources"))
+            result.append("notes")
+        if any(item.source_uses_changed for item in self._notes):
+            result.append("sources")
         if self._issue_scope is not None and self._issue_scope.changed:
             result.extend(("work", "sources"))
         return tuple(sorted(set(result)))

@@ -6,6 +6,8 @@
 
 机器可读真源为 [公共类型](contracts/core.schema.json)、[业务事实](contracts/business-facts.schema.json) 和 [既有看板响应](contracts/dashboard-response-v2.json)。JSON Schema 负责字段形状；本文及 [业务规则](05-business-rules.md) 负责跨字段、引用和核算约束。两类检查都通过才能办理，不能用 `json_valid` 或 Schema 校验代替完整业务校验。进程内 `validate_contract_items` 可批量校验完整类型，也可明确选择已安装对象类型的顶层属性；属性仍使用原合同和必填规则，不能额外夹带字段。属性投影只证明所选内容，不能作为完整事实、完整采用正文或跨字段核算已经通过的依据。
 
+公司说明的唯一只读合同为[company-note.schema.json](contracts/company-note.schema.json)，行为和接续规则见[公司说明设计](11-company-note.md)。text_format已合入共享NoteChange/CurrentNote/DocumentNote，沿原写入口办理；只读响应明确格式，旧纯文本默认值的规范内容保持。不维护第二套写接口或公司说明专用修改类型。
+
 ## 通用字段
 
 | 类型 | 规定 |

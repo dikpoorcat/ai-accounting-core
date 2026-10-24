@@ -110,21 +110,20 @@ async function generatedType(schema, name, { typeName = `${name}Response`, valid
   return `${banner}\nexport namespace ${name}Contract {\n${indented}\n}\n\nexport type ${responseName} = ${name}Contract.${responseName};\n\nimport type { DashboardResponseValidator } from "./dashboardValidatorTypes";\nexport const ${validatorName}: DashboardResponseValidator<${responseName}>;\n`;
 }
 
-async function reviewOutputs() {
-  const directory = resolve(frontendRoot, "../docs/redesign/contracts");
-  const documents = new Map(await Promise.all(["core.schema.json", "review-materials.schema.json"].map(async file => [file, JSON.parse(await readFile(join(directory, file), "utf8"))])));
-  const source = documents.get("review-materials.schema.json");
-  // Review contracts reference named core definitions, never its ApplyRequest root.
+async function documentOutputs(file, definitions, coreNames, directory = resolve(frontendRoot, "../docs/redesign/contracts")) {
+  const documents = new Map(await Promise.all(["core.schema.json", file].map(async name => [name, JSON.parse(await readFile(join(directory, name), "utf8"))])));
+  const source = documents.get(file);
+  // Independent read contracts reference named core definitions, never its ApplyRequest root.
   const coreDefinitions = structuredClone(documents.get("core.schema.json"));
   delete coreDefinitions.$ref;
-  coreDefinitions.$defs = Object.fromEntries(["Id", "Month", "Digest", "Page"].map(name => [name, coreDefinitions.$defs[name]]));
+  coreDefinitions.$defs = Object.fromEntries(coreNames.map(name => [name, coreDefinitions.$defs[name]]));
   documents.set("core.schema.json", coreDefinitions);
   const outputs = {};
-  for (const definition of ["ReviewMaterialsResponse", "ReviewMaterialsQuery", "SourceContentQuery", "SourceTextContent", "SourceFileReceipt"]) {
-    const name = definition === "ReviewMaterialsResponse" ? "ReviewMaterials" : definition;
+  for (const definition of definitions) {
+    const name = definition.endsWith("Response") ? definition.slice(0, -8) : definition;
     const module = moduleName(name), validatorName = `validate${definition}`;
     const schema = { ...source, $ref: `#/$defs/${definition}` };
-    outputs[`${module}.js`] = generatedValidator(schema, `review_${definition}`, name, {
+    outputs[`${module}.js`] = generatedValidator(schema, `${file === "review-materials.schema.json" ? "review" : "company_note"}_${definition}`, name, {
       registry: [coreDefinitions], validatorName,
     });
     outputs[`${module}.d.ts`] = await generatedType({ ...schema, title: definition }, name, {
@@ -153,7 +152,12 @@ async function buildOutputs(targetDirectory) {
     outputs[`${module}.d.ts`] = await generatedType(schemas[key], name);
     outputs[`${module}.js`] = generatedValidator(schemas[key], key, name);
   }
-  Object.assign(outputs, await reviewOutputs());
+  Object.assign(outputs, await documentOutputs("review-materials.schema.json", [
+    "ReviewMaterialsResponse", "ReviewMaterialsQuery", "SourceContentQuery", "SourceTextContent", "SourceFileReceipt",
+  ], ["Id", "Month", "Digest", "Page"]));
+  Object.assign(outputs, await documentOutputs("company-note.schema.json", [
+    "CompanyNoteResponse", "CompanyNoteQuery",
+  ], ["Id"], resolve(frontendRoot, "../src/ai_accounting_modular/contracts/_schemas")));
   await Promise.all(Object.entries(outputs).map(([name, content]) => writeFile(join(targetDirectory, name), content, "utf8")));
   return Object.keys(outputs);
 }

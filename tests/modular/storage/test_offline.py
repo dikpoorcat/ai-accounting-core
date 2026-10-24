@@ -322,9 +322,16 @@ def test_as_posted_context_and_repository_contract_validation(company):
 
 def test_structure_export_is_complete_and_detached_from_its_single_packaged_source(company):
     contract = company_structure_contract()
-    assert set(contract) == {"format_family", "kind", "version", "fingerprint", "objects"}
+    assert set(contract) == {
+        "format_family",
+        "kind",
+        "version",
+        "fingerprint",
+        "parent_fingerprint",
+        "objects",
+    }
     assert contract["format_family"] == "ai-accounting-modular/1"
-    assert contract["kind"] == "company" and contract["version"] == 1
+    assert contract["kind"] == "company" and contract["version"] == 2
     assert all(
         set(item) == {"owner", "type", "name", "table", "sql"} for item in contract["objects"]
     )

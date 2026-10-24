@@ -34,7 +34,7 @@ async function flush() { for (let index = 0; index < 6; index++) { await Promise
 
 async function harness(query = { company_id: "a", period: "2026-01" }, name = "employees") {
   const calls = [], replacements = [], pushes = [], unmount = [], notices = [];
-  const route = Vue.reactive({ query: { ...query }, name, hash: "" });
+  const route = Vue.reactive({ query: { ...query }, name, hash: "", meta: { requiresPeriod: name !== "company-note" } });
   const window = { location: { search: queryString(query) }, addEventListener() {}, removeEventListener() {} };
   const environment = {
     Vue, window,
@@ -558,4 +558,50 @@ test("T6 sidebar changes company with shared selection only and clears page-spec
     await h.selectCompany("a");
     assert.deepEqual(h.pushes[1], { query: { company_id: "a", period: "2026-01" }, hash: "" });
   } finally { h.close(); }
+});
+
+test("company note shell opens a company without periods and never invents a month", async () => {
+  const h = await harness({ company_id: "a" }, "company-note");
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", [])); await flush();
+    assert.equal(h.routeSelectionReady.value, true);
+    assert.equal(h.route.query.period, undefined);
+    assert.equal(h.route.query.quarter, undefined);
+    assert.equal(h.calls.length, 1);
+  } finally { h.close(); }
+});
+
+test("company note shell preserves a historical month and quarter during a same-company reading detour", async () => {
+  const h = await harness({ company_id: "a", period: "2026-01", quarter: "2026-Q1" }, "reports");
+  try {
+    h.setAuthenticated(true);
+    h.calls[0].resolve(context("a", ["2026-01", "2026-08"], "2026-08")); await flush();
+    h.route.name = "company-note"; h.route.meta.requiresPeriod = false; await flush();
+    assert.equal(h.routeSelectionReady.value, true);
+    assert.equal(h.route.query.period, "2026-01");
+    assert.equal(h.route.query.quarter, "2026-Q1");
+    h.route.name = "reports"; h.route.meta.requiresPeriod = true; await flush();
+    assert.equal(h.routeSelectionReady.value, true);
+    assert.equal(h.route.query.period, "2026-01");
+    assert.equal(h.route.query.quarter, "2026-Q1");
+    assert.equal(h.calls.length, 1, "same-company navigation reuses company metadata without rereading financial pages");
+  } finally { h.close(); }
+});
+
+test("company note shell validates the new company's period and permits a company with none", async () => {
+  for (const [periods, expected] of [[["2026-04"], "2026-04"], [[], undefined]]) {
+    const h = await harness({ company_id: "a", period: "2026-01", quarter: "2026-Q1" }, "company-note");
+    try {
+      h.setAuthenticated(true);
+      h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+      await h.selectCompany("b");
+      assert.equal(h.routeSelectionReady.value, false);
+      h.calls[1].resolve(context("b", periods)); await flush();
+      assert.equal(h.route.query.company_id, "b");
+      assert.equal(h.route.query.period, expected);
+      assert.equal(h.route.query.quarter, undefined);
+      assert.equal(h.routeSelectionReady.value, true);
+    } finally { h.close(); }
+  }
 });

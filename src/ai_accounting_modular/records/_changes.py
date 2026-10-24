@@ -33,8 +33,12 @@ def note_current(row, repository, evidence_ids=None):
         "evidence_ids": list(repository.uses("note", row["scope_key"]))
         if evidence_ids is None
         else evidence_ids,
+        **_format_fields(row["note_format"]),
     }
-    validate_contract("core.schema.json", "CurrentNote", result)
+    try:
+        validate_contract("core.schema.json", "CurrentNote", result)
+    except ContractError as error:
+        raise ContractError("storage_corrupt", "当前说明的正文或格式损坏。") from error
     if row["content_digest"] != note_digest(result):
         raise ContractError("storage_corrupt", "当前说明与保存的摘要不一致。")
     return result
@@ -42,8 +46,26 @@ def note_current(row, repository, evidence_ids=None):
 
 def note_digest(current):
     return content_digest(
-        {key: current[key] for key in ("scope", "state", "text", "basis_head", "evidence_ids")}
+        {
+            **{
+                key: current[key]
+                for key in ("scope", "state", "text", "basis_head", "evidence_ids")
+            },
+            **_format_fields(current.get("text_format", "plain_text")),
+        }
     )
+
+
+def _format_fields(text_format):
+    # Default omission preserves the canonical bytes of existing plain-text notes.
+    return {} if text_format == "plain_text" else {"text_format": text_format}
+
+
+def document_note(current):
+    return {
+        **{key: current[key] for key in ("scope", "text", "evidence_ids")},
+        **_format_fields(current.get("text_format", "plain_text")),
+    }
 
 
 def _next(value):
@@ -133,15 +155,17 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             "text": note["text"],
             "basis_head": basis,
             "evidence_ids": note["evidence_ids"],
+            **_format_fields(note.get("text_format", "plain_text")),
         }
         digest = note_digest(target)
         expected = note["expected_seq"]
+        old_sources = []
         if old is None:
             if expected != 0:
                 raise ContractError("conflict", "该说明尚未建立，创建前提应为0。")
             changed = True
         else:
-            note_current(old, repository)
+            old_sources = note_current(old, repository)["evidence_ids"]
             same = old["content_digest"] == digest
             if expected == old["seq"]:
                 changed = not same
@@ -157,6 +181,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
                 content_digest(old) if old else None,
                 canonical_json({"current": target, "expected_seq": expected}),
                 changed,
+                changed and old_sources != target["evidence_ids"],
             )
         )
     issue_plan = None
@@ -265,7 +290,8 @@ def apply_current(plan, uow, root):
             repository.save_note(
                 current, value["expected_seq"], plan.command_id, note_digest(current)
             )
-            repository.replace_uses("note", item.key, current["evidence_ids"])
+            if item.source_uses_changed:
+                repository.replace_uses("note", item.key, current["evidence_ids"])
     if plan._issue_scope is not None and plan._issue_scope.changed:
         value = loads_json(plan._issue_scope.target_json)
         repository.replace_issues(

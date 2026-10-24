@@ -1,0 +1,1036 @@
+{
+  "fingerprint": "c4522b0be4ea7850c6a39007b449b0880a50c9016cce0d0d8882b4116f72a603",
+  "kind": "company",
+  "objects": [
+    {
+      "name": "business_head_family_period",
+      "owner": "application",
+      "sql": "CREATE INDEX business_head_family_period ON business_head(family,state,period,business_id)",
+      "table": "business_head",
+      "type": "index"
+    },
+    {
+      "name": "business_head_kind_period",
+      "owner": "application",
+      "sql": "CREATE INDEX business_head_kind_period ON business_head(kind,state,period,business_id)",
+      "table": "business_head",
+      "type": "index"
+    },
+    {
+      "name": "business_head_natural",
+      "owner": "application",
+      "sql": "CREATE UNIQUE INDEX business_head_natural ON business_head(kind,natural_key) WHERE state='active' AND natural_key IS NOT NULL",
+      "table": "business_head",
+      "type": "index"
+    },
+    {
+      "name": "current_dependency_reverse",
+      "owner": "application",
+      "sql": "CREATE INDEX current_dependency_reverse ON current_dependency(producer_kind,producer_id,producer_public_slot,read_mode,relation_kind,consumer_business_id)",
+      "table": "current_dependency",
+      "type": "index"
+    },
+    {
+      "name": "current_publication_range",
+      "owner": "application",
+      "sql": "CREATE INDEX current_publication_range ON current_publication(collection,period_from,period_to,business_id,result_slot)",
+      "table": "current_publication",
+      "type": "index"
+    },
+    {
+      "name": "current_relation_reverse",
+      "owner": "application",
+      "sql": "CREATE INDEX current_relation_reverse ON current_relation(producer_kind,producer_id,relation_kind,consumer_business_id)",
+      "table": "current_relation",
+      "type": "index"
+    },
+    {
+      "name": "application_state",
+      "owner": "application",
+      "sql": "CREATE TABLE application_state (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n working_period_to TEXT NOT NULL CHECK(length(working_period_to)=7)\n) STRICT",
+      "table": "application_state",
+      "type": "table"
+    },
+    {
+      "name": "business_head",
+      "owner": "application",
+      "sql": "CREATE TABLE business_head (\nbusiness_id TEXT PRIMARY KEY CHECK(length(business_id)=36),\n family TEXT NOT NULL CHECK(family IN ('operations','people','assets','financing','investment','money','taxes','opening','reports')),\n kind TEXT NOT NULL,\n result_slots_json TEXT NOT NULL CHECK(json_valid(result_slots_json) AND json_type(result_slots_json)='array'),\n natural_key TEXT,\n seq INTEGER NOT NULL CHECK(seq>=1),\n state TEXT NOT NULL CHECK(state IN ('active','withdrawn')),\n period TEXT,\n archive_month TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n latest_op TEXT NOT NULL CHECK(latest_op IN ('create','replace','withdraw','restore')),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_content_digest TEXT NOT NULL CHECK(length(latest_content_digest)=64),\n search_revision INTEGER NOT NULL CHECK(search_revision>=1),\n CHECK((state='active' AND period IS NOT NULL AND current_digest IS NOT NULL) OR (state='withdrawn' AND current_digest IS NULL))\n) STRICT",
+      "table": "business_head",
+      "type": "table"
+    },
+    {
+      "name": "current_dependency",
+      "owner": "application",
+      "sql": "CREATE TABLE current_dependency (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n consumer_result_slot TEXT NOT NULL,\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object','scope','calendar','aggregate')),\n producer_id TEXT NOT NULL CHECK(\n  (producer_kind IN ('business','object') AND length(producer_id)=36) OR\n  (producer_kind='scope' AND length(producer_id) BETWEEN 1 AND 200) OR\n  (producer_kind='calendar' AND producer_id='work') OR\n  (producer_kind='aggregate' AND producer_id IN ('tax_sales','pre_tax'))\n ),\n producer_public_slot TEXT NOT NULL,\n read_mode TEXT NOT NULL CHECK(read_mode IN ('fact','result','collection','use','balance')),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n period_from TEXT,\n period_to TEXT,\n effective_on TEXT,\n excluded_result_slots_json TEXT CHECK(excluded_result_slots_json IS NULL OR json_valid(excluded_result_slots_json)),\n resource_components_json TEXT CHECK(resource_components_json IS NULL OR (json_valid(resource_components_json) AND json_type(resource_components_json)='array')),\n notify_effect TEXT CHECK(notify_effect IS NULL OR (read_mode='collection' AND notify_effect IN ('result','description'))),\n PRIMARY KEY(consumer_business_id,consumer_result_slot,producer_kind,producer_id,producer_public_slot,read_mode,relation_kind)\n) STRICT",
+      "table": "current_dependency",
+      "type": "table"
+    },
+    {
+      "name": "current_publication",
+      "owner": "application",
+      "sql": "CREATE TABLE current_publication (\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n collection TEXT NOT NULL CHECK(collection IN ('tax_sales','pre_tax')),\n period_from TEXT NOT NULL CHECK(length(period_from)=7),\n period_to TEXT NOT NULL CHECK(length(period_to)=7 AND period_to>=period_from),\n PRIMARY KEY(business_id,result_slot,collection)\n) STRICT",
+      "table": "current_publication",
+      "type": "table"
+    },
+    {
+      "name": "current_relation",
+      "owner": "application",
+      "sql": "CREATE TABLE current_relation (\nconsumer_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n producer_kind TEXT NOT NULL CHECK(producer_kind IN ('business','object')),\n producer_id TEXT NOT NULL CHECK(length(producer_id)=36),\n relation_kind TEXT NOT NULL CHECK(relation_kind IN ('reference','calculation','settlement','cost','identity','policy')),\n PRIMARY KEY(consumer_business_id,producer_kind,producer_id,relation_kind)\n) STRICT",
+      "table": "current_relation",
+      "type": "table"
+    },
+    {
+      "name": "asset_fact_object",
+      "owner": "domains.assets",
+      "sql": "CREATE INDEX asset_fact_object ON asset_fact(main_object_id,business_id)",
+      "table": "asset_fact",
+      "type": "index"
+    },
+    {
+      "name": "asset_fact",
+      "owner": "domains.assets",
+      "sql": "CREATE TABLE asset_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "asset_fact",
+      "type": "table"
+    },
+    {
+      "name": "financing_fact_object",
+      "owner": "domains.financing",
+      "sql": "CREATE INDEX financing_fact_object ON financing_fact(main_object_id,business_id)",
+      "table": "financing_fact",
+      "type": "index"
+    },
+    {
+      "name": "investment_fact_object",
+      "owner": "domains.financing",
+      "sql": "CREATE INDEX investment_fact_object ON investment_fact(main_object_id,business_id)",
+      "table": "investment_fact",
+      "type": "index"
+    },
+    {
+      "name": "financing_fact",
+      "owner": "domains.financing",
+      "sql": "CREATE TABLE financing_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "financing_fact",
+      "type": "table"
+    },
+    {
+      "name": "investment_fact",
+      "owner": "domains.financing",
+      "sql": "CREATE TABLE investment_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "investment_fact",
+      "type": "table"
+    },
+    {
+      "name": "op_fact_object",
+      "owner": "domains.operations",
+      "sql": "CREATE INDEX op_fact_object ON op_fact(main_object_id,business_id)",
+      "table": "op_fact",
+      "type": "index"
+    },
+    {
+      "name": "op_fact",
+      "owner": "domains.operations",
+      "sql": "CREATE TABLE op_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "op_fact",
+      "type": "table"
+    },
+    {
+      "name": "people_fact_object",
+      "owner": "domains.people",
+      "sql": "CREATE INDEX people_fact_object ON people_fact(main_object_id,business_id)",
+      "table": "people_fact",
+      "type": "index"
+    },
+    {
+      "name": "people_fact",
+      "owner": "domains.people",
+      "sql": "CREATE TABLE people_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "people_fact",
+      "type": "table"
+    },
+    {
+      "name": "tax_fact_object",
+      "owner": "domains.taxes",
+      "sql": "CREATE INDEX tax_fact_object ON tax_fact(main_object_id,business_id)",
+      "table": "tax_fact",
+      "type": "index"
+    },
+    {
+      "name": "tax_fact",
+      "owner": "domains.taxes",
+      "sql": "CREATE TABLE tax_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "tax_fact",
+      "type": "table"
+    },
+    {
+      "name": "file_task_scope",
+      "owner": "files",
+      "sql": "CREATE INDEX file_task_scope ON file_task(kind,scope_key,state,task_id)",
+      "table": "file_task",
+      "type": "index"
+    },
+    {
+      "name": "file_task",
+      "owner": "files",
+      "sql": "CREATE TABLE file_task (\ntask_id TEXT PRIMARY KEY CHECK(length(task_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('backup','report_export')),\n state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),\n scope_key TEXT NOT NULL,\n scope_head TEXT NOT NULL CHECK(length(scope_head)=64),\n creator_request_id TEXT NOT NULL CHECK(length(creator_request_id) BETWEEN 1 AND 500),\n attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),\n capture_id TEXT CHECK(capture_id IS NULL OR length(capture_id)=36),\n plan_schema TEXT,\n plan_json TEXT CHECK(plan_json IS NULL OR json_valid(plan_json)),\n output_path TEXT,\n output_sha256 TEXT CHECK(output_sha256 IS NULL OR length(output_sha256)=64),\n output_bytes INTEGER CHECK(output_bytes>=0),\n error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 100),\n error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 2000),\n UNIQUE(kind,scope_key),\n CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind='report_export' AND capture_id IS NULL)),\n CHECK((state='expired' AND plan_schema IS NULL AND plan_json IS NULL)\n    OR (state<>'expired' AND plan_schema IS NOT NULL AND plan_json IS NOT NULL)),\n CHECK((state='succeeded' AND output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL)\n    OR (state<>'succeeded' AND output_path IS NULL AND output_sha256 IS NULL AND output_bytes IS NULL)),\n CHECK((error_code IS NULL)=(error_message IS NULL)),\n CHECK(state NOT IN ('failed','expired') OR error_code IS NOT NULL),\n CHECK(state<>'succeeded' OR error_code IS NULL)\n) STRICT",
+      "table": "file_task",
+      "type": "table"
+    },
+    {
+      "name": "identity_object_kind_sort",
+      "owner": "identity",
+      "sql": "CREATE INDEX identity_object_kind_sort ON identity_object(kind,sort_key,name,object_id)",
+      "table": "identity_object",
+      "type": "index"
+    },
+    {
+      "name": "identity_object",
+      "owner": "identity",
+      "sql": "CREATE TABLE identity_object (\nobject_id TEXT PRIMARY KEY CHECK(length(object_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('person','organization','bank_account','cash_account','platform_account','project','investment_product','asset')),\n name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),\n sort_key TEXT NOT NULL,\n seq INTEGER NOT NULL CHECK(seq>=1),\n data_json TEXT NOT NULL CHECK(json_valid(data_json)),\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36)\n) STRICT",
+      "table": "identity_object",
+      "type": "table"
+    },
+    {
+      "name": "adopted_result_business_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_business_period ON adopted_result(business_period)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_business_slot_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_business_slot_period ON adopted_result(business_id,result_slot,posting_period)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_calculation",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_calculation ON adopted_result(calculation_key,calculation_revision,state,result_id)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_financial_boundaries",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_financial_boundaries ON adopted_result(business_id,result_slot,posting_period,result_id) WHERE result_slot='main' AND json_extract(target_json,'$.kind') IN ('opening.package','reports.continuation')",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_kind_posting_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_kind_posting_period ON adopted_result(CASE WHEN target_state='withdrawn' THEN json_extract(target_json,'$.business_kind') ELSE json_extract(target_json,'$.kind') END,posting_period)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX adopted_result_period ON adopted_result(posting_period,state,business_id,result_slot)",
+      "table": "adopted_result",
+      "type": "index"
+    },
+    {
+      "name": "cost_consumption_source",
+      "owner": "ledger",
+      "sql": "CREATE INDEX cost_consumption_source ON cost_consumption(source_business_id,source_public_slot,period,result_id)",
+      "table": "cost_consumption",
+      "type": "index"
+    },
+    {
+      "name": "cost_lot_category_object_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX cost_lot_category_object_period ON cost_lot(category,object_id,business_period,result_id,public_slot)",
+      "table": "cost_lot",
+      "type": "index"
+    },
+    {
+      "name": "obligation_party",
+      "owner": "ledger",
+      "sql": "CREATE INDEX obligation_party ON obligation(party_id,business_period,result_id,public_slot)",
+      "table": "obligation",
+      "type": "index"
+    },
+    {
+      "name": "obligation_reclassification_source",
+      "owner": "ledger",
+      "sql": "CREATE INDEX obligation_reclassification_source ON obligation_reclassification(source_business_id,source_public_slot,result_id)",
+      "table": "obligation_reclassification",
+      "type": "index"
+    },
+    {
+      "name": "obligation_reclassification_target",
+      "owner": "ledger",
+      "sql": "CREATE INDEX obligation_reclassification_target ON obligation_reclassification(target_business_id,target_public_slot,result_id)",
+      "table": "obligation_reclassification",
+      "type": "index"
+    },
+    {
+      "name": "result_basis_ref_reverse",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_basis_ref_reverse ON result_basis_ref(producer_business_id,producer_result_slot,result_id)",
+      "table": "result_basis_ref",
+      "type": "index"
+    },
+    {
+      "name": "result_fund_movement_account_date",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_fund_movement_account_date ON result_fund_movement(account_id,period,actual_on,movement_id,result_id)",
+      "table": "result_fund_movement",
+      "type": "index"
+    },
+    {
+      "name": "result_fund_movement_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_fund_movement_period ON result_fund_movement(period,actual_on,movement_id,result_id)",
+      "table": "result_fund_movement",
+      "type": "index"
+    },
+    {
+      "name": "result_source_reverse",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_source_reverse ON result_source(source_id,result_id)",
+      "table": "result_source",
+      "type": "index"
+    },
+    {
+      "name": "result_tax_sale_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX result_tax_sale_period ON result_tax_sale(tax_period,source_business_id,result_id,item_no)",
+      "table": "result_tax_sale",
+      "type": "index"
+    },
+    {
+      "name": "settlement_movement",
+      "owner": "ledger",
+      "sql": "CREATE INDEX settlement_movement ON settlement(movement_id,result_id)",
+      "table": "settlement",
+      "type": "index"
+    },
+    {
+      "name": "settlement_period",
+      "owner": "ledger",
+      "sql": "CREATE INDEX settlement_period ON settlement(period,actual_on,settlement_id,result_id)",
+      "table": "settlement",
+      "type": "index"
+    },
+    {
+      "name": "settlement_source",
+      "owner": "ledger",
+      "sql": "CREATE INDEX settlement_source ON settlement(source_business_id,source_public_slot,period,result_id)",
+      "table": "settlement",
+      "type": "index"
+    },
+    {
+      "name": "voucher_line_account",
+      "owner": "ledger",
+      "sql": "CREATE INDEX voucher_line_account ON voucher_line(account_code,voucher_id,line_no)",
+      "table": "voucher_line",
+      "type": "index"
+    },
+    {
+      "name": "adopted_result",
+      "owner": "ledger",
+      "sql": "CREATE TABLE adopted_result (\nresult_id TEXT PRIMARY KEY CHECK(length(result_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n generation INTEGER NOT NULL CHECK(generation>=1),\n business_period TEXT NOT NULL,\n posting_period TEXT NOT NULL,\n state TEXT NOT NULL CHECK(state IN ('open','frozen')),\n target_state TEXT NOT NULL CHECK(target_state IN ('active','withdrawn')),\n baseline_result_id TEXT REFERENCES adopted_result(result_id),\n adopted_fact_seq INTEGER NOT NULL CHECK(adopted_fact_seq>=1),\n calculation_key TEXT NOT NULL,\n calculation_revision INTEGER NOT NULL CHECK(calculation_revision>=1),\n basis_schema TEXT NOT NULL,\n basis_json TEXT NOT NULL CHECK(json_valid(basis_json)),\n target_schema TEXT NOT NULL,\n target_json TEXT NOT NULL CHECK(json_valid(target_json)),\n basis_digest TEXT NOT NULL CHECK(length(basis_digest)=64),\n target_digest TEXT NOT NULL CHECK(length(target_digest)=64),\n formal_output_digest TEXT NOT NULL CHECK(length(formal_output_digest)=64)\n) STRICT",
+      "table": "adopted_result",
+      "type": "table"
+    },
+    {
+      "name": "cost_consumption",
+      "owner": "ledger",
+      "sql": "CREATE TABLE cost_consumption (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n consumer_public_slot TEXT NOT NULL,\n source_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n source_public_slot TEXT NOT NULL,\n period TEXT NOT NULL,\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0),\n PRIMARY KEY(result_id,consumer_public_slot,source_business_id,source_public_slot)\n) STRICT",
+      "table": "cost_consumption",
+      "type": "table"
+    },
+    {
+      "name": "cost_lot",
+      "owner": "ledger",
+      "sql": "CREATE TABLE cost_lot (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n public_slot TEXT NOT NULL,\n object_id TEXT NOT NULL REFERENCES identity_object(object_id),\n category TEXT NOT NULL CHECK(category IN ('project','asset','money_fund','investment')),\n amount_fen INTEGER NOT NULL CHECK(amount_fen>=0),\n business_period TEXT NOT NULL,\n PRIMARY KEY(result_id,public_slot)\n) STRICT",
+      "table": "cost_lot",
+      "type": "table"
+    },
+    {
+      "name": "obligation",
+      "owner": "ledger",
+      "sql": "CREATE TABLE obligation (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n public_slot TEXT NOT NULL,\n party_id TEXT REFERENCES identity_object(object_id),\n direction TEXT NOT NULL CHECK(direction IN ('receivable','payable')),\n category TEXT NOT NULL,\n amount_fen INTEGER NOT NULL CHECK(amount_fen>=0),\n account_code TEXT NOT NULL,\n cashflow_weights_json TEXT CHECK(cashflow_weights_json IS NULL OR json_valid(cashflow_weights_json)),\n allowed_settlements_json TEXT NOT NULL CHECK(json_valid(allowed_settlements_json)),\n business_period TEXT NOT NULL,\n due_on TEXT,\n PRIMARY KEY(result_id,public_slot)\n) STRICT",
+      "table": "obligation",
+      "type": "table"
+    },
+    {
+      "name": "obligation_reclassification",
+      "owner": "ledger",
+      "sql": "CREATE TABLE obligation_reclassification (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n relation_id TEXT NOT NULL CHECK(length(relation_id)=36),\n mode TEXT NOT NULL CHECK(mode IN ('transfer','reclassify_excess')),\n source_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n source_public_slot TEXT NOT NULL,\n target_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n target_public_slot TEXT NOT NULL,\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0),\n PRIMARY KEY(result_id,relation_id)\n) STRICT",
+      "table": "obligation_reclassification",
+      "type": "table"
+    },
+    {
+      "name": "period_close",
+      "owner": "ledger",
+      "sql": "CREATE TABLE period_close (\nperiod TEXT PRIMARY KEY,\n result_head TEXT NOT NULL,\n frozen_at TEXT NOT NULL,\n basis_schema TEXT NOT NULL,\n basis_json TEXT NOT NULL CHECK(json_valid(basis_json)),\n report_schema TEXT NOT NULL,\n report_json TEXT NOT NULL CHECK(json_valid(report_json)),\n report_digest TEXT NOT NULL CHECK(length(report_digest)=64)\n) STRICT",
+      "table": "period_close",
+      "type": "table"
+    },
+    {
+      "name": "result_basis_ref",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_basis_ref (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,\n item_no INTEGER NOT NULL CHECK(item_no>=1),\n producer_business_id TEXT NOT NULL REFERENCES business_head(business_id) ON DELETE RESTRICT,\n producer_result_slot TEXT NOT NULL,\n producer_result_id TEXT NOT NULL CHECK(length(producer_result_id)=36),\n producer_generation INTEGER NOT NULL CHECK(producer_generation>=1),\n producer_content_digest TEXT NOT NULL CHECK(length(producer_content_digest)=64),\n PRIMARY KEY(result_id,item_no)\n) STRICT",
+      "table": "result_basis_ref",
+      "type": "table"
+    },
+    {
+      "name": "result_fund_movement",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_fund_movement (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n movement_id TEXT NOT NULL REFERENCES money_occurrence(occurrence_id),\n public_slot TEXT NOT NULL,\n account_id TEXT NOT NULL REFERENCES identity_object(object_id),\n actual_on TEXT NOT NULL,\n period TEXT NOT NULL,\n direction TEXT NOT NULL CHECK(direction IN ('in','out')),\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0),\n transfer_group_id TEXT,\n party_id TEXT REFERENCES identity_object(object_id),\n cashflow_parts_json TEXT CHECK(cashflow_parts_json IS NULL OR json_valid(cashflow_parts_json)),\n memo TEXT,\n PRIMARY KEY(result_id,movement_id),\n UNIQUE(result_id,public_slot)\n) STRICT",
+      "table": "result_fund_movement",
+      "type": "table"
+    },
+    {
+      "name": "result_report_contribution",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_report_contribution (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n statement TEXT NOT NULL CHECK(statement='profit'),\n line INTEGER NOT NULL CHECK(line IN (6,10,12,13,15,16,17,19)),\n detail_code TEXT NOT NULL CHECK(detail_code IN ('management_startup','management_entertainment','management_research','management_other','sales_merchandise_repair','sales_advertising_promotion','sales_other','finance_interest','finance_other','tax_urban','tax_education','tax_local_education')),\n amount_fen INTEGER,\n issue_json TEXT CHECK(issue_json IS NULL OR json_valid(issue_json)),\n CHECK((amount_fen IS NOT NULL AND issue_json IS NULL) OR (amount_fen IS NULL AND issue_json IS NOT NULL)),\n PRIMARY KEY(result_id,statement,line,detail_code)\n) STRICT",
+      "table": "result_report_contribution",
+      "type": "table"
+    },
+    {
+      "name": "result_slot_current",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_slot_current (\nbusiness_id TEXT NOT NULL REFERENCES business_head(business_id),\n result_slot TEXT NOT NULL,\n head_result_id TEXT NOT NULL UNIQUE REFERENCES adopted_result(result_id) DEFERRABLE INITIALLY DEFERRED,\n generation INTEGER NOT NULL CHECK(generation>=1),\n PRIMARY KEY(business_id,result_slot)\n) STRICT",
+      "table": "result_slot_current",
+      "type": "table"
+    },
+    {
+      "name": "result_source",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_source (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,\n source_id TEXT NOT NULL REFERENCES source(source_id) ON DELETE RESTRICT,\n location TEXT NOT NULL DEFAULT '',\n PRIMARY KEY(result_id,source_id,location)\n) STRICT",
+      "table": "result_source",
+      "type": "table"
+    },
+    {
+      "name": "result_tax_sale",
+      "owner": "ledger",
+      "sql": "CREATE TABLE result_tax_sale (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n item_no INTEGER NOT NULL CHECK(item_no>=1),\n source_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n tax_period TEXT NOT NULL,\n net_sales_fen INTEGER NOT NULL,\n vat_fen INTEGER NOT NULL,\n nominal_rate TEXT NOT NULL,\n tax_base_rate TEXT NOT NULL,\n payable_rate TEXT NOT NULL,\n exemption_eligible INTEGER NOT NULL CHECK(exemption_eligible IN (0,1)),\n filing_bucket TEXT NOT NULL CHECK(filing_bucket IN ('standard','used_asset')),\n invoice_kind TEXT NOT NULL CHECK(invoice_kind IN ('ordinary','special','uninvoiced','unestablished')),\n ranges_json TEXT NOT NULL CHECK(json_valid(ranges_json)),\n PRIMARY KEY(result_id,item_no)\n) STRICT",
+      "table": "result_tax_sale",
+      "type": "table"
+    },
+    {
+      "name": "settlement",
+      "owner": "ledger",
+      "sql": "CREATE TABLE settlement (\nresult_id TEXT NOT NULL REFERENCES adopted_result(result_id),\n settlement_id TEXT NOT NULL CHECK(length(settlement_id)=36),\n source_business_id TEXT NOT NULL REFERENCES business_head(business_id),\n source_public_slot TEXT NOT NULL,\n consumer_public_slot TEXT NOT NULL,\n period TEXT NOT NULL,\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0),\n method TEXT NOT NULL CHECK(method IN ('money','offset','agency')),\n movement_id TEXT REFERENCES money_occurrence(occurrence_id),\n agency_business_id TEXT REFERENCES business_head(business_id),\n agency_public_slot TEXT,\n actual_on TEXT,\n CHECK((method='money' AND movement_id IS NOT NULL AND agency_business_id IS NULL AND agency_public_slot IS NULL)\n    OR (method='agency' AND movement_id IS NULL AND agency_business_id IS NOT NULL AND agency_public_slot='agency')\n    OR (method='offset' AND movement_id IS NULL AND agency_business_id IS NULL AND agency_public_slot IS NULL)),\n PRIMARY KEY(result_id,settlement_id)\n) STRICT",
+      "table": "settlement",
+      "type": "table"
+    },
+    {
+      "name": "voucher",
+      "owner": "ledger",
+      "sql": "CREATE TABLE voucher (\nvoucher_id TEXT PRIMARY KEY CHECK(length(voucher_id)=36),\n result_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,\n role TEXT NOT NULL CHECK(role IN ('original','reversal','replacement','reclassification','closing')),\n period TEXT NOT NULL,\n number INTEGER NOT NULL CHECK(number>=1),\n summary TEXT NOT NULL,\n reverses_voucher_id TEXT REFERENCES voucher(voucher_id),\n sealed INTEGER NOT NULL DEFAULT 0 CHECK(sealed IN (0,1)),\n UNIQUE(period,number),\n UNIQUE(result_id,role)\n) STRICT",
+      "table": "voucher",
+      "type": "table"
+    },
+    {
+      "name": "voucher_line",
+      "owner": "ledger",
+      "sql": "CREATE TABLE voucher_line (\nvoucher_id TEXT NOT NULL REFERENCES voucher(voucher_id) ON DELETE CASCADE,\n line_no INTEGER NOT NULL CHECK(line_no>=1),\n account_code TEXT NOT NULL,\n debit_fen INTEGER NOT NULL CHECK(debit_fen>=0),\n credit_fen INTEGER NOT NULL CHECK(credit_fen>=0),\n party_id TEXT REFERENCES identity_object(object_id),\n object_id TEXT REFERENCES identity_object(object_id),\n summary TEXT NOT NULL,\n CHECK((debit_fen>0 AND credit_fen=0) OR (credit_fen>0 AND debit_fen=0)),\n PRIMARY KEY(voucher_id,line_no)\n) STRICT",
+      "table": "voucher_line",
+      "type": "table"
+    },
+    {
+      "name": "voucher_sequence",
+      "owner": "ledger",
+      "sql": "CREATE TABLE voucher_sequence (\nperiod TEXT PRIMARY KEY,\n next_number INTEGER NOT NULL CHECK(next_number>=1)\n) STRICT",
+      "table": "voucher_sequence",
+      "type": "table"
+    },
+    {
+      "name": "adopted_result_closed_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER adopted_result_closed_insert BEFORE INSERT ON adopted_result\nWHEN NEW.posting_period >= (SELECT start_period FROM company_profile WHERE singleton=1)\n AND EXISTS(SELECT 1 FROM period_close WHERE period>=NEW.posting_period)\nBEGIN SELECT RAISE(ABORT,'closed_period'); END",
+      "table": "adopted_result",
+      "type": "trigger"
+    },
+    {
+      "name": "adopted_result_closed_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER adopted_result_closed_update BEFORE UPDATE ON adopted_result\nWHEN OLD.state<>'frozen'\n AND NEW.posting_period >= (SELECT start_period FROM company_profile WHERE singleton=1)\n AND EXISTS(SELECT 1 FROM period_close WHERE period>=NEW.posting_period)\nBEGIN SELECT RAISE(ABORT,'closed_period'); END",
+      "table": "adopted_result",
+      "type": "trigger"
+    },
+    {
+      "name": "adopted_result_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER adopted_result_frozen_delete BEFORE DELETE ON adopted_result\nWHEN OLD.state='frozen' BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "adopted_result",
+      "type": "trigger"
+    },
+    {
+      "name": "adopted_result_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER adopted_result_frozen_update BEFORE UPDATE ON adopted_result\nWHEN OLD.state='frozen' BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "adopted_result",
+      "type": "trigger"
+    },
+    {
+      "name": "cost_consumption_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER cost_consumption_frozen_delete BEFORE DELETE ON cost_consumption\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "cost_consumption",
+      "type": "trigger"
+    },
+    {
+      "name": "cost_consumption_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER cost_consumption_frozen_insert BEFORE INSERT ON cost_consumption\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "cost_consumption",
+      "type": "trigger"
+    },
+    {
+      "name": "cost_consumption_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER cost_consumption_frozen_update BEFORE UPDATE ON cost_consumption\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "cost_consumption",
+      "type": "trigger"
+    },
+    {
+      "name": "cost_lot_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER cost_lot_frozen_delete BEFORE DELETE ON cost_lot\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "cost_lot",
+      "type": "trigger"
+    },
+    {
+      "name": "cost_lot_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER cost_lot_frozen_insert BEFORE INSERT ON cost_lot\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "cost_lot",
+      "type": "trigger"
+    },
+    {
+      "name": "cost_lot_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER cost_lot_frozen_update BEFORE UPDATE ON cost_lot\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "cost_lot",
+      "type": "trigger"
+    },
+    {
+      "name": "obligation_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER obligation_frozen_delete BEFORE DELETE ON obligation\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "obligation",
+      "type": "trigger"
+    },
+    {
+      "name": "obligation_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER obligation_frozen_insert BEFORE INSERT ON obligation\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "obligation",
+      "type": "trigger"
+    },
+    {
+      "name": "obligation_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER obligation_frozen_update BEFORE UPDATE ON obligation\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "obligation",
+      "type": "trigger"
+    },
+    {
+      "name": "obligation_reclassification_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER obligation_reclassification_frozen_delete BEFORE DELETE ON obligation_reclassification\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "obligation_reclassification",
+      "type": "trigger"
+    },
+    {
+      "name": "obligation_reclassification_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER obligation_reclassification_frozen_insert BEFORE INSERT ON obligation_reclassification\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "obligation_reclassification",
+      "type": "trigger"
+    },
+    {
+      "name": "obligation_reclassification_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER obligation_reclassification_frozen_update BEFORE UPDATE ON obligation_reclassification\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "obligation_reclassification",
+      "type": "trigger"
+    },
+    {
+      "name": "period_close_immutable_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER period_close_immutable_delete BEFORE DELETE ON period_close BEGIN SELECT RAISE(ABORT,'closed_period'); END",
+      "table": "period_close",
+      "type": "trigger"
+    },
+    {
+      "name": "period_close_immutable_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER period_close_immutable_update BEFORE UPDATE ON period_close BEGIN SELECT RAISE(ABORT,'closed_period'); END",
+      "table": "period_close",
+      "type": "trigger"
+    },
+    {
+      "name": "result_basis_ref_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_basis_ref_frozen_delete BEFORE DELETE ON result_basis_ref\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_basis_ref",
+      "type": "trigger"
+    },
+    {
+      "name": "result_basis_ref_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_basis_ref_frozen_insert BEFORE INSERT ON result_basis_ref\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_basis_ref",
+      "type": "trigger"
+    },
+    {
+      "name": "result_basis_ref_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_basis_ref_frozen_update BEFORE UPDATE ON result_basis_ref\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_basis_ref",
+      "type": "trigger"
+    },
+    {
+      "name": "result_fund_movement_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_fund_movement_frozen_delete BEFORE DELETE ON result_fund_movement\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_fund_movement",
+      "type": "trigger"
+    },
+    {
+      "name": "result_fund_movement_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_fund_movement_frozen_insert BEFORE INSERT ON result_fund_movement\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_fund_movement",
+      "type": "trigger"
+    },
+    {
+      "name": "result_fund_movement_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_fund_movement_frozen_update BEFORE UPDATE ON result_fund_movement\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_fund_movement",
+      "type": "trigger"
+    },
+    {
+      "name": "result_report_contribution_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_report_contribution_frozen_delete BEFORE DELETE ON result_report_contribution\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_report_contribution",
+      "type": "trigger"
+    },
+    {
+      "name": "result_report_contribution_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_report_contribution_frozen_insert BEFORE INSERT ON result_report_contribution\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_report_contribution",
+      "type": "trigger"
+    },
+    {
+      "name": "result_report_contribution_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_report_contribution_frozen_update BEFORE UPDATE ON result_report_contribution\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_report_contribution",
+      "type": "trigger"
+    },
+    {
+      "name": "result_source_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_source_frozen_delete BEFORE DELETE ON result_source\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_source",
+      "type": "trigger"
+    },
+    {
+      "name": "result_source_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_source_frozen_insert BEFORE INSERT ON result_source\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_source",
+      "type": "trigger"
+    },
+    {
+      "name": "result_source_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_source_frozen_update BEFORE UPDATE ON result_source\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_source",
+      "type": "trigger"
+    },
+    {
+      "name": "result_tax_sale_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_tax_sale_frozen_delete BEFORE DELETE ON result_tax_sale\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_tax_sale",
+      "type": "trigger"
+    },
+    {
+      "name": "result_tax_sale_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_tax_sale_frozen_insert BEFORE INSERT ON result_tax_sale\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_tax_sale",
+      "type": "trigger"
+    },
+    {
+      "name": "result_tax_sale_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER result_tax_sale_frozen_update BEFORE UPDATE ON result_tax_sale\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "result_tax_sale",
+      "type": "trigger"
+    },
+    {
+      "name": "settlement_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER settlement_frozen_delete BEFORE DELETE ON settlement\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "settlement",
+      "type": "trigger"
+    },
+    {
+      "name": "settlement_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER settlement_frozen_insert BEFORE INSERT ON settlement\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "settlement",
+      "type": "trigger"
+    },
+    {
+      "name": "settlement_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER settlement_frozen_update BEFORE UPDATE ON settlement\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "settlement",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_frozen_delete BEFORE DELETE ON voucher\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "voucher",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_frozen_insert BEFORE INSERT ON voucher\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "voucher",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_frozen_update BEFORE UPDATE ON voucher\nWHEN EXISTS(SELECT 1 FROM adopted_result WHERE result_id=NEW.result_id AND state='frozen') OR EXISTS(SELECT 1 FROM adopted_result WHERE result_id=OLD.result_id AND state='frozen') BEGIN SELECT RAISE(ABORT,'frozen_result'); END",
+      "table": "voucher",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_line_frozen_delete",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_line_frozen_delete BEFORE DELETE ON voucher_line\nWHEN EXISTS(SELECT 1 FROM voucher v JOIN adopted_result r ON r.result_id=v.result_id WHERE v.voucher_id=OLD.voucher_id AND (r.state='frozen' OR v.sealed=1)) BEGIN SELECT RAISE(ABORT,'sealed_voucher'); END",
+      "table": "voucher_line",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_line_frozen_insert",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_line_frozen_insert BEFORE INSERT ON voucher_line\nWHEN EXISTS(SELECT 1 FROM voucher v JOIN adopted_result r ON r.result_id=v.result_id WHERE v.voucher_id=NEW.voucher_id AND (r.state='frozen' OR v.sealed=1)) BEGIN SELECT RAISE(ABORT,'sealed_voucher'); END",
+      "table": "voucher_line",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_line_frozen_update",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_line_frozen_update BEFORE UPDATE ON voucher_line\nWHEN EXISTS(SELECT 1 FROM voucher v JOIN adopted_result r ON r.result_id=v.result_id WHERE v.voucher_id=NEW.voucher_id AND (r.state='frozen' OR v.sealed=1)) OR EXISTS(SELECT 1 FROM voucher v JOIN adopted_result r ON r.result_id=v.result_id WHERE v.voucher_id=OLD.voucher_id AND (r.state='frozen' OR v.sealed=1)) BEGIN SELECT RAISE(ABORT,'sealed_voucher'); END",
+      "table": "voucher_line",
+      "type": "trigger"
+    },
+    {
+      "name": "voucher_seal_balance",
+      "owner": "ledger",
+      "sql": "CREATE TRIGGER voucher_seal_balance BEFORE UPDATE OF sealed ON voucher\nWHEN NEW.sealed=1 AND (NOT EXISTS(SELECT 1 FROM voucher_line WHERE voucher_id=NEW.voucher_id)\n OR (SELECT COALESCE(SUM(debit_fen),0)-COALESCE(SUM(credit_fen),0) FROM voucher_line WHERE voucher_id=NEW.voucher_id)<>0)\nBEGIN SELECT RAISE(ABORT,'unbalanced_voucher'); END",
+      "table": "voucher",
+      "type": "trigger"
+    },
+    {
+      "name": "opening_fact_object",
+      "owner": "ledger.opening",
+      "sql": "CREATE INDEX opening_fact_object ON opening_fact(main_object_id,business_id)",
+      "table": "opening_fact",
+      "type": "index"
+    },
+    {
+      "name": "opening_member_package",
+      "owner": "ledger.opening",
+      "sql": "CREATE INDEX opening_member_package ON opening_member(business_id,member_id)",
+      "table": "opening_member",
+      "type": "index"
+    },
+    {
+      "name": "opening_fact",
+      "owner": "ledger.opening",
+      "sql": "CREATE TABLE opening_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "opening_fact",
+      "type": "table"
+    },
+    {
+      "name": "opening_member",
+      "owner": "ledger.opening",
+      "sql": "CREATE TABLE opening_member (\nmember_id TEXT PRIMARY KEY CHECK(length(member_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n kind TEXT NOT NULL,\n object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "opening_member",
+      "type": "table"
+    },
+    {
+      "name": "report_basis_fact_object",
+      "owner": "ledger.reporting",
+      "sql": "CREATE INDEX report_basis_fact_object ON report_basis_fact(main_object_id,business_id)",
+      "table": "report_basis_fact",
+      "type": "index"
+    },
+    {
+      "name": "report_basis_fact",
+      "owner": "ledger.reporting",
+      "sql": "CREATE TABLE report_basis_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "report_basis_fact",
+      "type": "table"
+    },
+    {
+      "name": "bank_statement_row_reference",
+      "owner": "money",
+      "sql": "CREATE UNIQUE INDEX bank_statement_row_reference ON bank_statement_row(business_id,reference) WHERE reference IS NOT NULL",
+      "table": "bank_statement_row",
+      "type": "index"
+    },
+    {
+      "name": "bank_statement_row_scope",
+      "owner": "money",
+      "sql": "CREATE INDEX bank_statement_row_scope ON bank_statement_row(account_id,period,actual_on,row_id)",
+      "table": "bank_statement_row",
+      "type": "index"
+    },
+    {
+      "name": "money_fact_object",
+      "owner": "money",
+      "sql": "CREATE INDEX money_fact_object ON money_fact(main_object_id,business_id)",
+      "table": "money_fact",
+      "type": "index"
+    },
+    {
+      "name": "platform_activity_row_reference",
+      "owner": "money",
+      "sql": "CREATE UNIQUE INDEX platform_activity_row_reference ON platform_activity_row(business_id,reference) WHERE reference IS NOT NULL",
+      "table": "platform_activity_row",
+      "type": "index"
+    },
+    {
+      "name": "platform_activity_row_scope",
+      "owner": "money",
+      "sql": "CREATE INDEX platform_activity_row_scope ON platform_activity_row(account_id,period,actual_on,row_id)",
+      "table": "platform_activity_row",
+      "type": "index"
+    },
+    {
+      "name": "bank_statement_row",
+      "owner": "money",
+      "sql": "CREATE TABLE bank_statement_row (\nrow_id TEXT PRIMARY KEY CHECK(length(row_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n account_id TEXT NOT NULL REFERENCES identity_object(object_id),\n source_id TEXT NOT NULL REFERENCES source(source_id),\n source_location TEXT NOT NULL,\n reference TEXT,\n actual_on TEXT NOT NULL,\n period TEXT NOT NULL,\n direction TEXT NOT NULL CHECK(direction IN ('in','out')),\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0),\n memo TEXT,\n counterparty_text TEXT,\n UNIQUE(business_id,source_location)\n) STRICT",
+      "table": "bank_statement_row",
+      "type": "table"
+    },
+    {
+      "name": "money_fact",
+      "owner": "money",
+      "sql": "CREATE TABLE money_fact (\nbusiness_id TEXT PRIMARY KEY REFERENCES business_head(business_id) ON DELETE RESTRICT,\n schema_key TEXT NOT NULL,\n effective_on TEXT,\n main_object_id TEXT REFERENCES identity_object(object_id),\n data_json TEXT NOT NULL CHECK(json_valid(data_json))\n) STRICT",
+      "table": "money_fact",
+      "type": "table"
+    },
+    {
+      "name": "money_occurrence",
+      "owner": "money",
+      "sql": "CREATE TABLE money_occurrence (\noccurrence_id TEXT PRIMARY KEY CHECK(length(occurrence_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n public_slot TEXT NOT NULL,\n UNIQUE(business_id,public_slot)\n) STRICT",
+      "table": "money_occurrence",
+      "type": "table"
+    },
+    {
+      "name": "money_reconciliation",
+      "owner": "money",
+      "sql": "CREATE TABLE money_reconciliation (\ngroup_id TEXT PRIMARY KEY CHECK(length(group_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n account_id TEXT NOT NULL REFERENCES identity_object(object_id),\n direction TEXT NOT NULL CHECK(direction IN ('in','out')),\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0)\n) STRICT",
+      "table": "money_reconciliation",
+      "type": "table"
+    },
+    {
+      "name": "money_reconciliation_member",
+      "owner": "money",
+      "sql": "CREATE TABLE money_reconciliation_member (\ngroup_id TEXT NOT NULL REFERENCES money_reconciliation(group_id) ON DELETE CASCADE,\n member_kind TEXT NOT NULL CHECK(member_kind IN ('bank_row','platform_row','occurrence')),\n member_id TEXT NOT NULL CHECK(length(member_id)=36),\n PRIMARY KEY(group_id,member_kind,member_id),\n UNIQUE(member_kind,member_id)\n) STRICT",
+      "table": "money_reconciliation_member",
+      "type": "table"
+    },
+    {
+      "name": "platform_activity_row",
+      "owner": "money",
+      "sql": "CREATE TABLE platform_activity_row (\nrow_id TEXT PRIMARY KEY CHECK(length(row_id)=36),\n business_id TEXT NOT NULL REFERENCES business_head(business_id),\n account_id TEXT NOT NULL REFERENCES identity_object(object_id),\n source_id TEXT NOT NULL REFERENCES source(source_id),\n source_location TEXT NOT NULL,\n reference TEXT,\n actual_on TEXT NOT NULL,\n period TEXT NOT NULL,\n direction TEXT NOT NULL CHECK(direction IN ('in','out')),\n amount_fen INTEGER NOT NULL CHECK(amount_fen>0),\n memo TEXT,\n counterparty_text TEXT,\n UNIQUE(business_id,source_location)\n) STRICT",
+      "table": "platform_activity_row",
+      "type": "table"
+    },
+    {
+      "name": "money_occurrence_identity_immutable",
+      "owner": "money",
+      "sql": "CREATE TRIGGER money_occurrence_identity_immutable BEFORE UPDATE ON money_occurrence\nWHEN NEW.occurrence_id<>OLD.occurrence_id OR NEW.business_id<>OLD.business_id OR NEW.public_slot<>OLD.public_slot\nBEGIN SELECT RAISE(ABORT,'immutable_money_identity'); END",
+      "table": "money_occurrence",
+      "type": "trigger"
+    },
+    {
+      "name": "read_item_category",
+      "owner": "reading",
+      "sql": "CREATE INDEX read_item_category ON read_item(scope_key,collection_key,category,sort_key,item_id) WHERE category IS NOT NULL",
+      "table": "read_item",
+      "type": "index"
+    },
+    {
+      "name": "read_item_group",
+      "owner": "reading",
+      "sql": "CREATE INDEX read_item_group ON read_item(scope_key,collection_key,group_key,sort_key,item_id) WHERE group_key IS NOT NULL",
+      "table": "read_item",
+      "type": "index"
+    },
+    {
+      "name": "read_item_object",
+      "owner": "reading",
+      "sql": "CREATE INDEX read_item_object ON read_item(scope_key,collection_key,object_id,sort_key,item_id) WHERE object_id IS NOT NULL",
+      "table": "read_item",
+      "type": "index"
+    },
+    {
+      "name": "read_item_page",
+      "owner": "reading",
+      "sql": "CREATE INDEX read_item_page ON read_item(scope_key,collection_key,sort_key,item_id)",
+      "table": "read_item",
+      "type": "index"
+    },
+    {
+      "name": "read_component",
+      "owner": "reading",
+      "sql": "CREATE TABLE read_component (\nscope_key TEXT NOT NULL,\n component_key TEXT NOT NULL,\n head INTEGER NOT NULL CHECK(head>=0),\n payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),\n PRIMARY KEY(scope_key,component_key),\n FOREIGN KEY(scope_key,component_key) REFERENCES read_scope_head(scope_key,component_key)\n) STRICT",
+      "table": "read_component",
+      "type": "table"
+    },
+    {
+      "name": "read_item",
+      "owner": "reading",
+      "sql": "CREATE TABLE read_item (\nscope_key TEXT NOT NULL,\n collection_key TEXT NOT NULL,\n item_id TEXT NOT NULL,\n component_key TEXT NOT NULL,\n head INTEGER NOT NULL CHECK(head>=0),\n sort_key TEXT NOT NULL,\n business_id TEXT,\n object_id TEXT,\n group_key TEXT,\n category TEXT,\n payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),\n PRIMARY KEY(scope_key,collection_key,item_id)\n) STRICT",
+      "table": "read_item",
+      "type": "table"
+    },
+    {
+      "name": "read_scope_head",
+      "owner": "reading",
+      "sql": "CREATE TABLE read_scope_head (\nscope_key TEXT NOT NULL,\n component_key TEXT NOT NULL,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n ready_head INTEGER NOT NULL DEFAULT 0 CHECK(ready_head>=0 AND ready_head<=wanted_head),\n format_version INTEGER NOT NULL CHECK(format_version>=1),\n content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest)=64),\n state TEXT NOT NULL CHECK(state IN ('ready','preparing','failed')),\n error_code TEXT,\n revision INTEGER NOT NULL DEFAULT 0 CHECK(revision>=0),\n PRIMARY KEY(scope_key,component_key)\n) STRICT",
+      "table": "read_scope_head",
+      "type": "table"
+    },
+    {
+      "name": "current_issue_period_idx",
+      "owner": "records",
+      "sql": "CREATE INDEX current_issue_period_idx ON current_issue(period,scope_key,issue_id)",
+      "table": "current_issue",
+      "type": "index"
+    },
+    {
+      "name": "current_issue_scope_idx",
+      "owner": "records",
+      "sql": "CREATE INDEX current_issue_scope_idx ON current_issue(scope_key,period,issue_id)",
+      "table": "current_issue",
+      "type": "index"
+    },
+    {
+      "name": "source_digest",
+      "owner": "records",
+      "sql": "CREATE INDEX source_digest ON source(kind,sha256,source_id)",
+      "table": "source",
+      "type": "index"
+    },
+    {
+      "name": "source_path",
+      "owner": "records",
+      "sql": "CREATE UNIQUE INDEX source_path ON source(relative_path) WHERE relative_path IS NOT NULL",
+      "table": "source",
+      "type": "index"
+    },
+    {
+      "name": "source_use_reverse",
+      "owner": "records",
+      "sql": "CREATE INDEX source_use_reverse ON source_use(source_id,owner_kind,owner_key)",
+      "table": "source_use",
+      "type": "index"
+    },
+    {
+      "name": "company_note",
+      "owner": "records",
+      "sql": "CREATE TABLE company_note (\nscope_key TEXT PRIMARY KEY,\n note_text TEXT,\n basis_head TEXT,\n state TEXT NOT NULL CHECK(state IN ('current','needs_refresh')),\n seq INTEGER NOT NULL CHECK(seq>=1),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n CHECK((state='current' AND note_text IS NOT NULL AND length(note_text)>0) OR (state='needs_refresh' AND note_text IS NULL))\n) STRICT",
+      "table": "company_note",
+      "type": "table"
+    },
+    {
+      "name": "current_issue",
+      "owner": "records",
+      "sql": "CREATE TABLE current_issue (\nissue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),\n scope_key TEXT NOT NULL,\n period TEXT,\n business_id TEXT,\n known_schema_key TEXT,\n known_fact_json TEXT CHECK(known_fact_json IS NULL OR json_valid(known_fact_json)),\n missing_fields_json TEXT NOT NULL CHECK(json_valid(missing_fields_json)),\n current_question TEXT NOT NULL,\n assignee TEXT NOT NULL CHECK(assignee IN ('ai','owner')),\n action TEXT NOT NULL CHECK(action IN ('provide_material','clarify_reality','external_payment','external_filing','professional_check')),\n due_on TEXT,\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n evidence_ids_json TEXT NOT NULL CHECK(json_valid(evidence_ids_json) AND json_type(evidence_ids_json)='array')\n) STRICT",
+      "table": "current_issue",
+      "type": "table"
+    },
+    {
+      "name": "current_issue_scope",
+      "owner": "records",
+      "sql": "CREATE TABLE current_issue_scope (\nscope_key TEXT PRIMARY KEY,\n head INTEGER NOT NULL CHECK(head>=0),\n latest_command_id TEXT,\n latest_expected_head INTEGER NOT NULL CHECK(latest_expected_head>=0),\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64)\n) STRICT",
+      "table": "current_issue_scope",
+      "type": "table"
+    },
+    {
+      "name": "document_set",
+      "owner": "records",
+      "sql": "CREATE TABLE document_set (\nsingleton INTEGER PRIMARY KEY CHECK(singleton=1),\n published_set_id TEXT CHECK(published_set_id IS NULL OR length(published_set_id)=64),\n manifest_path TEXT NOT NULL\n) STRICT",
+      "table": "document_set",
+      "type": "table"
+    },
+    {
+      "name": "document_shard_head",
+      "owner": "records",
+      "sql": "CREATE TABLE document_shard_head (\nshard_key TEXT PRIMARY KEY,\n wanted_head INTEGER NOT NULL CHECK(wanted_head>=0),\n published_head INTEGER CHECK(published_head IS NULL OR (published_head>=0 AND published_head<=wanted_head)),\n current_path TEXT,\n current_digest TEXT CHECK(current_digest IS NULL OR length(current_digest)=64),\n last_error_code TEXT,\n last_error_message TEXT\n) STRICT",
+      "table": "document_shard_head",
+      "type": "table"
+    },
+    {
+      "name": "source",
+      "owner": "records",
+      "sql": "CREATE TABLE source (\nsource_id TEXT PRIMARY KEY CHECK(length(source_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('file','owner_statement')),\n archive_month TEXT,\n relative_path TEXT,\n original_name TEXT,\n media_type TEXT,\n byte_size INTEGER CHECK(byte_size>=0),\n sha256 TEXT NOT NULL CHECK(length(sha256)=64),\n statement_text TEXT,\n CHECK((kind='file' AND relative_path IS NOT NULL AND original_name IS NOT NULL AND byte_size IS NOT NULL AND statement_text IS NULL) OR (kind='owner_statement' AND statement_text IS NOT NULL AND relative_path IS NULL))\n) STRICT",
+      "table": "source",
+      "type": "table"
+    },
+    {
+      "name": "source_use",
+      "owner": "records",
+      "sql": "CREATE TABLE source_use (\nowner_kind TEXT NOT NULL CHECK(owner_kind IN ('business','object','issue','note')),\n owner_key TEXT NOT NULL,\n source_id TEXT NOT NULL REFERENCES source(source_id) ON DELETE RESTRICT,\n location TEXT NOT NULL DEFAULT '',\n PRIMARY KEY(owner_kind,owner_key,source_id,location)\n) STRICT",
+      "table": "source_use",
+      "type": "table"
+    },
+    {
+      "name": "source_content_immutable",
+      "owner": "records",
+      "sql": "CREATE TRIGGER source_content_immutable BEFORE UPDATE ON source\nWHEN NEW.source_id<>OLD.source_id OR NEW.kind<>OLD.kind OR NEW.sha256<>OLD.sha256\n OR NEW.statement_text IS NOT OLD.statement_text OR NEW.byte_size IS NOT OLD.byte_size\nBEGIN SELECT RAISE(ABORT,'immutable_source_content'); END",
+      "table": "source",
+      "type": "trigger"
+    },
+    {
+      "name": "company_profile",
+      "owner": "storage",
+      "sql": "CREATE TABLE company_profile (\nsingleton INTEGER PRIMARY KEY CHECK(singleton=1),\n company_id TEXT NOT NULL UNIQUE CHECK(length(company_id)=36),\n credit_code TEXT NOT NULL UNIQUE CHECK(length(credit_code)=18),\n legal_name TEXT NOT NULL CHECK(length(legal_name) BETWEEN 1 AND 200),\n accounting_standard TEXT NOT NULL CHECK(accounting_standard='small_enterprise'),\n currency TEXT NOT NULL CHECK(currency='CNY'),\n start_period TEXT NOT NULL CHECK(length(start_period)=7),\n profile_seq INTEGER NOT NULL DEFAULT 1 CHECK(profile_seq>=1)\n) STRICT",
+      "table": "company_profile",
+      "type": "table"
+    },
+    {
+      "name": "module_schema",
+      "owner": "storage",
+      "sql": "CREATE TABLE module_schema (\nmodule_key TEXT PRIMARY KEY,\n version INTEGER NOT NULL CHECK(version>=1),\n contract_digest TEXT NOT NULL CHECK(length(contract_digest)=64),\n parent_digest TEXT CHECK(parent_digest IS NULL OR length(parent_digest)=64),\n sql_fingerprint TEXT NOT NULL CHECK(length(sql_fingerprint)=64)\n) STRICT",
+      "table": "module_schema",
+      "type": "table"
+    },
+    {
+      "name": "system_meta",
+      "owner": "storage",
+      "sql": "CREATE TABLE system_meta (\nsingleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=1),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
+      "table": "system_meta",
+      "type": "table"
+    }
+  ],
+  "version": 1
+}

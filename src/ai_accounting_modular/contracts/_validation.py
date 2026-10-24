@@ -25,6 +25,7 @@ CONTRACT = "ai-accounting-modular/1"
 _BASE = "https://ai-accounting.local/design/"
 _SCHEMAS = (
     "core.schema.json",
+    "company-note.schema.json",
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",

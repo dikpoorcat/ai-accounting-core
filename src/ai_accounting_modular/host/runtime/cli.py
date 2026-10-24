@@ -57,6 +57,12 @@ def main():
     for action in ("restore", "rebuild"):
         offline = commands.add_parser(action, help="独立同步处理显式离线包/清单，不启动源服务")
         offline.add_argument("--input", type=Path)
+    upgrade = commands.add_parser(
+        "database-upgrade", help="服务停止后，以已验证备份升级明确公司结构"
+    )
+    upgrade.add_argument("--company-directory", type=Path, required=True)
+    upgrade.add_argument("--backup", type=Path, required=True)
+    upgrade.add_argument("--expected-structure-fingerprint", required=True)
     args = parser.parse_args()
     runtime = None
     try:
@@ -64,6 +70,10 @@ def main():
             from ai_accounting_modular.agent.public import generate_ids
 
             result = {"ids": generate_ids(args.count)}
+        elif args.mode == "database-upgrade":
+            from ._upgrade import run
+
+            result = run(args.company_directory, args.backup, args.expected_structure_fingerprint)
         elif args.mode in {"restore", "rebuild"}:
             from ai_accounting_modular.host.public import create_offline_application
 

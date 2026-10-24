@@ -65,6 +65,8 @@ artifacts = [
   "src/ai_accounting_modular/agent/_guides.json",
   "src/ai_accounting_modular/contracts/_schemas/*.json",
   "src/ai_accounting_modular/storage/schema/*.json",
+  "src/ai_accounting_modular/storage/schema/*.sql",
+  "src/ai_accounting_modular/storage/schema/previous/*.json",
   "src/ai_accounting_modular/reading/_templates/*.xlsx",
   "src/ai_accounting_modular/static/dashboard/**",
   "src/ai_accounting/static/dashboard/**",

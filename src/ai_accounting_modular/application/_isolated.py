@@ -11,12 +11,13 @@ from ai_accounting_modular.records.public import copy_standard_bundle, open_stan
 from ai_accounting_modular.storage.public import (
     CompanySpec,
     company_metadata,
+    company_structure_contract,
     create_company_database,
     open_database_unit,
     verify_database,
 )
 
-from . import _documents
+from . import _backup_verify, _documents
 from ._backup_scope import DATABASE_PATH
 from ._target_paths import beneath, checked, copy_file, file_digest
 
@@ -103,7 +104,7 @@ def _rebuild(application, bundle, root):
     _publish_documents(application, root)
 
 
-def _restore(application, extracted, root):
+def _restore(application, extracted, root, *, structure_version):
     manifest = extracted.manifest
     for item in manifest["files"]:
         copy_file(
@@ -115,15 +116,21 @@ def _restore(application, extracted, root):
     for item in manifest["files"]:
         if file_digest(beneath(root, item["path"])) != (item["sha256"], item["byte_size"]):
             raise ContractError("target_changed", "恢复目标的实际字节与备份完整清单不一致。")
+    from ai_accounting_modular.files.public import repository_factory as files_repository
     from ai_accounting_modular.files.public import reset_for_restore as reset_files
+    from ai_accounting_modular.reading.public import repository_factory as reading_repository
     from ai_accounting_modular.reading.public import reset_for_restore as reset_reading
 
-    with _unit(application, root, "maintenance") as unit:
+    with open_database_unit(
+        beneath(root, DATABASE_PATH),
+        repositories=(files_repository(), reading_repository()),
+        company_root=root,
+        mode="maintenance",
+        structure_version=structure_version,
+    ) as unit:
         reset_files(unit)
         reset_reading(unit)
-    application.backup_verifier.verify_extracted(root, manifest)
-    with _unit(application, root) as read:
-        return company_metadata(read)
+    return application.backup_verifier.verify_extracted(root, manifest)
 
 
 def _message_parts(code, text, label):
@@ -194,12 +201,29 @@ def run(application, request):
             with source.open("rb") as stream:
                 with opener(stream) as extracted:
                     result["source_digest"] = extracted.sha256
+                    version = _backup_verify.structure_version(extracted.company_root)
+                    upgrade_required = version != company_structure_contract()["version"]
                     if check_only:
-                        _publish(extracted.company_root, target, True, result)
+                        _publish(
+                            extracted.company_root,
+                            target,
+                            True,
+                            result,
+                            upgrade_required=upgrade_required,
+                        )
                     else:
                         with _stage(target, False) as stage:
-                            metadata = _restore(application, extracted, stage)
-                            _publish(stage, target, False, result, metadata)
+                            metadata = _restore(
+                                application, extracted, stage, structure_version=version
+                            )
+                            _publish(
+                                stage,
+                                target,
+                                False,
+                                result,
+                                metadata,
+                                upgrade_required=upgrade_required,
+                            )
     except (ContractError, OSError) as error:
         _failure(result, error)
     return validate_contract("core.schema.json", "IsolatedTargetResult", result)
@@ -213,10 +237,19 @@ def _finish(application, stage, target, check_only, result):
     _publish(stage, target, check_only, result, metadata)
 
 
-def _publish(stage, target, check_only, result, metadata=None):
+def _publish(stage, target, check_only, result, metadata=None, *, upgrade_required=False):
     result["checks"].append(
         {"code": "complete_target", "state": "pass", "message": "完整资料及正式账务核验通过。"}
     )
+    if upgrade_required:
+        result["checks"].append(
+            {
+                "code": "structure_upgrade_required",
+                "state": "pass",
+                "message": "这是上一结构的备份；恢复保留原结构，"
+                "使用前须明确执行结构升级，再登记公司。",
+            }
+        )
     if check_only:
         result["state"] = "checked"
         return

@@ -18,6 +18,7 @@ SOURCE = ROOT / "docs/redesign/contracts"
 TARGET = ROOT / "src/ai_accounting_modular/contracts"
 SCHEMAS = (
     "core.schema.json",
+    "company-note.schema.json",
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",

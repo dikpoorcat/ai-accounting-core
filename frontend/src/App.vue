@@ -31,6 +31,7 @@ localStorage.removeItem("finance-dashboard-org-id");
 const route = useRoute();
 const router = useRouter();
 const isMaterials = computed(() => route.name === "review-materials");
+const requiresPeriod = computed(() => route.meta?.requiresPeriod !== false);
 const savedTheme = localStorage.getItem("finance-dashboard-theme");
 const theme = ref<Theme>(savedTheme === "dark" ? "dark" : "light");
 const {
@@ -73,6 +74,7 @@ const selectedPeriod = computed(() => {
 const selectionSettled = ref(false);
 const routeMatchesContext = computed(() => {
   if (!currentCompany.value || currentCompany.value.company_id !== route.query.company_id) return false;
+  if (!requiresPeriod.value) return true;
   if (route.query.period !== (selectedPeriod.value || undefined)) return false;
   return route.name !== "reports" || !route.query.quarter
     || context.value?.quarters.some(item => item.key === route.query.quarter) === true;
@@ -84,7 +86,7 @@ async function applyContextSelection(loaded: DeepReadonly<DashboardContext>, val
   const companyId = loaded.current_company?.company_id;
   if (!companyId) return;
   const requestedPeriod = typeof route.query.period === "string" ? route.query.period : undefined;
-  const quarter = route.name === "reports" && typeof route.query.quarter === "string" && loaded.quarters.some(item => item.key === route.query.quarter)
+  const quarter = (route.name === "reports" || !requiresPeriod.value) && typeof route.query.quarter === "string" && loaded.quarters.some(item => item.key === route.query.quarter)
     ? route.query.quarter : undefined;
   const quarterPeriod = quarter ? loaded.periods
     .filter(item => `${item.year}-Q${Math.ceil(item.month / 3)}` === quarter)
@@ -137,8 +139,8 @@ function setAuthenticated(value: boolean) {
 }
 function sessionExpired() { setAuthenticated(false); }
 watch(
-  [authenticated, isMaterials, () => route.query.company_id, () => route.query.period, () => route.query.quarter],
-  ([isAuthenticated, independent, companyId, period, quarter], [wasAuthenticated, wasIndependent, previousCompany, previousPeriod, previousQuarter]) => {
+  [authenticated, isMaterials, requiresPeriod, () => route.query.company_id, () => route.query.period, () => route.query.quarter],
+  ([isAuthenticated, independent, needsPeriod, companyId, period, quarter], [wasAuthenticated, wasIndependent, neededPeriod, previousCompany, previousPeriod, previousQuarter]) => {
     if (independent) {
       contextGeneration += 1; cancelContext(); activeContextLoad = null;
       selectionSettled.value = false; contextError.value = "";
@@ -148,7 +150,7 @@ watch(
       void loadCompanyContext();
       return;
     }
-    if (period !== previousPeriod || quarter !== previousQuarter) {
+    if (period !== previousPeriod || quarter !== previousQuarter || needsPeriod !== neededPeriod) {
       contextGeneration += 1;
       if (isAuthenticated && !context.value) void loadCompanyContext();
       else if (isAuthenticated && context.value?.current_company?.company_id === companyId) {
@@ -313,7 +315,7 @@ async function selectPeriod(periodKey: string) {
           <RouterLink
             v-for="item in navItems"
             :key="item.name"
-            :to="{ path: item.path, query: { company_id: route.query.company_id, period: route.query.period } }"
+            :to="{ path: item.path, query: { company_id: route.query.company_id, period: route.query.period, ...(item.name === 'reports' && !requiresPeriod ? { quarter: route.query.quarter } : {}) } }"
             class="module-link"
             :aria-label="item.label"
             :title="item.label"
@@ -367,13 +369,14 @@ async function selectPeriod(periodKey: string) {
         </nav>
 
         <DashboardMonthPicker
-          v-if="authenticated && !sidebarCollapsed"
+          v-if="authenticated && requiresPeriod && !sidebarCollapsed"
           :periods="periods"
           :selected-period="selectedPeriod"
           @select="selectPeriod"
         />
 
         <div class="sidebar-footer">
+          <RouterLink v-if="authenticated" :to="{ name: 'company-note', query: { company_id: route.query.company_id, period: route.query.period, quarter: route.query.quarter } }" class="theme-button company-note-link" aria-label="公司说明" title="公司说明"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg><span class="control-label">公司说明</span></RouterLink>
           <button class="theme-button" type="button" :aria-expanded="showSecurity" aria-haspopup="dialog" aria-controls="owner-dialog" aria-label="负责人身份" title="负责人身份" @click="showSecurity = true"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg><span class="control-label">负责人身份</span></button>
           <button
             class="theme-button"
@@ -439,4 +442,6 @@ async function selectPeriod(periodKey: string) {
 .materials-shell { min-height: 100dvh; }
 .materials-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .materials-toolbar a { color: var(--accent); text-decoration: none; }
+.company-note-link { text-decoration: none; }
+.company-note-link.router-link-exact-active { color: var(--accent); background: var(--accent-soft); }
 </style>

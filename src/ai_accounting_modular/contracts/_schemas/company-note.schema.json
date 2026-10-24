@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-accounting.local/design/company-note.schema.json",
+  "title": "公司说明只读查阅合同",
+  "$ref": "#/$defs/CompanyNoteResponse",
+  "$defs": {
+    "NoteFormat": {
+      "type": "string",
+      "enum": [
+        "plain_text",
+        "markdown"
+      ]
+    },
+    "CompanyNoteQuery": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        }
+      },
+      "required": [
+        "company_id"
+      ],
+      "additionalProperties": false
+    },
+    "CompanyNoteDescription": {
+      "type": "object",
+      "properties": {
+        "text_format": {
+          "$ref": "#/$defs/NoteFormat"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "text_format",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "CompanyNoteIdentity": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "credit_code": {
+          "type": "string",
+          "pattern": "^[0-9A-Z]{18}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "credit_code",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "CompanyNoteResponse": {
+      "type": "object",
+      "properties": {
+        "company": {
+          "$ref": "#/$defs/CompanyNoteIdentity"
+        },
+        "description": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/CompanyNoteDescription"
+            }
+          ]
+        }
+      },
+      "required": [
+        "company",
+        "description"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

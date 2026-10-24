@@ -10,7 +10,7 @@ from typing import Literal
 from ai_accounting_modular.contracts.public import ContractError
 
 from ._database import _connect, _database_error, _month, _stored_company
-from ._schema import module_schema, verify_structure
+from ._schema import company_schema, module_contract, module_schema, verify_structure
 from ._session import StorageContext, StorageUnitOfWork
 from ._types import RepositoryFactory
 
@@ -19,11 +19,19 @@ _active_writes: ContextVar[frozenset[Path]] = ContextVar(
 )
 
 
-def repository_factories(repositories: Iterable[RepositoryFactory]) -> dict[str, RepositoryFactory]:
+def repository_factories(
+    repositories: Iterable[RepositoryFactory], *, structure_version=None
+) -> dict[str, RepositoryFactory]:
+    contract = company_schema(structure_version)
     factories = {}
     for factory in repositories:
         owner = factory.schema.owner
-        if owner in factories or factory.schema != module_schema(owner):
+        expected = (
+            module_schema(owner)
+            if contract is company_schema()
+            else module_contract(contract, owner)
+        )
+        if owner in factories or factory.schema != expected:
             raise ContractError("invalid_input", "模块仓储重复或结构合同不匹配")
         factories[owner] = factory
     return factories
@@ -40,6 +48,7 @@ def database_unit(
     view="current",
     as_of=None,
     expected_identity=None,
+    structure_version=None,
 ):
     if (
         view not in {"current", "as_posted"}
@@ -58,7 +67,7 @@ def database_unit(
         connection.execute("BEGIN IMMEDIATE" if writable else "BEGIN")
         if writable:
             token = _active_writes.set(_active_writes.get() | {path})
-        verify_structure(connection, "company")
+        verify_structure(connection, "company", expected=company_schema(structure_version))
         system, profile = _stored_company(connection)
         actual_identity = (profile["company_id"], system["database_id"], profile["credit_code"])
         if expected_identity is not None and actual_identity != expected_identity:
@@ -129,6 +138,7 @@ def open_database_unit(
     mode: Literal["read", "write", "maintenance"] = "read",
     view: Literal["current", "as_posted"] = "current",
     as_of: str | None = None,
+    structure_version: int | None = None,
 ):
     """Select an existing company database without a catalog or implicit creation.
 
@@ -138,6 +148,8 @@ def open_database_unit(
     """
     if mode not in {"read", "write", "maintenance"}:
         raise ContractError("invalid_input", "离线工作单元必须明确读取、业务写入或派生维护模式")
+    if structure_version is not None and mode != "maintenance":
+        raise ContractError("invalid_operation", "显式旧结构只用于匹配合同的派生恢复维护")
     root = Path(company_root).resolve()
     location = {
         "company_root": root,
@@ -148,9 +160,10 @@ def open_database_unit(
     }
     return database_unit(
         location,
-        repository_factories(repositories),
+        repository_factories(repositories, structure_version=structure_version),
         writable=mode != "read",
         maintenance=mode == "maintenance",
         view=view,
         as_of=as_of,
+        structure_version=structure_version,
     )

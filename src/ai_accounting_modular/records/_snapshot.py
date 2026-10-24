@@ -10,7 +10,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 from . import _documents, _sources
-from ._changes import note_current
+from ._changes import document_note, note_current
 from ._standard import _read_standard_bundle
 from ._types import RecordsSnapshot, StandardFile
 
@@ -115,11 +115,7 @@ def verify(records, company_identity, facts, objects, read, root, required_sourc
         "notes": {
             "format": _documents.FORMAT,
             "key": "notes",
-            "notes": [
-                {key: note[key] for key in ("scope", "text", "evidence_ids")}
-                for note in notes
-                if note["state"] == "current"
-            ],
+            "notes": [document_note(note) for note in notes if note["state"] == "current"],
         },
         "sources": {
             "format": _documents.FORMAT,

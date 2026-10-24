@@ -267,6 +267,7 @@ class NoteChange(TypedDict):
     text: str
     evidence_ids: list[Id]
     expected_basis_head: NotRequired[str]
+    text_format: NotRequired[NoteFormat]
 
 type DocumentObject = DocumentObjectVariant1 | DocumentObjectVariant2 | DocumentObjectVariant3 | DocumentObjectVariant4 | DocumentObjectVariant5 | DocumentObjectVariant6 | DocumentObjectVariant7 | DocumentObjectVariant8
 
@@ -274,6 +275,7 @@ class DocumentNote(TypedDict):
     scope: str
     text: str
     evidence_ids: list[Id]
+    text_format: NotRequired[NoteFormat]
 
 class ObjectShard(TypedDict):
     format: Literal['ai-accounting-standard/1']
@@ -426,6 +428,7 @@ class CurrentNote(TypedDict):
     text: str | None
     basis_head: str | None
     evidence_ids: list[Id]
+    text_format: NotRequired[NoteFormat]
 
 class NoteBasisHead(TypedDict):
     scope: str
@@ -631,6 +634,25 @@ class RemunerationPositionResult(TypedDict):
     period: Month
     view: Literal['current', 'as_posted']
     items: list[RemunerationPositionItem]
+
+type NoteFormat = Literal['plain_text', 'markdown']
+
+class CompanyNoteQuery(TypedDict):
+    company_id: Id
+
+class CompanyNoteDescription(TypedDict):
+    text_format: NoteFormat
+    text: str
+
+class CompanyNoteIdentity(TypedDict):
+    company_id: Id
+    database_id: Id
+    credit_code: str
+    name: str
+
+class CompanyNoteResponse(TypedDict):
+    company: CompanyNoteIdentity
+    description: None | CompanyNoteDescription
 
 type SourceLocation = SourceLocator
 
@@ -11335,6 +11357,11 @@ __all__ = [
     'RemunerationWithdrawnPosition',
     'RemunerationPositionItem',
     'RemunerationPositionResult',
+    'NoteFormat',
+    'CompanyNoteQuery',
+    'CompanyNoteDescription',
+    'CompanyNoteIdentity',
+    'CompanyNoteResponse',
     'SourceLocation',
     'AmountRange',
     'CostUse',

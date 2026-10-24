@@ -130,6 +130,7 @@ def check_examples():
         "business-facts-cases.json": {"format", "purpose", "execution", "sources", "object_ids", "valid_cases", "negative_cases", "investment_lifecycle"},
         "reporting-cases.json": {"format", "synthetic_only", "instructions", "cases", "contract_examples"},
         "review-materials-cases.json": {"format", "synthetic_only", "examples", "negative_cases", "integration_checks"},
+        "company-note-cases.json": {"format", "status", "description", "schema", "valid", "invalid", "checks"},
         "file-cases.json": {"format", "synthetic_only", "scope", "schema_map", "contract_examples", "cases", "negative_cases"},
     }
     def validate_examples(name, definition, values):
@@ -233,6 +234,18 @@ def check_examples():
             for value, size in [(statement, len(statement["text"].encode("utf-8"))), (receipt, receipt["byte_size"])]:
                 item = by_source[value["source_id"]]
                 assert item["sha256"] == value["sha256"] and item["byte_size"] == size
+        elif path.name == "company-note-cases.json":
+            assert data["status"] == "planned", "设计样例不能冒充产品验收结果"
+            assert data["schema"] == "company-note.schema.json"
+            for case in data["valid"]:
+                validate_examples(case.get("schema", data["schema"]), case["definition"], [case["value"]])
+            for case in data["invalid"]:
+                assert not validator(case.get("schema", data["schema"]), case["definition"]).is_valid(case["value"]), case["name"]
+                invalid_count += 1
+            identifiers = [case["id"] for case in data["checks"]]
+            assert len(set(identifiers)) == len(identifiers)
+            assert all(case["given"] and case["action"] and case["expect"] for case in data["checks"])
+            COUNTS["company_note_planned_checks"] = len(identifiers)
         elif path.name == "file-cases.json":
             mapping = {"backup_plan": "FilePlan", "report_export_plan": "FilePlan", "restore_check_request": "IsolatedTargetRequest", "restore_run_request": "IsolatedTargetRequest", "rebuild_run_request": "IsolatedTargetRequest", "restore_checked_result": "IsolatedTargetResult", "restore_created_result": "IsolatedTargetResult", "rebuild_created_result": "IsolatedTargetResult", "missing_source_failed_result": "IsolatedTargetResult"}
             assert data["schema_map"] == mapping, ("未分类的文件样例映射", data["schema_map"])
@@ -380,10 +393,59 @@ def check_links():
     COUNTS["local_links"] = count
 
 
+def check_company_note_structure_plan():
+    """Check proposed DDL only in memory; this is not a runtime migration test."""
+    baseline = (ROOT / "schema/company.sql").read_text(encoding="utf-8")
+    proposed = (ROOT / "schema/company-note-format.sql").read_text(encoding="utf-8")
+    columns = "scope_key,note_text,basis_head,state,seq,latest_command_id,latest_expected_seq,content_digest"
+    for rollback in (False, True):
+        db = sqlite3.connect(":memory:")
+        try:
+            db.executescript(baseline)
+            db.executemany(
+                f"INSERT INTO company_note({columns}) VALUES(?,?,?,?,?,?,?,?)",
+                [(scope, "原文 * _ <公司>\n第二行", None, "current", 1, "00000000-0000-4000-8000-000000000401", 0, "0" * 64)
+                 for scope in ("company", "period:2026-08")],
+            )
+            db.commit()
+            before = db.execute(f"SELECT {columns} FROM company_note ORDER BY scope_key").fetchall()
+            db.execute("SAVEPOINT note_format_plan")
+            statement = ""
+            for line in proposed.splitlines(True):
+                statement += line
+                if sqlite3.complete_statement(statement):
+                    db.execute(statement)
+                    statement = ""
+            assert not statement.strip(), "结构接续包含不完整SQL"
+            if rollback:
+                try:
+                    db.execute("UPDATE company_note SET note_format='html'")
+                except sqlite3.IntegrityError:
+                    db.execute("ROLLBACK TO note_format_plan")
+                else:
+                    raise AssertionError("格式约束未拒绝HTML")
+                assert "note_format" not in {row[1] for row in db.execute("PRAGMA table_info(company_note)")}
+            else:
+                assert db.execute("SELECT DISTINCT note_format FROM company_note").fetchall() == [("plain_text",)]
+                db.execute("UPDATE company_note SET note_format='markdown' WHERE scope_key='company'")
+                try:
+                    db.execute("UPDATE company_note SET note_format='markdown' WHERE scope_key LIKE 'period:%'")
+                except sqlite3.IntegrityError:
+                    pass
+                else:
+                    raise AssertionError("月份说明不应接受Markdown")
+            db.execute("RELEASE note_format_plan")
+            assert db.execute(f"SELECT {columns} FROM company_note ORDER BY scope_key").fetchall() == before
+        finally:
+            db.close()
+    COUNTS["company_note_memory_ddl"] = "default, scope constraint and rollback checked"
+
+
 def main():
     check_contracts()
     check_examples()
     check_sql()
+    check_company_note_structure_plan()
     check_links()
     print(json.dumps(COUNTS, ensure_ascii=False, indent=2))
     print("设计静态检查通过。未运行产品业务、真实集成、浏览器或性能验收。")

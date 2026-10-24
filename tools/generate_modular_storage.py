@@ -32,6 +32,10 @@ def generate(kind: str) -> str:
             table_owners[match[1]] = owner
     with sqlite3.connect(":memory:") as connection:
         connection.executescript(sql)
+        if kind == "company":
+            connection.executescript(
+                (ROOT / "docs/redesign/schema/company-note-format.sql").read_text("utf-8")
+            )
         objects = [
             {
                 "owner": table_owners[table],
@@ -46,7 +50,10 @@ def generate(kind: str) -> str:
             )
         ]
     objects.sort(key=lambda item: (item["owner"], item["type"], item["name"]))
-    result = {"kind": kind, "version": 1, "objects": objects}
+    result = {"kind": kind, "version": 2 if kind == "company" else 1, "objects": objects}
+    if kind == "company":
+        previous = json.loads((OUTPUT / "previous/company-v1.json").read_text("utf-8"))
+        result["parent_fingerprint"] = previous["fingerprint"]
     result["fingerprint"] = hashlib.sha256(canonical(objects).encode("utf-8")).hexdigest()
     return json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
@@ -64,6 +71,13 @@ def main() -> None:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(expected, encoding="utf-8", newline="\n")
+    path = OUTPUT / "company-v1-to-v2.sql"
+    expected = (ROOT / "docs/redesign/schema/company-note-format.sql").read_text("utf-8")
+    if args.check:
+        if not path.is_file() or path.read_text("utf-8") != expected:
+            raise SystemExit(f"Packaged structure transition is stale: {path}")
+    else:
+        path.write_text(expected, encoding="utf-8", newline="\n")
     print("Packaged storage contracts are current.")
 
 

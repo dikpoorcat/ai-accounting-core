@@ -1,4 +1,4 @@
-"""HTTP-neutral adapter for the frozen existing dashboard protocol."""
+"""HTTP-neutral adapters for dashboard pages and independent read-only details."""
 
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -35,9 +35,9 @@ def _json(body, status=200):
     )
 
 
-def _validate(key, value):
+def _validate(key, value, *, schema="dashboard-response-v2.json"):
     try:
-        return validate_contract("dashboard-response-v2.json", key, value)
+        return validate_contract(schema, key, value)
     except ContractError as error:
         raise ContractError(
             "response_contract_mismatch", "看板响应与已确定的格式不一致。"
@@ -161,6 +161,13 @@ class Dashboard:
             return _error(error, report=path.startswith("/api/local/report-export"))
 
     def _get_json(self, path, parameters):
+        if path == "/api/dashboard/company-note":
+            scope = _requests.company_note(parameters)
+            return _validate(
+                "CompanyNoteResponse",
+                self.reading.detail("company_note", scope, {}),
+                schema="company-note.schema.json",
+            )
         if path.startswith("/api/local/report-export/") and path.endswith("/status"):
             company_id, job_id = _requests.report_task(path, parameters, "/status")
             return _validate("report_export_status", self.reading.report_task(company_id, job_id))

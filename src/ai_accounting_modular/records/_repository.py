@@ -239,10 +239,13 @@ class RecordsRepository:
 
     def save_note(self, current, expected_seq, command_id, digest):
         self._session.execute(
-            "INSERT INTO company_note VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET "
+            "INSERT INTO company_note(scope_key,note_text,basis_head,state,seq,latest_command_id,"
+            "latest_expected_seq,content_digest,note_format) VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(scope_key) DO UPDATE SET "
             "note_text=excluded.note_text,basis_head=excluded.basis_head,state=excluded.state,seq=excluded.seq,"
             "latest_command_id=excluded.latest_command_id,"
-            "latest_expected_seq=excluded.latest_expected_seq,content_digest=excluded.content_digest",
+            "latest_expected_seq=excluded.latest_expected_seq,content_digest=excluded.content_digest,"
+            "note_format=excluded.note_format",
             (
                 current["scope"],
                 current["text"],
@@ -252,6 +255,7 @@ class RecordsRepository:
                 command_id,
                 expected_seq,
                 digest,
+                current.get("text_format", "plain_text"),
             ),
         )
 

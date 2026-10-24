@@ -20,6 +20,7 @@ from ._types import (
     SchemaObject,
 )
 from ._units import open_database_unit
+from ._upgrades import upgrade_company_database
 
 __all__ = [
     "BlockWrite",
@@ -49,4 +50,5 @@ __all__ = [
     "publish_company_directory",
     "restore_database_copy",
     "verify_database",
+    "upgrade_company_database",
 ]

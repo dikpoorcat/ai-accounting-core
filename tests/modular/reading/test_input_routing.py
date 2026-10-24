@@ -250,22 +250,34 @@ def test_closed_correction_keeps_historical_pages_and_updates_only_real_current_
         assert (item["outstanding_fen"], item["current_outstanding_fen"]) == ("100000", "90000")
 
 
-def test_previous_projection_format_requires_explicit_retry_without_replaying_business(case):
+def test_previous_projection_format_rebuilds_on_demand_without_replaying_business(case):
     initialize(case)
     actual = ready(case, "funds")
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         unit.repository("reading")._session.execute(
-            "UPDATE read_scope_head SET format_version=2 WHERE component_key='funds'"
+            "UPDATE read_scope_head SET format_version=? WHERE component_key='funds'",
+            (_monthly.version("funds") - 1,),
         )
     with case.kernel.storage.read_unit(case.company) as read:
         head = read.head
-    assert selected(case, "funds").state == "failed"
-    case.kernel.reading.retry("funds", MonthScope(case.company, "2026-01"), {})
+    assert selected(case, "funds").state == "preparing"
     rebuilt = ready(case, "funds")
     assert rebuilt.payload == actual.payload
     with case.kernel.storage.read_unit(case.company) as read:
         assert read.head == head
-        assert read.repository("reading").scopes()[0]["format_version"] == _monthly.FORMAT_VERSION
+        key = _monthly.key(
+            _monthly.normalize(
+                {
+                    "company_id": case.company,
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                    "view": "as_posted",
+                }
+            )
+        )
+        assert read.repository("reading").state(key, "funds")["format_version"] == _monthly.version(
+            "funds"
+        )
 
 
 def test_closed_withdrawal_marks_discovery_stock_without_rewriting_frozen_month(case, monkeypatch):

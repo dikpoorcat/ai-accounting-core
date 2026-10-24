@@ -2248,6 +2248,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 500
+        },
+        "text_format": {
+          "$ref": "company-note.schema.json#/$defs/NoteFormat"
         }
       },
       "required": [
@@ -2270,6 +2273,31 @@
             "required": [
               "expected_basis_head"
             ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "expected_basis_head"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "not": {
+                  "const": "company"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text_format": {
+                "const": "plain_text"
+              }
+            }
           }
         }
       ]
@@ -2784,6 +2812,9 @@
           },
           "minItems": 0,
           "maxItems": 500
+        },
+        "text_format": {
+          "$ref": "company-note.schema.json#/$defs/NoteFormat"
         }
       },
       "required": [
@@ -2791,7 +2822,27 @@
         "text",
         "evidence_ids"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "not": {
+                  "const": "company"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text_format": {
+                "const": "plain_text"
+              }
+            }
+          }
+        }
+      ]
     },
     "ObjectShard": {
       "type": "object",
@@ -4363,6 +4414,9 @@
           },
           "minItems": 0,
           "maxItems": 500
+        },
+        "text_format": {
+          "$ref": "company-note.schema.json#/$defs/NoteFormat"
         }
       },
       "required": [
@@ -4399,6 +4453,24 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 20000
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "not": {
+                  "const": "company"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text_format": {
+                "const": "plain_text"
               }
             }
           }

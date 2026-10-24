@@ -2,7 +2,38 @@
 
 import calendar
 
-from ai_accounting_modular.contracts.public import YearMonth, validate_contract
+from ai_accounting_modular.contracts.public import ContractError, YearMonth, validate_contract
+
+
+def company_note(reader, scope, query):
+    """Current company prose is independent of accounting periods and projections."""
+    validate_contract("company-note.schema.json", "CompanyNoteQuery", scope)
+    if query != {}:
+        raise ContractError("invalid_input", "公司说明不接受月份或其他筛选。")
+    with reader.storage.read_unit(scope["company_id"]) as read:
+        metadata = reader.storage.company_metadata(read)
+        notes = reader.records.current_notes(("company",), read)
+        description = None
+        if notes:
+            note = notes[0]
+            # Records validates its stored format and digest.
+            # Do not turn a damaged description into an honest-looking empty one.
+            if note["state"] != "current" or not isinstance(note["text"], str):
+                raise ContractError("storage_corrupt", "当前公司说明的正文状态不正确。")
+            if note["text"].strip():
+                description = {
+                    "text_format": note.get("text_format", "plain_text"),
+                    "text": note["text"],
+                }
+        return {
+            "company": {
+                "company_id": read.company_id,
+                "database_id": read.database_id,
+                "credit_code": metadata.credit_code,
+                "name": metadata.legal_name,
+            },
+            "description": description,
+        }
 
 
 def period(value, closed_through=None):

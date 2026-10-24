@@ -32,43 +32,77 @@ def packaged_schema(kind: str) -> dict:
     value = json.loads(files(__package__).joinpath("schema", f"{kind}.json").read_text("utf-8"))
     if (
         value["kind"] != kind
-        or value["version"] != 1
+        or value["version"] != (2 if kind == "company" else 1)
         or digest(value["objects"]) != value["fingerprint"]
     ):
         raise RuntimeError("Packaged storage contract is damaged")
     return value
 
 
-def company_structure_contract() -> dict:
-    """A detached copy of the sole supported, exact company structure."""
-    return {"format_family": COMPANY_FORMAT, **deepcopy(packaged_schema("company"))}
+def company_structure_contract(*, version: int | None = None) -> dict:
+    """Return an exact current or explicitly selected archived contract."""
+    contract = company_schema(version)
+    return {"format_family": COMPANY_FORMAT, **deepcopy(contract)}
+
+
+def company_schema(version: int | None = None) -> dict:
+    if version is None or type(version) is int and version == 2:
+        return packaged_schema("company")
+    if type(version) is int and version == 1:
+        return previous_company_schema()
+    raise ContractError("unsupported_structure", "不支持这个公司数据库结构版本")
 
 
 @cache
 def module_schema(owner: str) -> ModuleSchema:
+    return module_contract(packaged_schema("company"), owner)
+
+
+def module_contract(contract: dict, owner: str) -> ModuleSchema:
     objects = tuple(
         SchemaObject(item["type"], item["name"], item["table"], item["sql"])
-        for item in packaged_schema("company")["objects"]
+        for item in contract["objects"]
         if item["owner"] == owner
     )
     if not objects:
         raise ValueError(f"Unknown storage owner: {owner}")
     raw = [dict(type=item.type, name=item.name, table=item.table, sql=item.sql) for item in objects]
     sql_fingerprint = digest(raw)
+    version = 2 if contract["version"] == 2 and owner in {"records", "storage"} else 1
+    parent = (
+        module_contract(previous_company_schema(), owner).contract_digest if version == 2 else None
+    )
     return ModuleSchema(
         owner,
-        1,
+        version,
         objects,
         sql_fingerprint,
         digest(
             {
                 "owner": owner,
-                "version": 1,
+                "version": version,
                 "sql_fingerprint": sql_fingerprint,
-                "parent_digest": None,
+                "parent_digest": parent,
             }
         ),
+        parent,
     )
+
+
+@cache
+def previous_company_schema() -> dict:
+    value = json.loads(
+        files(__package__).joinpath("schema", "previous", "company-v1.json").read_text("utf-8")
+    )
+    if (
+        value["kind"] != "company"
+        or value["version"] != 1
+        or digest(value["objects"]) != value["fingerprint"]
+    ):
+        raise RuntimeError("Archived company structure contract is damaged")
+    if packaged_schema("company")["parent_fingerprint"] != value["fingerprint"]:
+        raise RuntimeError("Company structure parent does not match")
+    return value
 
 
 def install_structure(connection: sqlite3.Connection, kind: str) -> None:
@@ -80,8 +114,8 @@ def install_structure(connection: sqlite3.Connection, kind: str) -> None:
                 connection.execute(item["sql"])
 
 
-def verify_structure(connection: sqlite3.Connection, kind: str) -> None:
-    expected = packaged_schema(kind)
+def verify_structure(connection: sqlite3.Connection, kind: str, *, expected=None) -> None:
+    expected = packaged_schema(kind) if expected is None else expected
     owners = {
         item["name"]: item["owner"] for item in expected["objects"] if item["type"] == "table"
     }
@@ -94,6 +128,13 @@ def verify_structure(connection: sqlite3.Connection, kind: str) -> None:
     ]
     actual.sort(key=lambda item: (item["owner"] or "", item["type"], item["name"]))
     if actual != expected["objects"]:
+        if kind == "company" and expected["version"] == 2:
+            previous = previous_company_schema()
+            if actual == previous["objects"]:
+                verify_structure(connection, kind, expected=previous)
+                raise ContractError(
+                    "structure_upgrade_required", "公司数据库需要先完成明确的结构升级"
+                )
         raise ContractError("storage_corrupt", "数据库结构与本体系的结构合同不一致")
     table = "system_meta" if kind == "company" else "catalog_meta"
     row = connection.execute(f"SELECT * FROM {table} WHERE singleton=1").fetchone()
@@ -101,14 +142,18 @@ def verify_structure(connection: sqlite3.Connection, kind: str) -> None:
     if (
         row is None
         or row["format_family"] != family
-        or row["schema_version"] != 1
+        or row["schema_version"] != expected["version"]
         or row["structure_fingerprint"] != expected["fingerprint"]
     ):
         raise ContractError("storage_corrupt", "数据库格式或结构标识不一致")
     if kind == "company":
         expected_modules = []
         for owner in sorted({item["owner"] for item in expected["objects"]}):
-            contract = module_schema(owner)
+            contract = (
+                module_schema(owner)
+                if expected is packaged_schema("company")
+                else module_contract(expected, owner)
+            )
             expected_modules.append(
                 (
                     owner,

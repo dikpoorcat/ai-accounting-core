@@ -1,0 +1,203 @@
+{
+  "format": "company-note-design-cases/1",
+  "status": "planned",
+  "description": "仅为新增公司说明的预定义合成合同与行为预期，不是产品已通过的运行报告。",
+  "schema": "company-note.schema.json",
+  "valid": [
+    {
+      "name": "明确公司且无期间的读取",
+      "definition": "CompanyNoteQuery",
+      "value": {
+        "company_id": "00000000-0000-4000-8000-000000000101"
+      }
+    },
+    {
+      "name": "旧纯文本提交不需要格式字段",
+      "definition": "NoteChange",
+      "value": {
+        "scope": "company",
+        "expected_seq": 0,
+        "text": "原文中的 *、_、1. 和 <公司> 不改含义。\n第二行。",
+        "evidence_ids": [
+          "00000000-0000-4000-8000-000000000301"
+        ]
+      },
+      "schema": "core.schema.json"
+    },
+    {
+      "name": "明确格式的公司说明提交",
+      "definition": "NoteChange",
+      "value": {
+        "scope": "company",
+        "expected_seq": 1,
+        "text_format": "markdown",
+        "text": "# 业务背景\n\n这是合成公司的**日常安排**。\n\n## 工资安排\n\n- 工资按劳动所属月确认。\n- 实际发放以真实付款为准。\n\n1. 老板提供已知现实资料。\n2. AI继续核查和办理。\n\n> 这里记录当前安排，付款以实际业务为准。\n\n[公开资料示例](https://example.invalid/info)\n\n| 事项 | 说明 |\n| --- | --- |\n| 工资 | 次月安排发放 |",
+        "evidence_ids": [
+          "00000000-0000-4000-8000-000000000301"
+        ]
+      },
+      "schema": "core.schema.json"
+    },
+    {
+      "name": "没有凭证或月份但已有公司说明",
+      "definition": "CompanyNoteResponse",
+      "value": {
+        "company": {
+          "company_id": "00000000-0000-4000-8000-000000000101",
+          "database_id": "00000000-0000-4000-8000-000000000201",
+          "credit_code": "913100000000000001",
+          "name": "合成甲公司"
+        },
+        "description": {
+          "text_format": "markdown",
+          "text": "# 业务背景\n\n老板已说明的日常安排。"
+        }
+      }
+    },
+    {
+      "name": "公司存在但尚未填写说明",
+      "definition": "CompanyNoteResponse",
+      "value": {
+        "company": {
+          "company_id": "00000000-0000-4000-8000-000000000102",
+          "database_id": "00000000-0000-4000-8000-000000000202",
+          "credit_code": "913100000000000002",
+          "name": "合成乙公司"
+        },
+        "description": null
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "不能缺公司身份",
+      "definition": "CompanyNoteQuery",
+      "value": {}
+    },
+    {
+      "name": "不接受月份",
+      "definition": "CompanyNoteQuery",
+      "value": {
+        "company_id": "00000000-0000-4000-8000-000000000101",
+        "period": "2026-08"
+      }
+    },
+    {
+      "name": "不能用接口修改正文",
+      "definition": "CompanyNoteQuery",
+      "value": {
+        "company_id": "00000000-0000-4000-8000-000000000101",
+        "text": "不接受"
+      }
+    },
+    {
+      "name": "不能把HTML作为格式",
+      "definition": "CompanyNoteDescription",
+      "value": {
+        "text_format": "html",
+        "text": "<b>不接受</b>"
+      }
+    },
+    {
+      "name": "正文必须带明确格式",
+      "definition": "CompanyNoteDescription",
+      "value": {
+        "text": "不能猜格式"
+      }
+    },
+    {
+      "name": "有正文时不能是空字符串",
+      "definition": "CompanyNoteDescription",
+      "value": {
+        "text_format": "plain_text",
+        "text": ""
+      }
+    },
+    {
+      "name": "公司说明不接受月份依据",
+      "definition": "NoteChange",
+      "value": {
+        "scope": "company",
+        "expected_seq": 0,
+        "expected_basis_head": "不属于公司说明",
+        "text": "合成说明",
+        "evidence_ids": []
+      },
+      "schema": "core.schema.json"
+    }
+  ],
+  "checks": [
+    {
+      "id": "CN01",
+      "given": "合成甲公司已登记，但无业务、凭证或可选月份；另用有业务公司从已选历史月份及季度进入。",
+      "action": "从工具区打开公司说明，再返回原业务页，另核查期间切公司。",
+      "expect": "独立页读取所选公司说明；无月公司不生成月份，原五项导航保持；同公司临时阅读后原历史月份及季度不丢失，切公司按原规则选该公司有效期间或无期间。"
+    },
+    {
+      "id": "CN02",
+      "given": "原纯文本包含星号、下划线、数字点号、尖括号和换行。",
+      "action": "旧结构前向接续后读取；省略格式提交再以显式plain_text重试。",
+      "expect": "文字原样；说明seq、原摘要和NotesShard字节不因默认值表达而变化；账务结果保持。"
+    },
+    {
+      "id": "CN03",
+      "given": "seq=1的公司纯文本。",
+      "action": "用expected_seq=1提交明确Markdown，再原样重试；另以旧seq提交不同正文。",
+      "expect": "首次成为seq=2且仅更新说明和必要档案；相同重试仍seq=2；冲突提交拒绝并保持正确正文。"
+    },
+    {
+      "id": "CN04",
+      "given": "上述Markdown提交样例，另含斜体和代码块等未支持排版。",
+      "action": "老板打开文章，使用键盘和窄屏查看长文与表格。",
+      "expect": "标题、段落、加粗、有序/无序列表、引用及表格层次清楚，正常链接只采用受控href，未支持排版保留可读内容；正文可完整读，表格不撑宽整页，无编辑或批准按钮。"
+    },
+    {
+      "id": "CN05",
+      "given": "合成乙公司无说明；另有未知公司身份和一次读取故障。",
+      "action": "分别打开。",
+      "expect": "乙显示未填写；未知公司404；故障显示失败和重试；不把错误变成未填写。"
+    },
+    {
+      "id": "CN06",
+      "given": "A1请求延迟，用户切B再切A发起A2，随后按A2、B、A1次序返回。",
+      "action": "应用响应并离开页面。",
+      "expect": "只展示A2；切公司立即清除旧内容，旧B和A1均不能写回；离开取消请求。"
+    },
+    {
+      "id": "CN07",
+      "given": "同公司已经显示正文，手动刷新失败。",
+      "action": "观察提示并重试。",
+      "expect": "原文可保留但明确未取得新内容，成功后显示新正文；无自动轮询。"
+    },
+    {
+      "id": "CN08",
+      "given": "Markdown正文含<script>alert(1)</script>、<img src=x onerror=alert(1)>、[链接](javascript:alert(1))、![图片](https://example.invalid/image.png)及<table onclick=alert(1) style=position:fixed><tr><td>原文</td></tr></table>。",
+      "action": "打开和滚动说明，核对生成节点与属性。",
+      "expect": "脚本和事件不执行、危险链接不可点击、图片不发请求，可读文字及图片地址保留，不进行HTML插入；标签及属性只来自固定白名单，不整体转入任意attrs或style。"
+    },
+    {
+      "id": "CN09",
+      "given": "甲公司说明和原五页已可用，随后只修改公司说明或增加无关历史业务。",
+      "action": "刷新说明与五页，并检查实际调用范围。",
+      "expect": "说明仅读取当前公司和company说明，不扫描历史或读标准文件；更新不重算财务或失效无关月页；五页默认不请求说明正文。"
+    },
+    {
+      "id": "CN10",
+      "given": "甲公司有Markdown说明，乙公司有旧纯文本说明。",
+      "action": "分别导出标准文档、空库重建及当前结构ZIP准确恢复。",
+      "expect": "正文、格式、来源均保持；恢复保留公司/DB身份，重建使用新运行身份；没有第二份可编辑正文。"
+    },
+    {
+      "id": "CN11",
+      "given": "本体系增加格式列前的公司库及其已验证ZIP。",
+      "action": "准确恢复旧结构，再前向接续；另在接续中注入失败。",
+      "expect": "成功保留身份、账务及旧说明摘要且明确默认格式；失败完整回滚原结构和数据，不换库、不靠重放替代。"
+    },
+    {
+      "id": "CN12",
+      "given": "月份经营说明已有正文和依据头。",
+      "action": "照常读取及更新月份说明，并尝试月份Markdown。",
+      "expect": "原纯文本UI、失效规则和摘要不变；月份Markdown以invalid_input拒绝，不转成老板补资料。"
+    }
+  ]
+}

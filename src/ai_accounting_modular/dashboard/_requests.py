@@ -41,6 +41,12 @@ def company(value):
         raise ContractError("invalid_command", "公司身份格式无效。") from error
 
 
+def company_note(values):
+    selected = parameters(values, {"company_id"}, ("company_id",))
+    validate_contract("company-note.schema.json", "CompanyNoteQuery", selected)
+    return selected
+
+
 def quarterly(values):
     values = parameters(
         values, {"company_id", "year", "quarter", "preparation"}, ("company_id", "year", "quarter")

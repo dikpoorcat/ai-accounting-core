@@ -1,5 +1,5 @@
 {
-  "fingerprint": "c4522b0be4ea7850c6a39007b449b0880a50c9016cce0d0d8882b4116f72a603",
+  "fingerprint": "6bb88d19653b79f14793e67b4b7b3def6233047c52498e770fd6461249ea3b92",
   "kind": "company",
   "objects": [
     {
@@ -957,7 +957,7 @@
     {
       "name": "company_note",
       "owner": "records",
-      "sql": "CREATE TABLE company_note (\nscope_key TEXT PRIMARY KEY,\n note_text TEXT,\n basis_head TEXT,\n state TEXT NOT NULL CHECK(state IN ('current','needs_refresh')),\n seq INTEGER NOT NULL CHECK(seq>=1),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n CHECK((state='current' AND note_text IS NOT NULL AND length(note_text)>0) OR (state='needs_refresh' AND note_text IS NULL))\n) STRICT",
+      "sql": "CREATE TABLE company_note (\nscope_key TEXT PRIMARY KEY,\n note_text TEXT,\n basis_head TEXT,\n state TEXT NOT NULL CHECK(state IN ('current','needs_refresh')),\n seq INTEGER NOT NULL CHECK(seq>=1),\n latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),\n latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64), note_format TEXT NOT NULL DEFAULT 'plain_text'\n  CHECK(note_format IN ('plain_text', 'markdown'))\n  CHECK(note_format='plain_text' OR scope_key='company'),\n CHECK((state='current' AND note_text IS NOT NULL AND length(note_text)>0) OR (state='needs_refresh' AND note_text IS NULL))\n) STRICT",
       "table": "company_note",
       "type": "table"
     },
@@ -1027,10 +1027,11 @@
     {
       "name": "system_meta",
       "owner": "storage",
-      "sql": "CREATE TABLE system_meta (\nsingleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=1),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
+      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=2),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
       "table": "system_meta",
       "type": "table"
     }
   ],
-  "version": 1
+  "parent_fingerprint": "c4522b0be4ea7850c6a39007b449b0880a50c9016cce0d0d8882b4116f72a603",
+  "version": 2
 }

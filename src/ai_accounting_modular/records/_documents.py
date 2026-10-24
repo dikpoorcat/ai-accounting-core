@@ -17,7 +17,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from ._changes import _missing_sources, note_current
+from ._changes import _missing_sources, document_note, note_current
 from ._sources import atomic_write, controlled_path, issue_source_ids
 from ._types import DocumentSnapshot, PreparedDocuments, ShardTarget
 
@@ -176,7 +176,7 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
     for scope, row in note_rows.items():
         current_note = note_current(row, repository, note_uses[scope])
         if current_note["state"] == "current":
-            note = {key: current_note[key] for key in ("scope", "text", "evidence_ids")}
+            note = document_note(current_note)
             notes.append(note)
             used_sources.update(note["evidence_ids"])
     if "notes" in selected:

@@ -121,6 +121,8 @@ class Reading:
         raise ContractError("unsupported_business", "此看板页面尚未接入新读取模型。")
 
     def detail(self, detail_key, scope, query):
+        if detail_key == "company_note":
+            return _context.company_note(self, scope, query)
         if detail_key == "close_review":
             from ._close_review import detail
 

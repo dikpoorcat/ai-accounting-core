@@ -37,7 +37,7 @@ def create_database(metadata: CompanyMetadata):
 
     def seed(connection):
         connection.execute(
-            "INSERT INTO system_meta VALUES(1,?,?,1,?,0)",
+            "INSERT INTO system_meta VALUES(1,?,?,2,?,0)",
             (COMPANY_FORMAT, metadata.database_id, packaged_schema("company")["fingerprint"]),
         )
         connection.execute(
@@ -55,7 +55,13 @@ def create_database(metadata: CompanyMetadata):
             contract = module_schema(owner)
             connection.execute(
                 "INSERT INTO module_schema VALUES(?,?,?,?,?)",
-                (owner, contract.version, contract.contract_digest, None, contract.sql_fingerprint),
+                (
+                    owner,
+                    contract.version,
+                    contract.contract_digest,
+                    contract.parent_digest,
+                    contract.sql_fingerprint,
+                ),
             )
 
     with _candidate(metadata.database_path) as candidate:

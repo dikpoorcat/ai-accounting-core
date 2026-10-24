@@ -1,6 +1,7 @@
 """Capture in a read snapshot, then publish only the still-wanted component."""
 
 from copy import deepcopy
+from dataclasses import replace
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
@@ -208,6 +209,14 @@ def _mark_target(reader, repository, state, selection, impact, unit):
 def mark_targets(reader, impact, unit):
     if not isinstance(impact, ReadingImpact):
         raise ContractError("invalid_input", "读取通知须提供明确的影响范围。")
+    # Company prose has a direct snapshot reader and no monthly consumers.
+    # Exclude it before touching targets, including unfinished first captures.
+    if "company" in impact.note_scopes:
+        impact = replace(
+            impact, note_scopes=tuple(key for key in impact.note_scopes if key != "company")
+        )
+    if not impact:
+        return ()
     repository = unit.repository("reading")
     touched, financial = [], []
     for state in repository.scopes():

@@ -2,7 +2,7 @@
 
 # 看板适配与读取交付
 
-本模块把新体系的公开业务结果交给现有 Vue 看板。经营简报、资金、员工、资产、财务报表五页的主要内容、布局、样式、筛选、展开和刷新用法保持；不以后台重构为由重做页面。合作项目投资只接通记账结果，不新增页面、板块或项目管理展示。顾问来源查阅按第11节提供独立只读入口，不加入原五页的默认读取链。
+本模块把新体系的公开业务结果交给现有 Vue 看板。经营简报、资金、员工、资产、财务报表五页的主要内容、布局、样式、筛选、展开和刷新用法保持；不以后台重构为由重做页面。合作项目投资只接通记账结果，不新增页面、板块或项目管理展示。顾问来源查阅按第11节提供独立只读入口，不加入原五页的默认读取链。[公司说明](11-company-note.md)通过工具区进入独立公司级阅读页，不套月页或来源审查协议。
 
 职责依照 [整体架构](02-architecture.md)：`reading` 通过公开入口批量取得并整理业务结果，`dashboard` 适配 HTTP 格式、范围和错误；领域与账务模块不依赖页面字段、前端类型或看板缓存。共同类型以 [接口合同](03-contracts.md) 为准，本文规定现有页面的外部兼容要求。
 
@@ -13,6 +13,8 @@
 [dashboard-response-v2.json](contracts/dashboard-response-v2.json) 是前后端共同采用的响应真源，保留现有字段和页面用法。资产取得及启用时间允许真实月份或日期，未明确实际日就保留月份；长期资产净值未知时为null，老板待办没有明确所属月时同样保持null，由页面说明待核对。按 UTF-8、LF 行尾计算的 SHA-256 为 `ade6c0319c137511110464762a7a4ac0702c5a7e9ec017f7a79d89380009db2d`；Windows 检出的 CRLF 先规范为 LF。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
 
 本文下表列出的响应以该合同为字段、必填项、枚举、空值、金额格式及 `additionalProperties` 的唯一真源。它不替代新数据库合同，也不随旧内核模型自动覆盖。前端生成器从此真源生成 `dashboardResponseSchemas.json`、TypeScript类型和Ajv校验，后端生成包内同份合同；不维护两套当前响应定义。允许资产月份没有改变原字段、内层版本常量或对已有日期的接受范围。确需变更时发布新合同并同步消费者。不能凭字段名称另写近似响应，不能为通过校验伪造零值或旧处理状态。合同还包含其他旧命令，保存它们不表示新体系实现这些入口，尤其不恢复旧审批、重放和审计机制。
+
+公司说明使用独立[CompanyNoteQuery/Response合同](contracts/company-note.schema.json)，不改变下表的五页响应或版本。工具区入口、公司范围、只读状态、Markdown呈现及接续预期集中在[公司说明设计](11-company-note.md)，与本文共同约束前端。
 
 | HTTP GET 端点 | 响应 Schema 键 | 内层 schema_version |
 | --- | --- | --- |
@@ -61,6 +63,7 @@
 | `quarterly-report` | 只接受 `company_id`、`year:1..9999整数`、`quarter:1..4整数`、可选 preparation；季度为 `YYYY-Qn`，不能套用月页的 period、section或cursor。 |
 | `business-status` | 必须提供 `subject_id:string`；`settlement_view=historical/current` 默认 current；可选 `section=settlement_events`、limit/cursor/expected_version；`detail_scope_key:string` 与 `voucher_version_id:string` 成对，选择精确业务分项。真实无凭证成员的后者为空字符串，仍须由精确范围核验，不退回整项业务。 |
 | `close-review` | 必须提供 `company_id`、`period`；首读可省略 `preview_digest:64位小写十六进制字符串`，提供时核验相同内容。此字段是第 7 节的只读核对标识，没有批准效力。 |
+| `company-note` | 仅接受company_id，不接受本章共同参数中的period、分页、版本或准备参数；响应为独立CompanyNoteResponse。 |
 
 资金页面第一次未指定账户时请求 first，并消费 `selected_movement_account`；随后用明确账户身份分页。账户筛选先作用于完整月份，再分页。员工精确定位越过未指定的默认关系筛选，显式筛选仍取交集；资产身份与显式类型筛选同样取交集。同名人员和账户不合并。employee_filter筛选员工和劳务人员名单，不按当前关系抹去已定位人员的历史labor_sources。
 
@@ -76,6 +79,7 @@ HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.pu
 | `brief-group/close-review` | `detail("brief_group"/"close_review", MonthScope, query)`；必须提供明确月份，query仅含本节列明的定位、筛选或核对头。 |
 | `business-status` | `detail("business_status", LedgerScope, query)`；period_from=period_to为指定月份，view=as_posted，query含明确事项及本节列明的分项范围。 |
 | 报表生成、状态、下载 | `export_report(scope, head, request_id)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)`；head由已取得的预览标识和epochs共同校验。 |
+| `company-note` | `detail("company_note", ContextScope{company_id}, {})`；公开records当前company说明与公司元数据，不依赖期间、财务投影或标准文件。 |
 
 `expected_version` 转成同范围的 expected_head；业务进展首读不套用父页面版本，续页沿进展自身返回版本；`preview_digest` 转成对应只读检查或报表计划头。业务进展中的 historical/current 只选择清偿的查询截止，不改变主月采用口径；同次响应需要当前后续信息时，在同一个 `ReadContext` 中明确读取两个视图。跨模块读取共用该上下文及只读事务，不能由每个提供者另开连接。没有指定月时先从context确定范围，再查询，不把缺省期当作当前自然月。
 
