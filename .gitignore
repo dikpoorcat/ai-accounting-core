@@ -30,3 +30,4 @@ docs/formal-replay-ledger.md
 /tmp
 frontend/.bank-preview*
 docs/kernel-refactor-stages/09-performance-history.zip
+*.log
