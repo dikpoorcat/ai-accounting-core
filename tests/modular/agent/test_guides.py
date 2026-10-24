@@ -123,7 +123,7 @@ def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_s
     assert "后阶段专属资料" in stages["1"] and "第8项正式整月核对" in stages["1"]
     assert "性质完全未知" in stages["1"] and "渠道或流水有缺口" in stages["1"]
     assert "第3项" in stages["2"] and "第4项" in stages["2"]
-    assert "尚未发生不自动成为本项缺口" in stages["2"]
+    assert "计提不必等待后来扣税、申报和付款" in stages["2"]
     assert "允许政策估算时不强求" in stages["3"]
     assert "不需代发表也不能漏掉必要核算" in stages["4"]
     assert "文档已完成" in stages["4"] and "文件不代表银行已付" in stages["4"]

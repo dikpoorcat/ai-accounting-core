@@ -59,7 +59,7 @@ def breakdown(entries):
 def net_settlements(events):
     values = asdict(RemunerationNetSettlement())
     for item in events:
-        if item.component != "net_pay":
+        if item.component != "net_pay" or item.tax_reclassification:
             continue
         use, movement = item.event.use, item.event.movement
         if use.component == "money":
@@ -135,8 +135,8 @@ def people(entries, positions, events, roster, *, known):
             PersonRemuneration(
                 person_id,
                 summary(own_entries, own_positions, own_events, known=known),
-                tuple(sorted({entry.effective["business_id"] for entry in payroll})),
-                tuple(sorted({entry.effective["business_id"] for entry in labor})),
+                tuple(sorted({entry.remuneration_id for entry in payroll})),
+                tuple(sorted({entry.remuneration_id for entry in labor})),
                 tuple(sorted({entry.business_period for entry in payroll})),
                 bool(payroll),
                 bool(labor),

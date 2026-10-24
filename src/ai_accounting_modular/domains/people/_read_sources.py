@@ -30,6 +30,31 @@ def remuneration_meaning(source):
     )
 
 
+def tax_payroll_basis(content):
+    """Locate the original payroll quantity and exact adoption cited by a tax target."""
+    values = content.target["values"]
+    identity = values["remuneration_id"]
+    quantities = [
+        item
+        for item in content.basis["adopted_quantities"]
+        if item["type"] == "remuneration"
+        and item["source"] == {"business_id": identity, "slot": "main"}
+    ]
+    sources = [
+        item
+        for item in content.basis["source_results"]
+        if item["business_id"] == identity and item["result_slot"] == "main"
+    ]
+    if len(quantities) != 1 or len(sources) != 1:
+        raise ContractError("storage_corrupt", "薪酬税款缺少唯一的原报酬采用依据。")
+    quantity = quantities[0]
+    if any(
+        quantity["values"][field] != values[field] for field in ("person_id", "remuneration_type")
+    ):
+        raise ContractError("storage_corrupt", "薪酬税款与原报酬人员或类别不符。")
+    return quantity, sources[0]
+
+
 def batches(values):
     values = tuple(values)
     for offset in range(0, len(values), 500):
@@ -86,6 +111,22 @@ class Contents:
             self.load(refs)
             self.selected.update((ref["business_id"], self.exact[ref["result_id"]]) for ref in refs)
             self.loaded.update(batch)
+
+    def load_sources(self, sources):
+        sources = tuple(sources)
+        for item in sources:
+            if item["result_id"] in self.exact and self.exact[item["result_id"]].source != item:
+                raise ContractError("storage_corrupt", "薪酬采用来源与精确正文不一致。")
+        missing = {
+            item["result_id"]: item for item in sources if item["result_id"] not in self.exact
+        }
+        for batch in batches(missing.values()):
+            found = self.ledger.get_adopted_sources(batch, self.read)
+            if len(found) != len(batch):
+                raise ContractError("storage_corrupt", "薪酬采用来源缺少精确定位。")
+            self.load(item.reference for item in found)
+            if any(self.exact[item["result_id"]].source != item for item in batch):
+                raise ContractError("storage_corrupt", "薪酬采用来源与精确正文不一致。")
 
     def remuneration(self, content):
         if content.target["kind"] != "people.remuneration":
@@ -160,6 +201,13 @@ class Contents:
         selected = {
             item.effective["result_id"]: self.exact[item.effective["result_id"]] for item in entries
         }
+        parents = [
+            item.parent_remuneration_source
+            for item in entries
+            if item.parent_remuneration_source is not None
+        ]
+        self.load_sources(parents)
+        selected.update((item["result_id"], self.exact[item["result_id"]]) for item in parents)
         refs = [
             item.parent_source if item.recovery else item.position.definition.reference
             for item in positions
@@ -171,6 +219,16 @@ class Contents:
         for ref in refs:
             content = self.selected[ref["business_id"]]
             selected[content.reference["result_id"]] = content
+        tax_parents = [
+            source
+            for content in selected.values()
+            if content.target["kind"] == "people.remuneration_tax"
+            for source in content.basis["source_results"]
+            if source["business_id"] == content.target["values"]["remuneration_id"]
+            and source["result_slot"] == "main"
+        ]
+        self.load_sources(tax_parents)
+        selected.update((item["result_id"], self.exact[item["result_id"]]) for item in tax_parents)
         result = [
             source
             for content in selected.values()
@@ -210,6 +268,19 @@ class Contents:
                 remuneration.remuneration_type,
                 ref["slot"],
                 remuneration.project_id,
+                ref,
+            )
+        if content.target["kind"] == "people.remuneration_tax":
+            values = content.target["values"]
+            quantity, _ = tax_payroll_basis(content)
+            if ref["slot"] != "tax":
+                raise ContractError("storage_corrupt", "薪酬税款引用缺少正式报酬组成。")
+            return _Source(
+                values["person_id"],
+                quantity["period"],
+                values["remuneration_type"],
+                "tax",
+                quantity.get("project_id"),
                 ref,
             )
         if content.target["kind"] == "opening.package":

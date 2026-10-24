@@ -25,6 +25,7 @@ from ._business_labels import (
     business_matter,
     obligation_fields,
     origin_fields,
+    remuneration_identity,
 )
 
 _CONTRIBUTIONS = {
@@ -118,19 +119,14 @@ def _meaning(content, definition, opening):
     definition = obligation_fields(definition)
     label = business_label(content, definition)
     party = definition.party_id
-    target, _ = origin_fields(content)
-    kind = target["kind"]
     component, person, payroll_period, labor = None, None, None, False
     metadata = opening.get(content.reference["result_id"], {}).get(ref_key(definition.reference))
     category = _category(content, definition, metadata)
-    if kind == "people.remuneration":
-        values = target["values"]
-        person, component, payroll_period = (
-            values["person_id"],
-            definition.reference["slot"],
-            content.reference["business_period"],
-        )
-        labor = values["remuneration_type"] == "labor"
+    payroll = remuneration_identity(content)
+    if payroll is not None:
+        person, payroll_period, remuneration_type = payroll
+        component = definition.reference["slot"]
+        labor = remuneration_type == "labor"
     elif isinstance(metadata, OpeningPayrollReference):
         person, component, payroll_period = (
             metadata.person_id,
@@ -141,9 +137,9 @@ def _meaning(content, definition, opening):
             label = BusinessLabel("opening_net_pay", "期初未付净薪")
     if person is not None:
         description = "应付工资净额"
-        if kind == "people.remuneration":
+        if payroll is not None:
             description = {"wage": "应付工资净额", "bonus": "应付奖金净额", "labor": "劳务报酬"}[
-                target["values"]["remuneration_type"]
+                remuneration_type
             ]
         description = {**_CONTRIBUTIONS, "tax": "代扣个人所得税"}.get(component, description)
         return Meaning(

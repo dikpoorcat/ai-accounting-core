@@ -112,14 +112,22 @@ def query_adopted(
     targets=False,
     business_ids=(),
     result_slots=(),
+    source_refs=(),
     economic_from=None,
 ):
     selected = scope_selection(scope, read)
     kinds = bounded(kinds, "text")
     business_ids, result_slots = bounded(business_ids), bounded(result_slots, "Slot")
+    source_refs = bounded(source_refs, "BusinessRef")
     repo = read.repository("ledger")
     table, where, args = repo.read_result_scope(
-        scope, kinds, selected, flow=flow, business_ids=business_ids, result_slots=result_slots
+        scope,
+        kinds,
+        selected,
+        flow=flow,
+        business_ids=business_ids,
+        result_slots=result_slots,
+        source_refs=source_refs,
     )
     if economic_from is not None:
         where += " AND r.business_period>=?"
@@ -135,6 +143,7 @@ def query_adopted(
             "kinds": kinds,
             "business_ids": business_ids,
             "result_slots": result_slots,
+            "source_refs": source_refs,
             "economic_from": economic_from,
         },
         selected,

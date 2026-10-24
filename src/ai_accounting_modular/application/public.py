@@ -113,6 +113,27 @@ class Application:
     def find_businesses(self, query, read_context):
         return _queries.find(self, query, read_context)
 
+    def accounting_remuneration(self, request):
+        validate_contract("core.schema.json", "RemunerationRequest", request)
+        view = request.get("view", "current")
+        owner = self.registry.owner("people.remuneration")
+        with self.storage.read_unit(request["company_id"]) as read:
+            return validate_contract(
+                "core.schema.json",
+                "RemunerationPositionResult",
+                {
+                    "company_id": read.company_id,
+                    "database_id": read.database_id,
+                    "period": request["period"],
+                    "view": view,
+                    "items": list(
+                        owner.remuneration_positions(
+                            request["business_ids"], request["period"], read, view=view
+                        )
+                    ),
+                },
+            )
+
     def get_businesses(self, query, read_context):
         return _queries.get(self, query, read_context)
 

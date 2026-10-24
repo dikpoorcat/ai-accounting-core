@@ -806,6 +806,54 @@
       }
     },
     {
+      "case_id": "B17N",
+      "kind": "people.remuneration",
+      "given": [
+        "独立样本：B14、B15、B16有效，同员工同月无其他工资；本次只确认工资和缴费，不声明后来扣税、申报或付款。"
+      ],
+      "when": {
+        "business_id": "d6fc9a8b-b21c-59ae-9783-d146ae845d27",
+        "kind": "people.remuneration",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "type": "wage",
+          "person_id": "31136407-8d14-51dd-a6bd-029b948b102b",
+          "gross_fen": "1000000",
+          "expense_area": "administration",
+          "employment_id": "6a2e9e3c-8c93-5854-949d-f160f8e187cb",
+          "contribution_policy_id": "9fd6eaff-4c87-5fa4-87e6-6a6791d82d32",
+          "contribution_basis": "actual_required",
+          "contribution_actual_id": "acd01693-a282-545d-ad87-5425084c64eb"
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "gross_fen": "1000000",
+          "cost_fen": "1250000",
+          "net_fen": "850000",
+          "tax_fen": "0",
+          "employee_social_fen": "100000",
+          "employee_housing_fen": "50000",
+          "employer_social_fen": "200000",
+          "employer_housing_fen": "50000",
+          "disbursement_target_fen": "850000",
+          "held_fen": "0",
+          "tax_state": "not_withheld_not_filed"
+        },
+        "obligation_slots": [
+          "net_pay",
+          "employee_social",
+          "employee_housing",
+          "employer_social",
+          "employer_housing"
+        ]
+      }
+    },
+    {
       "case_id": "B17B",
       "kind": "people.remuneration",
       "given": [],
@@ -2965,6 +3013,46 @@
         },
         "closed_month_correction_changes_accounting": false
       }
+    },
+    {
+      "case_id": "B17T",
+      "kind": "people.remuneration_tax",
+      "given": [
+        "独立样本：B14/B15/B16/B17已采用；二月才从这笔工资扣取500分个税，税期二月，有据来源明确，不是重做一月成本。"
+      ],
+      "when": {
+        "business_id": "53a3cfb4-cd92-4729-8136-a6a10129c691",
+        "kind": "people.remuneration_tax",
+        "period": "2026-02",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "remuneration_id": "d6fc9a8b-b21c-59ae-9783-d146ae845d27",
+          "tax_period": "2026-02",
+          "basis_type": "actual_withholding",
+          "components": [
+            {
+              "tax_fen": "500",
+              "source": {
+                "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07",
+                "location": "合成二月工资实际扣税行"
+              }
+            }
+          ]
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "initial_tax_fen": "0",
+          "target_tax_fen": "500",
+          "additional_tax_fen": "500"
+        },
+        "obligation_slots": [
+          "tax"
+        ]
+      }
     }
   ],
   "negative_cases": [
@@ -3103,13 +3191,18 @@
           "employment_id": "6a2e9e3c-8c93-5854-949d-f160f8e187cb",
           "contribution_policy_id": "9fd6eaff-4c87-5fa4-87e6-6a6791d82d32",
           "contribution_basis": "actual_required",
-          "contribution_actual_id": "acd01693-a282-545d-ad87-5425084c64eb"
+          "contribution_actual_id": "acd01693-a282-545d-ad87-5425084c64eb",
+          "tax_basis": {
+            "tax_period": "2026-01",
+            "tax_fen": "20000",
+            "basis_type": "final_statement"
+          }
         }
       },
       "then": {
         "schema": "invalid",
         "business": "rejected",
-        "reason": "工资缺必要税额依据"
+        "reason": "已经声明采用扣税额时，必须有可复用的来源；不要求尚未发生的税额。"
       }
     },
     {

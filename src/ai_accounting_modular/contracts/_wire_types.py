@@ -549,6 +549,7 @@ class CompanyContext(TypedDict):
     document_set_id: Digest | None
     note_basis_heads: list[NoteBasisHead]
     state: Literal['selected']
+    work_defaults: CompanyContextWorkDefaults
 
 class EmptyContext(TypedDict):
     contract: Literal['ai-accounting-modular/1']
@@ -582,6 +583,54 @@ class CashflowWeight(TypedDict):
     weight: PositiveFen
 
 type SourceId = Id
+
+class PayrollWorkDefaults(TypedDict):
+    accrual_period: Literal['service_month']
+    planned_payment_period: Literal['following_month']
+
+class RemunerationRequest(TypedDict):
+    company_id: Id
+    period: Month
+    business_ids: list[Id]
+    view: NotRequired[Literal['current', 'as_posted']]
+
+class RemunerationAmountValues(TypedDict):
+    gross_fen: NonNegativeFen
+    cost_fen: NonNegativeFen
+    net_fen: NonNegativeFen
+    tax_fen: NonNegativeFen
+    employee_social_fen: NonNegativeFen
+    employee_housing_fen: NonNegativeFen
+    employer_social_fen: NonNegativeFen
+    employer_housing_fen: NonNegativeFen
+    disbursement_target_fen: NonNegativeFen
+    held_fen: NonNegativeFen
+
+class RemunerationActivePosition(TypedDict):
+    business_id: Id
+    state: Literal['active']
+    person_id: Id
+    remuneration_type: Literal['wage', 'bonus', 'labor']
+    business_period: Month
+    remuneration: ResultSourceRef
+    tax_targets: list[ResultSourceRef]
+    amounts: RemunerationAmountValues
+    tax_state: Literal['not_withheld_not_filed', 'final_statement', 'actual_withholding', 'mixed']
+    remaining_fen: Fen
+    payable_fen: NonNegativeFen
+
+class RemunerationWithdrawnPosition(TypedDict):
+    business_id: Id
+    state: Literal['withdrawn']
+
+type RemunerationPositionItem = RemunerationActivePosition | RemunerationWithdrawnPosition
+
+class RemunerationPositionResult(TypedDict):
+    company_id: Id
+    database_id: Id
+    period: Month
+    view: Literal['current', 'as_posted']
+    items: list[RemunerationPositionItem]
 
 type SourceLocation = SourceLocator
 
@@ -806,7 +855,7 @@ class WageRemuneration(TypedDict):
     contribution_policy_id: NotRequired[Id]
     contribution_basis: NotRequired[Literal['policy_until_actual', 'actual_required']]
     contribution_actual_id: NotRequired[Id]
-    tax_basis: RemunerationTaxBasis
+    tax_basis: NotRequired[RemunerationTaxBasis]
     disbursement_basis: NotRequired[DisbursementBasis]
 
 class BonusRemuneration(TypedDict):
@@ -814,7 +863,7 @@ class BonusRemuneration(TypedDict):
     person_id: Id
     gross_fen: PositiveFen
     expense_area: Literal['administration', 'sales', 'service']
-    tax_basis: RemunerationTaxBasis
+    tax_basis: NotRequired[RemunerationTaxBasis]
 
 class LaborRemuneration(TypedDict):
     type: Literal['labor']
@@ -1664,7 +1713,7 @@ class FactReportsContinuation(TypedDict):
     evidence_ids: list[Id]
     data: ReportsContinuation
 
-type Fact = FactOperationsServiceSale | FactOperationsExpense | FactOperationsOtherIncome | FactOperationsAdvance | FactOperationsAdvanceFulfillment | FactOperationsSaleReturn | FactOperationsAdvanceRefund | FactOperationsExpenseRecovery | FactOperationsPassThrough | FactOperationsPassThroughReturn | FactOperationsDeposit | FactOperationsReimbursement | FactOperationsOverpayment | FactPeopleEmployment | FactPeopleRemuneration | FactPeopleContributionPolicy | FactPeopleContributionActual | FactAssetsProjectCost | FactAssetsProjectRelease | FactAssetsAcquisition | FactAssetsActivation | FactAssetsDisposal | FactFinancingOwnerFunding | FactFinancingLoanContract | FactFinancingLoanDrawdown | FactFinancingInterestPeriod | FactInvestmentMoneyFundPurchase | FactInvestmentMoneyFundRedemption | FactMoneyMovement | FactMoneyTransfer | FactMoneyBankStatement | FactMoneyReconciliation | FactMoneyReserveInternal | FactMoneyPlatformActivity | FactTaxesVatPolicy | FactTaxesSurtaxPolicy | FactTaxesUsedAssetVatPolicy | FactTaxesIncomeTaxPolicy | FactTaxesPrepaymentBasis | FactTaxesAssessment | FactTaxesTaxCredit | FactTaxesActualDeclaration | FactTaxesTaxPoint | FactOpeningPackage | FactReportsContinuation | CooperationFact | FactPeopleRelationship
+type Fact = FactOperationsServiceSale | FactOperationsExpense | FactOperationsOtherIncome | FactOperationsAdvance | FactOperationsAdvanceFulfillment | FactOperationsSaleReturn | FactOperationsAdvanceRefund | FactOperationsExpenseRecovery | FactOperationsPassThrough | FactOperationsPassThroughReturn | FactOperationsDeposit | FactOperationsReimbursement | FactOperationsOverpayment | FactPeopleEmployment | FactPeopleRemuneration | FactPeopleContributionPolicy | FactPeopleContributionActual | FactAssetsProjectCost | FactAssetsProjectRelease | FactAssetsAcquisition | FactAssetsActivation | FactAssetsDisposal | FactFinancingOwnerFunding | FactFinancingLoanContract | FactFinancingLoanDrawdown | FactFinancingInterestPeriod | FactInvestmentMoneyFundPurchase | FactInvestmentMoneyFundRedemption | FactMoneyMovement | FactMoneyTransfer | FactMoneyBankStatement | FactMoneyReconciliation | FactMoneyReserveInternal | FactMoneyPlatformActivity | FactTaxesVatPolicy | FactTaxesSurtaxPolicy | FactTaxesUsedAssetVatPolicy | FactTaxesIncomeTaxPolicy | FactTaxesPrepaymentBasis | FactTaxesAssessment | FactTaxesTaxCredit | FactTaxesActualDeclaration | FactTaxesTaxPoint | FactOpeningPackage | FactReportsContinuation | CooperationFact | FactPeopleRelationship | FactPeopleRemunerationTax
 
 class PartialBusinessRef(TypedDict):
     business_id: NotRequired[Id]
@@ -2755,7 +2804,7 @@ class PartialFactReportsContinuation(TypedDict):
     evidence_ids: NotRequired[list[Id]]
     data: NotRequired[PartialReportsContinuation]
 
-type PartialFact = PartialFactOperationsServiceSale | PartialFactOperationsExpense | PartialFactOperationsOtherIncome | PartialFactOperationsAdvance | PartialFactOperationsAdvanceFulfillment | PartialFactOperationsSaleReturn | PartialFactOperationsAdvanceRefund | PartialFactOperationsExpenseRecovery | PartialFactOperationsPassThrough | PartialFactOperationsPassThroughReturn | PartialFactOperationsDeposit | PartialFactOperationsReimbursement | PartialFactOperationsOverpayment | PartialFactPeopleEmployment | PartialFactPeopleRemuneration | PartialFactPeopleContributionPolicy | PartialFactPeopleContributionActual | PartialFactAssetsProjectCost | PartialFactAssetsProjectRelease | PartialFactAssetsAcquisition | PartialFactAssetsActivation | PartialFactAssetsDisposal | PartialFactFinancingOwnerFunding | PartialFactFinancingLoanContract | PartialFactFinancingLoanDrawdown | PartialFactFinancingInterestPeriod | PartialFactInvestmentMoneyFundPurchase | PartialFactInvestmentMoneyFundRedemption | PartialFactMoneyMovement | PartialFactMoneyTransfer | PartialFactMoneyBankStatement | PartialFactMoneyReconciliation | PartialFactMoneyReserveInternal | PartialFactMoneyPlatformActivity | PartialFactTaxesVatPolicy | PartialFactTaxesSurtaxPolicy | PartialFactTaxesUsedAssetVatPolicy | PartialFactTaxesIncomeTaxPolicy | PartialFactTaxesPrepaymentBasis | PartialFactTaxesAssessment | PartialFactTaxesTaxCredit | PartialFactTaxesActualDeclaration | PartialFactTaxesTaxPoint | PartialFactOpeningPackage | PartialFactReportsContinuation | CooperationPartialFact | PartialFactPeopleRelationship
+type PartialFact = PartialFactOperationsServiceSale | PartialFactOperationsExpense | PartialFactOperationsOtherIncome | PartialFactOperationsAdvance | PartialFactOperationsAdvanceFulfillment | PartialFactOperationsSaleReturn | PartialFactOperationsAdvanceRefund | PartialFactOperationsExpenseRecovery | PartialFactOperationsPassThrough | PartialFactOperationsPassThroughReturn | PartialFactOperationsDeposit | PartialFactOperationsReimbursement | PartialFactOperationsOverpayment | PartialFactPeopleEmployment | PartialFactPeopleRemuneration | PartialFactPeopleContributionPolicy | PartialFactPeopleContributionActual | PartialFactAssetsProjectCost | PartialFactAssetsProjectRelease | PartialFactAssetsAcquisition | PartialFactAssetsActivation | PartialFactAssetsDisposal | PartialFactFinancingOwnerFunding | PartialFactFinancingLoanContract | PartialFactFinancingLoanDrawdown | PartialFactFinancingInterestPeriod | PartialFactInvestmentMoneyFundPurchase | PartialFactInvestmentMoneyFundRedemption | PartialFactMoneyMovement | PartialFactMoneyTransfer | PartialFactMoneyBankStatement | PartialFactMoneyReconciliation | PartialFactMoneyReserveInternal | PartialFactMoneyPlatformActivity | PartialFactTaxesVatPolicy | PartialFactTaxesSurtaxPolicy | PartialFactTaxesUsedAssetVatPolicy | PartialFactTaxesIncomeTaxPolicy | PartialFactTaxesPrepaymentBasis | PartialFactTaxesAssessment | PartialFactTaxesTaxCredit | PartialFactTaxesActualDeclaration | PartialFactTaxesTaxPoint | PartialFactOpeningPackage | PartialFactReportsContinuation | CooperationPartialFact | PartialFactPeopleRelationship | PartialFactPeopleRemunerationTax
 
 type CashflowCategory = Literal['none', 'customer_receipts', 'other_operating_receipts', 'materials_services_payments', 'employee_payments', 'tax_payments', 'other_operating_payments', 'investment_recovery', 'investment_income', 'asset_disposal', 'investment_acquisition', 'asset_acquisition', 'loan_receipts', 'capital_receipts', 'loan_repayment', 'interest_payments', 'profit_distributions']
 
@@ -3090,11 +3139,11 @@ class TargetReportsContinuation(TypedDict):
 
 class WithdrawnTarget(TypedDict):
     kind: Literal['system.withdrawal']
-    business_kind: Literal['operations.service_sale', 'operations.expense', 'operations.other_income', 'operations.advance', 'operations.advance_fulfillment', 'operations.sale_return', 'operations.advance_refund', 'operations.expense_recovery', 'operations.pass_through', 'operations.pass_through_return', 'operations.deposit', 'operations.reimbursement', 'operations.overpayment', 'people.employment', 'people.remuneration', 'people.contribution_policy', 'people.contribution_actual', 'assets.project_cost', 'assets.project_release', 'assets.acquisition', 'assets.activation', 'assets.disposal', 'financing.owner_funding', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.interest_period', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.movement', 'money.transfer', 'money.bank_statement', 'money.reconciliation', 'money.reserve_internal', 'money.platform_activity', 'taxes.vat_policy', 'taxes.surtax_policy', 'taxes.used_asset_vat_policy', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.assessment', 'taxes.tax_credit', 'taxes.actual_declaration', 'taxes.tax_point', 'opening.package', 'reports.continuation', 'investment.cooperation_contract', 'investment.cooperation_funding', 'investment.cooperation_collection', 'investment.cooperation_payment', 'investment.cooperation_operator_transfer', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'assets.consumption', 'investment.cooperation_position']
+    business_kind: Literal['operations.service_sale', 'operations.expense', 'operations.other_income', 'operations.advance', 'operations.advance_fulfillment', 'operations.sale_return', 'operations.advance_refund', 'operations.expense_recovery', 'operations.pass_through', 'operations.pass_through_return', 'operations.deposit', 'operations.reimbursement', 'operations.overpayment', 'people.employment', 'people.remuneration', 'people.contribution_policy', 'people.contribution_actual', 'assets.project_cost', 'assets.project_release', 'assets.acquisition', 'assets.activation', 'assets.disposal', 'financing.owner_funding', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.interest_period', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.movement', 'money.transfer', 'money.bank_statement', 'money.reconciliation', 'money.reserve_internal', 'money.platform_activity', 'taxes.vat_policy', 'taxes.surtax_policy', 'taxes.used_asset_vat_policy', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.assessment', 'taxes.tax_credit', 'taxes.actual_declaration', 'taxes.tax_point', 'opening.package', 'reports.continuation', 'investment.cooperation_contract', 'investment.cooperation_funding', 'investment.cooperation_collection', 'investment.cooperation_payment', 'investment.cooperation_operator_transfer', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'assets.consumption', 'investment.cooperation_position', 'people.remuneration_tax']
     result_slot: Slot
     state: Literal['withdrawn']
 
-type ResultTarget = TargetOperationsServiceSale | TargetOperationsExpense | TargetOperationsExpenseRecovery | TargetOperationsOtherIncome | TargetOperationsAdvance | TargetOperationsAdvanceFulfillment | TargetOperationsSaleReturn | TargetOperationsAdvanceRefund | TargetOperationsPassThrough | TargetOperationsPassThroughReturn | TargetOperationsDeposit | TargetOperationsReimbursement | TargetOperationsOverpayment | TargetPeopleEmployment | TargetPeopleContributionPolicy | TargetTaxesVatPolicy | TargetTaxesSurtaxPolicy | TargetTaxesUsedAssetVatPolicy | TargetTaxesIncomeTaxPolicy | TargetPeopleContributionActual | TargetPeopleRemuneration | TargetAssetsProjectCost | TargetAssetsProjectRelease | TargetAssetsAcquisition | TargetAssetsActivation | TargetAssetsDisposal | TargetAssetsConsumption | TargetFinancingOwnerFunding | TargetFinancingLoanContract | TargetFinancingLoanDrawdown | TargetFinancingInterestPeriod | TargetInvestmentMoneyFundPurchase | TargetInvestmentMoneyFundRedemption | TargetMoneyMovement | TargetMoneyTransfer | TargetMoneyBankStatement | TargetMoneyPlatformActivity | TargetMoneyReserveInternal | TargetMoneyReconciliation | TargetTaxesPrepaymentBasis | TargetTaxesAssessment | TargetTaxesTaxCredit | TargetTaxesActualDeclaration | TargetTaxesTaxPoint | TargetOpeningPackage | TargetReportsContinuation | WithdrawnTarget | CooperationResultTarget | TargetOperationsTaxRelease | TargetTaxesIncomeTaxNetting
+type ResultTarget = TargetOperationsServiceSale | TargetOperationsExpense | TargetOperationsExpenseRecovery | TargetOperationsOtherIncome | TargetOperationsAdvance | TargetOperationsAdvanceFulfillment | TargetOperationsSaleReturn | TargetOperationsAdvanceRefund | TargetOperationsPassThrough | TargetOperationsPassThroughReturn | TargetOperationsDeposit | TargetOperationsReimbursement | TargetOperationsOverpayment | TargetPeopleEmployment | TargetPeopleContributionPolicy | TargetTaxesVatPolicy | TargetTaxesSurtaxPolicy | TargetTaxesUsedAssetVatPolicy | TargetTaxesIncomeTaxPolicy | TargetPeopleContributionActual | TargetPeopleRemuneration | TargetAssetsProjectCost | TargetAssetsProjectRelease | TargetAssetsAcquisition | TargetAssetsActivation | TargetAssetsDisposal | TargetAssetsConsumption | TargetFinancingOwnerFunding | TargetFinancingLoanContract | TargetFinancingLoanDrawdown | TargetFinancingInterestPeriod | TargetInvestmentMoneyFundPurchase | TargetInvestmentMoneyFundRedemption | TargetMoneyMovement | TargetMoneyTransfer | TargetMoneyBankStatement | TargetMoneyPlatformActivity | TargetMoneyReserveInternal | TargetMoneyReconciliation | TargetTaxesPrepaymentBasis | TargetTaxesAssessment | TargetTaxesTaxCredit | TargetTaxesActualDeclaration | TargetTaxesTaxPoint | TargetOpeningPackage | TargetReportsContinuation | WithdrawnTarget | CooperationResultTarget | TargetOperationsTaxRelease | TargetTaxesIncomeTaxNetting | TargetPeopleRemunerationTax
 
 class AdoptedObligationQuantity(TypedDict):
     type: Literal['obligation']
@@ -3193,7 +3242,7 @@ class AdoptedBalanceQuantity(TypedDict):
     balance_fen: Fen
     as_of_period: Month
 
-type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity | CooperationTradeQuantity
+type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity | CooperationTradeQuantity | AdoptedRemunerationQuantity
 
 class AdoptedPeopleContributionPolicy(TypedDict):
     policy_business_id: Id
@@ -3440,7 +3489,7 @@ class AccountingWageRemuneration(TypedDict):
     contribution_policy_id: NotRequired[Id]
     contribution_basis: NotRequired[Literal['policy_until_actual', 'actual_required']]
     contribution_actual_id: NotRequired[Id]
-    tax_basis: AccountingRemunerationTaxBasis
+    tax_basis: NotRequired[AccountingRemunerationTaxBasis]
     disbursement_basis: NotRequired[AccountingDisbursementBasis]
 
 class AccountingBonusRemuneration(TypedDict):
@@ -3448,7 +3497,7 @@ class AccountingBonusRemuneration(TypedDict):
     person_id: Id
     gross_fen: PositiveFen
     expense_area: Literal['administration', 'sales', 'service']
-    tax_basis: AccountingRemunerationTaxBasis
+    tax_basis: NotRequired[AccountingRemunerationTaxBasis]
 
 class AccountingLaborRemuneration(TypedDict):
     type: Literal['labor']
@@ -4427,7 +4476,7 @@ class WithdrawnBasis(TypedDict):
     explanation: str
     source_locations: list[SourceLocator]
 
-type AdoptedBasis = BasisOperationsServiceSale | BasisOperationsExpense | BasisOperationsOtherIncome | BasisOperationsAdvance | BasisOperationsAdvanceFulfillment | BasisOperationsSaleReturn | BasisOperationsAdvanceRefund | BasisOperationsExpenseRecovery | BasisOperationsPassThrough | BasisOperationsPassThroughReturn | BasisOperationsDeposit | BasisOperationsReimbursement | BasisOperationsOverpayment | BasisPeopleEmployment | BasisPeopleRemuneration | BasisPeopleContributionPolicy | BasisPeopleContributionActual | BasisAssetsProjectCost | BasisAssetsProjectRelease | BasisAssetsAcquisition | BasisAssetsActivation | BasisAssetsDisposal | BasisFinancingOwnerFunding | BasisFinancingLoanContract | BasisFinancingLoanDrawdown | BasisFinancingInterestPeriod | BasisInvestmentMoneyFundPurchase | BasisInvestmentMoneyFundRedemption | BasisMoneyMovement | BasisMoneyTransfer | BasisMoneyBankStatement | BasisMoneyReconciliation | BasisMoneyReserveInternal | BasisMoneyPlatformActivity | BasisTaxesVatPolicy | BasisTaxesSurtaxPolicy | BasisTaxesUsedAssetVatPolicy | BasisTaxesIncomeTaxPolicy | BasisTaxesPrepaymentBasis | BasisTaxesAssessment | BasisTaxesTaxCredit | BasisTaxesActualDeclaration | BasisTaxesTaxPoint | BasisOpeningPackage | BasisReportsContinuation | BasisAssetsConsumption | WithdrawnBasis | CooperationAdoptedBasis | BasisOperationsTaxRelease | BasisTaxesIncomeTaxNetting
+type AdoptedBasis = BasisOperationsServiceSale | BasisOperationsExpense | BasisOperationsOtherIncome | BasisOperationsAdvance | BasisOperationsAdvanceFulfillment | BasisOperationsSaleReturn | BasisOperationsAdvanceRefund | BasisOperationsExpenseRecovery | BasisOperationsPassThrough | BasisOperationsPassThroughReturn | BasisOperationsDeposit | BasisOperationsReimbursement | BasisOperationsOverpayment | BasisPeopleEmployment | BasisPeopleRemuneration | BasisPeopleContributionPolicy | BasisPeopleContributionActual | BasisAssetsProjectCost | BasisAssetsProjectRelease | BasisAssetsAcquisition | BasisAssetsActivation | BasisAssetsDisposal | BasisFinancingOwnerFunding | BasisFinancingLoanContract | BasisFinancingLoanDrawdown | BasisFinancingInterestPeriod | BasisInvestmentMoneyFundPurchase | BasisInvestmentMoneyFundRedemption | BasisMoneyMovement | BasisMoneyTransfer | BasisMoneyBankStatement | BasisMoneyReconciliation | BasisMoneyReserveInternal | BasisMoneyPlatformActivity | BasisTaxesVatPolicy | BasisTaxesSurtaxPolicy | BasisTaxesUsedAssetVatPolicy | BasisTaxesIncomeTaxPolicy | BasisTaxesPrepaymentBasis | BasisTaxesAssessment | BasisTaxesTaxCredit | BasisTaxesActualDeclaration | BasisTaxesTaxPoint | BasisOpeningPackage | BasisReportsContinuation | BasisAssetsConsumption | WithdrawnBasis | CooperationAdoptedBasis | BasisOperationsTaxRelease | BasisTaxesIncomeTaxNetting | BasisPeopleRemunerationTax
 
 class CalculationRuleRef(TypedDict):
     key: str
@@ -4936,7 +4985,7 @@ class CooperationAdoptedCooperationCashSource(TypedDict):
 
 type CooperationShare = Rate
 
-type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.relationship', 'people.remuneration', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
+type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.relationship', 'people.remuneration', 'people.remuneration_tax', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
 
 class AdoptedEmploymentQuantity(TypedDict):
     type: Literal['employment']
@@ -5112,6 +5161,70 @@ class PartialFactPeopleRelationship(TypedDict):
     period: NotRequired[Month]
     evidence_ids: NotRequired[list[Id]]
     data: NotRequired[PartialPeopleRelationship]
+
+type RemunerationTaxComponent = RemunerationTaxComponentVariant1 | PooledTaxSource
+
+class PeopleRemunerationTax(TypedDict):
+    remuneration_id: Id
+    tax_period: Month
+    basis_type: Literal['final_statement', 'actual_withholding']
+    components: list[RemunerationTaxComponent]
+
+type PartialRemunerationTaxComponent = PartialRemunerationTaxComponentVariant1 | PartialPooledTaxSource
+
+class PartialPeopleRemunerationTax(TypedDict):
+    remuneration_id: NotRequired[Id]
+    tax_period: NotRequired[Month]
+    basis_type: NotRequired[Literal['final_statement', 'actual_withholding']]
+    components: NotRequired[list[PartialRemunerationTaxComponent]]
+
+type AccountingRemunerationTaxComponent = AccountingRemunerationTaxComponentVariant1 | AccountingRemunerationTaxComponentVariant2
+
+class AccountingPeopleRemunerationTax(TypedDict):
+    remuneration_id: Id
+    tax_period: Month
+    basis_type: Literal['final_statement', 'actual_withholding']
+    components: list[AccountingRemunerationTaxComponent]
+
+class FactPeopleRemunerationTax(TypedDict):
+    business_id: Id
+    kind: Literal['people.remuneration_tax']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PeopleRemunerationTax
+
+class PartialFactPeopleRemunerationTax(TypedDict):
+    kind: Literal['people.remuneration_tax']
+    business_id: NotRequired[Id]
+    period: NotRequired[Month]
+    effective_on: NotRequired[Date]
+    evidence_ids: NotRequired[list[Id]]
+    data: NotRequired[PartialPeopleRemunerationTax]
+
+class TargetPeopleRemunerationTax(TypedDict):
+    kind: Literal['people.remuneration_tax']
+    result_slot: Slot
+    values: TargetPeopleRemunerationTaxValues
+
+class BasisPeopleRemunerationTax(TypedDict):
+    kind: Literal['people.remuneration_tax']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingPeopleRemunerationTax
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class AdoptedRemunerationQuantity(TypedDict):
+    type: Literal['remuneration']
+    source: BusinessRef
+    period: Month
+    values: TargetPeopleRemunerationValues
+    expense_area: NotRequired[Literal['administration', 'sales', 'service']]
+    project_id: NotRequired[Id]
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
@@ -9869,6 +9982,9 @@ class IsolatedTargetResultChecksItem(TypedDict):
     state: Literal['pass', 'fail']
     message: str
 
+class CompanyContextWorkDefaults(TypedDict):
+    payroll: PayrollWorkDefaults
+
 class EmptyContextAvailableCompaniesItem(TypedDict):
     company_id: Id
     credit_code: str
@@ -10370,6 +10486,32 @@ class BasisTaxesIncomeTaxNettingInput(TypedDict):
     tax_period_end: Month
     stage: Literal['provision', 'annual']
     cutoff: BasisTaxesIncomeTaxNettingInputCutoff
+
+class RemunerationTaxComponentVariant1(TypedDict):
+    tax_fen: NonNegativeFen
+    source: SourceLocation
+
+class PartialRemunerationTaxComponentVariant1(TypedDict):
+    tax_fen: NotRequired[NonNegativeFen]
+    source: NotRequired[SourceLocation]
+
+class AccountingRemunerationTaxComponentVariant1(TypedDict):
+    tax_fen: NonNegativeFen
+
+class AccountingRemunerationTaxComponentVariant2(TypedDict):
+    declaration_id: Id
+    row_id: Id
+    tax_fen: NonNegativeFen
+
+class TargetPeopleRemunerationTaxValues(TypedDict):
+    remuneration_id: Id
+    person_id: Id
+    remuneration_type: Literal['wage', 'bonus', 'labor']
+    tax_period: Month
+    initial_tax_fen: NonNegativeFen
+    target_tax_fen: NonNegativeFen
+    additional_tax_fen: NonNegativeFen
+    basis_type: Literal['final_statement', 'actual_withholding']
 
 class BalanceSheet1(TypedDict):
     name: Literal['货币资金']
@@ -11186,6 +11328,13 @@ __all__ = [
     'ErrorResponse',
     'CashflowWeight',
     'SourceId',
+    'PayrollWorkDefaults',
+    'RemunerationRequest',
+    'RemunerationAmountValues',
+    'RemunerationActivePosition',
+    'RemunerationWithdrawnPosition',
+    'RemunerationPositionItem',
+    'RemunerationPositionResult',
     'SourceLocation',
     'AmountRange',
     'CostUse',
@@ -11836,6 +11985,17 @@ __all__ = [
     'PartialPeopleRelationship',
     'FactPeopleRelationship',
     'PartialFactPeopleRelationship',
+    'RemunerationTaxComponent',
+    'PeopleRemunerationTax',
+    'PartialRemunerationTaxComponent',
+    'PartialPeopleRemunerationTax',
+    'AccountingRemunerationTaxComponent',
+    'AccountingPeopleRemunerationTax',
+    'FactPeopleRemunerationTax',
+    'PartialFactPeopleRemunerationTax',
+    'TargetPeopleRemunerationTax',
+    'BasisPeopleRemunerationTax',
+    'AdoptedRemunerationQuantity',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

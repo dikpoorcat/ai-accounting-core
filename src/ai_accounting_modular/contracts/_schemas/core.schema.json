@@ -5275,6 +5275,19 @@
         },
         "state": {
           "const": "selected"
+        },
+        "work_defaults": {
+          "type": "object",
+          "description": "内核提供的日常工作默认。老板已明确的实际安排或公司说明优先，不重复询问是否接受默认；不解析说明生成正式核算事实。",
+          "properties": {
+            "payroll": {
+              "$ref": "#/$defs/PayrollWorkDefaults"
+            }
+          },
+          "required": [
+            "payroll"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -5291,7 +5304,8 @@
         "document_state",
         "document_set_id",
         "note_basis_heads",
-        "state"
+        "state",
+        "work_defaults"
       ],
       "additionalProperties": false
     },
@@ -5489,6 +5503,234 @@
     },
     "SourceId": {
       "$ref": "#/$defs/Id"
+    },
+    "PayrollWorkDefaults": {
+      "type": "object",
+      "properties": {
+        "accrual_period": {
+          "const": "service_month",
+          "description": "工资按提供劳动的所属月计提，不因次月办理或付款而改记。"
+        },
+        "planned_payment_period": {
+          "const": "following_month",
+          "description": "默认安排在工资所属月的次月发放；只是工作计划，不证明实际付款，也不能决定个税期间或税额。"
+        }
+      },
+      "required": [
+        "accrual_period",
+        "planned_payment_period"
+      ],
+      "additionalProperties": false
+    },
+    "RemunerationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 500,
+          "uniqueItems": true
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "current",
+            "as_posted"
+          ],
+          "default": "current"
+        }
+      },
+      "required": [
+        "company_id",
+        "period",
+        "business_ids"
+      ]
+    },
+    "RemunerationAmountValues": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gross_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "cost_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "net_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "tax_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "employee_social_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "employee_housing_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "employer_social_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "employer_housing_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "disbursement_target_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        },
+        "held_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        }
+      },
+      "required": [
+        "gross_fen",
+        "cost_fen",
+        "net_fen",
+        "tax_fen",
+        "employee_social_fen",
+        "employee_housing_fen",
+        "employer_social_fen",
+        "employer_housing_fen",
+        "disbursement_target_fen",
+        "held_fen"
+      ]
+    },
+    "RemunerationActivePosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "const": "active"
+        },
+        "person_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "remuneration_type": {
+          "type": "string",
+          "enum": [
+            "wage",
+            "bonus",
+            "labor"
+          ]
+        },
+        "business_period": {
+          "$ref": "#/$defs/Month"
+        },
+        "remuneration": {
+          "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+        },
+        "tax_targets": {
+          "type": "array",
+          "items": {
+            "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+          }
+        },
+        "amounts": {
+          "$ref": "#/$defs/RemunerationAmountValues"
+        },
+        "tax_state": {
+          "type": "string",
+          "enum": [
+            "not_withheld_not_filed",
+            "final_statement",
+            "actual_withholding",
+            "mixed"
+          ]
+        },
+        "remaining_fen": {
+          "$ref": "#/$defs/Fen"
+        },
+        "payable_fen": {
+          "$ref": "#/$defs/NonNegativeFen"
+        }
+      },
+      "required": [
+        "business_id",
+        "state",
+        "person_id",
+        "remuneration_type",
+        "business_period",
+        "remuneration",
+        "tax_targets",
+        "amounts",
+        "tax_state",
+        "remaining_fen",
+        "payable_fen"
+      ]
+    },
+    "RemunerationWithdrawnPosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "const": "withdrawn"
+        }
+      },
+      "required": [
+        "business_id",
+        "state"
+      ]
+    },
+    "RemunerationPositionItem": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RemunerationActivePosition"
+        },
+        {
+          "$ref": "#/$defs/RemunerationWithdrawnPosition"
+        }
+      ]
+    },
+    "RemunerationPositionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "current",
+            "as_posted"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RemunerationPositionItem"
+          },
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "period",
+        "view",
+        "items"
+      ]
     }
   }
 }

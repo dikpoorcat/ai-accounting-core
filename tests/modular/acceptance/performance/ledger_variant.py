@@ -62,7 +62,15 @@ class AggregateJoinLedgerRepository(LedgerRepository):
         ]
 
     def read_result_scope(
-        self, scope, kinds, selection, *, flow=False, business_ids=(), result_slots=()
+        self,
+        scope,
+        kinds,
+        selection,
+        *,
+        flow=False,
+        business_ids=(),
+        result_slots=(),
+        source_refs=(),
     ):
         if flow and selection.view == "as_posted":
             return super().read_result_scope(
@@ -72,6 +80,7 @@ class AggregateJoinLedgerRepository(LedgerRepository):
                 flow=flow,
                 business_ids=business_ids,
                 result_slots=result_slots,
+                source_refs=source_refs,
             )
         table, selected_args = _selected_table(selection.as_of, business_ids)
         clauses, args = ["r.business_period<=?"], [*selected_args, scope["period_to"]]
@@ -81,6 +90,14 @@ class AggregateJoinLedgerRepository(LedgerRepository):
         _in(business_kind(), kinds, clauses, args)
         _in("r.business_id", business_ids, clauses, args)
         _in("r.result_slot", result_slots, clauses, args)
+        if source_refs:
+            clauses.append(
+                "r.result_id IN (SELECT b.result_id FROM json_each(?) wanted "
+                "JOIN result_basis_ref b ON b.producer_business_id="
+                "json_extract(wanted.value,'$.business_id') "
+                "AND b.producer_result_slot=json_extract(wanted.value,'$.slot'))"
+            )
+            args.append(canonical_json(list(source_refs)))
         return table, " AND ".join(clauses), tuple(args)
 
     def result_references(self, business_ids, *, as_of=None):

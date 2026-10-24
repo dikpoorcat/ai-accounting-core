@@ -22,11 +22,13 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 from ._common import problem
 from ._contributions import actual, check_actual, check_policy, employment, policy
 from ._read_remuneration import remuneration_activity
+from ._read_taxes import remuneration_positions as read_remuneration_positions
 from ._read_types import (
     PersonRemuneration,
     RemunerationActivity,
     RemunerationAmounts,
     RemunerationBreakdown,
+    RemunerationComposition,
     RemunerationEntry,
     RemunerationNetSettlement,
     RemunerationPosition,
@@ -43,6 +45,9 @@ from ._relationships import (
     project_relationship,
 )
 from ._remuneration import remuneration
+from ._remuneration_tax import KIND as TAX_KIND
+from ._remuneration_tax import references as tax_references
+from ._remuneration_tax import remuneration_tax, use_dependency
 from ._repository import PeopleRepository
 
 _CALCULATORS = {
@@ -50,6 +55,7 @@ _CALCULATORS = {
     "people.contribution_policy": policy,
     "people.contribution_actual": actual,
     "people.remuneration": remuneration,
+    TAX_KIND: remuneration_tax,
 }
 _KINDS = (*_CALCULATORS, "people.relationship")
 
@@ -61,6 +67,7 @@ __all__ = [
     "RemunerationActivity",
     "RemunerationAmounts",
     "RemunerationBreakdown",
+    "RemunerationComposition",
     "RemunerationEntry",
     "RemunerationNetSettlement",
     "RemunerationPosition",
@@ -111,6 +118,8 @@ def _role_issues(fact, context):
 
 
 def _references(fact):
+    if fact["kind"] == TAX_KIND:
+        return tax_references(fact)
     if fact["kind"] != "people.remuneration":
         return []
     data, refs = fact["data"], []
@@ -138,6 +147,8 @@ def _natural_key(fact):
         return f"people:relationship:{data['person_id']}"
     if kind == "people.remuneration" and data["type"] == "wage":
         return f"people:wage:{data['person_id']}:{fact['period']}"
+    if kind == TAX_KIND:
+        return f"people:remuneration_tax:{data['remuneration_id']}:{data['tax_period']}"
     if kind == "people.contribution_actual":
         return f"people:contribution_actual:{data['employee_id']}:{fact['period']}"
     if kind == "people.employment":
@@ -167,6 +178,7 @@ def _direct_dependencies(fact):
             _direct_edge(fact, producer, mode, relation)
             for producer, mode, relation in _references(fact)
         ),
+        *([use_dependency(fact)] if fact["kind"] == TAX_KIND else []),
     ]
 
 
@@ -192,6 +204,13 @@ class People:
         self, scope: LedgerScope, read_context: ReadContext
     ) -> RemunerationActivity:
         return remuneration_activity(self._ledger, scope, read_context)
+
+    def remuneration_positions(
+        self, business_ids, period, read_context: ReadContext, *, view="current"
+    ):
+        return read_remuneration_positions(
+            self._ledger, business_ids, period, read_context, view=view
+        )
 
     def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         edges = []

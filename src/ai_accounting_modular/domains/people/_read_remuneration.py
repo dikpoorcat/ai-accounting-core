@@ -19,6 +19,7 @@ from ._read_sources import (
     outstanding_basis,
     remuneration_meaning,
 )
+from ._read_taxes import TAX_KIND, compositions, tax_entry
 from ._read_totals import people, summary
 from ._read_types import (
     RemunerationActivity,
@@ -28,7 +29,7 @@ from ._read_types import (
     RemunerationSettlement,
 )
 
-_KINDS = ("people.remuneration", "opening.package")
+_KINDS = ("people.remuneration", "people.remuneration_tax", "opening.package")
 _UNPAID_CATEGORIES = ("net_pay", "social", "housing", "withholding")
 
 
@@ -76,13 +77,26 @@ def _entry(adopted, source, sign):
 
 def _flow(ledger, scope, read, contents):
     rows = _all(
-        lambda page: ledger.query_adopted_values(scope, ("people.remuneration",), page, read)
+        lambda page: ledger.query_adopted_values(
+            scope, ("people.remuneration", TAX_KIND), page, read
+        )
     )
     contents.load(
         ref for row in rows for ref in (row.reference, row.baseline_reference) if ref is not None
     )
     entries = []
     for row in rows:
+        if row.business_kind == TAX_KIND:
+            if row.baseline_target == row.target:
+                continue
+            for reference, sign in ((row.baseline_reference, -1), (row.reference, 1)):
+                if reference is not None:
+                    content = contents.exact[reference["result_id"]]
+                    if content.target["kind"] != TAX_KIND:
+                        continue
+                    entry = tax_entry(row.reference, content, sign)
+                    entries.append(entry)
+            continue
         previous = (
             contents.remuneration(contents.exact[row.baseline_reference["result_id"]])
             if row.baseline_reference is not None
@@ -146,6 +160,7 @@ def _events(ledger, month, read, selection, contents, unpaid_claims):
     parents = _recovery_parents(ledger, month, read, selection, contents, events, unpaid_claims)
     refs = [event.use.value["source"] for event in events]
     contents.select(ref["business_id"] for ref in refs)
+    contents.load_sources(event.use.source for event in events if event.use.component == "transfer")
     result = []
     for event, ref in zip(events, refs, strict=True):
         info = contents.source(ref)
@@ -163,6 +178,8 @@ def _events(ledger, month, read, selection, contents, unpaid_claims):
                     event,
                     recovery,
                     info.reference if recovery else None,
+                    event.use.component == "transfer"
+                    and contents.exact[event.use.source["result_id"]].target["kind"] == TAX_KIND,
                 )
             )
     return result, parents
@@ -243,6 +260,14 @@ def remuneration_activity(ledger, scope, read):
     persons = people(entries, positions, events, roster, known=known)
     totals = summary(entries, positions, events, known=known)
     sources = contents.activity_sources(entries, positions, events)
+    composed = compositions(ledger, contents, sources, month, read, selection)
+    exact_sources = {item.reference["result_id"]: item for item in sources}
+    for item in composed:
+        exact_sources.setdefault(
+            item.remuneration["result_id"],
+            contents.remuneration(contents.exact[item.remuneration["result_id"]]),
+        )
+    sources = tuple(exact_sources.values())
     consumed = {source.reference["business_id"] for source in sources}
     consumed.update(contents.roster_business_ids)
     consumed.update(item.position.definition.reference["business_id"] for item in positions)
@@ -254,6 +279,7 @@ def remuneration_activity(ledger, scope, read):
             item.event.use.value["source"]["business_id"],
         )
     )
+    consumed.update(source["business_id"] for item in composed for source in item.tax_targets)
     payload = {
         "company": read.company_id,
         "database": read.database_id,
@@ -264,6 +290,7 @@ def remuneration_activity(ledger, scope, read):
         "positions": [asdict(item) for item in positions],
         "settlements": [asdict(item) for item in events],
         "sources": [asdict(item) for item in sources],
+        "compositions": [asdict(item) for item in composed],
         "roster": [asdict(item) for item in roster],
         "issues": list(issues),
     }
@@ -279,6 +306,7 @@ def remuneration_activity(ledger, scope, read):
         tuple(positions),
         tuple(events),
         sources,
+        composed,
         roster,
         issues,
         ReadInputs(

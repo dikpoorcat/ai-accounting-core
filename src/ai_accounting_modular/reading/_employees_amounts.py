@@ -39,7 +39,11 @@ def money(amounts):
 def settlements(events):
     direct, other = [], []
     for item in events:
-        if item.component != "net_pay" or item.remuneration_type == "labor":
+        if (
+            item.component != "net_pay"
+            or item.remuneration_type == "labor"
+            or item.tax_reclassification
+        ):
             continue
         use = item.event.use
         amount = parse_fen(use.value["amount_fen"])

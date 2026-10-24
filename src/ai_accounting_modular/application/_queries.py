@@ -92,6 +92,12 @@ def context(application, request, read_context=None):
             "issues": [item for scope in issues for item in scope["issues"]],
             "issue_scopes": issues,
             "supported_kinds": list(application.registry.supported_kinds),
+            "work_defaults": {
+                "payroll": {
+                    "accrual_period": "service_month",
+                    "planned_payment_period": "following_month",
+                }
+            },
             "document_state": status["state"],
             "document_set_id": status["set_id"],
             "note_basis_heads": [{"scope": scope, "head": head} for scope, head in heads.items()],

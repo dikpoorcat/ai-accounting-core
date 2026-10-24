@@ -121,9 +121,6 @@ def _payroll(fact, context):
             source = remuneration["data"]
             if source["person_id"] != row["person_id"] or source["type"] != row["income_category"]:
                 reject("实际申报分配的人及收入类别必须与报酬一致。", "invalid_input")
-            tax_basis = source.get("tax_basis")
-            if tax_basis and tax_basis["tax_period"] != row["tax_period"]:
-                reject("报酬扣税所属期与实际申报行不一致。", "invalid_input")
             if amount(allocation["tax_fen"]) > amount(source["gross_fen"]):
                 reject("分配个税不能超过该笔报酬毛额。", "invalid_input")
 

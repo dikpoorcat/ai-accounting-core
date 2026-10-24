@@ -11,7 +11,9 @@ _WAGE_ACCOUNTS = {"administration": "560201", "sales": "560101", "service": "540
 _LABOR_ACCOUNTS = {"administration": "560204", "sales": "560104", "service": "540104"}
 
 
-def declaration_allocation(fact, context, reference, *, field, tax_period):
+def read_declaration_allocation(
+    fact, context, reference, *, field, tax_period, remuneration_id, person_id, remuneration_type
+):
     declaration = context.get_fact(reference["declaration_id"])
     if declaration is None:
         missing(fact, field, "所引用的实际个税申报资料尚不存在。")
@@ -26,10 +28,9 @@ def declaration_allocation(fact, context, reference, *, field, tax_period):
     if not selected:
         missing(fact, field, "引用的实际个税申报行尚不存在。")
     row = selected[0]
-    remuneration = fact["data"]
     if (
-        row["person_id"] != remuneration["person_id"]
-        or row["income_category"] != remuneration["type"]
+        row["person_id"] != person_id
+        or row["income_category"] != remuneration_type
         or row["tax_period"] != tax_period
         or data["tax_period"] != tax_period
     ):
@@ -41,12 +42,23 @@ def declaration_allocation(fact, context, reference, *, field, tax_period):
         row["declared_tax_fen"]
     ):
         reject("实际申报行分配合计必须等于该行税额。")
-    own = next(
-        (item for item in allocations if item["remuneration_id"] == fact["business_id"]), None
-    )
+    own = next((item for item in allocations if item["remuneration_id"] == remuneration_id), None)
     if own is None:
         missing(fact, field, "申报行没有分配给当前报酬的明确税额。")
     return parse_fen(own["tax_fen"]), (data["source"], row["source"])
+
+
+def declaration_allocation(fact, context, reference, *, field, tax_period):
+    return read_declaration_allocation(
+        fact,
+        context,
+        reference,
+        field=field,
+        tax_period=tax_period,
+        remuneration_id=fact["business_id"],
+        person_id=fact["data"]["person_id"],
+        remuneration_type=fact["data"]["type"],
+    )
 
 
 def _accounting_input(data):

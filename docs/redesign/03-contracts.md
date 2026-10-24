@@ -63,7 +63,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 
 `changes=committed` 表明本单有效内容已保存，`accounting=saved` 表明其中正式核算确有提交；仅存资料/待办或完全幂等的单可 accounting=unchanged。`documents=ready` 表明对应最终文档已持久发布；保存内容与归档都满足才 completion=complete，归档未完为 saved_documents_pending。读取可以 preparing，不阻止这项完整办结。缺项、冲突或提交失败时不返回虚假的成功业务。内部错误不自动生成老板待办。
 
-`fact_issues` 每项含 `code, business_id?, field, meaning, message, allowed_precision, reusable_sources, blocking_scope`。field 使用实际 JSON Pointer；指出会改变核算的缺项、允许精度和可复用的来源身份。AI 先复用资料，再追问真正缺失的现实信息；程序不输出“让老板确认错误码”一类指令。
+`fact_issues` 每项含 `code, business_id?, field, meaning, message, allowed_precision, reusable_sources, blocking_scope`。field 使用实际 JSON Pointer；说明字段含义、允许精度、影响范围及可复用来源。它是程序交给AI处理的问题，不是老板问卷：输入、引用、程序错误及真正的现实缺项都可能出现。即使返回 `needs_information`，AI也先按[工作指南](08-ai-work-and-materials.md#不让老板承担程序协调)自行解答和定向查证；已有来源足够就补全提交，只有当前已交办工作仍缺必要现实事实才问老板。不增加另一套提问许可字段、检查流程或问答记录。
 
 月份说明依据头由 accounting_context.note_basis_heads 提供，即使该月还没有说明也可取得。它只覆盖该月相关正式业务及核算选择，不包含说明自身、文件任务或读取生成时间。AI 读取该头及对应业务结果后写说明；提交时比较事务最终将采用的依据头，过期或同单改变了依据则冲突，不把基于旧数字的文字绑定到新账。需要先记业务再解释时，先办理并读取实际结果，随后保存说明即可。自动失效同样推进说明 seq 并清掉旧正文/来源边；公司现实背景没有金额依据头，不随普通账务提交失效。
 
@@ -76,9 +76,10 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | 入口 | 输入 | 返回及作用 |
 | --- | --- | --- |
 | `accounting_schema` | SchemaRequest：可选 kinds、contract | SchemaResult：默认仅合同及支持目录，指定 kinds 才返回对应输入 Schema 的自包含依赖闭包，不返回旧接口或内部 PostingPlan。未知 kind 拒绝，不偷偷省略。 |
-| `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head。省略范围默认公司说明和当前开放月；不全库加载档案。 |
+| `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head，并给出 work_defaults.payroll 的通用工资安排。省略范围默认公司说明和当前开放月；不全库加载档案。 |
 | `accounting_objects` | ObjectsRequest：get 指定 IDs；find 指定 kind、可选 name_contains、limit/cursor | CurrentObject 含 seq/digest 和完整当前档案；检索名称只供选择，不自动绑定同名人。 |
 | `accounting_get` | company_id、1–500 business_ids；可选 result_id+generation、include=facts/results/sources | 当前事实、序号、结果槽及其必要来源；成对指定 result_id/generation 精确查询正式保留结果，开放旧代已替换则 conflict。不得声称能读取已经删除的开放期旧正文。 |
+| `accounting_remuneration` | company_id、period、1–500个明确报酬business_ids；view可选current/as_posted，缺省current | 仅查指定报酬截至该月的完整组成、原工资及后续税目标精确来源、正式未付额和当前可付额；不加载整月人员或其他历史工资。正式撤去结果返回withdrawn；不存在、错误类型、该月尚无结果或开放误记已撤去且不保留正式结果时明确报错，不静默漏人或伪装有效零工资。当前身份仍可用accounting_get查阅。 |
 | `accounting_find` | BusinessQuery：company_id、family、period_from/to、可选 object_id/status/kind、limit=1–500、cursor | BusinessFindResult：当前明确身份、kind/period/seq/state、摘要标签、完整数量和同范围 cursor；不作姓名模糊自动绑定。撤去身份只按最后归属月、种类及身份检索，不保存旧正文或旧对象关系。object_id只匹配当前有效关系，与status=withdrawn同时提供时明确拒绝。 |
 | `accounting_sources` | SourcesRequest：import/get/find/inspect/discard；company_id；来源描述或来源 ID；有界分页；discard 必须明确1–500个不重复source_ids | SourcesCommandResult：import/get/find/inspect返回SourcesResult，discard返回SourceDiscardResult。真实原件/老板有效补充的当前索引与定位；import核对公司根、文件类型/大小/摘要，discard只退出无当前或正式采用引用的指定无用来源，不任意读删主机文件。 |
 | `accounting_documents` | DocumentsRequest：company_id、action=status/finish/export；可选 scopes | DocumentsResult：集合标识、待完成范围和失败；ready 必含可供离线读取的 manifest_path 完整定位。finish 按当前事实接续；export 返回已发布清单定位，不新增归档任务或重记账。 |
@@ -93,7 +94,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 
 discard 不改账务和已有来源正文。SourceDiscardResult 固定包含company_id、discarded_source_ids、missing_source_ids和file_cleanup:{state,issues}；issues每项只有code、message。state=complete表示本批清理已完成，pending表示登记已退出但文件清理尚待程序接续，不能当作全部办结；原source_ids可重复提交，已退出的身份列入missing_source_ids，程序仍接续待清理文件。资料整理和退出选择见[资料如何进入系统](08-ai-work-and-materials.md#资料如何进入系统)。
 
-ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
+ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。work_defaults 是内核通用办理默认，不是公司的实际业务事实或税额依据；老板明确的安排和公司说明优先，实际付款仍由真实资金事实承接。字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
 
 同源 HTTP 页面只有只读业务能力及报表文件生成/下载，不提供业务修改或审批。会话保护属于本机入口安全：沿用单老板身份与原登录体验，不新增角色授权管理；专业顾问通过只读页面查看。AI 的业务入口由本机 MCP/CLI 接入程序，只接受上述类型化命令，不接收 SQL、脚本或自由分录；来源读取只用登记身份和受控公司相对路径，离线恢复/重建仅接受显式选定包及经过独立路径核验的新目标。
 
@@ -163,7 +164,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `query_business_settlements(query, page, read, selection=...)` | 必须有source_refs、consumer_business_ids或movement_ids中的至少一种已知身份；这些身份及期间界定完整计数和版本范围，components/source_business_kinds再在范围内筛选。复用同一实际清偿查询，无关业务变化不使本范围游标过期；需要发现身份及全公司统计时使用上一项宽查询。 |
 | `query_voucher_directory(scope, kinds, page, read, business_ids=..., roles=...)` | 按正式采用月份及凭证号提供窄目录，包含精确结果引用、凭证身份、摘要、角色及冲正关联。current 同样保留正式入账历史，不按当前目标丢掉必要原凭证。`get_vouchers(locators, read)` 只批量读取指定页的完整分录，定位含 voucher_id/result_id/generation。 |
 | `query_adopted_values(scope, kinds, page, read, business_ids=...)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；可按业务身份缩小读取范围，版本和游标绑定完整筛选。current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
-| `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。供人员名单等提取正式类型和身份；不是按采用月展开的发生额。 |
+| `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=(), source_refs=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。source_refs按至多500个公开业务／结果槽，沿已有正式依据引用索引筛选消费者，覆盖无凭证零结果及冻结历史，不用当前关系代替正式采用。供人员名单和相关后续结果取数；不是按采用月展开的发生额。 |
 | `get_adopted_sources(sources, read)`、`account_names(codes)` | 前者按最多500个精确ResultSourceRef核对身份、代次及内容摘要，只返回正式目录头；可定位消费者实际采用的较早冻结来源，不用当前头替代。后者无需数据库，返回受控科目的唯一中文名称，不由看板另抄科目表。 |
 | `period_closure(period, read)` | 只读取指定月份的关账状态、实际覆盖关账月、冻结范围和头摘要，不读取整套三表；完整冻结报告另由财务报告入口核验和提供。 |
 | `get_effective_voucher_directory(refs, read)` | 按最多500个精确ResultRef定位完整目标实际采用的凭证头；无新增凭证的正式采用沿必要基线继承，撤去或无替代冲正停止继承。每项返回实际凭证所属ResultRef及凭证头，或明确null；不取历史Basis、分录或凭证增量。冷生成可只存引用，展开实际页时再读取完整凭证。 |
@@ -203,7 +204,9 @@ base 遵守 FinancialProjectionReader：提供 header_json 和按输入顺序返
 
 `people.relationships(person_ids, period, read)`一次读取最多500个明确人员的当前正确关系时间线和月内成员状态。没有关系事实时返回未知；每项含可空业务身份、版本、保持月或日精度的关系段、月末状态、确定与可能状态、员工及劳务成员、来源和具体精度问题。relationship_start 只标明确确认的关系起点，不把首次记录或恢复上班自动当入职。不附事件修订版本，不借缴费参数推断在职，也不由关系资料重新计算工资。
 
-`people.remuneration_activity(scope, read)`一次返回完整月度工资、奖金、劳务和资本化劳务，含正式发生额、月末义务、真实清偿及必要来源。闭期更正旧负项和新正项各用自己的依据；仅补同额证明不再造薪酬活动，等额改变费用或项目归属仍保留。工资及劳务累计未付缺少必要期初时分别返回null及实际问题，本月已知计提和付款照常返回。超付追偿单独保留，不重复清偿原工资。
+`people.remuneration_activity(scope, read)`一次返回完整月度工资、奖金、劳务和资本化劳务，含正式发生额、月末义务、真实清偿及必要来源。后来税款组成的发生额单独表达，只含税与员工应付的变化，不能多算一份工资或实际付给员工的金额。sources保持精确原采用值，compositions按查询月经济截止返回当前有关报酬的完整组成及原工资、后续税目标的精确引用，不把合成值伪装成原凭证。current和as_posted都不纳入查询月以后才发生的扣税。闭期更正旧负项和新正项各用自己的依据；仅补同额证明不再造薪酬活动，等额改变费用或项目归属仍保留。工资及劳务累计未付缺少必要期初时分别返回null及实际问题，本月已知计提和付款照常返回。超付追偿单独保留，不重复清偿原工资。
+
+`people.remuneration_positions(business_ids, period, read, *, view='current')`提供指定报酬的窄查询，共用上述组成规则，再按同一截止取得正式未付和当前可付额，不构建整月活动或人员名册。它返回严格RemunerationPositionItem；应用的accounting_remuneration只转交结果和范围，不重算金额。明确一笔工资的正式未付不以全公司期初齐全为前提；仍不能把这笔的已知金额冒充全公司累计余额。
 
 roster按截至所选月的正式Target保留人员和员工／劳务类别，即使本月没有活动、过去工资已付清也不漏人；通用person档案不自动成为员工。sources只含本月发生、未付或本月清偿实际引用的精确薪酬来源，不加载全部历史Basis。期初模块统一核对精确正式正文及成员目录：`opening_payroll_references`解释本人、收款人、工资月及组成，不从收款人反猜员工，也不凭期初欠款补造税前工资；`opening_obligation_references`解释普通往来的原业务说明及税费原税月，借款成员分别解释合同、出借人及实际非零的本金／利息资源。所有入口返回真实公开资源引用，不猜造复合成员槽。
 

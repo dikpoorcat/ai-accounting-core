@@ -16,6 +16,7 @@ from ._business_labels import (
     business_label,
     business_matter,
     origin_fields,
+    remuneration_identity,
     settlement_label,
 )
 
@@ -79,6 +80,8 @@ def business_parties(content, cache):
     match kind:
         case "people.remuneration":
             return (data["person_id"],)
+        case "people.remuneration_tax":
+            return (target["values"]["person_id"],)
         case "operations.service_sale" | "operations.sale_return":
             return (data["customer_id"],)
         case "operations.expense":
@@ -194,12 +197,10 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
         recipient = payment_party
     if allocation.get("recipient_id", recipient) != recipient:
         raise ContractError("storage_corrupt", "实际分配对象与正式收付对象不一致。")
-    if kind == "people.remuneration":
-        person, payroll, component = (
-            producer.target["values"]["person_id"],
-            producer.basis["period"],
-            slot,
-        )
+    payroll_identity = remuneration_identity(producer)
+    if payroll_identity is not None:
+        person, payroll, _ = payroll_identity
+        component = slot
         if slot in _COMPONENTS:
             label = BusinessLabel(*_COMPONENTS[slot])
     elif kind == "opening.package":

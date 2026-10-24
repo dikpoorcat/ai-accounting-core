@@ -1,5 +1,7 @@
 """Selected target pages expose roster facts without loading historical bases."""
 
+from uuid import uuid4
+
 import pytest
 from test_adoption import BUSINESS, COMPANY, adopt_declared, expense, withdrawal
 from test_adoption import store as store
@@ -72,8 +74,86 @@ def test_target_cursor_is_not_a_directory_cursor_and_scope_version_is_checked(st
                 scope(), (), PageQuery(1, directory.next_cursor, directory.version), read
             )
         assert error.value.code == "snapshot_changed"
+
         with pytest.raises(ContractError) as error:
             ledger.query_adopted_targets(
                 scope() | {"expected_head": "0" * 64}, (), PageQuery(), read
             )
         assert error.value.code == "snapshot_changed"
+
+
+def test_target_source_filter_selects_only_actual_formal_consumers_and_binds_cursor(store):
+    ledger = create_ledger()
+    consumers = [str(uuid4()), str(uuid4())]
+    with store.write_unit(COMPANY) as unit:
+        adopt_declared(ledger, [expense()], unit)
+        source = ledger.get_result_source(BUSINESS, "main", unit)
+        for identity in consumers:
+            unit.repository("application").business(identity)
+            linked = expense("123", business_id=identity)
+            linked["plans"][0]["basis"]["source_results"] = [source]
+            adopt_declared(ledger, [linked], unit)
+    ref = {"business_id": BUSINESS, "slot": "main"}
+    with store.read_unit(COMPANY) as read:
+        first = ledger.query_adopted_targets(
+            scope(), ("operations.expense",), PageQuery(1), read, source_refs=(ref,)
+        )
+        assert first.total_count == 2 and first.next_cursor
+        last = ledger.query_adopted_targets(
+            scope(),
+            ("operations.expense",),
+            PageQuery(1, first.next_cursor, first.version),
+            read,
+            source_refs=(ref,),
+        )
+        assert {item.reference["business_id"] for item in (*first.items, *last.items)} == set(
+            consumers
+        )
+        assert last.next_cursor is None
+        assert (
+            ledger.query_adopted_targets(
+                scope(), (), PageQuery(), read, source_refs=({**ref, "slot": "another"},)
+            ).total_count
+            == 0
+        )
+        with pytest.raises(ContractError) as error:
+            ledger.query_adopted_targets(
+                scope(),
+                ("operations.expense",),
+                PageQuery(1, first.next_cursor, first.version),
+                read,
+            )
+        assert error.value.code == "snapshot_changed"
+        with pytest.raises(ContractError) as error:
+            ledger.query_adopted_targets(scope(), (), PageQuery(), read, source_refs=(ref, ref))
+        assert error.value.code == "invalid_input"
+
+
+def test_target_source_filter_keeps_frozen_basis_after_current_consumer_withdrawal(store):
+    ledger = create_ledger()
+    consumer = str(uuid4())
+    with store.write_unit(COMPANY) as unit:
+        adopt_declared(ledger, [expense()], unit)
+        source = ledger.get_result_source(BUSINESS, "main", unit)
+        unit.repository("application").business(consumer)
+        linked = expense("123", business_id=consumer)
+        linked["plans"][0]["basis"]["source_results"] = [source]
+        adopt_declared(ledger, [linked], unit)
+        unit.repository("ledger").freeze_heads("2026-01")
+    with store.write_unit(COMPANY) as unit:
+        baseline = ledger.get_result_source(consumer, "main", unit)
+        withdrawn = withdrawal(baseline)
+        for item in (*withdrawn["businesses"], *withdrawn["plans"], *withdrawn["publications"]):
+            item["business_id"] = consumer
+        adopt_declared(ledger, [withdrawn], unit, correction_period="2026-02")
+    with store.read_unit(COMPANY) as read:
+        selected = ledger.query_adopted_targets(
+            scope(),
+            ("operations.expense",),
+            PageQuery(),
+            read,
+            source_refs=({"business_id": BUSINESS, "slot": "main"},),
+        )
+    assert selected.total_count == 1
+    assert selected.items[0].reference["business_id"] == consumer
+    assert selected.items[0].target["values"]["amount_fen"] == "123"

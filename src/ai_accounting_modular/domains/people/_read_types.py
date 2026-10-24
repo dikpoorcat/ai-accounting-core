@@ -69,6 +69,21 @@ class RemunerationEntry:
     tax_state: str
     tax_period: str | None
     amounts: RemunerationAmounts
+    parent_remuneration_source: ResultSourceRef | None = None
+
+    @property
+    def remuneration_id(self) -> str:
+        return (self.parent_remuneration_source or self.effective)["business_id"]
+
+
+@dataclass(frozen=True)
+class RemunerationComposition:
+    """A cutoff composition, distinct from every exact adopted source it combines."""
+
+    remuneration: ResultSourceRef
+    tax_targets: tuple[ResultSourceRef, ...]
+    amounts: RemunerationAmounts
+    tax_state: str
 
 
 @dataclass(frozen=True)
@@ -146,6 +161,7 @@ class RemunerationSettlement:
     event: SettlementEvent
     recovery: bool = False
     parent_source: BusinessRef | None = None
+    tax_reclassification: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +174,7 @@ class RemunerationActivity:
     positions: tuple[RemunerationPosition, ...]
     settlements: tuple[RemunerationSettlement, ...]
     sources: tuple[RemunerationSource, ...]
+    compositions: tuple[RemunerationComposition, ...]
     roster: tuple[RemunerationRosterPerson, ...]
     issues: tuple[FactIssue, ...]
     inputs: ReadInputs

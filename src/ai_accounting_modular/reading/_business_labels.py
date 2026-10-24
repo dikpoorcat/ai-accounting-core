@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from ai_accounting_modular.contracts.public import ResourceDefinition
+from ai_accounting_modular.contracts.public import ContractError, ResourceDefinition
 from ai_accounting_modular.ledger.public import (
     AdoptedContent,
     AdoptedOriginProjection,
@@ -54,6 +54,23 @@ def origin_fields(content):
     if isinstance(content, AdoptedOriginProjection):
         return content.target_fields, content.basis_fields
     return content.target, content.basis
+
+
+def remuneration_identity(content):
+    """The original payroll identity is retained by a later, independently adopted tax."""
+    target, basis = origin_fields(content)
+    if target["kind"] not in {"people.remuneration", "people.remuneration_tax"}:
+        return None
+    values = target["values"]
+    period = basis["period"]
+    if target["kind"] == "people.remuneration_tax":
+        quantities = [
+            item for item in basis["adopted_quantities"] if item["type"] == "remuneration"
+        ]
+        if len(quantities) != 1:
+            raise ContractError("storage_corrupt", "薪酬税款缺少唯一的原报酬组成。")
+        period = quantities[0]["period"]
+    return values["person_id"], period, values["remuneration_type"]
 
 
 def business_fund_accounts(content):
@@ -124,6 +141,7 @@ def business_matter(
 
 
 _KINDS = {
+    "people.remuneration_tax": ("withholding", "薪酬个人所得税"),
     "operations.service_sale": ("service_sale", "服务业务款"),
     "operations.sale_return": ("sale_return", "销售退款"),
     "operations.expense_recovery": ("expense_recovery", "费用退回款"),

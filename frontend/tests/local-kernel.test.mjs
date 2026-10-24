@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { createServer } from "vite";
@@ -13,6 +14,13 @@ const server = await createServer({
 after(() => server.close());
 const api = await server.ssrLoadModule("/src/api/localKernel.ts");
 const money = await server.ssrLoadModule("/src/utils/money.ts");
+
+test("later remuneration tax uses the actual registered fact kind and a Chinese label", () => {
+  const facts = JSON.parse(readFileSync(new URL("../../docs/redesign/contracts/business-facts.schema.json", import.meta.url), "utf8"));
+  const kind = facts.$defs.FactPeopleRemunerationTax.properties.kind.const;
+  assert(facts.$defs.Fact.oneOf.some(item => item.$ref === "#/$defs/FactPeopleRemunerationTax"));
+  assert.equal(api.localBusinessName(kind), "薪酬个人所得税");
+});
 
 test("reserve facts and mixed payroll use the current business labels", () => {
   assert.equal(api.localBusinessName("managed_reserve_expense"), "备用金支出");

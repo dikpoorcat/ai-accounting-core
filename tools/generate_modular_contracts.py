@@ -51,6 +51,7 @@ BUSINESS_GUIDES = (
             "people.employment",
             "people.relationship",
             "people.remuneration",
+            "people.remuneration_tax",
             "people.contribution_policy",
             "people.contribution_actual",
         ),

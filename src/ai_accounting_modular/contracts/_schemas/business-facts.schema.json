@@ -1113,8 +1113,7 @@
         "person_id",
         "gross_fen",
         "expense_area",
-        "employment_id",
-        "tax_basis"
+        "employment_id"
       ],
       "allOf": [
         {
@@ -1134,7 +1133,12 @@
             ]
           }
         }
-      ]
+      ],
+      "dependentRequired": {
+        "disbursement_basis": [
+          "tax_basis"
+        ]
+      }
     },
     "BonusRemuneration": {
       "type": "object",
@@ -1165,8 +1169,7 @@
         "type",
         "person_id",
         "gross_fen",
-        "expense_area",
-        "tax_basis"
+        "expense_area"
       ]
     },
     "LaborRemuneration": {
@@ -5564,6 +5567,9 @@
         },
         {
           "$ref": "#/$defs/FactPeopleRelationship"
+        },
+        {
+          "$ref": "#/$defs/FactPeopleRemunerationTax"
         }
       ]
     },
@@ -10065,6 +10071,9 @@
         },
         {
           "$ref": "#/$defs/PartialFactPeopleRelationship"
+        },
+        {
+          "$ref": "#/$defs/PartialFactPeopleRemunerationTax"
         }
       ]
     },
@@ -12678,7 +12687,8 @@
             "investment.cooperation_distribution",
             "investment.cooperation_exit",
             "assets.consumption",
-            "investment.cooperation_position"
+            "investment.cooperation_position",
+            "people.remuneration_tax"
           ]
         },
         "result_slot": {
@@ -12846,6 +12856,9 @@
         },
         {
           "$ref": "#/$defs/TargetTaxesIncomeTaxNetting"
+        },
+        {
+          "$ref": "#/$defs/TargetPeopleRemunerationTax"
         }
       ]
     },
@@ -13370,6 +13383,9 @@
         },
         {
           "$ref": "#/$defs/CooperationTradeQuantity"
+        },
+        {
+          "$ref": "#/$defs/AdoptedRemunerationQuantity"
         }
       ]
     },
@@ -14571,8 +14587,7 @@
         "person_id",
         "gross_fen",
         "expense_area",
-        "employment_id",
-        "tax_basis"
+        "employment_id"
       ],
       "allOf": [
         {
@@ -14592,7 +14607,12 @@
             ]
           }
         }
-      ]
+      ],
+      "dependentRequired": {
+        "disbursement_basis": [
+          "tax_basis"
+        ]
+      }
     },
     "AccountingBonusRemuneration": {
       "type": "object",
@@ -14623,8 +14643,7 @@
         "type",
         "person_id",
         "gross_fen",
-        "expense_area",
-        "tax_basis"
+        "expense_area"
       ]
     },
     "AccountingLaborRemuneration": {
@@ -19931,6 +19950,9 @@
         },
         {
           "$ref": "#/$defs/BasisTaxesIncomeTaxNetting"
+        },
+        {
+          "$ref": "#/$defs/BasisPeopleRemunerationTax"
         }
       ]
     },
@@ -23427,6 +23449,7 @@
         "people.employment",
         "people.relationship",
         "people.remuneration",
+        "people.remuneration_tax",
         "reports.continuation",
         "taxes.actual_declaration",
         "taxes.assessment",
@@ -24933,6 +24956,410 @@
       },
       "required": [
         "kind"
+      ]
+    },
+    "RemunerationTaxComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "source": {
+              "$ref": "#/$defs/SourceLocation"
+            }
+          },
+          "required": [
+            "tax_fen",
+            "source"
+          ]
+        },
+        {
+          "$ref": "#/$defs/PooledTaxSource"
+        }
+      ]
+    },
+    "PeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remuneration_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "basis_type": {
+          "type": "string",
+          "enum": [
+            "final_statement",
+            "actual_withholding"
+          ]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RemunerationTaxComponent"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "description": "覆盖本报酬本税期的完整且互不重叠的有据金额组成。一份总表为一项，不把部分付款税额当作整期目标。"
+        }
+      },
+      "required": [
+        "remuneration_id",
+        "tax_period",
+        "basis_type",
+        "components"
+      ]
+    },
+    "PartialRemunerationTaxComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "source": {
+              "$ref": "#/$defs/SourceLocation"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/PartialPooledTaxSource"
+        }
+      ]
+    },
+    "PartialPeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remuneration_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "basis_type": {
+          "type": "string",
+          "enum": [
+            "final_statement",
+            "actual_withholding"
+          ]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PartialRemunerationTaxComponent"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "description": "覆盖本报酬本税期的完整且互不重叠的有据金额组成。一份总表为一项，不把部分付款税额当作整期目标。"
+        }
+      }
+    },
+    "AccountingRemunerationTaxComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            }
+          },
+          "required": [
+            "tax_fen"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "declaration_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "row_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            }
+          },
+          "required": [
+            "declaration_id",
+            "row_id",
+            "tax_fen"
+          ]
+        }
+      ]
+    },
+    "AccountingPeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remuneration_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "tax_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "basis_type": {
+          "type": "string",
+          "enum": [
+            "final_statement",
+            "actual_withholding"
+          ]
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccountingRemunerationTaxComponent"
+          },
+          "minItems": 1,
+          "maxItems": 1000,
+          "description": "覆盖本报酬本税期的完整且互不重叠的有据金额组成。一份总表为一项，不把部分付款税额当作整期目标。"
+        }
+      },
+      "required": [
+        "remuneration_id",
+        "tax_period",
+        "basis_type",
+        "components"
+      ]
+    },
+    "FactPeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "const": "people.remuneration_tax"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "data": {
+          "$ref": "#/$defs/PeopleRemunerationTax"
+        }
+      },
+      "required": [
+        "business_id",
+        "kind",
+        "period",
+        "evidence_ids",
+        "data"
+      ]
+    },
+    "PartialFactPeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "people.remuneration_tax"
+        },
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 0,
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "data": {
+          "$ref": "#/$defs/PartialPeopleRemunerationTax"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "TargetPeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "people.remuneration_tax"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "remuneration_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "person_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "remuneration_type": {
+              "type": "string",
+              "enum": [
+                "wage",
+                "bonus",
+                "labor"
+              ]
+            },
+            "tax_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "initial_tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "target_tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "additional_tax_fen": {
+              "$ref": "core.schema.json#/$defs/NonNegativeFen"
+            },
+            "basis_type": {
+              "type": "string",
+              "enum": [
+                "final_statement",
+                "actual_withholding"
+              ]
+            }
+          },
+          "required": [
+            "remuneration_id",
+            "person_id",
+            "remuneration_type",
+            "tax_period",
+            "initial_tax_fen",
+            "target_tax_fen",
+            "additional_tax_fen",
+            "basis_type"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "result_slot",
+        "values"
+      ]
+    },
+    "BasisPeopleRemunerationTax": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "people.remuneration_tax"
+        },
+        "result_slot": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "effective_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "input": {
+          "$ref": "#/$defs/AccountingPeopleRemunerationTax"
+        },
+        "source_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultSourceRef"
+          },
+          "minItems": 0
+        },
+        "adopted_quantities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptedQuantity"
+          },
+          "minItems": 0
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdoptedPolicy"
+          },
+          "minItems": 0
+        },
+        "source_locations": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/SourceLocator"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "kind",
+        "result_slot",
+        "period",
+        "input",
+        "source_results",
+        "adopted_quantities",
+        "policies",
+        "source_locations"
+      ]
+    },
+    "AdoptedRemunerationQuantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "remuneration"
+        },
+        "source": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "values": {
+          "$ref": "#/$defs/TargetPeopleRemuneration/properties/values"
+        },
+        "expense_area": {
+          "type": "string",
+          "enum": [
+            "administration",
+            "sales",
+            "service"
+          ]
+        },
+        "project_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "period",
+        "values"
       ]
     }
   }

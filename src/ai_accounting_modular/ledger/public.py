@@ -483,6 +483,7 @@ class Ledger:
         *,
         business_ids=(),
         result_slots=(),
+        source_refs=(),
     ) -> ReadPage[AdoptedTarget]:
         """Selected complete targets, without calculation bases or earlier versions."""
         return _read_contents.query_adopted(
@@ -493,6 +494,7 @@ class Ledger:
             targets=True,
             business_ids=business_ids,
             result_slots=result_slots,
+            source_refs=source_refs,
         )
 
     def query_adopted_values(

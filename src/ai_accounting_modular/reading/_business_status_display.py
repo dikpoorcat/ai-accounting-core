@@ -44,7 +44,7 @@ def profiles(reader, selected, settlements, events, read):
         cards.update(
             value for key, value in matter.items() if key in {"asset_id", "project_id", "fund_id"}
         )
-        if content.target["kind"] == "people.remuneration":
+        if content.target["kind"] in {"people.remuneration", "people.remuneration_tax"}:
             employees.add(content.target["values"]["person_id"])
     allowed = [source for sources in settlements.allowed_sources.values() for source in sources]
     for body, meaning in settlements.meanings.values():

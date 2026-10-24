@@ -13,6 +13,7 @@ REQUESTS = {
     "accounting_apply": "ApplyRequest",
     "accounting_get": "BusinessGet",
     "accounting_find": "BusinessQuery",
+    "accounting_remuneration": "RemunerationRequest",
     "accounting_sources": "SourcesRequest",
     "accounting_documents": "DocumentsRequest",
     "accounting_period": "PeriodRequest",
@@ -24,13 +25,7 @@ REQUESTS = {
 
 @lru_cache(maxsize=len(REQUESTS) + 1)
 def _bundle(name):
-    documents = {
-        key: schema_document(key)
-        for key in (
-            "core.schema.json",
-            "business-facts.schema.json",
-        )
-    }
+    documents = {"core.schema.json": schema_document("core.schema.json")}
     definitions, pending = {}, []
 
     def rewrite(document, node):
@@ -47,11 +42,13 @@ def _bundle(name):
                 continue
             path, marker, definition = value.partition("#/$defs/")
             target = urlsplit(path).path.rsplit("/", 1)[-1] if path else document
-            if (
-                not marker
-                or target not in documents
-                or definition not in documents[target]["$defs"]
-            ):
+            if not marker:
+                raise ContractError("storage_corrupt", "公开输入合同引用无法解析。")
+            if target not in documents:
+                # The contracts port accepts installed schema names only. This
+                # closes references locally without a second document allowlist.
+                documents[target] = schema_document(target)
+            if definition not in documents[target]["$defs"]:
                 raise ContractError("storage_corrupt", "公开输入合同引用无法解析。")
             local = target.removesuffix(".schema.json") + "__" + definition
             if local not in definitions:

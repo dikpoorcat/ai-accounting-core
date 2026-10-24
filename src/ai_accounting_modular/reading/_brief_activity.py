@@ -12,6 +12,7 @@ from . import _brief_vouchers, _brief_vouchers_display
 from ._brief_activity_amounts import EVENT_KINDS
 from ._brief_activity_parts import ActivityEvent, parts, rows, semantic
 from ._brief_activity_sources import Contents, identities, pages
+from ._business_labels import remuneration_identity
 from ._collections import IndexItem
 
 COMPONENT = index.COMPONENT
@@ -52,18 +53,15 @@ def _obligations(reader, scope, read, contents):
                 content = bodies.get(definition.source["result_id"])
                 if content is None or content.source != definition.source:
                     continue
-                person = (
-                    content.target.get("values", {}).get("person_id")
-                    if content.target["kind"] == "people.remuneration"
-                    else None
-                )
+                payroll = remuneration_identity(content)
+                person, period = payroll[:2] if payroll is not None else (None, None)
                 found.setdefault(definition.source["result_id"], []).append(
                     {
                         "source": definition.reference,
                         "producer": definition.source,
                         "person_id": person,
                         "recipient_id": definition.value.get("party_id"),
-                        "payroll_period": content.basis["period"] if person else None,
+                        "payroll_period": period,
                         "component": definition.reference["slot"] if person else None,
                     }
                 )

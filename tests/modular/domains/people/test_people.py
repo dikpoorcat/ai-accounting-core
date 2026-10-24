@@ -95,7 +95,7 @@ def no_contributions():
 
 
 @pytest.mark.parametrize(
-    "name", ["B14", "B15", "B16", "B17", "B17B", "B17Z", "B17A", "B17L", "B17P"]
+    "name", ["B14", "B15", "B16", "B17", "B17N", "B17B", "B17Z", "B17A", "B17L", "B17P"]
 )
 def test_published_business_examples(name):
     fact = case(name)

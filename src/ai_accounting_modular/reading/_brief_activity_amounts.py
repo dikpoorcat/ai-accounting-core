@@ -30,6 +30,7 @@ EVENT_KINDS = frozenset(
         "operations.reimbursement",
         "operations.overpayment",
         "people.remuneration",
+        "people.remuneration_tax",
         "assets.project_cost",
         "assets.project_release",
         "assets.acquisition",
@@ -72,6 +73,8 @@ def amount(content):
             value, label = values["amount_fen"], "业务金额"
         case "people.remuneration":
             value, label = values["gross_fen"], "应发金额"
+        case "people.remuneration_tax":
+            value, label = values["additional_tax_fen"], "转入应交个税金额"
         case "assets.project_cost" | "assets.project_release":
             value, label = values["amount_fen"], "成本金额"
         case "assets.acquisition":
