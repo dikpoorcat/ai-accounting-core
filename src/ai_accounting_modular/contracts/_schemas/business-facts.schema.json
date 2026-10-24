@@ -995,23 +995,44 @@
       ]
     },
     "DisbursementBasis": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "declared_tax"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "declared_tax"
+            },
+            "declaration_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "row_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "declaration_id",
+            "row_id"
+          ]
         },
-        "declaration_id": {
-          "$ref": "core.schema.json#/$defs/Id"
-        },
-        "row_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "本次已明确按内核当前可付余额发放，无额外未明暂扣；来源须明确本次付款安排。金额仍按实际税额、缴费、暂留及已付款计算，不表示税额为零、免税、已申报或已付款。",
+          "properties": {
+            "type": {
+              "const": "current_payable"
+            },
+            "source": {
+              "$ref": "#/$defs/SourceLocation"
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ]
         }
-      },
-      "required": [
-        "type",
-        "declaration_id",
-        "row_id"
       ]
     },
     "RemunerationTaxBasis": {
@@ -1132,13 +1153,32 @@
               "contribution_actual_id"
             ]
           }
+        },
+        {
+          "if": {
+            "required": [
+              "disbursement_basis"
+            ],
+            "properties": {
+              "disbursement_basis": {
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "declared_tax"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tax_basis"
+            ]
+          }
         }
-      ],
-      "dependentRequired": {
-        "disbursement_basis": [
-          "tax_basis"
-        ]
-      }
+      ]
     },
     "BonusRemuneration": {
       "type": "object",
@@ -1163,6 +1203,9 @@
         },
         "tax_basis": {
           "$ref": "#/$defs/RemunerationTaxBasis"
+        },
+        "disbursement_basis": {
+          "$ref": "#/$defs/DisbursementBasis"
         }
       },
       "required": [
@@ -1170,6 +1213,32 @@
         "person_id",
         "gross_fen",
         "expense_area"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "disbursement_basis"
+            ],
+            "properties": {
+              "disbursement_basis": {
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "declared_tax"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tax_basis"
+            ]
+          }
+        }
       ]
     },
     "LaborRemuneration": {
@@ -1197,6 +1266,9 @@
         },
         "tax_basis": {
           "$ref": "#/$defs/RemunerationTaxBasis"
+        },
+        "disbursement_basis": {
+          "$ref": "#/$defs/DisbursementBasis"
         }
       },
       "required": [
@@ -1229,6 +1301,30 @@
                 "tax_basis"
               ]
             }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "disbursement_basis"
+            ],
+            "properties": {
+              "disbursement_basis": {
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "declared_tax"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tax_basis"
+            ]
           }
         }
       ]
@@ -6364,19 +6460,36 @@
       }
     },
     "PartialDisbursementBasis": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "declared_tax"
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "declared_tax"
+            },
+            "declaration_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "row_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            }
+          }
         },
-        "declaration_id": {
-          "$ref": "core.schema.json#/$defs/Id"
-        },
-        "row_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "本次已明确按内核当前可付余额发放，无额外未明暂扣；来源须明确本次付款安排。金额仍按实际税额、缴费、暂留及已付款计算，不表示税额为零、免税、已申报或已付款。",
+          "properties": {
+            "type": {
+              "const": "current_payable"
+            },
+            "source": {
+              "$ref": "#/$defs/PartialSourceLocation"
+            }
+          }
         }
-      }
+      ]
     },
     "PartialRemunerationTaxBasis": {
       "type": "object",
@@ -6474,6 +6587,9 @@
         },
         "tax_basis": {
           "$ref": "#/$defs/PartialRemunerationTaxBasis"
+        },
+        "disbursement_basis": {
+          "$ref": "#/$defs/PartialDisbursementBasis"
         }
       }
     },
@@ -6502,6 +6618,9 @@
         },
         "tax_basis": {
           "$ref": "#/$defs/PartialRemunerationTaxBasis"
+        },
+        "disbursement_basis": {
+          "$ref": "#/$defs/PartialDisbursementBasis"
         }
       }
     },
@@ -14492,23 +14611,44 @@
       ]
     },
     "AccountingDisbursementBasis": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "declared_tax"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "declared_tax"
+            },
+            "declaration_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "row_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "declaration_id",
+            "row_id"
+          ]
         },
-        "declaration_id": {
-          "$ref": "core.schema.json#/$defs/Id"
-        },
-        "row_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "本次已明确按内核当前可付余额发放，无额外未明暂扣；来源须明确本次付款安排。金额仍按实际税额、缴费、暂留及已付款计算，不表示税额为零、免税、已申报或已付款。",
+          "properties": {
+            "type": {
+              "const": "current_payable"
+            },
+            "source": {
+              "$ref": "#/$defs/SourceLocation"
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ]
         }
-      },
-      "required": [
-        "type",
-        "declaration_id",
-        "row_id"
       ]
     },
     "AccountingRemunerationTaxBasis": {
@@ -14606,13 +14746,32 @@
               "contribution_actual_id"
             ]
           }
+        },
+        {
+          "if": {
+            "required": [
+              "disbursement_basis"
+            ],
+            "properties": {
+              "disbursement_basis": {
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "declared_tax"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tax_basis"
+            ]
+          }
         }
-      ],
-      "dependentRequired": {
-        "disbursement_basis": [
-          "tax_basis"
-        ]
-      }
+      ]
     },
     "AccountingBonusRemuneration": {
       "type": "object",
@@ -14637,6 +14796,9 @@
         },
         "tax_basis": {
           "$ref": "#/$defs/AccountingRemunerationTaxBasis"
+        },
+        "disbursement_basis": {
+          "$ref": "#/$defs/AccountingDisbursementBasis"
         }
       },
       "required": [
@@ -14644,6 +14806,32 @@
         "person_id",
         "gross_fen",
         "expense_area"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "disbursement_basis"
+            ],
+            "properties": {
+              "disbursement_basis": {
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "declared_tax"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tax_basis"
+            ]
+          }
+        }
       ]
     },
     "AccountingLaborRemuneration": {
@@ -14671,6 +14859,9 @@
         },
         "tax_basis": {
           "$ref": "#/$defs/AccountingRemunerationTaxBasis"
+        },
+        "disbursement_basis": {
+          "$ref": "#/$defs/AccountingDisbursementBasis"
         }
       },
       "required": [
@@ -14703,6 +14894,30 @@
                 "tax_basis"
               ]
             }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "disbursement_basis"
+            ],
+            "properties": {
+              "disbursement_basis": {
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "declared_tax"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tax_basis"
+            ]
           }
         }
       ]

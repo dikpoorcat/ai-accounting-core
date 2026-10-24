@@ -5799,6 +5799,14 @@
         },
         "payable_fen": {
           "$ref": "#/$defs/NonNegativeFen"
+        },
+        "payment_composition_state": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "unconfirmed"
+          ],
+          "description": "由精确采用依据及当前实际税款组成派生的付款组成状态；不代表申报或实际付款状态。"
         }
       },
       "required": [
@@ -5812,7 +5820,8 @@
         "amounts",
         "tax_state",
         "remaining_fen",
-        "payable_fen"
+        "payable_fen",
+        "payment_composition_state"
       ]
     },
     "RemunerationWithdrawnPosition": {

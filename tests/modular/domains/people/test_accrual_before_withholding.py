@@ -9,7 +9,7 @@ from .test_people import case, evaluate, no_contributions
 
 def pending_remuneration(name):
     fact = case(name)
-    fact["data"].pop("tax_basis")
+    fact["data"].pop("tax_basis", None)
     return fact
 
 
@@ -31,8 +31,9 @@ def test_no_recorded_deduction_accrues_without_claiming_exemption_or_payment(nam
     ]
 
 
-def test_pending_deduction_cannot_produce_a_bank_disbursement_basis():
-    fact = pending_remuneration("B17Z")
+@pytest.mark.parametrize("name", ["B17Z", "B17B", "B17L"])
+def test_declared_tax_hold_still_needs_an_evidenced_tax_period(name):
+    fact = pending_remuneration(name)
     fact["data"]["disbursement_basis"] = {
         "type": "declared_tax",
         "declaration_id": case("B17Z")["business_id"],

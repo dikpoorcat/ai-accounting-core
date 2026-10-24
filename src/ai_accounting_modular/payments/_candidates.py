@@ -100,12 +100,12 @@ def collect(owner, scope, read, balance_period):
         wage = wages[identity]
         if wage["state"] != "active":
             continue
-        if parse_fen(wage["payable_fen"]) and wage["tax_state"] == "not_withheld_not_filed":
+        if parse_fen(wage["payable_fen"]) and wage["payment_composition_state"] == "unconfirmed":
             issues.append(
                 issue(
                     "payment_payable_composition_unconfirmed",
                     "/candidates/payable_fen",
-                    "本账尚未记录这笔薪酬的扣税组成；当前应付余额只供核算，不能据此把未知扣税当零生成实发指令。AI须先核查已有薪酬、扣税或申报资料，仍缺必要事实才向老板提问。",
+                    "这笔薪酬的本次付款组成或安排尚未明确。AI须先核查已有薪酬资料和付款约定，明确是否有额外暂扣；仍缺当前付款必需的事实才向老板提问。",
                     business_id=identity,
                 )
             )

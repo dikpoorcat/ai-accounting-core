@@ -40,6 +40,7 @@ def test_narrow_payable_read_uses_exact_wage_debt_without_a_company_opening(case
     assert value["remuneration_type"] == "wage" and value["business_period"] == "2026-01"
     assert value["remaining_fen"] == value["payable_fen"] == "100000"
     assert value["tax_targets"] == []
+    assert value["payment_composition_state"] == "unconfirmed"
 
 
 @pytest.mark.parametrize("view", ["current", "as_posted"])
@@ -53,11 +54,13 @@ def test_selected_cutoff_excludes_future_tax_and_already_paid_money(case, view):
     assert january["amounts"]["tax_fen"] == "0"
     assert january["remaining_fen"] == january["payable_fen"] == "100000"
     assert january["tax_targets"] == []
+    assert january["payment_composition_state"] == "unconfirmed"
     february = positions(case, [wage["business_id"]], view=view)[0]
     assert february["amounts"]["tax_fen"] == "10000"
     assert february["amounts"]["net_fen"] == "90000"
     assert february["remaining_fen"] == february["payable_fen"] == "60000"
     assert february["tax_state"] == "actual_withholding"
+    assert february["payment_composition_state"] == "confirmed"
     assert february["tax_targets"][0]["business_id"] == target["business_id"]
 
 
@@ -74,6 +77,7 @@ def test_absorbed_hold_is_not_subtracted_again_from_unpaid_capacity(case):
     assert value["amounts"]["net_fen"] == "490000"
     assert value["amounts"]["held_fen"] == "0"
     assert value["remaining_fen"] == value["payable_fen"] == "460000"
+    assert value["payment_composition_state"] == "confirmed"
 
 
 def test_partial_hold_and_fully_paid_wage_do_not_become_an_extra_payment(case):
@@ -99,6 +103,7 @@ def test_narrow_read_keeps_evidenced_zero_confirmation(case):
     assert value["tax_state"] == "final_statement"
     assert value["tax_targets"][0]["business_id"] == target["business_id"]
     assert value["payable_fen"] == "100000"
+    assert value["payment_composition_state"] == "confirmed"
 
 
 def test_withdrawn_closed_wage_is_explicit_and_historical_wage_remains_available(case):

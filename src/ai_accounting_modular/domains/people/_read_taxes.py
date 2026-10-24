@@ -182,6 +182,12 @@ def remuneration_positions(
             continue
         source = contents.remuneration(contents.selected[identity])
         composition = combined[identity]
+        basis_input = contents.selected[identity].basis["input"]
+        payment_confirmed = (
+            basis_input.get("disbursement_basis", {}).get("type") == "current_payable"
+            or "tax_basis" in basis_input
+            or bool(composition.tax_targets)
+        )
         result.append(
             {
                 "business_id": identity,
@@ -196,6 +202,7 @@ def remuneration_positions(
                     for field in fields(RemunerationAmounts)
                 },
                 "tax_state": composition.tax_state,
+                "payment_composition_state": "confirmed" if payment_confirmed else "unconfirmed",
                 "remaining_fen": format_fen(remaining[identity]),
                 "payable_fen": format_fen(
                     max(remaining[identity] - composition.amounts.held_fen, 0)

@@ -407,7 +407,7 @@ def test_settled_person_does_not_require_a_bank_account_or_produce_an_empty_file
     assert result["issues"] == [] and result["rows"] == [] and not result["available"]
 
 
-def test_unknown_tax_is_not_zero_for_bank_export_and_does_not_block_selected_reimbursement(case):
+def test_unconfirmed_payment_composition_keeps_debt_and_selected_expense_unblocked(case):
     case.seed(expense=False)
     wage, reimbursed = unpaid_wage(), expense(case)
     add(case, no_contributions(), wage, reimbursed)

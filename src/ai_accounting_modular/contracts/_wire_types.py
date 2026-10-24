@@ -621,6 +621,7 @@ class RemunerationActivePosition(TypedDict):
     tax_state: Literal['not_withheld_not_filed', 'final_statement', 'actual_withholding', 'mixed']
     remaining_fen: Fen
     payable_fen: NonNegativeFen
+    payment_composition_state: Literal['confirmed', 'unconfirmed']
 
 class RemunerationWithdrawnPosition(TypedDict):
     business_id: Id
@@ -939,10 +940,7 @@ class PooledTaxSource(TypedDict):
     declaration_id: Id
     row_id: Id
 
-class DisbursementBasis(TypedDict):
-    type: Literal['declared_tax']
-    declaration_id: Id
-    row_id: Id
+type DisbursementBasis = DisbursementBasisVariant1 | DisbursementBasisVariant2
 
 class RemunerationTaxBasis(TypedDict):
     tax_period: Month
@@ -970,6 +968,7 @@ class BonusRemuneration(TypedDict):
     gross_fen: PositiveFen
     expense_area: Literal['administration', 'sales', 'service']
     tax_basis: NotRequired[RemunerationTaxBasis]
+    disbursement_basis: NotRequired[DisbursementBasis]
 
 class LaborRemuneration(TypedDict):
     type: Literal['labor']
@@ -978,6 +977,7 @@ class LaborRemuneration(TypedDict):
     destination: CostDestination
     withholding_state: Literal['not_withheld_not_filed', 'deduction_established']
     tax_basis: NotRequired[RemunerationTaxBasis]
+    disbursement_basis: NotRequired[DisbursementBasis]
 
 type PeopleRemuneration = WageRemuneration | BonusRemuneration | LaborRemuneration
 
@@ -2030,10 +2030,7 @@ class PartialPooledTaxSource(TypedDict):
     declaration_id: NotRequired[Id]
     row_id: NotRequired[Id]
 
-class PartialDisbursementBasis(TypedDict):
-    type: NotRequired[Literal['declared_tax']]
-    declaration_id: NotRequired[Id]
-    row_id: NotRequired[Id]
+type PartialDisbursementBasis = PartialDisbursementBasisVariant1 | PartialDisbursementBasisVariant2
 
 class PartialRemunerationTaxBasis(TypedDict):
     tax_period: NotRequired[Month]
@@ -2061,6 +2058,7 @@ class PartialBonusRemuneration(TypedDict):
     gross_fen: NotRequired[PositiveFen]
     expense_area: NotRequired[Literal['administration', 'sales', 'service']]
     tax_basis: NotRequired[PartialRemunerationTaxBasis]
+    disbursement_basis: NotRequired[PartialDisbursementBasis]
 
 class PartialLaborRemuneration(TypedDict):
     type: NotRequired[Literal['labor']]
@@ -2069,6 +2067,7 @@ class PartialLaborRemuneration(TypedDict):
     destination: NotRequired[PartialCostDestination]
     withholding_state: NotRequired[Literal['not_withheld_not_filed', 'deduction_established']]
     tax_basis: NotRequired[PartialRemunerationTaxBasis]
+    disbursement_basis: NotRequired[PartialDisbursementBasis]
 
 type PartialPeopleRemuneration = PartialWageRemuneration | PartialBonusRemuneration | PartialLaborRemuneration
 
@@ -3575,10 +3574,7 @@ class AccountingPooledTaxSource(TypedDict):
     declaration_id: Id
     row_id: Id
 
-class AccountingDisbursementBasis(TypedDict):
-    type: Literal['declared_tax']
-    declaration_id: Id
-    row_id: Id
+type AccountingDisbursementBasis = AccountingDisbursementBasisVariant1 | AccountingDisbursementBasisVariant2
 
 class AccountingRemunerationTaxBasis(TypedDict):
     tax_period: Month
@@ -3604,6 +3600,7 @@ class AccountingBonusRemuneration(TypedDict):
     gross_fen: PositiveFen
     expense_area: Literal['administration', 'sales', 'service']
     tax_basis: NotRequired[AccountingRemunerationTaxBasis]
+    disbursement_basis: NotRequired[AccountingDisbursementBasis]
 
 class AccountingLaborRemuneration(TypedDict):
     type: Literal['labor']
@@ -3612,6 +3609,7 @@ class AccountingLaborRemuneration(TypedDict):
     destination: AccountingCostDestination
     withholding_state: Literal['not_withheld_not_filed', 'deduction_established']
     tax_basis: NotRequired[AccountingRemunerationTaxBasis]
+    disbursement_basis: NotRequired[AccountingDisbursementBasis]
 
 type AccountingPeopleRemuneration = AccountingWageRemuneration | AccountingBonusRemuneration | AccountingLaborRemuneration
 
@@ -10144,6 +10142,15 @@ class OperationsExpenseReportDetailsItem(TypedDict):
     code: Literal['management_startup', 'management_entertainment', 'management_research', 'management_other', 'sales_merchandise_repair', 'sales_advertising_promotion', 'sales_other', 'finance_interest', 'finance_other']
     amount_fen: PositiveFen
 
+class DisbursementBasisVariant1(TypedDict):
+    type: Literal['declared_tax']
+    declaration_id: Id
+    row_id: Id
+
+class DisbursementBasisVariant2(TypedDict):
+    type: Literal['current_payable']
+    source: SourceLocation
+
 class VatAssessmentFilingProfile(TypedDict):
     taxpayer_type: Literal['small_scale']
     form_scope: Literal['nonpilot', 'pilot_or_other']
@@ -10152,6 +10159,15 @@ class VatAssessmentFilingProfile(TypedDict):
 class PartialOperationsExpenseReportDetailsItem(TypedDict):
     code: NotRequired[Literal['management_startup', 'management_entertainment', 'management_research', 'management_other', 'sales_merchandise_repair', 'sales_advertising_promotion', 'sales_other', 'finance_interest', 'finance_other']]
     amount_fen: NotRequired[PositiveFen]
+
+class PartialDisbursementBasisVariant1(TypedDict):
+    type: NotRequired[Literal['declared_tax']]
+    declaration_id: NotRequired[Id]
+    row_id: NotRequired[Id]
+
+class PartialDisbursementBasisVariant2(TypedDict):
+    type: NotRequired[Literal['current_payable']]
+    source: NotRequired[PartialSourceLocation]
 
 class PartialVatAssessmentFilingProfile(TypedDict):
     taxpayer_type: NotRequired[Literal['small_scale']]
@@ -10424,6 +10440,15 @@ class AdoptedExpenseQuantityReportDetailsItem(TypedDict):
 class AccountingOperationsExpenseReportDetailsItem(TypedDict):
     code: Literal['management_startup', 'management_entertainment', 'management_research', 'management_other', 'sales_merchandise_repair', 'sales_advertising_promotion', 'sales_other', 'finance_interest', 'finance_other']
     amount_fen: PositiveFen
+
+class AccountingDisbursementBasisVariant1(TypedDict):
+    type: Literal['declared_tax']
+    declaration_id: Id
+    row_id: Id
+
+class AccountingDisbursementBasisVariant2(TypedDict):
+    type: Literal['current_payable']
+    source: SourceLocation
 
 class AccountingVatAssessmentFilingProfile(TypedDict):
     taxpayer_type: Literal['small_scale']

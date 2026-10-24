@@ -119,11 +119,14 @@ def remuneration(fact, context):
         cost_fen=format_fen(cost),
         disbursement_target_fen=format_fen(net),
     )
-    if kind == "wage" and "disbursement_basis" in data:
+    disbursement = data.get("disbursement_basis")
+    if disbursement is not None and disbursement["type"] == "current_payable":
+        use_location(plan, context, disbursement["source"])
+    elif disbursement is not None:
         declared, locations = declaration_allocation(
             fact,
             context,
-            data["disbursement_basis"],
+            disbursement,
             field="/data/disbursement_basis",
             tax_period=tax_basis["tax_period"],
         )

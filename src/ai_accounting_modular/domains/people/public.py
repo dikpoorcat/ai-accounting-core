@@ -133,7 +133,11 @@ def _references(fact):
                 )
             )
     tax_basis = data.get("tax_basis", {})
-    for locator in (tax_basis.get("pooled_source"), data.get("disbursement_basis")):
+    disbursement = data.get("disbursement_basis", {})
+    for locator in (
+        tax_basis.get("pooled_source"),
+        disbursement if disbursement.get("type") == "declared_tax" else None,
+    ):
         if locator is not None:
             # An official row is a fact, independent of a payroll calculation using it.
             # The tax owner can validate its allocations against remuneration facts.
