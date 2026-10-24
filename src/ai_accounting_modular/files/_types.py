@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
-from ai_accounting_modular.contracts.public import ContractError, FilePlan
+from ai_accounting_modular.contracts.public import ContractError, FilePlan, TaskReceipt
 from ai_accounting_modular.storage.public import CompanyMetadata
 
 
@@ -97,6 +97,14 @@ class VerifiedDownload:
     file_name: str
     sha256: str
     byte_size: int
+
+
+@dataclass(frozen=True)
+class CurrentFile:
+    """Accepted scope plan plus actual current delivery state; expired plans are absent."""
+
+    plan: FilePlan | None
+    receipt: TaskReceipt
 
 
 class ProductionError(ContractError):

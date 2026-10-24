@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from ai_accounting_modular.agent import _guides
-from ai_accounting_modular.agent.public import guide_index, read_guide
+from ai_accounting_modular.agent.public import guide_index, read_guide, read_work_checklist
 from ai_accounting_modular.contracts.public import ContractError, schema_document
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -129,7 +129,7 @@ def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_s
     assert "文档已完成" in stages["4"] and "文件不代表银行已付" in stages["4"]
     assert "文件已生成" in stages["6"] and "不能称为已报送" in stages["6"]
     assert "后月份付款不强行登记在本期" in stages["7"]
-    assert "实际关账后完成" in stages["8"] and "检查通过不等于已经关账" in stages["8"]
+    assert "程序已实际关账" in stages["8"] and "检查通过不等于已经关账" in stages["8"]
     assert "同时决定图标与接续位置" in checklist
     assert "同阶段条件满足的独立事项" in checklist and "不据此跳步" in checklist
     assert "原项保持未完成" in checklist and "先保全归期" in checklist
@@ -148,6 +148,7 @@ def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
         "05b-financial-reporting.md",
         "08-ai-work-and-materials.md",
         "09-runtime-and-ai.md",
+        "work-checklist.json",
     ):
         shutil.copyfile(ROOT / "docs/redesign" / name, source / name)
     file = source / "05-business-rules.md"
@@ -188,6 +189,7 @@ def test_directory_is_small_and_mutation_cannot_change_shared_text():
     assert len(guide_index()["topics"]) == 5
     assert read_guide("business", kind="operations.expense") == before
     assert "accounting_schema" in guide_index()["message"]
+    assert read_work_checklist()["stages"][3]["id"] == "payment_export"
 
 
 def test_copied_package_reads_guides_without_workspace_application_or_docs(tmp_path):
@@ -202,7 +204,7 @@ def test_copied_package_reads_guides_without_workspace_application_or_docs(tmp_p
 import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from ai_accounting_modular.agent.public import guide_index, read_guide
+from ai_accounting_modular.agent.public import guide_index, read_guide, read_work_checklist
 import ai_accounting_modular.agent.public as public
 assert Path(public.__file__).is_relative_to(Path(sys.argv[1]))
 assert not (Path(sys.argv[1]) / 'docs').exists()
@@ -216,6 +218,7 @@ assert '当前缺资料仍保留🔄' in read_guide('work')
 assert '同时决定图标与接续位置' in read_guide('work')
 assert 'SourceDiscardResult' in read_guide('commands')
 assert 'call accounting-sources' in read_guide('runtime')
+assert read_work_checklist()['stages'][3]['checks'][2]['id'] == 'payment_export.file'
 print(json.dumps(guide_index(), ensure_ascii=False))
 """
     process = subprocess.run(

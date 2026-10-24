@@ -5,13 +5,14 @@
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import json
-from pathlib import Path
 import re
 import sqlite3
 import sys
+from contextlib import closing
+from copy import deepcopy
+from pathlib import Path
 from urllib.parse import unquote
 
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError, validators
@@ -393,15 +394,77 @@ def check_links():
     COUNTS["local_links"] = count
 
 
+def archived_structure(version):
+    directory = ROOT.parents[1] / "src/ai_accounting_modular/storage/schema/previous"
+    return load(directory / f"company-v{version}.json")
+
+
+def install_structure(db, contract):
+    for kind in ("table", "index", "trigger"):
+        for item in contract["objects"]:
+            if item["type"] == kind:
+                db.execute(item["sql"])
+
+
+def apply_structure_sql(db, sql):
+    statement = ""
+    for line in sql.splitlines(True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            db.execute(statement)
+            statement = ""
+    assert not statement.strip(), "结构接续包含不完整SQL"
+
+
+def check_forward_structure_plans():
+    """Exact archived 1/2 advance to the current DDL and roll back as one unit."""
+    current = load(ROOT.parents[1] / "src/ai_accounting_modular/storage/schema/company.json")
+    contracts = {1: archived_structure(1), 2: archived_structure(2), 3: current}
+    plans = {1: "company-note-format.sql", 2: "payment-export.sql"}
+
+    def signatures(contract):
+        return sorted(
+            (item["type"], item["name"], item["table"], item["sql"])
+            for item in contract["objects"]
+        )
+
+    def actual(db):
+        return sorted(
+            db.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_schema "
+                "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        )
+
+    for version in (1, 2):
+        assert contracts[version + 1]["parent_fingerprint"] == contracts[version]["fingerprint"]
+        for rollback in (False, True):
+            with closing(sqlite3.connect(":memory:")) as db:
+                install_structure(db, contracts[version])
+                db.execute("SAVEPOINT structure_plan")
+                for step in range(version, 3):
+                    apply_structure_sql(db, (ROOT / "schema" / plans[step]).read_text("utf-8"))
+                    assert actual(db) == signatures(contracts[step + 1]), (
+                        "前向结构与精确目标不同", step
+                    )
+                if rollback:
+                    db.execute("ROLLBACK TO structure_plan")
+                    assert actual(db) == signatures(contracts[version]), (
+                        "回滚未恢复原结构", version
+                    )
+                db.execute("RELEASE structure_plan")
+    COUNTS["forward_structure_memory_ddl"] = "exact 1/2 to 3 and whole-chain rollback checked"
+
+
 def check_company_note_structure_plan():
     """Check proposed DDL only in memory; this is not a runtime migration test."""
-    baseline = (ROOT / "schema/company.sql").read_text(encoding="utf-8")
+    baseline = archived_structure(1)
     proposed = (ROOT / "schema/company-note-format.sql").read_text(encoding="utf-8")
     columns = "scope_key,note_text,basis_head,state,seq,latest_command_id,latest_expected_seq,content_digest"
     for rollback in (False, True):
         db = sqlite3.connect(":memory:")
         try:
-            db.executescript(baseline)
+            install_structure(db, baseline)
             db.executemany(
                 f"INSERT INTO company_note({columns}) VALUES(?,?,?,?,?,?,?,?)",
                 [(scope, "原文 * _ <公司>\n第二行", None, "current", 1, "00000000-0000-4000-8000-000000000401", 0, "0" * 64)
@@ -410,13 +473,7 @@ def check_company_note_structure_plan():
             db.commit()
             before = db.execute(f"SELECT {columns} FROM company_note ORDER BY scope_key").fetchall()
             db.execute("SAVEPOINT note_format_plan")
-            statement = ""
-            for line in proposed.splitlines(True):
-                statement += line
-                if sqlite3.complete_statement(statement):
-                    db.execute(statement)
-                    statement = ""
-            assert not statement.strip(), "结构接续包含不完整SQL"
+            apply_structure_sql(db, proposed)
             if rollback:
                 try:
                     db.execute("UPDATE company_note SET note_format='html'")
@@ -445,6 +502,7 @@ def main():
     check_contracts()
     check_examples()
     check_sql()
+    check_forward_structure_plans()
     check_company_note_structure_plan()
     check_links()
     print(json.dumps(COUNTS, ensure_ascii=False, indent=2))

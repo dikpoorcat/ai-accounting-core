@@ -123,7 +123,7 @@ def _restore(application, extracted, root, *, structure_version):
 
     with open_database_unit(
         beneath(root, DATABASE_PATH),
-        repositories=(files_repository(), reading_repository()),
+        repositories=(files_repository(structure_version=structure_version), reading_repository()),
         company_root=root,
         mode="maintenance",
         structure_version=structure_version,

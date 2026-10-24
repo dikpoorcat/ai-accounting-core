@@ -19,6 +19,7 @@ TARGET = ROOT / "src/ai_accounting_modular/contracts"
 SCHEMAS = (
     "core.schema.json",
     "company-note.schema.json",
+    "payment-export.schema.json",
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",
@@ -123,6 +124,7 @@ GUIDE_LINKS = {
     "05-business-rules.md": "accounting://guides/business",
     "05b-financial-reporting.md": "accounting://guides/reporting",
     "08-ai-work-and-materials.md": "accounting://guides/work",
+    "work-checklist.json": "accounting://guides/work/checklist",
     "09-runtime-and-ai.md": "accounting://guides/runtime",
     "core.schema.json": "accounting://contracts",
     "business-facts.schema.json": "accounting://contracts",
@@ -168,6 +170,77 @@ def fact_kinds(document):
     return kinds
 
 
+def work_checklist(source):
+    """Load the one editable acceptance list; never persist an AI's stage decisions."""
+    value = json.loads(source.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+    if set(value) != {"format", "stages"} or value["format"] != "ai-accounting-work-checklist/1":
+        raise ValueError("Invalid work checklist format")
+    stages = value["stages"]
+    if not isinstance(stages, list) or len(stages) != 8:
+        raise ValueError("Work checklist must describe eight stages")
+    identities = set()
+    for number, stage in enumerate(stages, 1):
+        if set(stage) != {"number", "id", "title", "completion", "checks"}:
+            raise ValueError("Invalid work checklist stage")
+        if type(stage["number"]) is not int or stage["number"] != number:
+            raise ValueError("Work checklist stages must be ordered from one to eight")
+        for key in ("id", "title", "completion"):
+            if not isinstance(stage[key], str) or not stage[key].strip():
+                raise ValueError("Work checklist stage text is required")
+        if stage["id"] in identities:
+            raise ValueError("Duplicate work checklist identity")
+        identities.add(stage["id"])
+        if not isinstance(stage["checks"], list) or not stage["checks"]:
+            raise ValueError("Work checklist stage must have checks")
+        for check in stage["checks"]:
+            if set(check) - {"id", "condition", "evidence", "if_unmet", "actions"} or not {
+                "id",
+                "condition",
+                "evidence",
+                "if_unmet",
+            }.issubset(check):
+                raise ValueError("Invalid work checklist check")
+            for key in ("id", "condition", "if_unmet"):
+                if not isinstance(check[key], str) or not check[key].strip():
+                    raise ValueError("Work checklist check text is required")
+            if not check["id"].startswith(stage["id"] + ".") or check["id"] in identities:
+                raise ValueError("Work checklist check must have a unique stage identity")
+            identities.add(check["id"])
+            if (
+                not isinstance(check["evidence"], list)
+                or not check["evidence"]
+                or any(not isinstance(item, str) or not item.strip() for item in check["evidence"])
+            ):
+                raise ValueError("Work checklist check evidence is required")
+            for action in check.get("actions", ()):
+                if set(action) != {"command", "action", "when"} or any(
+                    not isinstance(item, str) or not item.strip() for item in action.values()
+                ):
+                    raise ValueError("Invalid work checklist action")
+    return value
+
+
+def render_work_checklist(value):
+    """The human work guide and packaged machine list share these exact conditions."""
+    lines = []
+    for stage in value["stages"]:
+        lines.append(f"{stage['number']}. **{stage['title']}**：{stage['completion']}")
+        for check in stage["checks"]:
+            lines.extend(
+                (
+                    f"   - `{check['id']}`：{check['condition']}",
+                    f"     核对依据：{'；'.join(check['evidence'])}。",
+                    f"     未满足时：{check['if_unmet']}",
+                )
+            )
+            for action in check.get("actions", ()):
+                lines.append(
+                    f"     调用 `{action['command']}(action={action['action']})`：{action['when']}"
+                )
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def guide_outputs(root, business_document):
     source = root / "docs/redesign"
 
@@ -193,7 +266,12 @@ def guide_outputs(root, business_document):
             "text": re.sub(r"\[([^\]]+)\]\(([^\s)]+)\)", link, text).strip() + "\n",
         }
 
+    checklist = work_checklist(source / "work-checklist.json")
     operations = read("08-ai-work-and-materials.md")
+    marker = "<!-- generated-work-checklist -->"
+    if operations.count(marker) != 1:
+        raise ValueError("Work guide must include its checklist exactly once")
+    operations = operations.replace(marker, render_work_checklist(checklist))
     work = "\n\n".join(
         markdown_section(operations, "## " + heading)
         for heading in (
@@ -252,6 +330,7 @@ def guide_outputs(root, business_document):
     payload = {
         "format": "ai-accounting-guides/1",
         "topics": topics,
+        "checklist": checklist,
         "business": {
             "kinds": business,
             "sections": sections,

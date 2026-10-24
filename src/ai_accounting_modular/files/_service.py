@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
@@ -22,6 +22,7 @@ from ._locks import locked
 from ._plans import copy_json as _copy
 from ._types import (
     CaptureContext,
+    CurrentFile,
     ExpireTask,
     FileArtifact,
     FileCompletion,
@@ -70,8 +71,8 @@ def _transient_download_error(error):
 
 class Files:
     def __init__(self, storage, producers: Mapping[str, FileProducer]):
-        if not isinstance(producers, Mapping) or set(producers) - {"backup", "report_export"}:
-            raise ContractError("invalid_input", "仅能装配备份和报表两类文件生产者。")
+        if not isinstance(producers, Mapping) or set(producers) - _plans.KIND_SCHEMAS.keys():
+            raise ContractError("invalid_input", "仅能装配已注册种类的文件生产者。")
         self._storage = storage
         self._producers = dict(producers)
         self._runtimes = {}
@@ -334,8 +335,7 @@ class Files:
         """
         if self._closed:
             raise ContractError("invalid_operation", "文件任务服务已经关闭。")
-        if type(kind) is not str or kind not in {"backup", "report_export"}:
-            raise ContractError("invalid_input", "仅能查询备份或报表任务仍保留的输入计划。")
+        _plans.plan_schema(kind)
         metadata = self._storage.company_metadata(read_context)
         return tuple(
             self._plan(metadata, row)
@@ -350,12 +350,50 @@ class Files:
             return self._receipt(company_id, row)
         with locked(self._lock_path(metadata, row), 0):
             row = self._row(company_id, task_id, plan=True)
-            if row is not None and row["state"] != "expired":
-                plan = self._plan(metadata, row)
-                context = self._context(metadata, task_id, row["capture_id"])
-                if not _plans.is_current(self._producer(row["kind"]), plan, context):
-                    row = self._expire(metadata, row, ExpireTask())
+            row = self._checked_row(metadata, row)
             return self._receipt(company_id, row)
+
+    def current_plan(self, company_id, kind, scope_key) -> CurrentFile | None:
+        """Locate one accepted scope without exposing the files-owned repository.
+
+        A successful receipt is returned only after checking current semantics
+        and actual downloadable bytes. This never generates or retries a file.
+        """
+        _plans.plan_schema(kind)
+        if type(scope_key) is not str or not scope_key:
+            raise ContractError("invalid_input", "文件范围必须是非空字符串。")
+        metadata = self._metadata(company_id)
+        selector = {"kind": kind, "scope_key": scope_key}
+        with locked(self._lock_path(metadata, selector), 0):
+            with self._storage.read_unit(company_id) as read:
+                row = read.repository("files").scope(kind, scope_key)
+            if row is None:
+                return None
+            plan = self._plan(metadata, row) if row["state"] != "expired" else None
+            row = self._checked_row(metadata, row, plan=plan)
+            return CurrentFile(
+                plan if row["state"] != "expired" else None, self._receipt(company_id, row)
+            )
+
+    def _checked_row(self, metadata, row, *, plan=None):
+        if row is None or row["state"] == "expired":
+            return row
+        plan = self._plan(metadata, row) if plan is None else plan
+        if row["state"] == "succeeded":
+            try:
+                with self._download_snapshot(metadata, row, plan=plan):
+                    pass
+            except ContractError as exc:
+                if exc.code not in {"file_invalid", "plan_expired"}:
+                    raise
+                row = self._row(metadata.company_id, row["task_id"], plan=True)
+                if row is None or row["state"] == "succeeded":
+                    raise
+        else:
+            context = self._context(metadata, row["task_id"], row["capture_id"])
+            if not _plans.is_current(self._producer(row["kind"]), plan, context):
+                return self._expire(metadata, row, ExpireTask())
+        return row
 
     def ensure_current(self, plan, head, request_id):
         validate_contract("core.schema.json", "Digest", head)
@@ -380,6 +418,8 @@ class Files:
                 or creator["scope_head"] != head
             ):
                 raise ContractError("conflict", "当前创建请求标识不能用于另一份文件计划。")
+            if row is not None and row["state"] == "succeeded":
+                row = self._checked_row(metadata, row)
             if row is not None and row["scope_head"] == head:
                 if row["state"] in {"pending", "running", "succeeded"} or (
                     row["state"] == "failed" and row["creator_request_id"] == request_id
@@ -680,59 +720,66 @@ class Files:
         self.recover(company_id)
 
     @contextmanager
+    def _download_snapshot(self, metadata, row, *, plan=None):
+        """Caller holds the scope lock; yield independently checked output bytes."""
+        company_id, task_id = metadata.company_id, row["task_id"]
+        if row["state"] != "succeeded":
+            code = "plan_expired" if row["state"] == "expired" else "file_not_ready"
+            raise ContractError(code, "当前文件尚未成为可下载的有效交付。")
+        plan = self._plan(metadata, row) if plan is None else plan
+        producer = self._producer(row["kind"])
+        context = self._context(metadata, task_id, row["capture_id"])
+        stream = None
+        try:
+            if not _plans.is_current(producer, plan, context):
+                self._expire(metadata, row, ExpireTask())
+                raise ContractError("plan_expired", "文件计划已失效，不能下载旧结果。")
+            path = self._output_path(context, row["kind"], Path(row["output_path"]))
+            try:
+                stream, digest, size = _paths.snapshot_file(path)
+            except (OSError, ContractError) as exc:
+                if _transient_download_error(exc):
+                    raise ContractError(
+                        "temporary_failure", "交付文件暂时无法读取，请稍后重试下载。"
+                    ) from exc
+                self._change(
+                    company_id,
+                    row,
+                    state="failed",
+                    error=("file_invalid", "已生成文件缺失或内容核验失败，需显式重新生成。"),
+                )
+                raise ContractError("file_invalid", "交付文件缺失或内容核验失败。") from exc
+            if (digest, size) != (row["output_sha256"], row["output_bytes"]):
+                self._change(
+                    company_id,
+                    row,
+                    state="failed",
+                    error=("file_invalid", "已生成文件字节与任务记录不一致，需显式重新生成。"),
+                )
+                raise ContractError("file_invalid", "交付文件字节与任务保存结果不一致。")
+            if not _plans.is_current(producer, plan, context):
+                self._expire(metadata, row, ExpireTask())
+                raise ContractError("plan_expired", "文件计划已失效，不能下载旧结果。")
+            yield VerifiedDownload(stream, self._describe(plan).file_name, digest, size)
+        finally:
+            if stream is not None:
+                stream.close()
+
+    @contextmanager
     def verified_download(self, company_id, task_id):
         metadata = self._prepare(company_id)
         row = self._row(company_id, task_id, plan=True)
         if row is None:
             raise ContractError("not_found", "当前公司没有这个文件任务。")
-        stream = None
-        try:
+        with ExitStack() as snapshots:
             with locked(self._lock_path(metadata, row), 0):
                 row = self._row(company_id, task_id, plan=True)
                 if row is None:
                     raise ContractError("not_found", "当前公司没有这个文件任务。")
-                if row["state"] != "succeeded":
-                    code = "plan_expired" if row["state"] == "expired" else "file_not_ready"
-                    raise ContractError(code, "当前文件尚未成为可下载的有效交付。")
-                plan = self._plan(metadata, row)
-                producer = self._producer(row["kind"])
-                context = self._context(metadata, task_id, row["capture_id"])
-                if not _plans.is_current(producer, plan, context):
-                    self._expire(metadata, row, ExpireTask())
-                    raise ContractError("plan_expired", "文件计划已失效，不能下载旧结果。")
-                path = self._output_path(context, row["kind"], Path(row["output_path"]))
-                try:
-                    stream, digest, size = _paths.snapshot_file(path)
-                except (OSError, ContractError) as exc:
-                    if _transient_download_error(exc):
-                        raise ContractError(
-                            "temporary_failure", "交付文件暂时无法读取，请稍后重试下载。"
-                        ) from exc
-                    self._change(
-                        company_id,
-                        row,
-                        state="failed",
-                        error=("file_invalid", "已生成文件缺失或内容核验失败，需显式重新生成。"),
-                    )
-                    raise ContractError("file_invalid", "交付文件缺失或内容核验失败。") from exc
-                if (digest, size) != (row["output_sha256"], row["output_bytes"]):
-                    self._change(
-                        company_id,
-                        row,
-                        state="failed",
-                        error=("file_invalid", "已生成文件字节与任务记录不一致，需显式重新生成。"),
-                    )
-                    raise ContractError("file_invalid", "交付文件字节与任务保存结果不一致。")
-                if not _plans.is_current(producer, plan, context):
-                    self._expire(metadata, row, ExpireTask())
-                    raise ContractError("plan_expired", "文件计划已失效，不能下载旧结果。")
-                name = self._describe(plan).file_name
-            # The independent byte snapshot is the response snapshot. Network
-            # sending holds neither a database transaction nor a scope lock.
-            yield VerifiedDownload(stream, name, digest, size)
-        finally:
-            if stream is not None:
-                stream.close()
+                download = snapshots.enter_context(self._download_snapshot(metadata, row))
+            # Sending the independent snapshot holds neither DB transaction nor
+            # scope lock, even if the current task is replaced during transfer.
+            yield download
 
     def close(self):
         with self._lifecycle:

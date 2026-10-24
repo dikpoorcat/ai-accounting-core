@@ -51,6 +51,7 @@ flowchart LR
 | `records` | 来源索引、公司说明、当前未解事项、最终标准文档的组织与持久保存；资料路径和校验。 | `contracts`、各领域公开事实导出与当前状态。 |
 | `storage` | 目录库与公司库的连接、事务、结构识别/新建/同体系升级、备份恢复的底层一致性。 | `contracts`、模块提交的结构合同；不解释业务 JSON。 |
 | `files` | 当前文件任务的防重、持久状态、运行接续及文件验证；不判断报表、备份或业务含义。 | `contracts`、自身存储端口；由 host 注入生产者 Protocol。 |
+| `payments` | 付款文件适配：按明确范围读取当前可付额、组织收款行、采用公司模板并核验代发表；无业务私表，不写实际付款。 | 注入的公开业务读取端口、`people/ledger/identity/records/storage/files.public`及共同合同。 |
 | `reading` | 分页检索、当前读取模型、各页面和报表文件的组装与版本；不得重新决定核算金额。 | `ledger.public`、领域和 `money` 的公开批量查询、`identity/records/storage/files.public`。 |
 | `dashboard` | 保持旧 HTTP 线协议、校验器、错误和分页约定，转换 `reading` 结果；只读，不办理批准。 | `reading.public`、`contracts`。 |
 | `host` | 启动、依赖注入、HTTP/MCP/CLI 装配、同源会话、后台调度和退出。 | 各模块公开工厂；业务模块不依赖它。 |

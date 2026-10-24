@@ -146,6 +146,52 @@ def report_plan(company, *, label="first", period="2026-01"):
     return plan
 
 
+def payment_plan(company, *, label="first", period="2026-01"):
+    business_id, party_id = str(uuid4()), str(uuid4())
+    refs = [{"business_id": business_id, "slot": "primary"}]
+    return {
+        "kind": "payment_export",
+        "plan_version": 1,
+        "company_id": company.company_id,
+        "database_id": company.database_id,
+        "scope_head": content_digest({"label": label, "database": company.database_id}),
+        "scope": {"period": period, "selection": "period"},
+        "balance_period": period,
+        "candidates": [
+            {
+                "business_id": business_id,
+                "kind": "operations.expense",
+                "party_id": party_id,
+                "purpose": "合成报销",
+                "remaining_fen": "30000",
+                "payable_fen": "30000",
+                "obligation_refs": refs,
+                "basis_digest": content_digest("synthetic payable"),
+            }
+        ],
+        "rows": [
+            {
+                "party_id": party_id,
+                "name": "合成员工",
+                "account": "000000000000000001",
+                "purpose": "合成报销",
+                "amount_fen": "30000",
+                "obligation_refs": refs,
+            }
+        ],
+        "total_fen": "30000",
+        "template": {
+            "source_id": str(uuid4()),
+            "sha256": content_digest("synthetic template"),
+            "layout": {
+                "sheet_name": "代发",
+                "first_data_row": 2,
+                "columns": {"payee_name": 1, "payee_account": 2, "amount": 3, "purpose": 4},
+            },
+        },
+    }
+
+
 class SyntheticProducer:
     """Produces actual ZIP/XLSX bytes; only the task boundary is under test."""
 
@@ -164,6 +210,10 @@ class SyntheticProducer:
     def describe(self, plan):
         if plan["kind"] == "backup":
             return FileScope("company", plan["scope_head"], "synthetic.zip")
+        if plan["kind"] == "payment_export":
+            return FileScope(
+                "payment:" + plan["scope"]["period"], plan["scope_head"], "合成代发.xlsx"
+            )
         scope = plan["snapshot"]["scope"]
         key = "report:" + scope["period_from"] + ":" + plan["variant"]
         return FileScope(key, plan["scope_head"], "合成报表.xlsx")
@@ -277,4 +327,11 @@ class SyntheticProducer:
 
 
 def service(storage, producer):
-    return create_files(storage, {"backup": producer, "report_export": producer})
+    return create_files(
+        storage,
+        {
+            "backup": producer,
+            "report_export": producer,
+            "payment_export": producer,
+        },
+    )

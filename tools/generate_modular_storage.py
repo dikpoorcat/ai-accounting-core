@@ -25,17 +25,13 @@ def generate(kind: str) -> str:
         match = re.match(r"-- owner: (\S+)", line)
         if match:
             owner = match[1]
-        match = re.match(r"CREATE TABLE (\w+)", line)
+        match = re.match(r'CREATE TABLE "?(\w+)"?', line)
         if match:
             if owner is None:
                 raise ValueError(f"Missing owner: {match[1]}")
             table_owners[match[1]] = owner
     with sqlite3.connect(":memory:") as connection:
         connection.executescript(sql)
-        if kind == "company":
-            connection.executescript(
-                (ROOT / "docs/redesign/schema/company-note-format.sql").read_text("utf-8")
-            )
         objects = [
             {
                 "owner": table_owners[table],
@@ -50,9 +46,9 @@ def generate(kind: str) -> str:
             )
         ]
     objects.sort(key=lambda item: (item["owner"], item["type"], item["name"]))
-    result = {"kind": kind, "version": 2 if kind == "company" else 1, "objects": objects}
+    result = {"kind": kind, "version": 3 if kind == "company" else 1, "objects": objects}
     if kind == "company":
-        previous = json.loads((OUTPUT / "previous/company-v1.json").read_text("utf-8"))
+        previous = json.loads((OUTPUT / "previous/company-v2.json").read_text("utf-8"))
         result["parent_fingerprint"] = previous["fingerprint"]
     result["fingerprint"] = hashlib.sha256(canonical(objects).encode("utf-8")).hexdigest()
     return json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
@@ -71,13 +67,17 @@ def main() -> None:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(expected, encoding="utf-8", newline="\n")
-    path = OUTPUT / "company-v1-to-v2.sql"
-    expected = (ROOT / "docs/redesign/schema/company-note-format.sql").read_text("utf-8")
-    if args.check:
-        if not path.is_file() or path.read_text("utf-8") != expected:
-            raise SystemExit(f"Packaged structure transition is stale: {path}")
-    else:
-        path.write_text(expected, encoding="utf-8", newline="\n")
+    for transition, source in (
+        ("company-v1-to-v2.sql", "company-note-format.sql"),
+        ("company-v2-to-v3.sql", "payment-export.sql"),
+    ):
+        path = OUTPUT / transition
+        expected = (ROOT / "docs/redesign/schema" / source).read_text("utf-8")
+        if args.check:
+            if not path.is_file() or path.read_text("utf-8") != expected:
+                raise SystemExit(f"Packaged structure transition is stale: {path}")
+        else:
+            path.write_text(expected, encoding="utf-8", newline="\n")
     print("Packaged storage contracts are current.")
 
 

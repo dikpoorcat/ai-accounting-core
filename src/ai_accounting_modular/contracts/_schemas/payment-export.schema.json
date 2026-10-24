@@ -1,0 +1,518 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-accounting.local/design/payment-export.schema.json",
+  "title": "银行代发表检查、生成与计划合同",
+  "$ref": "#/$defs/PaymentExportRequest",
+  "$defs": {
+    "PaymentExportLayout": {
+      "type": "object",
+      "properties": {
+        "sheet_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "first_data_row": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "columns": {
+          "type": "object",
+          "properties": {
+            "payee_name": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16384
+            },
+            "payee_account": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16384
+            },
+            "amount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16384
+            },
+            "purpose": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16384
+            }
+          },
+          "required": [
+            "payee_name",
+            "payee_account",
+            "amount",
+            "purpose"
+          ],
+          "additionalProperties": false
+        },
+        "last_data_row": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      },
+      "required": [
+        "sheet_name",
+        "first_data_row",
+        "columns"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportTemplate": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "sha256": {
+          "$ref": "core.schema.json#/$defs/Digest"
+        },
+        "layout": {
+          "$ref": "#/$defs/PaymentExportLayout"
+        }
+      },
+      "required": [
+        "source_id",
+        "sha256",
+        "layout"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "selection": {
+              "const": "period"
+            }
+          },
+          "required": [
+            "period",
+            "selection"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "selection": {
+              "const": "selected"
+            },
+            "business_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "core.schema.json#/$defs/Id"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "period",
+            "selection",
+            "business_ids"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PaymentExportIssue": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "object_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        }
+      },
+      "required": [
+        "code",
+        "field",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportCandidate": {
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "people.remuneration",
+            "operations.expense",
+            "operations.reimbursement",
+            "operations.pass_through",
+            "operations.pass_through_return",
+            "opening.package"
+          ]
+        },
+        "party_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remaining_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "payable_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "obligation_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/BusinessRef"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "basis_digest": {
+          "$ref": "core.schema.json#/$defs/Digest"
+        }
+      },
+      "required": [
+        "business_id",
+        "kind",
+        "purpose",
+        "remaining_fen",
+        "payable_fen",
+        "obligation_refs",
+        "basis_digest"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportRow": {
+      "type": "object",
+      "properties": {
+        "party_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "amount_fen": {
+          "$ref": "core.schema.json#/$defs/PositiveFen"
+        },
+        "obligation_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/BusinessRef"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "party_id",
+        "name",
+        "account",
+        "purpose",
+        "amount_fen",
+        "obligation_refs"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportInspectRequest": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "template_source_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "template_layout": {
+          "$ref": "#/$defs/PaymentExportLayout"
+        }
+      },
+      "required": [
+        "company_id",
+        "period"
+      ],
+      "additionalProperties": false,
+      "dependentRequired": {
+        "template_layout": [
+          "template_source_id"
+        ]
+      }
+    },
+    "PaymentExportInspection": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "scope": {
+          "$ref": "#/$defs/PaymentExportScope"
+        },
+        "scope_head": {
+          "$ref": "core.schema.json#/$defs/Digest"
+        },
+        "balance_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaymentExportCandidate"
+          },
+          "minItems": 0
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaymentExportRow"
+          },
+          "minItems": 0
+        },
+        "total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "template": {
+          "$ref": "#/$defs/PaymentExportTemplate"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaymentExportIssue"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "scope",
+        "scope_head",
+        "balance_period",
+        "candidates",
+        "rows",
+        "total_fen",
+        "available",
+        "issues"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportPlan": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "scope": {
+          "$ref": "#/$defs/PaymentExportScope"
+        },
+        "scope_head": {
+          "$ref": "core.schema.json#/$defs/Digest"
+        },
+        "balance_period": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaymentExportCandidate"
+          },
+          "minItems": 0
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PaymentExportRow"
+          },
+          "minItems": 0
+        },
+        "total_fen": {
+          "$ref": "core.schema.json#/$defs/NonNegativeFen"
+        },
+        "template": {
+          "$ref": "#/$defs/PaymentExportTemplate"
+        },
+        "kind": {
+          "const": "payment_export"
+        },
+        "plan_version": {
+          "const": 1
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "scope",
+        "scope_head",
+        "balance_period",
+        "candidates",
+        "rows",
+        "total_fen",
+        "template",
+        "kind",
+        "plan_version"
+      ],
+      "additionalProperties": false
+    },
+    "PaymentExportRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "business_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "core.schema.json#/$defs/Id"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "template_source_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "template_layout": {
+              "$ref": "#/$defs/PaymentExportLayout"
+            },
+            "action": {
+              "const": "inspect"
+            }
+          },
+          "required": [
+            "company_id",
+            "period",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "business_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "core.schema.json#/$defs/Id"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "template_source_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "template_layout": {
+              "$ref": "#/$defs/PaymentExportLayout"
+            },
+            "request_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "action": {
+              "const": "generate"
+            }
+          },
+          "required": [
+            "company_id",
+            "period",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "business_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "core.schema.json#/$defs/Id"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "action": {
+              "const": "status"
+            },
+            "template_source_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "template_layout": {
+              "$ref": "#/$defs/PaymentExportLayout"
+            }
+          },
+          "required": [
+            "company_id",
+            "period",
+            "action"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

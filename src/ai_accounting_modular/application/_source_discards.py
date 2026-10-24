@@ -4,17 +4,34 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 from ai_accounting_modular.records.public import SourceDiscardCleanup
 
 
-def _protected_paths(application, read):
+def _protected_paths(application, read, *, template_ids=None):
     if application.files is None:
         raise ContractError("unsupported", "当前实例未装配原件备份保护，不能清理原件。")
     plans = application.files.retained_input_plans("backup", read)
+    paths = {
+        item["relative_path"]
+        for plan in plans
+        for item in plan["inputs"]
+        if item["source_root"] == "company"
+    }
+    if template_ids is None:
+        template_ids = _template_sources(application, read)
+    paths.update(
+        source["relative_path"]
+        for source in application.records.resolve_sources(template_ids, read)
+        if source["kind"] == "file"
+    )
+    return tuple(sorted(paths))
+
+
+def _template_sources(application, read):
+    if application.files is None:
+        return ()
     return tuple(
         sorted(
             {
-                item["relative_path"]
-                for plan in plans
-                for item in plan["inputs"]
-                if item["source_root"] == "company"
+                plan["template"]["source_id"]
+                for plan in application.files.retained_input_plans("payment_export", read)
             }
         )
     )
@@ -41,15 +58,19 @@ def discard(application, request):
     wanted = tuple(sorted(set(request["source_ids"])))
     with application.storage.write_unit(request["company_id"]) as unit:
         sources = application.records.resolve_sources(wanted, unit)
+        templates = _template_sources(application, unit)
         paths = (
-            _protected_paths(application, unit)
+            _protected_paths(application, unit, template_ids=templates)
             if any(source["kind"] == "file" for source in sources)
             else ()
         )
         prepared = application.records.discard_sources(
             wanted,
             unit,
-            retained_source_ids=application.ledger.referenced_source_ids(wanted, unit),
+            retained_source_ids=(
+                *application.ledger.referenced_source_ids(wanted, unit),
+                *templates,
+            ),
             protected_paths=paths,
         )
     pending, issues = False, set()

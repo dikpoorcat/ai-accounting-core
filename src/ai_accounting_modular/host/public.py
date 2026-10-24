@@ -17,6 +17,7 @@ from ai_accounting_modular.ledger import public as ledger
 from ai_accounting_modular.ledger.opening import public as opening
 from ai_accounting_modular.ledger.reporting import public as reporting
 from ai_accounting_modular.money import public as money
+from ai_accounting_modular.payments import public as payments
 from ai_accounting_modular.reading import public as reading
 from ai_accounting_modular.records import public as records
 from ai_accounting_modular.storage.public import Storage, company_metadata
@@ -133,23 +134,30 @@ def create_kernel(
 ) -> Kernel:
     modules = _modules()
     storage = Storage(catalog_path, repositories=modules.repositories)
+
+    def mark_reading_targets(impact, unit):
+        return read_models.mark_targets(impact, unit)
+
+    app = modules.application(storage, mark_reading_targets=mark_reading_targets)
+    payment_files = payments.create_payments(
+        storage=storage,
+        ledger=modules.ledger,
+        records=modules.records,
+        identity=modules.identity,
+        people=modules.people,
+        businesses=app,
+    )
     producers = {
         "backup": application.create_backup_producer(
             storage=storage, records=modules.records, verify_package=modules.verifier
         ),
         "report_export": reading.create_report_producer(storage),
+        "payment_export": payments.create_payment_export_producer(payment_files),
         **(file_producers or {}),
     }
     file_tasks = files.create_files(storage, producers)
 
-    def mark_reading_targets(impact, unit):
-        return read_models.mark_targets(impact, unit)
-
-    app = modules.application(
-        storage,
-        files=file_tasks,
-        mark_reading_targets=mark_reading_targets,
-    )
+    app.files, app.payments = file_tasks, payment_files
     read_models = reading.create_reading(
         storage=storage,
         ledger=modules.ledger,

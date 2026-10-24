@@ -2041,7 +2041,8 @@
           "type": "string",
           "enum": [
             "backup",
-            "report_export"
+            "report_export",
+            "payment_export"
           ]
         },
         "state": {
@@ -3142,17 +3143,27 @@
         {
           "type": "object",
           "properties": {
-            "company_id": { "$ref": "#/$defs/Id" },
-            "action": { "const": "discard" },
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "discard"
+            },
             "source_ids": {
               "type": "array",
-              "items": { "$ref": "#/$defs/Id" },
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
               "minItems": 1,
               "maxItems": 500,
               "uniqueItems": true
             }
           },
-          "required": ["company_id", "action", "source_ids"],
+          "required": [
+            "company_id",
+            "action",
+            "source_ids"
+          ],
           "additionalProperties": false
         }
       ]
@@ -3160,47 +3171,81 @@
     "SourceDiscardResult": {
       "type": "object",
       "properties": {
-        "company_id": { "$ref": "#/$defs/Id" },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
         "discarded_source_ids": {
           "type": "array",
-          "items": { "$ref": "#/$defs/Id" },
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
           "maxItems": 500,
           "uniqueItems": true
         },
         "missing_source_ids": {
           "type": "array",
-          "items": { "$ref": "#/$defs/Id" },
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
           "maxItems": 500,
           "uniqueItems": true
         },
         "file_cleanup": {
           "type": "object",
           "properties": {
-            "state": { "enum": ["complete", "pending"] },
+            "state": {
+              "enum": [
+                "complete",
+                "pending"
+              ]
+            },
             "issues": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
-                  "code": { "type": "string", "minLength": 1, "maxLength": 100 },
-                  "message": { "type": "string", "minLength": 1, "maxLength": 2000 }
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
                 },
-                "required": ["code", "message"],
+                "required": [
+                  "code",
+                  "message"
+                ],
                 "additionalProperties": false
               }
             }
           },
-          "required": ["state", "issues"],
+          "required": [
+            "state",
+            "issues"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["company_id", "discarded_source_ids", "missing_source_ids", "file_cleanup"],
+      "required": [
+        "company_id",
+        "discarded_source_ids",
+        "missing_source_ids",
+        "file_cleanup"
+      ],
       "additionalProperties": false
     },
     "SourcesCommandResult": {
       "oneOf": [
-        { "$ref": "#/$defs/SourcesResult" },
-        { "$ref": "#/$defs/SourceDiscardResult" }
+        {
+          "$ref": "#/$defs/SourcesResult"
+        },
+        {
+          "$ref": "#/$defs/SourceDiscardResult"
+        }
       ]
     },
     "DocumentsRequest": {
@@ -4778,16 +4823,35 @@
     "SourceStatus": {
       "type": "object",
       "properties": {
-        "source_id": { "$ref": "#/$defs/Id" },
-        "state": { "enum": ["present", "missing_file", "content_mismatch", "not_found"] },
+        "source_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "enum": [
+            "present",
+            "missing_file",
+            "content_mismatch",
+            "not_found"
+          ]
+        },
         "observed_size": {
           "oneOf": [
-            { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
-            { "type": "null" }
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
-      "required": ["source_id", "state", "observed_size"],
+      "required": [
+        "source_id",
+        "state",
+        "observed_size"
+      ],
       "additionalProperties": false
     },
     "SourceInspection": {
@@ -4837,7 +4901,11 @@
         },
         "unsupported_sections": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
           "uniqueItems": true
         }
       },
@@ -4881,7 +4949,9 @@
         },
         "source_statuses": {
           "type": "array",
-          "items": { "$ref": "#/$defs/SourceStatus" },
+          "items": {
+            "$ref": "#/$defs/SourceStatus"
+          },
           "minItems": 0,
           "maxItems": 500
         }
@@ -5036,6 +5106,9 @@
         },
         {
           "$ref": "#/$defs/ReportExportPlan"
+        },
+        {
+          "$ref": "#/$defs/PaymentExportPlan"
         }
       ]
     },
@@ -5803,6 +5876,44 @@
         "view",
         "items"
       ]
+    },
+    "PaymentExportRequest": {
+      "$ref": "payment-export.schema.json#/$defs/PaymentExportRequest"
+    },
+    "PaymentExportInspection": {
+      "$ref": "payment-export.schema.json#/$defs/PaymentExportInspection"
+    },
+    "PaymentExportPlan": {
+      "$ref": "payment-export.schema.json#/$defs/PaymentExportPlan"
+    },
+    "PaymentExportResult": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "inspected",
+            "needs_information",
+            "no_payments",
+            "not_generated",
+            "pending",
+            "running",
+            "succeeded",
+            "failed",
+            "expired"
+          ]
+        },
+        "inspection": {
+          "$ref": "#/$defs/PaymentExportInspection"
+        },
+        "task": {
+          "$ref": "#/$defs/TaskReceipt"
+        }
+      },
+      "required": [
+        "state",
+        "inspection"
+      ],
+      "additionalProperties": false
     }
   }
 }

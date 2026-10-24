@@ -184,12 +184,13 @@ def test_post_commit_cleanup_failure_is_truthful_and_same_request_resumes(
         else:
             # The discard guard succeeds; only the post-commit fresh writer fails.
             plans = case.kernel.files.retained_input_plans
-            plan_calls = 0
+            original_unit = None
 
-            def plans_then_fail(*args):
-                nonlocal plan_calls
-                plan_calls += 1
-                return plans(*args) if plan_calls == 1 else unavailable_plans()
+            def plans_then_fail(kind, read):
+                nonlocal original_unit
+                if original_unit is None:
+                    original_unit = read
+                return plans(kind, read) if read is original_unit else unavailable_plans()
 
             patch.setattr(case.kernel.files, "retained_input_plans", plans_then_fail)
         result = discard(case, file["source_id"])

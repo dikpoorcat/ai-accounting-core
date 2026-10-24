@@ -1,5 +1,5 @@
 {
-  "fingerprint": "6bb88d19653b79f14793e67b4b7b3def6233047c52498e770fd6461249ea3b92",
+  "fingerprint": "bfa9713ff61bedc1c193a297909515bd19169a4a9f9d8eb7f7d3cb5598a3e61d",
   "kind": "company",
   "objects": [
     {
@@ -173,7 +173,7 @@
     {
       "name": "file_task",
       "owner": "files",
-      "sql": "CREATE TABLE file_task (\ntask_id TEXT PRIMARY KEY CHECK(length(task_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('backup','report_export')),\n state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),\n scope_key TEXT NOT NULL,\n scope_head TEXT NOT NULL CHECK(length(scope_head)=64),\n creator_request_id TEXT NOT NULL CHECK(length(creator_request_id) BETWEEN 1 AND 500),\n attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),\n capture_id TEXT CHECK(capture_id IS NULL OR length(capture_id)=36),\n plan_schema TEXT,\n plan_json TEXT CHECK(plan_json IS NULL OR json_valid(plan_json)),\n output_path TEXT,\n output_sha256 TEXT CHECK(output_sha256 IS NULL OR length(output_sha256)=64),\n output_bytes INTEGER CHECK(output_bytes>=0),\n error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 100),\n error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 2000),\n UNIQUE(kind,scope_key),\n CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind='report_export' AND capture_id IS NULL)),\n CHECK((state='expired' AND plan_schema IS NULL AND plan_json IS NULL)\n    OR (state<>'expired' AND plan_schema IS NOT NULL AND plan_json IS NOT NULL)),\n CHECK((state='succeeded' AND output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL)\n    OR (state<>'succeeded' AND output_path IS NULL AND output_sha256 IS NULL AND output_bytes IS NULL)),\n CHECK((error_code IS NULL)=(error_message IS NULL)),\n CHECK(state NOT IN ('failed','expired') OR error_code IS NOT NULL),\n CHECK(state<>'succeeded' OR error_code IS NULL)\n) STRICT",
+      "sql": "CREATE TABLE \"file_task\" (\ntask_id TEXT PRIMARY KEY CHECK(length(task_id)=36),\n kind TEXT NOT NULL CHECK(kind IN ('backup','report_export','payment_export')),\n state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),\n scope_key TEXT NOT NULL,\n scope_head TEXT NOT NULL CHECK(length(scope_head)=64),\n creator_request_id TEXT NOT NULL CHECK(length(creator_request_id) BETWEEN 1 AND 500),\n attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),\n capture_id TEXT CHECK(capture_id IS NULL OR length(capture_id)=36),\n plan_schema TEXT,\n plan_json TEXT CHECK(plan_json IS NULL OR json_valid(plan_json)),\n output_path TEXT,\n output_sha256 TEXT CHECK(output_sha256 IS NULL OR length(output_sha256)=64),\n output_bytes INTEGER CHECK(output_bytes>=0),\n error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 100),\n error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 2000),\n UNIQUE(kind,scope_key),\n CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind IN ('report_export','payment_export') AND capture_id IS NULL)),\n CHECK((state='expired' AND plan_schema IS NULL AND plan_json IS NULL)\n    OR (state<>'expired' AND plan_schema IS NOT NULL AND plan_json IS NOT NULL)),\n CHECK((state='succeeded' AND output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL)\n    OR (state<>'succeeded' AND output_path IS NULL AND output_sha256 IS NULL AND output_bytes IS NULL)),\n CHECK((error_code IS NULL)=(error_message IS NULL)),\n CHECK(state NOT IN ('failed','expired') OR error_code IS NOT NULL),\n CHECK(state<>'succeeded' OR error_code IS NULL)\n) STRICT",
       "table": "file_task",
       "type": "table"
     },
@@ -1027,11 +1027,11 @@
     {
       "name": "system_meta",
       "owner": "storage",
-      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=2),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
+      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=3),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
       "table": "system_meta",
       "type": "table"
     }
   ],
-  "parent_fingerprint": "c4522b0be4ea7850c6a39007b449b0880a50c9016cce0d0d8882b4116f72a603",
-  "version": 2
+  "parent_fingerprint": "6bb88d19653b79f14793e67b4b7b3def6233047c52498e770fd6461249ea3b92",
+  "version": 3
 }

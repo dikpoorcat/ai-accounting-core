@@ -12,6 +12,18 @@ from ai_accounting_modular.contracts.public import (
 from . import _paths
 from ._types import FileScope
 
+KIND_SCHEMAS = {
+    "backup": "BackupPlan",
+    "report_export": "ReportExportPlan",
+    "payment_export": "PaymentExportPlan",
+}
+
+
+def plan_schema(kind):
+    if type(kind) is not str or kind not in KIND_SCHEMAS:
+        raise ContractError("invalid_input", "文件任务种类未注册。")
+    return KIND_SCHEMAS[kind]
+
 
 def copy_json(value):
     return loads_json(canonical_json(value))
@@ -80,7 +92,7 @@ def validate(metadata, value):
             files[item["path"]] = (item["sha256"], item["byte_size"])
         if inputs != files:
             raise ContractError("invalid_input", "捕获输入须完整对应备份清单的每项字节。")
-    else:
+    elif plan["kind"] == "report_export":
         snapshot = plan["snapshot"]
         if (
             snapshot["scope"]["company_id"] != metadata.company_id
@@ -93,7 +105,7 @@ def validate(metadata, value):
 def load(metadata, row, producer):
     try:
         plan = validate(metadata, loads_json(row["plan_json"]))
-        expected = "BackupPlan" if row["kind"] == "backup" else "ReportExportPlan"
+        expected = plan_schema(row["kind"])
         if (
             row["plan_schema"] != expected
             or plan["kind"] != row["kind"]

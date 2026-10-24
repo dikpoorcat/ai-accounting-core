@@ -14,6 +14,7 @@ REQUESTS = {
     "accounting_get": "BusinessGet",
     "accounting_find": "BusinessQuery",
     "accounting_remuneration": "RemunerationRequest",
+    "accounting_payment_export": "PaymentExportRequest",
     "accounting_sources": "SourcesRequest",
     "accounting_documents": "DocumentsRequest",
     "accounting_period": "PeriodRequest",

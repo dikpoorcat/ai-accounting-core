@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from ai_accounting_modular.contracts.public import ContractError
 
+from ._plans import plan_schema
+
 _SUMMARY = (
     "task_id,kind,state,scope_key,scope_head,creator_request_id,attempts,capture_id,"
     "output_path,output_sha256,output_bytes,error_code,error_message"
@@ -67,7 +69,7 @@ class FilesRepository:
                 plan["scope_head"],
                 request_id,
                 plan.get("capture_id"),
-                "BackupPlan" if plan["kind"] == "backup" else "ReportExportPlan",
+                plan_schema(plan["kind"]),
                 plan_json,
             ),
         )

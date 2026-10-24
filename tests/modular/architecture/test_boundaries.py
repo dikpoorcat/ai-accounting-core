@@ -14,6 +14,17 @@ def test_implemented_modules_obey_declared_boundaries():
     assert CHECK["check_tree"]() == []
 
 
+def test_quoted_current_ddl_tables_still_have_their_declared_owners():
+    owners = CHECK["table_owners"]()
+    assert owners["system_meta"] == "storage"
+    assert owners["file_task"] == "files"
+    assert CHECK["violations"](
+        'query = "SELECT task_id FROM file_task"',
+        "ai_accounting_modular.application.public",
+        tables=owners,
+    )
+
+
 def test_relative_imports_cannot_hide_internal_dependencies():
     scan = CHECK["violations"]
     assert (

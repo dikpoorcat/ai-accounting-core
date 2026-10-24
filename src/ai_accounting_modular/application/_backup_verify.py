@@ -130,7 +130,7 @@ def _extract(package, entries, manifest, root):
 def structure_version(root):
     """Accept only the exact packaged current or explicitly archived company contract."""
     saved = canonical_json(loads_json(beneath(root, CONTRACT_PATH).read_bytes()))
-    for version in (None, 1):
+    for version in (None, 2, 1):
         contract = company_structure_contract(version=version)
         if saved == canonical_json(contract):
             return contract["version"]

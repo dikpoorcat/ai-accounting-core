@@ -38,7 +38,7 @@ def _write_archive(path, entries):
             output.writestr(name, raw)
 
 
-def _v1_backup(case, tmp_path, *, seed=True):
+def _previous_backup(case, tmp_path, *, seed=True, version=1):
     """Build only synthetic previous storage from its sealed SQL and real current facts."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     if seed:
@@ -70,9 +70,12 @@ def _v1_backup(case, tmp_path, *, seed=True):
     archive = package(case, seed=False)
     with ZipFile(archive) as source:
         entries = {name: source.read(name) for name in source.namelist()}
-    current, previous = tmp_path / "fixture-current.sqlite3", tmp_path / "fixture-v1.sqlite3"
+    current, previous = (
+        tmp_path / "fixture-current.sqlite3",
+        tmp_path / f"fixture-v{version}.sqlite3",
+    )
     current.write_bytes(entries["runtime/company.sqlite3"])
-    contract = company_structure_contract(version=1)
+    contract = company_structure_contract(version=version)
     with closing(sqlite3.connect(current)) as original, closing(sqlite3.connect(previous)) as old:
         original.row_factory = sqlite3.Row
         for item in contract["objects"]:
@@ -87,7 +90,9 @@ def _v1_backup(case, tmp_path, *, seed=True):
             for row in original.execute(f'SELECT {selected} FROM "{table}"'):
                 values = dict(row)
                 if table == "system_meta":
-                    values.update(schema_version=1, structure_fingerprint=contract["fingerprint"])
+                    values.update(
+                        schema_version=version, structure_fingerprint=contract["fingerprint"]
+                    )
                 elif table == "module_schema":
                     module = module_contract(contract, values["module_key"])
                     values.update(
@@ -107,7 +112,7 @@ def _v1_backup(case, tmp_path, *, seed=True):
         old.commit()
         assert old.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
         old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    verify_database(previous, structure_version=1)
+    verify_database(previous, structure_version=version)
     entries["runtime/company.sqlite3"] = previous.read_bytes()
     entries["contracts/company.json"] = (canonical_json(contract) + "\n").encode()
     manifest = loads_json(entries["manifest.json"])
@@ -147,10 +152,11 @@ def _saved_rows(database, *, derived=False):
 
 
 @pytest.mark.parametrize("mode, state", [("check", "checked"), ("run", "created")])
+@pytest.mark.parametrize("version", [1, 2])
 def test_previous_zip_checks_on_private_upgrade_and_restores_original_structure(
-    case, tmp_path, monkeypatch, mode, state
+    case, tmp_path, monkeypatch, mode, state, version
 ):
-    archive, entries = _v1_backup(case, tmp_path)
+    archive, entries = _previous_backup(case, tmp_path, version=version)
     before = archive.read_bytes()
     manifest = loads_json(entries["manifest.json"])
     offline = create_offline_application()
@@ -163,7 +169,7 @@ def test_previous_zip_checks_on_private_upgrade_and_restores_original_structure(
         return actual_upgrade(path, expected_structure_fingerprint=expected_structure_fingerprint)
 
     monkeypatch.setattr(_backup_verify, "upgrade_company_database", observed)
-    target = tmp_path / "restored-v1"
+    target = tmp_path / f"restored-v{version}"
     result = offline.accounting_isolated(request("restore", mode, archive, target))
     assert result["state"] == state, result
     assert any(check["code"] == "structure_upgrade_required" for check in result["checks"])
@@ -173,14 +179,14 @@ def test_previous_zip_checks_on_private_upgrade_and_restores_original_structure(
         assert not target.exists()
         return
     database = target / "runtime/company.sqlite3"
-    physical = verify_database(database, structure_version=1)
+    physical = verify_database(database, structure_version=version)
     assert (physical.company_id, physical.database_id, physical.head) == (
         manifest["company_id"],
         manifest["database_id"],
         manifest["database_head"],
     )
-    assert _saved_rows(database) == _saved_rows(tmp_path / "fixture-v1.sqlite3")
-    original_derived = _saved_rows(tmp_path / "fixture-v1.sqlite3", derived=True)
+    assert _saved_rows(database) == _saved_rows(tmp_path / f"fixture-v{version}.sqlite3")
+    original_derived = _saved_rows(tmp_path / f"fixture-v{version}.sqlite3", derived=True)
     assert original_derived["file_task"] and original_derived["read_scope_head"]
     assert all(not rows for rows in _saved_rows(database, derived=True).values())
     assert (target / "contracts/company.json").read_bytes() == entries["contracts/company.json"]
@@ -204,7 +210,7 @@ def test_previous_zip_checks_on_private_upgrade_and_restores_original_structure(
 
 @pytest.mark.parametrize("change", ["boolean_version", "extra_field"])
 def test_previous_zip_contract_must_exactly_match_sealed_contract(case, tmp_path, change):
-    archive, entries = _v1_backup(case, tmp_path)
+    archive, entries = _previous_backup(case, tmp_path)
     contract = loads_json(entries["contracts/company.json"])
     if change == "boolean_version":
         contract["version"] = True
@@ -222,7 +228,7 @@ def test_previous_zip_contract_must_exactly_match_sealed_contract(case, tmp_path
 
 
 def test_previous_zip_semantic_corruption_is_rejected_after_private_upgrade(case, tmp_path):
-    archive, entries = _v1_backup(case, tmp_path)
+    archive, entries = _previous_backup(case, tmp_path)
     database = tmp_path / "broken-v1.sqlite3"
     database.write_bytes(entries["runtime/company.sqlite3"])
     with closing(sqlite3.connect(database)) as connection:
@@ -244,7 +250,7 @@ def test_previous_zip_semantic_corruption_is_rejected_after_private_upgrade(case
 def test_failed_private_upgrade_preserves_original_zip_and_delivers_no_target(
     case, tmp_path, monkeypatch
 ):
-    archive, entries = _v1_backup(case, tmp_path)
+    archive, entries = _previous_backup(case, tmp_path)
     before = archive.read_bytes()
     actual_upgrade = _backup_verify.upgrade_company_database
 
@@ -270,14 +276,15 @@ def _restore_previous(archive, target):
     return target / "runtime/company.sqlite3"
 
 
+@pytest.mark.parametrize("version", [1, 2])
 def test_offline_upgrade_command_preserves_identity_frozen_books_and_retries(
-    case, tmp_path, monkeypatch
+    case, tmp_path, monkeypatch, version
 ):
-    archive, entries = _v1_backup(case, tmp_path)
+    archive, entries = _previous_backup(case, tmp_path, version=version)
     target = tmp_path / "upgrade-target"
     database = _restore_previous(archive, target)
     manifest = loads_json(entries["manifest.json"])
-    fingerprint = company_structure_contract(version=1)["fingerprint"]
+    fingerprint = company_structure_contract(version=version)["fingerprint"]
     before_archive = archive.read_bytes()
     output = StringIO()
     with monkeypatch.context() as patch:
@@ -304,7 +311,7 @@ def test_offline_upgrade_command_preserves_identity_frozen_books_and_retries(
         manifest["database_id"],
         manifest["database_head"],
     )
-    assert result["structure_version"] == 2
+    assert result["structure_version"] == 3
     assert result["structure_fingerprint"] == company_structure_contract()["fingerprint"]
     assert host_upgrade.run(target, archive, fingerprint) == result
     assert archive.read_bytes() == before_archive
@@ -324,13 +331,13 @@ def test_offline_upgrade_command_preserves_identity_frozen_books_and_retries(
 def test_offline_upgrade_rejects_a_valid_backup_for_a_different_head_without_writing(
     case, tmp_path
 ):
-    archive, _ = _v1_backup(case, tmp_path)
+    archive, _ = _previous_backup(case, tmp_path)
     target = tmp_path / "upgrade-target"
     database = _restore_previous(archive, target)
     before = database.read_bytes()
     changed = case.app.accounting_apply(case.request(case.expense("20000", "2026-02")))
     assert changed["completion"] == "complete", changed
-    newer_archive, _ = _v1_backup(case, tmp_path / "newer", seed=False)
+    newer_archive, _ = _previous_backup(case, tmp_path / "newer", seed=False)
     with pytest.raises(ContractError) as error:
         host_upgrade.run(
             target, newer_archive, company_structure_contract(version=1)["fingerprint"]
@@ -341,7 +348,7 @@ def test_offline_upgrade_rejects_a_valid_backup_for_a_different_head_without_wri
 
 
 def test_in_place_upgrade_and_retry_preserve_prepared_reading_and_files_rows(case, tmp_path):
-    archive, entries = _v1_backup(case, tmp_path)
+    archive, entries = _previous_backup(case, tmp_path)
     target = tmp_path / "in-place-v1"
     for name, raw in entries.items():
         if name == "manifest.json":

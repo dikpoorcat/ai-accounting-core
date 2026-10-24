@@ -1,4 +1,4 @@
-"""One reviewed, explicit company-v1 to company-v2 structural transition."""
+"""Explicit forward company transitions preserve every retained source row."""
 
 import sqlite3
 from importlib.resources import files
@@ -7,16 +7,18 @@ from pathlib import Path
 from ai_accounting_modular.contracts.public import ContractError
 
 from ._database import _connect, _database_error, _stored_company
-from ._schema import module_schema, packaged_schema, previous_company_schema, verify_structure
+from ._schema import company_schema, module_schema, packaged_schema, verify_structure
 from ._types import DatabaseSnapshot
 from ._units import _active_writes
 
+TRANSITIONS = {1: "company-v1-to-v2.sql", 2: "company-v2-to-v3.sql"}
 
-def _transition(connection):
+
+def _transition(connection, version):
     statement = ""
     for line in (
         files(__package__)
-        .joinpath("schema", "company-v1-to-v2.sql")
+        .joinpath("schema", TRANSITIONS[version])
         .read_text("utf-8")
         .splitlines(True)
     ):
@@ -42,17 +44,21 @@ def upgrade_company_database(
     expected_structure_fingerprint: str,
     expected_snapshot: DatabaseSnapshot | None = None,
 ) -> DatabaseSnapshot:
-    """Upgrade an offline, backed-up v1 database in place; never replay business.
+    """Upgrade an exact offline, backed-up known structure; never replay business.
 
     The caller stops its service and verifies its backup first. The original exact
     contract is checked again under the write lock. A failed transition rolls back
     the DDL, module records and data together. A completed retry changes nothing.
     """
-    previous, current = previous_company_schema(), packaged_schema("company")
-    if type(expected_structure_fingerprint) is not str or expected_structure_fingerprint not in {
-        previous["fingerprint"],
-        current["fingerprint"],
-    }:
+    current = packaged_schema("company")
+    contracts = {
+        company_schema(version)["fingerprint"]: company_schema(version)
+        for version in (*TRANSITIONS, current["version"])
+    }
+    if (
+        type(expected_structure_fingerprint) is not str
+        or expected_structure_fingerprint not in contracts
+    ):
         raise ContractError("unsupported_structure", "升级仅接受明确的本体系起始结构合同")
     path = Path(path).resolve()
     if path in _active_writes.get():
@@ -61,12 +67,9 @@ def upgrade_company_database(
     try:
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute("SELECT * FROM system_meta WHERE singleton=1").fetchone()
-        if row is None or row["structure_fingerprint"] not in {
-            previous["fingerprint"],
-            current["fingerprint"],
-        }:
+        if row is None or row["structure_fingerprint"] not in contracts:
             raise ContractError("storage_corrupt", "数据库没有已知的起始结构")
-        actual = current if row["structure_fingerprint"] == current["fingerprint"] else previous
+        actual = contracts[row["structure_fingerprint"]]
         verify_structure(connection, "company", expected=actual)
         system, company = _stored_company(connection)
         before = (company["company_id"], system["database_id"], system["global_seq"])
@@ -77,27 +80,34 @@ def upgrade_company_database(
         ):
             raise ContractError("conflict", "公司身份或账务版本已变化，请重新核验备份")
         _integrity(connection)
-        if actual is previous:
-            if expected_structure_fingerprint != previous["fingerprint"]:
+        if actual is not current:
+            if expected_structure_fingerprint != actual["fingerprint"]:
                 raise ContractError("conflict", "数据库结构与本次明确的起始结构不一致")
-            _transition(connection)
-            connection.execute(
-                "UPDATE system_meta SET structure_fingerprint=? WHERE singleton=1",
-                (current["fingerprint"],),
-            )
-            for owner in ("records", "storage"):
-                module = module_schema(owner)
+            while actual["version"] < current["version"]:
+                version = actual["version"]
+                following = company_schema(version + 1)
+                _transition(connection, version)
                 connection.execute(
-                    "UPDATE module_schema SET version=?,contract_digest=?,parent_digest=?,"
-                    "sql_fingerprint=? WHERE module_key=?",
-                    (
-                        module.version,
-                        module.contract_digest,
-                        module.parent_digest,
-                        module.sql_fingerprint,
-                        owner,
-                    ),
+                    "UPDATE system_meta SET structure_fingerprint=? WHERE singleton=1",
+                    (following["fingerprint"],),
                 )
+                for owner in sorted({item["owner"] for item in following["objects"]}):
+                    module = module_schema(owner, structure_version=following["version"])
+                    if module == module_schema(owner, structure_version=version):
+                        continue
+                    connection.execute(
+                        "UPDATE module_schema SET version=?,contract_digest=?,parent_digest=?,"
+                        "sql_fingerprint=? WHERE module_key=?",
+                        (
+                            module.version,
+                            module.contract_digest,
+                            module.parent_digest,
+                            module.sql_fingerprint,
+                            owner,
+                        ),
+                    )
+                verify_structure(connection, "company", expected=following)
+                actual = following
             verify_structure(connection, "company")
             _integrity(connection)
             system, company = _stored_company(connection)

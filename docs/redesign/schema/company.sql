@@ -1,12 +1,12 @@
--- 新体系公司库初版设计；仅设计产物，不是对现有库执行的迁移。
+-- 当前公司库完整结构3；新库按此建立，现有库仅通过明确的前向结构调整接续。
 PRAGMA foreign_keys = ON;
 
 -- owner: storage
-CREATE TABLE system_meta (
-singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+CREATE TABLE "system_meta" (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),
  database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),
- schema_version INTEGER NOT NULL CHECK(schema_version=1),
+ schema_version INTEGER NOT NULL CHECK(schema_version=3),
  structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),
  global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)
 ) STRICT;
@@ -240,7 +240,9 @@ scope_key TEXT PRIMARY KEY,
  seq INTEGER NOT NULL CHECK(seq>=1),
  latest_command_id TEXT NOT NULL CHECK(length(latest_command_id)=36),
  latest_expected_seq INTEGER NOT NULL CHECK(latest_expected_seq>=0),
- content_digest TEXT NOT NULL CHECK(length(content_digest)=64),
+ content_digest TEXT NOT NULL CHECK(length(content_digest)=64), note_format TEXT NOT NULL DEFAULT 'plain_text'
+  CHECK(note_format IN ('plain_text', 'markdown'))
+  CHECK(note_format='plain_text' OR scope_key='company'),
  CHECK((state='current' AND note_text IS NOT NULL AND length(note_text)>0) OR (state='needs_refresh' AND note_text IS NULL))
 ) STRICT;
 
@@ -705,9 +707,9 @@ CREATE INDEX read_item_group ON read_item(scope_key,collection_key,group_key,sor
 CREATE INDEX read_item_category ON read_item(scope_key,collection_key,category,sort_key,item_id) WHERE category IS NOT NULL;
 
 -- owner: files
-CREATE TABLE file_task (
+CREATE TABLE "file_task" (
 task_id TEXT PRIMARY KEY CHECK(length(task_id)=36),
- kind TEXT NOT NULL CHECK(kind IN ('backup','report_export')),
+ kind TEXT NOT NULL CHECK(kind IN ('backup','report_export','payment_export')),
  state TEXT NOT NULL CHECK(state IN ('pending','running','succeeded','failed','expired')),
  scope_key TEXT NOT NULL,
  scope_head TEXT NOT NULL CHECK(length(scope_head)=64),
@@ -722,7 +724,7 @@ task_id TEXT PRIMARY KEY CHECK(length(task_id)=36),
  error_code TEXT CHECK(error_code IS NULL OR length(error_code) BETWEEN 1 AND 100),
  error_message TEXT CHECK(error_message IS NULL OR length(error_message) BETWEEN 1 AND 2000),
  UNIQUE(kind,scope_key),
- CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind='report_export' AND capture_id IS NULL)),
+ CHECK((kind='backup' AND capture_id IS NOT NULL) OR (kind IN ('report_export','payment_export') AND capture_id IS NULL)),
  CHECK((state='expired' AND plan_schema IS NULL AND plan_json IS NULL)
     OR (state<>'expired' AND plan_schema IS NOT NULL AND plan_json IS NOT NULL)),
  CHECK((state='succeeded' AND output_path IS NOT NULL AND output_sha256 IS NOT NULL AND output_bytes IS NOT NULL)

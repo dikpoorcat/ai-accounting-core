@@ -23,6 +23,7 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
         assert {str(item.uri) for item in resources} == {
             "accounting://contracts",
             "accounting://guides",
+            "accounting://guides/work/checklist",
         }
         directory = list(await server.read_resource("accounting://guides"))[0]
         assert directory.mime_type == "application/json"
@@ -37,6 +38,11 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
         assert "opening.package" not in rules.content
         work = list(await server.read_resource("accounting://guides/work"))[0].content
         assert "owner_statement" in work and "accounting_sources(action=discard)" in work
+        checklist = list(await server.read_resource("accounting://guides/work/checklist"))[0]
+        assert checklist.mime_type == "application/json"
+        stages = json.loads(checklist.content)["stages"]
+        assert len(stages) == 8 and stages[3]["id"] == "payment_export"
+        assert "task.path的绝对文件路径" in stages[3]["checks"][3]["condition"]
         for uri in (
             "accounting://guides/unknown",
             "accounting://guides/business/operations.unknown",

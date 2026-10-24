@@ -331,7 +331,7 @@ def test_structure_export_is_complete_and_detached_from_its_single_packaged_sour
         "objects",
     }
     assert contract["format_family"] == "ai-accounting-modular/1"
-    assert contract["kind"] == "company" and contract["version"] == 2
+    assert contract["kind"] == "company" and contract["version"] == 3
     assert all(
         set(item) == {"owner", "type", "name", "table", "sql"} for item in contract["objects"]
     )

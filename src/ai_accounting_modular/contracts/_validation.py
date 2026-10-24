@@ -26,6 +26,7 @@ _BASE = "https://ai-accounting.local/design/"
 _SCHEMAS = (
     "core.schema.json",
     "company-note.schema.json",
+    "payment-export.schema.json",
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",

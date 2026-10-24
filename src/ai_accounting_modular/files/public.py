@@ -6,6 +6,7 @@ from ._repository import FilesRepository
 from ._service import Files
 from ._types import (
     CaptureContext,
+    CurrentFile,
     ExpireTask,
     FileArtifact,
     FileCompletion,
@@ -20,8 +21,12 @@ from ._types import (
 )
 
 
-def repository_factory() -> RepositoryFactory:
-    return RepositoryFactory(module_schema("files"), FilesRepository, FilesRepository)
+def repository_factory(*, structure_version=None) -> RepositoryFactory:
+    return RepositoryFactory(
+        module_schema("files", structure_version=structure_version),
+        FilesRepository,
+        FilesRepository,
+    )
 
 
 def create_files(storage, producers) -> Files:
@@ -35,6 +40,7 @@ def reset_for_restore(uow) -> None:
 
 __all__ = [
     "CaptureContext",
+    "CurrentFile",
     "ExpireTask",
     "FileArtifact",
     "FileCompletion",

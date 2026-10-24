@@ -243,7 +243,7 @@ class FactShard(TypedDict):
 class TaskReceipt(TypedDict):
     task_id: Id
     company_id: Id
-    kind: Literal['backup', 'report_export']
+    kind: Literal['backup', 'report_export', 'payment_export']
     state: Literal['pending', 'running', 'succeeded', 'failed', 'expired']
     scope_head: Digest
     attempts: int
@@ -508,7 +508,7 @@ class ReportExportPlan(TypedDict):
     template_version: int
     organization: CompanyIdentity
 
-type FilePlan = BackupPlan | ReportExportPlan
+type FilePlan = BackupPlan | ReportExportPlan | PaymentExportPlan
 
 class IsolatedTargetResult(TypedDict):
     action: Literal['restore', 'rebuild']
@@ -635,6 +635,17 @@ class RemunerationPositionResult(TypedDict):
     view: Literal['current', 'as_posted']
     items: list[RemunerationPositionItem]
 
+type PaymentExportRequest = PaymentExportPaymentExportRequest
+
+type PaymentExportInspection = PaymentExportPaymentExportInspection
+
+type PaymentExportPlan = PaymentExportPaymentExportPlan
+
+class PaymentExportResult(TypedDict):
+    state: Literal['inspected', 'needs_information', 'no_payments', 'not_generated', 'pending', 'running', 'succeeded', 'failed', 'expired']
+    inspection: PaymentExportInspection
+    task: NotRequired[TaskReceipt]
+
 type NoteFormat = Literal['plain_text', 'markdown']
 
 class CompanyNoteQuery(TypedDict):
@@ -653,6 +664,79 @@ class CompanyNoteIdentity(TypedDict):
 class CompanyNoteResponse(TypedDict):
     company: CompanyNoteIdentity
     description: None | CompanyNoteDescription
+
+class PaymentExportLayout(TypedDict):
+    sheet_name: str
+    first_data_row: int
+    columns: PaymentExportLayoutColumns
+    last_data_row: NotRequired[int]
+
+class PaymentExportTemplate(TypedDict):
+    source_id: Id
+    sha256: Digest
+    layout: PaymentExportLayout
+
+type PaymentExportScope = PaymentExportScopeVariant1 | PaymentExportScopeVariant2
+
+class PaymentExportIssue(TypedDict):
+    code: str
+    field: str
+    message: str
+    business_id: NotRequired[Id]
+    object_id: NotRequired[Id]
+
+class PaymentExportCandidate(TypedDict):
+    business_id: Id
+    kind: Literal['people.remuneration', 'operations.expense', 'operations.reimbursement', 'operations.pass_through', 'operations.pass_through_return', 'opening.package']
+    party_id: NotRequired[Id]
+    purpose: str
+    remaining_fen: NonNegativeFen
+    payable_fen: NonNegativeFen
+    obligation_refs: list[BusinessRef]
+    basis_digest: Digest
+
+class PaymentExportRow(TypedDict):
+    party_id: Id
+    name: str
+    account: str
+    purpose: str
+    amount_fen: PositiveFen
+    obligation_refs: list[BusinessRef]
+
+class PaymentExportInspectRequest(TypedDict):
+    company_id: Id
+    period: Month
+    business_ids: NotRequired[list[Id]]
+    template_source_id: NotRequired[Id]
+    template_layout: NotRequired[PaymentExportLayout]
+
+class PaymentExportPaymentExportInspection(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: PaymentExportScope
+    scope_head: Digest
+    balance_period: Month
+    candidates: list[PaymentExportCandidate]
+    rows: list[PaymentExportRow]
+    total_fen: NonNegativeFen
+    template: NotRequired[PaymentExportTemplate]
+    available: bool
+    issues: list[PaymentExportIssue]
+
+class PaymentExportPaymentExportPlan(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: PaymentExportScope
+    scope_head: Digest
+    balance_period: Month
+    candidates: list[PaymentExportCandidate]
+    rows: list[PaymentExportRow]
+    total_fen: NonNegativeFen
+    template: PaymentExportTemplate
+    kind: Literal['payment_export']
+    plan_version: Literal[1]
+
+type PaymentExportPaymentExportRequest = PaymentExportPaymentExportRequestVariant1 | PaymentExportPaymentExportRequestVariant2 | PaymentExportPaymentExportRequestVariant3
 
 type SourceLocation = SourceLocator
 
@@ -10016,6 +10100,46 @@ class SchemaResultSchemasItem(TypedDict):
     kind: str
     schema_document: dict[str, JsonValue]
 
+class PaymentExportLayoutColumns(TypedDict):
+    payee_name: int
+    payee_account: int
+    amount: int
+    purpose: int
+
+class PaymentExportScopeVariant1(TypedDict):
+    period: Month
+    selection: Literal['period']
+
+class PaymentExportScopeVariant2(TypedDict):
+    period: Month
+    selection: Literal['selected']
+    business_ids: list[Id]
+
+class PaymentExportPaymentExportRequestVariant1(TypedDict):
+    company_id: Id
+    period: Month
+    business_ids: NotRequired[list[Id]]
+    template_source_id: NotRequired[Id]
+    template_layout: NotRequired[PaymentExportLayout]
+    action: Literal['inspect']
+
+class PaymentExportPaymentExportRequestVariant2(TypedDict):
+    company_id: Id
+    period: Month
+    business_ids: NotRequired[list[Id]]
+    template_source_id: NotRequired[Id]
+    template_layout: NotRequired[PaymentExportLayout]
+    request_id: NotRequired[Id]
+    action: Literal['generate']
+
+class PaymentExportPaymentExportRequestVariant3(TypedDict):
+    company_id: Id
+    period: Month
+    business_ids: NotRequired[list[Id]]
+    action: Literal['status']
+    template_source_id: NotRequired[Id]
+    template_layout: NotRequired[PaymentExportLayout]
+
 class OperationsExpenseReportDetailsItem(TypedDict):
     code: Literal['management_startup', 'management_entertainment', 'management_research', 'management_other', 'sales_merchandise_repair', 'sales_advertising_promotion', 'sales_other', 'finance_interest', 'finance_other']
     amount_fen: PositiveFen
@@ -11357,11 +11481,25 @@ __all__ = [
     'RemunerationWithdrawnPosition',
     'RemunerationPositionItem',
     'RemunerationPositionResult',
+    'PaymentExportRequest',
+    'PaymentExportInspection',
+    'PaymentExportPlan',
+    'PaymentExportResult',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',
     'CompanyNoteIdentity',
     'CompanyNoteResponse',
+    'PaymentExportLayout',
+    'PaymentExportTemplate',
+    'PaymentExportScope',
+    'PaymentExportIssue',
+    'PaymentExportCandidate',
+    'PaymentExportRow',
+    'PaymentExportInspectRequest',
+    'PaymentExportPaymentExportInspection',
+    'PaymentExportPaymentExportPlan',
+    'PaymentExportPaymentExportRequest',
     'SourceLocation',
     'AmountRange',
     'CostUse',

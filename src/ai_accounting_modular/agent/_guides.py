@@ -1,5 +1,6 @@
 """Read only the installed, generated operating text; never workspace documents."""
 
+from copy import deepcopy
 from functools import lru_cache
 from importlib.resources import files
 
@@ -14,7 +15,7 @@ def _book():
         value = loads_json(files(__package__).joinpath("_guides.json").read_bytes())
         if (
             not isinstance(value, dict)
-            or set(value) != {"format", "topics", "business"}
+            or set(value) != {"format", "topics", "business", "checklist"}
             or value["format"] != "ai-accounting-guides/1"
             or not isinstance(value["topics"], dict)
             or set(value["topics"]) != set(TOPICS)
@@ -22,6 +23,16 @@ def _book():
             or set(value["business"]) != {"kinds", "sections", "common", "corrections"}
         ):
             raise ValueError("Invalid installed guide directory")
+        checklist = value["checklist"]
+        if (
+            not isinstance(checklist, dict)
+            or set(checklist) != {"format", "stages"}
+            or checklist["format"] != "ai-accounting-work-checklist/1"
+            or not isinstance(checklist["stages"], list)
+            or any(not isinstance(item, dict) for item in checklist["stages"])
+            or [item.get("number") for item in checklist["stages"]] != list(range(1, 9))
+        ):
+            raise ValueError("Invalid installed work checklist")
         for topic in value["topics"].values():
             if (
                 not isinstance(topic, dict)
@@ -70,6 +81,11 @@ def guide_index():
             for topic in TOPICS
         ],
     }
+
+
+def read_work_checklist():
+    """Return an isolated rule list, never a company's progress or an acceptance log."""
+    return deepcopy(_book()["checklist"])
 
 
 def read_guide(topic, *, kind=None):

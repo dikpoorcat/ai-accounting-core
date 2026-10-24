@@ -33,7 +33,7 @@ def table_owners() -> dict[str, str]:
         source = (ROOT / "docs/redesign/schema" / filename).read_text(encoding="utf-8")
         for line in source.splitlines():
             marker = re.match(r"-- owner:\s*(\S+)", line)
-            table = re.match(r"CREATE TABLE\s+(\w+)", line)
+            table = re.match(r'CREATE TABLE\s+"?(\w+)"?', line)
             if marker:
                 owner = marker[1]
             if table:

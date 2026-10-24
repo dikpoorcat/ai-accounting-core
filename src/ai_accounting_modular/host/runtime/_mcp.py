@@ -13,6 +13,7 @@ from ai_accounting_modular.agent.public import (
     guide_index,
     offline_contracts,
     read_guide,
+    read_work_checklist,
 )
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.host.public import create_offline_application
@@ -40,6 +41,11 @@ def _guides(mcp, *, offline=False):
         return read_guide(topic)
 
     if not offline:
+
+        @mcp.resource("accounting://guides/work/checklist", mime_type="application/json")
+        def work_checklist() -> str:
+            """八阶段内部条件、依据与办理动作；不包含公司完成状态。"""
+            return json.dumps(read_work_checklist(), ensure_ascii=False)
 
         @mcp.resource("accounting://guides/business/{kind}", mime_type="text/markdown")
         def business_guide(kind: str) -> str:

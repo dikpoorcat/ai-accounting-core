@@ -31,6 +31,7 @@ from . import (
     _backup_capture,
     _documents,
     _execution,
+    _payment_exports,
     _period,
     _queries,
     _rebuild,
@@ -79,6 +80,7 @@ class Application:
         files=None,
         backup_verifier=None,
         repositories=(),
+        payments=None,
     ):
         self.storage, self.identity, self.ledger, self.records = storage, identity, ledger, records
         self.registry = DomainRegistry(domains)
@@ -87,6 +89,7 @@ class Application:
         self.files = files
         self.backup_verifier = backup_verifier
         self.repositories = tuple(repositories)
+        self.payments = payments
 
     def _notify_reading(self, impact, unit):
         return (
@@ -320,6 +323,9 @@ class Application:
     def accounting_get(self, query: BusinessGet):
         return _queries.get(self, query)
 
+    def accounting_payment_export(self, request):
+        return _payment_exports.run(self, request)
+
     def accounting_documents(self, request):
         validate_contract("core.schema.json", "DocumentsRequest", request)
         if request["action"] == "finish":
@@ -340,6 +346,7 @@ def create_application(
     files=None,
     backup_verifier=None,
     repositories=(),
+    payments=None,
 ):
     return Application(
         storage,
@@ -352,4 +359,5 @@ def create_application(
         files,
         backup_verifier,
         repositories,
+        payments,
     )

@@ -37,8 +37,13 @@ def create_database(metadata: CompanyMetadata):
 
     def seed(connection):
         connection.execute(
-            "INSERT INTO system_meta VALUES(1,?,?,2,?,0)",
-            (COMPANY_FORMAT, metadata.database_id, packaged_schema("company")["fingerprint"]),
+            "INSERT INTO system_meta VALUES(1,?,?,?,?,0)",
+            (
+                COMPANY_FORMAT,
+                metadata.database_id,
+                packaged_schema("company")["version"],
+                packaged_schema("company")["fingerprint"],
+            ),
         )
         connection.execute(
             "INSERT INTO company_profile VALUES(1,?,?,?,?,?,?,1)",
