@@ -82,7 +82,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | 入口 | 输入 | 返回及作用 |
 | --- | --- | --- |
 | `accounting_schema` | SchemaRequest：可选 kinds、contract | SchemaResult：默认仅合同及支持目录，指定 kinds 才返回对应输入 Schema 的自包含依赖闭包，不返回旧接口或内部 PostingPlan。未知 kind 拒绝，不偷偷省略。 |
-| `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head，并给出 work_defaults.payroll 和 service_revenue 的通用办理安排。省略范围默认公司说明和当前开放月；不全库加载档案。 |
+| `accounting_context` | ContextRequest：可选 company_id、note_scopes、issue_scopes | 当前公司身份、支持范围、开放/关闭月、有效说明与当前待办及其 seq/head，并给出 work_defaults.payroll、service_revenue 和 income_tax 的通用办理安排。省略范围默认公司说明和当前开放月；不全库加载档案。 |
 | `accounting_objects` | ObjectsRequest：get 指定 IDs；find 指定 kind、可选 name_contains、limit/cursor | CurrentObject 含 seq/digest 和完整当前档案；检索名称只供选择，不自动绑定同名人。 |
 | `accounting_get` | company_id、1–500 business_ids；可选 result_id+generation、include=facts/results/sources | 当前事实、序号、结果槽及其必要来源；成对指定 result_id/generation 精确查询正式保留结果，开放旧代已替换则 conflict。不得声称能读取已经删除的开放期旧正文。 |
 | `accounting_review` | ReviewRequest：company_id、cutoff_period、action=find/inspect、明确范围及要读的collection；limit/cursor/expected_version按需提供 | ReviewResult：当前范围共同basis_version、完整数量及本页义务/清偿/资金/原行/确定关联，精确正式引用和必要来源。余额只由ledger提供，工资当前可付额仍由people提供；详见下节。 |
@@ -128,7 +128,11 @@ discard 不改账务和已有来源正文。SourceDiscardResult 固定包含comp
 
 MonthCancelResult 固定含 `company_id/database_id/period/head/state/business_ids/source_ids/discarded_source_ids/retained_source_ids/documents/file_cleanup`。`state=cancelled` 表示账务撤销已提交；`discarded_source_ids` 只列实际退出，`retained_source_ids` 列跨月、长期、模板、冻结或其他有效保护项，非空时向老板说明仍保留。`documents=ready/pending` 和 `file_cleanup.state=complete/pending` 分别说明最终标准文档及物理文件是否完成，pending 不得称为全部完成。文档 pending 用 accounting_documents(action=finish) 接续；文件 pending 由后台完成旧清理，不能用discard再次退出登记或用新head再撤一轮。响应丢失先 inspect 核对现范围。整月撤销后的现有月份说明记录本月待重新提供资料并从第1项办理，保护保留的旧来源不证明本期资料已收齐，不存撤销日志。原件不因单笔撤回自动退出，也不建立通用重做模式、审批记录或流程历史。
 
-ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。work_defaults 提供工资及常规服务安排；增值税默认通过业务的 `tax_point={type:owner_recognition_default}` 与报表营业收入共用收入确认月和同含义金额，无须另建税点业务。老板明确的其他安排和长期规则优先，默认结果如实标记老板口径，不证明合同条款或法定结论。VatTreatment 的放弃选项省略时按 `false` 处理，正式采用依据保存明确布尔值；税期、预收与优惠规则见[业务规则](05-business-rules.md)。字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
+ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。work_defaults 提供工资、常规服务及季度所得税安排。增值税默认通过业务的 `tax_point={type:owner_recognition_default}` 与报表营业收入共用收入确认月和同含义金额，无须另建税点业务。老板明确的其他安排和长期规则优先，默认结果如实标记老板口径，不证明合同条款或法定结论。VatTreatment 的放弃选项省略时按 `false` 处理，正式采用依据保存明确布尔值。
+
+`work_defaults.income_tax` 固定提供 `method=computed_provision`、`collection_method=actual_profit`、`basis=project_default`。季度计算输入的 `method` 可省略；`taxes.prepayment_basis` 中的 `collection_method` 和 `basis_source` 各自可省略，不为采用默认另索确认或补造税务资料。原事实及标准文档保留提交时的省略，正式采用依据保存明确的方式；没有 `basis_source` 时由程序标记 `collection_method_basis=project_default`，该标记不能作为原事实提交。企业已有实际方式来源时继续验证和保留，默认不替代税务认定、政策、资格、亏损和特殊事项事实。金额路线的 `method` 仍须明确；完整实际结果优先，年度汇算不自动计算。税期、预收、优惠和所得税规则见[业务规则](05-business-rules.md)。
+
+字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
 
 同源 HTTP 页面只有只读业务能力及报表文件生成/下载，不提供业务修改或审批。会话保护属于本机入口安全：沿用单老板身份与原登录体验，不新增角色授权管理；专业顾问通过只读页面查看。AI 的业务入口由本机 MCP/CLI 接入程序，只接受上述类型化命令，不接收 SQL、脚本或自由分录；来源读取只用登记身份和受控公司相对路径，离线恢复/重建仅接受显式选定包及经过独立路径核验的新目标。
 

@@ -26,6 +26,28 @@ from ._common import (
 from ._policies import adopt_policy
 
 
+def assessment_method(data):
+    """Resolve the quarterly route once for evaluation and dependency identity."""
+    return data.get("method", "computed_provision")
+
+
+def _income_plan(fact, context, values):
+    plan = plan_for(fact, context, values)
+    data, adopted = fact["data"], plan["basis"]["input"]
+    if fact["kind"] == "taxes.prepayment_basis":
+        adopted["collection_method"] = data.get("collection_method", "actual_profit")
+        if "basis_source" not in data:
+            adopted["collection_method_basis"] = "project_default"
+        defaulted = "collection_method" not in data or "basis_source" not in data
+    else:
+        adopted["method"] = assessment_method(data)
+        defaulted = "method" not in data
+    if defaulted:
+        plan["calculation_revision"] = 2
+        plan["rule_refs"][0]["revision"] = 2
+    return plan
+
+
 def check_year(data, end):
     if end[:4] != f"{data['tax_year']:04d}" or int(end[5:]) not in (3, 6, 9, 12):
         reject("所得税累计截止期必须属于指定税年的自然季度末。", "invalid_input")
@@ -38,7 +60,7 @@ def prepayment(fact, context):
         reject("企业适用依据不能先于所述季度结束。", "invalid_input")
     if amount(data["loss_deduction_fen"]) and "loss_source" not in data:
         missing(fact, "/data/loss_source", "使用以前年度亏损必须有可复用来源。")
-    return plan_for(
+    return _income_plan(
         fact,
         context,
         {key: data[key] for key in ("tax_year", "quarter_end", "treatment", "loss_deduction_fen")},
@@ -49,7 +71,7 @@ def order(fact):
     data = fact["data"]
     return (
         data.get("quarter_end", data.get("tax_period_end")),
-        data["method"] == "annual_settlement",
+        assessment_method(data) == "annual_settlement",
     )
 
 
@@ -311,13 +333,14 @@ def _computed(fact, context, plan):
 
 def income_tax(fact, context):
     data = fact["data"]
+    method = assessment_method(data)
     end = data.get("quarter_end", data.get("tax_period_end"))
     check_year(data, end)
     if end > fact["period"]:
         reject("所得税计提不能早于累计截止期。", "invalid_input")
-    if data["method"] == "annual_settlement" and end[5:] != "12":
+    if method == "annual_settlement" and end[5:] != "12":
         reject("年度汇算必须针对该税年的年末累计结果。", "invalid_input")
-    plan = plan_for(fact, context, {})
+    plan = _income_plan(fact, context, {})
     actual = declarations(fact, context)
     if actual is not None:
         check_actual(actual, context)
@@ -329,12 +352,12 @@ def income_tax(fact, context):
         adopt_source(plan, result.source)
         values = {"cumulative_tax_fen": actual["data"]["cumulative_tax_fen"]}
         adopted = "actual"
-    elif data["method"] == "computed_provision":
+    elif method == "computed_provision":
         values = _computed(fact, context, plan)
         adopted = "computed_provision"
     else:
         values = {"cumulative_tax_fen": data["cumulative_tax_fen"]}
-        adopted = data["method"]
+        adopted = method
     before = previous(fact, context)
     previous_amount = _carry(fact, context, plan) if before is None else 0
     if before is not None:

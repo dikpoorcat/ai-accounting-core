@@ -595,6 +595,11 @@ class PayrollWorkDefaults(TypedDict):
     accrual_period: Literal['service_month']
     planned_payment_period: Literal['following_month']
 
+class IncomeTaxWorkDefaults(TypedDict):
+    method: Literal['computed_provision']
+    collection_method: Literal['actual_profit']
+    basis: Literal['project_default']
+
 class RemunerationRequest(TypedDict):
     company_id: Id
     period: Month
@@ -1246,9 +1251,9 @@ class TaxesIncomeTaxPolicy(TypedDict):
 class TaxesPrepaymentBasis(TypedDict):
     tax_year: int
     quarter_end: Month
-    collection_method: Literal['actual_profit']
+    collection_method: NotRequired[Literal['actual_profit']]
     treatment: Literal['standard', 'small_low_profit']
-    basis_source: SourceLocation
+    basis_source: NotRequired[SourceLocation]
     eligibility_source: NotRequired[SourceLocation]
     loss_deduction_fen: NonNegativeFen
     loss_source: NotRequired[SourceLocation]
@@ -1265,7 +1270,7 @@ class VatAssessment(TypedDict):
 
 class IncomeTaxComputedAssessment(TypedDict):
     type: Literal['income_tax']
-    method: Literal['computed_provision']
+    method: NotRequired[Literal['computed_provision']]
     tax_year: int
     quarter_end: Month
     policy_id: Id
@@ -3859,6 +3864,7 @@ class AccountingTaxesPrepaymentBasis(TypedDict):
     tax_year: int
     quarter_end: Month
     collection_method: Literal['actual_profit']
+    collection_method_basis: NotRequired[Literal['project_default']]
     treatment: Literal['standard', 'small_low_profit']
     loss_deduction_fen: NonNegativeFen
     special_treatments: list[str]
@@ -10266,6 +10272,7 @@ class IsolatedTargetResultChecksItem(TypedDict):
 class CompanyContextWorkDefaults(TypedDict):
     payroll: PayrollWorkDefaults
     service_revenue: ServiceRevenueWorkDefaults
+    income_tax: IncomeTaxWorkDefaults
 
 class EmptyContextAvailableCompaniesItem(TypedDict):
     company_id: Id
@@ -11855,6 +11862,7 @@ __all__ = [
     'CashflowWeight',
     'SourceId',
     'PayrollWorkDefaults',
+    'IncomeTaxWorkDefaults',
     'RemunerationRequest',
     'RemunerationAmountValues',
     'RemunerationActivePosition',

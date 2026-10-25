@@ -20,6 +20,7 @@ from ._actual import actual, declarations
 from ._common import interval, reject
 from ._credits import credit
 from ._income_tax import (
+    assessment_method,
     assessments,
     carry_candidates,
     check_chronology,
@@ -227,7 +228,7 @@ def _dependencies(fact, context, actuals=()):
             for earlier in assessments(fact, context):
                 if order(earlier) < order(fact):
                     edges.append(_collection(fact, earlier["business_id"], relation="settlement"))
-            if data["method"] == "computed_provision" and source is None:
+            if assessment_method(data) == "computed_provision" and source is None:
                 edges.extend(
                     (
                         _edge(fact, data["policy_id"], relation="policy"),

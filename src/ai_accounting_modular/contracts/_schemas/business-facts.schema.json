@@ -2492,7 +2492,9 @@
           "$ref": "core.schema.json#/$defs/Month"
         },
         "collection_method": {
-          "const": "actual_profit"
+          "const": "actual_profit",
+          "default": "actual_profit",
+          "description": "省略时采用项目默认的实际利润季度预缴口径，不代表已经核实企业的税务征收方式；明确填写也不另要求重复确认。"
         },
         "treatment": {
           "type": "string",
@@ -2502,7 +2504,8 @@
           ]
         },
         "basis_source": {
-          "$ref": "#/$defs/SourceLocation"
+          "$ref": "#/$defs/SourceLocation",
+          "description": "已有企业实际预缴方式依据时提供并核验；可独立省略，省略时程序在正式采用依据中标明项目默认，不虚构税务资料。"
         },
         "eligibility_source": {
           "$ref": "#/$defs/SourceLocation"
@@ -2527,9 +2530,7 @@
       "required": [
         "tax_year",
         "quarter_end",
-        "collection_method",
         "treatment",
-        "basis_source",
         "loss_deduction_fen",
         "special_treatments"
       ],
@@ -2620,7 +2621,9 @@
           "const": "income_tax"
         },
         "method": {
-          "const": "computed_provision"
+          "const": "computed_provision",
+          "default": "computed_provision",
+          "description": "省略时由程序计算实际利润季度暂计；不默认年度汇算或有据累计税额路线。"
         },
         "tax_year": {
           "type": "integer",
@@ -2639,7 +2642,6 @@
       },
       "required": [
         "type",
-        "method",
         "tax_year",
         "quarter_end",
         "policy_id",
@@ -7540,7 +7542,9 @@
           "$ref": "core.schema.json#/$defs/Month"
         },
         "collection_method": {
-          "const": "actual_profit"
+          "const": "actual_profit",
+          "default": "actual_profit",
+          "description": "省略时采用项目默认的实际利润季度预缴口径，不代表已经核实企业的税务征收方式；明确填写也不另要求重复确认。"
         },
         "treatment": {
           "type": "string",
@@ -7550,7 +7554,8 @@
           ]
         },
         "basis_source": {
-          "$ref": "#/$defs/PartialSourceLocation"
+          "$ref": "#/$defs/PartialSourceLocation",
+          "description": "已有企业实际预缴方式依据时提供并核验；可独立省略，省略时程序在正式采用依据中标明项目默认，不虚构税务资料。"
         },
         "eligibility_source": {
           "$ref": "#/$defs/PartialSourceLocation"
@@ -7630,7 +7635,9 @@
           "const": "income_tax"
         },
         "method": {
-          "const": "computed_provision"
+          "const": "computed_provision",
+          "default": "computed_provision",
+          "description": "省略时由程序计算实际利润季度暂计；不默认年度汇算或有据累计税额路线。"
         },
         "tax_year": {
           "type": "integer",
@@ -15987,6 +15994,10 @@
         },
         "collection_method": {
           "const": "actual_profit"
+        },
+        "collection_method_basis": {
+          "const": "project_default",
+          "description": "程序在未提供企业实际预缴方式依据时保存的采用标记，仅存在于正式规范化依据，不接受原始事实提交。"
         },
         "treatment": {
           "type": "string",

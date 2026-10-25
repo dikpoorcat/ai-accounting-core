@@ -104,6 +104,11 @@ def context(application, request, read_context=None):
                     "vat_period_basis": "income_recognition_month",
                     "vat_preference": "retain_applicable_reliefs",
                 },
+                "income_tax": {
+                    "method": "computed_provision",
+                    "collection_method": "actual_profit",
+                    "basis": "project_default",
+                },
             },
             "document_state": status["state"],
             "document_set_id": status["set_id"],

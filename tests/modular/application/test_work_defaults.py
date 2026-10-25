@@ -20,6 +20,11 @@ def test_context_exposes_work_defaults_without_creating_any_business(case):
             "vat_period_basis": "income_recognition_month",
             "vat_preference": "retain_applicable_reliefs",
         },
+        "income_tax": {
+            "method": "computed_provision",
+            "collection_method": "actual_profit",
+            "basis": "project_default",
+        },
     }
     assert context["notes"] == []
     assert context["open_periods"] == ["2026-01"]

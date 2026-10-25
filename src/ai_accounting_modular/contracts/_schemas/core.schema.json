@@ -5568,11 +5568,15 @@
             },
             "service_revenue": {
               "$ref": "#/$defs/ServiceRevenueWorkDefaults"
+            },
+            "income_tax": {
+              "$ref": "#/$defs/IncomeTaxWorkDefaults"
             }
           },
           "required": [
             "payroll",
-            "service_revenue"
+            "service_revenue",
+            "income_tax"
           ],
           "additionalProperties": false
         }
@@ -5808,6 +5812,27 @@
         "planned_payment_period"
       ],
       "additionalProperties": false
+    },
+    "IncomeTaxWorkDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "企业所得税默认按共享累计实际利润计算季度暂计；这是项目办理默认，不替代企业真实税务认定、政策资格或亏损等事实。完整实际结果优先，年度汇算及有据累计税额路线仍须明确选择。",
+      "properties": {
+        "method": {
+          "const": "computed_provision"
+        },
+        "collection_method": {
+          "const": "actual_profit"
+        },
+        "basis": {
+          "const": "project_default"
+        }
+      },
+      "required": [
+        "method",
+        "collection_method",
+        "basis"
+      ]
     },
     "RemunerationRequest": {
       "type": "object",
