@@ -96,7 +96,7 @@ def publish(catalog: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def read(catalog: Path) -> dict:
+def _read_bytes(catalog: Path) -> bytes:
     path = _checked(state_path(catalog))
     try:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -111,6 +111,16 @@ def read(catalog: Path) -> dict:
             raw = stream.read(65537)
         if len(raw) > 65536:
             raise ValueError
+        return raw
+    except FileNotFoundError:
+        raise
+    except (ValueError, OSError) as error:
+        raise ContractError("service_state_invalid", "本机服务连接资料无法验证。") from error
+
+
+def read(catalog: Path) -> dict:
+    raw = _read_bytes(catalog)
+    try:
         value = json.loads(_protect(raw, catalog, decrypt=True))
         if (
             not isinstance(value, dict)
@@ -124,8 +134,6 @@ def read(catalog: Path) -> dict:
         ):
             raise ValueError
         return value
-    except FileNotFoundError:
-        raise
     except (ValueError, OSError) as error:
         raise ContractError("service_state_invalid", "本机服务连接资料无法验证。") from error
 

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { request as httpRequest, type OutgoingHttpHeaders, type ServerResponse } from "node:http";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { Plugin } from "vite";
@@ -14,6 +14,7 @@ export interface LocalServiceMetadata {
   port: number;
   capability: string;
   catalogId: string;
+  statePath: string;
   stateFingerprint: string;
 }
 
@@ -21,40 +22,33 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function localServiceStatePath(catalogPath: string): string {
-  return `${catalogPath}.modular-service`;
-}
-
 async function stateFingerprint(statePath: string): Promise<string> {
   return createHash("sha256").update(await readFile(statePath)).digest("hex");
 }
 
 export async function readLocalServiceMetadata(repositoryRoot: string, catalogPath: string): Promise<LocalServiceMetadata> {
-  const statePath = localServiceStatePath(catalogPath);
   try {
-    const fingerprint = await stateFingerprint(statePath);
-    // The kernel owns DPAPI decryption, path checks, catalog identity and live protocol verification.
-    // Private metadata is consumed only through this Node child-process pipe, never sent to Vite clients.
+    // The public runtime command owns discovery and its opaque change probe.
+    // Connection capability stays in this child-process pipe and Node memory.
     const { stdout } = await runFile(
       resolve(repositoryRoot, ".tmp-kernel-venv/Scripts/python.exe"),
-      ["-I", "-X", "utf8", "-c", [
-        "import json, sys",
-        "from ai_accounting_modular.host.runtime._client import discover",
-        "print(json.dumps(discover(sys.argv[1])))",
-      ].join("\n"), catalogPath],
+      ["-I", "-X", "utf8", "-m", "ai_accounting_modular.host.runtime.cli",
+        "--catalog", catalogPath, "dev-proxy-info"],
       { cwd: repositoryRoot, encoding: "utf8", timeout: 10_000, windowsHide: true },
     );
     const metadata: unknown = JSON.parse(stdout);
-    if (fingerprint !== await stateFingerprint(statePath)
-        || !record(metadata) || metadata.protocol !== serviceProtocol
+    if (!record(metadata) || metadata.protocol !== serviceProtocol
         || typeof metadata.port !== "number"
         || !Number.isInteger(metadata.port) || metadata.port < 1 || metadata.port > 65535
         || typeof metadata.catalog_id !== "string" || !metadata.catalog_id
         || metadata.catalog_path !== resolve(catalogPath)
-        || typeof metadata.capability !== "string" || metadata.capability.length < 32) {
-      throw new Error("service metadata changed or is invalid");
+        || typeof metadata.capability !== "string" || metadata.capability.length < 32
+        || typeof metadata.state_path !== "string" || !isAbsolute(metadata.state_path)
+        || typeof metadata.state_fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(metadata.state_fingerprint)) {
+      throw new Error("invalid development connection");
     }
-    return { port: metadata.port, capability: metadata.capability, catalogId: metadata.catalog_id, stateFingerprint: fingerprint };
+    return { port: metadata.port, capability: metadata.capability, catalogId: metadata.catalog_id,
+      statePath: metadata.state_path, stateFingerprint: metadata.state_fingerprint };
   } catch {
     // Child-process errors can contain private metadata; never forward them to the browser or Vite log.
     throw new Error(`本地会计服务不可用。请先启动此目录库的 V3 后台，再刷新页面（目录库：${catalogPath}）。`);
@@ -84,7 +78,7 @@ function browserTicketUrl(value: unknown, metadata: LocalServiceMetadata): strin
 }
 
 export async function localApiProxy(
-  statePath: string, discover: () => Promise<LocalServiceMetadata>,
+  discover: () => Promise<LocalServiceMetadata>,
 ): Promise<Plugin> {
   let current = await discover();
   const catalogId = current.catalogId;
@@ -107,10 +101,12 @@ export async function localApiProxy(
 
   async function connection(): Promise<LocalServiceMetadata> {
     if (discovering) return discovering;
+    const observed = current;
     let fingerprint: string | undefined;
-    try { fingerprint = await stateFingerprint(statePath); } catch { /* Restart may briefly remove the state file. */ }
-    if (needsDiscovery || fingerprint !== current.stateFingerprint) return reconnect();
-    return current;
+    try { fingerprint = await stateFingerprint(observed.statePath); } catch { /* Restart may briefly remove the state file. */ }
+    if (observed !== current) return connection();
+    if (needsDiscovery || fingerprint !== observed.stateFingerprint) return reconnect();
+    return observed;
   }
 
   return {

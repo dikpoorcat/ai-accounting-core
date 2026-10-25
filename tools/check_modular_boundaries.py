@@ -12,6 +12,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "ai_accounting_modular"
 SOURCE = ROOT / "src" / PACKAGE
+KNOWN_OWNERS = frozenset(
+    {
+        "agent",
+        "application",
+        "contracts",
+        "dashboard",
+        "domains.assets",
+        "domains.financing",
+        "domains.operations",
+        "domains.people",
+        "domains.taxes",
+        "files",
+        "host",
+        "identity",
+        "ledger",
+        "ledger.opening",
+        "ledger.reporting",
+        "money",
+        "payments",
+        "reading",
+        "records",
+        "storage",
+    }
+)
 _SQL_TABLE = re.compile(r'\b(?:FROM|JOIN|UPDATE|INTO)\s+["\[]?([a-z_][a-z_0-9]*)', re.IGNORECASE)
 
 
@@ -61,9 +85,15 @@ def imports(node: ast.Import | ast.ImportFrom, module: str, is_package: bool):
 
 
 def permitted_dependency(owner: str, target: str) -> bool:
+    if owner not in KNOWN_OWNERS or target not in KNOWN_OWNERS:
+        return False
     if owner == "host":
         return True
     if target == "host":
+        return False
+    if owner == "application":
+        return True
+    if target == "payments":
         return False
     if owner == "contracts":
         return False
@@ -75,19 +105,32 @@ def permitted_dependency(owner: str, target: str) -> bool:
         return target in {"contracts", "reading"}
     if owner == "agent":
         return target in {"contracts", "application"}
+    if owner == "payments":
+        return target in {
+            "contracts",
+            "domains.people",
+            "files",
+            "identity",
+            "ledger",
+            "ledger.opening",
+            "records",
+            "storage",
+        }
     if owner == "reading":
         return target not in {"application", "agent", "dashboard"}
     if owner == "records":
         return target not in {"application", "agent", "reading", "dashboard"}
     if owner.startswith(("domains.", "ledger.")) or owner in {"ledger", "money"}:
         return target not in {"application", "agent", "reading", "dashboard"}
-    return True
+    return False
 
 
 def violations(source: str, module: str, *, is_package=False, tables=None) -> list[str]:
     owner = owner_of(module)
     if owner is None:
         return []
+    if owner not in KNOWN_OWNERS:
+        return [f"1: 未声明模块依赖规则：{owner}"]
     tree = ast.parse(source)
     issues = []
     for node in ast.walk(tree):

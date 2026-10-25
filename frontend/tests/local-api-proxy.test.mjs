@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer as createHttpServer, request as httpRequest } from "node:http";
-import { execFile } from "node:child_process";
+import childProcess, { execFile } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fsPromises, { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const loader = await createServer({ root, configFile: false, optimizeDeps: { noDiscovery: true },
   server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 after(() => loader.close());
-const { localApiProxy, localServiceStatePath, readLocalServiceMetadata } = await loader.ssrLoadModule("/local-api-proxy.ts");
+const { localApiProxy, readLocalServiceMetadata } = await loader.ssrLoadModule("/local-api-proxy.ts");
 const serviceProtocol = "ai-accounting-modular-service/1";
 const fingerprint = value => createHash("sha256").update(value).digest("hex");
 
@@ -31,7 +32,7 @@ async function close(server) {
 }
 async function fixture(t, handler) {
   const directory = await mkdtemp(join(tmpdir(), "finance-proxy-test-"));
-  const statePath = localServiceStatePath(join(directory, "catalog.sqlite3"));
+  const statePath = join(directory, "opaque-connection.probe");
   const requests = [];
   const backends = [];
   const startBackend = async (custom = handler, port = 0) => {
@@ -52,7 +53,7 @@ async function fixture(t, handler) {
     return { server: backend, port: await listen(backend, port) };
   };
   const first = await startBackend();
-  let current = { port: first.port, capability: "private-test-capability-one", catalogId: "synthetic-catalog", stateText: "state-one" };
+  let current = { port: first.port, capability: "private-test-capability-one", catalogId: "synthetic-catalog", stateText: "state-one", statePath };
   await writeFile(statePath, current.stateText);
   let discoveryCount = 0;
   let unavailable = false;
@@ -63,7 +64,7 @@ async function fixture(t, handler) {
     if (unavailable) throw new Error(`offline ${current.capability}`);
     return { ...current, stateFingerprint: fingerprint(current.stateText) };
   };
-  const plugin = await localApiProxy(statePath, discover);
+  const plugin = await localApiProxy(discover);
   const vite = await createServer({ root, configFile: false, plugins: [plugin],
     optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   vite.middlewares.use((_req, res) => { res.end("frontend-page"); });
@@ -80,12 +81,13 @@ async function fixture(t, handler) {
     for (const backend of backends) if (backend.listening) await close(backend);
     await rm(directory, { recursive: true, force: true });
   });
-  return { first, requests, startBackend, request, rawRequest, origin, statePath,
+  return { first, requests, startBackend, request, rawRequest, origin,
+    get statePath() { return current.statePath; },
     count: () => discoveryCount,
     setUnavailable: value => { unavailable = value; },
     setGate: value => { gate = value; },
     metadata: () => current,
-    async change(overrides) { current = { ...current, ...overrides }; await writeFile(statePath, current.stateText); },
+    async change(overrides) { current = { ...current, ...overrides }; await writeFile(current.statePath, current.stateText); },
   };
 }
 async function unavailable(response, capability) {
@@ -94,6 +96,90 @@ async function unavailable(response, capability) {
   assert.equal(JSON.parse(text).code, "local_service_unavailable");
   assert.ok(!text.includes(capability));
 }
+
+test("development discovery consumes the public CLI contract without inspecting private state", async t => {
+  const repositoryRoot = join(root, "..");
+  const catalogPath = join(tmpdir(), "synthetic-public-cli-catalog.sqlite3");
+  const metadata = { protocol: serviceProtocol, catalog_id: "synthetic-public-cli-catalog", catalog_path: catalogPath,
+    port: 32123, capability: "synthetic-private-capability-for-cli-contract", state_path: join(tmpdir(), "opaque-public-cli.probe"),
+    state_fingerprint: fingerprint("synthetic-state") };
+  let output = metadata;
+  const calls = [];
+  const original = childProcess.execFile;
+  const mock = () => { throw new Error("expected promisified execution"); };
+  mock[promisify.custom] = async (...args) => {
+    calls.push(args);
+    return { stdout: JSON.stringify(output), stderr: "" };
+  };
+  childProcess.execFile = mock;
+  syncBuiltinESMExports();
+  t.after(() => { childProcess.execFile = original; syncBuiltinESMExports(); });
+  const isolated = await loader.ssrLoadModule("/local-api-proxy.ts?public-cli-contract");
+  assert.deepEqual(await isolated.readLocalServiceMetadata(repositoryRoot, catalogPath), {
+    port: metadata.port, capability: metadata.capability, catalogId: metadata.catalog_id,
+    statePath: metadata.state_path, stateFingerprint: metadata.state_fingerprint,
+  });
+  assert.equal(calls[0][0], join(repositoryRoot, ".tmp-kernel-venv", "Scripts", "python.exe"));
+  assert.deepEqual(calls[0][1], ["-I", "-X", "utf8", "-m", "ai_accounting_modular.host.runtime.cli",
+    "--catalog", catalogPath, "dev-proxy-info"]);
+  assert.equal(calls[0][2].windowsHide, true);
+  for (const invalid of [{ state_path: "relative-probe" }, { state_fingerprint: "invalid" }, { state_path: "" }]) {
+    output = { ...metadata, ...invalid };
+    await assert.rejects(isolated.readLocalServiceMetadata(repositoryRoot, catalogPath), error => {
+      assert.ok(!String(error).includes(metadata.capability));
+      return /本地会计服务不可用/.test(error.message);
+    });
+  }
+});
+
+test("the runtime can move its opaque state path without changing the catalog identity", async t => {
+  const f = await fixture(t);
+  assert.equal((await f.request()).status, 200);
+  const previousPath = f.statePath;
+  const replacement = await f.startBackend();
+  await f.change({ port: replacement.port, statePath: join(previousPath, "..", "replacement.probe"), stateText: "replacement-state" });
+  await rm(previousPath);
+  const discoveries = f.count();
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.count(), discoveries + 1);
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.count(), discoveries + 1, "later requests must use the new probe path");
+});
+
+test("a delayed old probe cannot invalidate a connection already rediscovered by another request", async t => {
+  const f = await fixture(t);
+  const previousPath = f.statePath;
+  const original = fsPromises.readFile;
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const pending = new Promise(resolve => { release = resolve; });
+  let delayFirst = true;
+  fsPromises.readFile = async (...args) => {
+    const value = await original(...args);
+    if (delayFirst && args[0] === previousPath) {
+      delayFirst = false;
+      entered();
+      await pending;
+    }
+    return value;
+  };
+  syncBuiltinESMExports();
+  try {
+    const delayed = f.request("/api/delayed-probe");
+    await started;
+    await f.change({ statePath: join(previousPath, "..", "new-generation.probe"), stateText: "new-generation" });
+    await rm(previousPath);
+    assert.equal((await f.request()).status, 200);
+    const discoveries = f.count();
+    release();
+    assert.equal((await delayed).status, 200);
+    assert.equal(f.count(), discoveries, "the late probe must not cause another discovery");
+  } finally {
+    release();
+    fsPromises.readFile = original;
+    syncBuiltinESMExports();
+  }
+});
 
 test("changed state discovers the new port and bridges only the ticket request with private capability", async t => {
   const f = await fixture(t);
@@ -283,7 +369,7 @@ test("real V3 discovery decrypts synthetic state and rejects catalog, protocol a
 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), "finance-modular-discovery-test-"));
   const catalogPath = join(directory, "catalog.sqlite3");
-  const statePath = localServiceStatePath(catalogPath);
+  let statePath;
   const capability = "synthetic-private-cli-capability-with-32-characters";
   let identity;
   let infoOverrides = {};
@@ -313,7 +399,7 @@ catalog = Path(sys.argv[1]).absolute()
 if not catalog.exists():
     create_catalog(catalog, OwnerProfile(str(uuid4()), "Synthetic owner", "synthetic-password-hash"))
 identity = {"catalog_id": Storage(catalog).catalog_identity(), "catalog_path": str(catalog),
-            "protocol": _state.PROTOCOL, "port": int(sys.argv[2])}
+            "protocol": _state.PROTOCOL, "port": int(sys.argv[2]), "state_path": str(_state.state_path(catalog))}
 metadata = {**identity, "capability": "synthetic-private-cli-capability-with-32-characters", **json.loads(sys.argv[3])}
 _state.publish(catalog, metadata)
 print(json.dumps(identity))
@@ -327,10 +413,11 @@ print(json.dumps(identity))
     return JSON.parse(stdout);
   };
   identity = await publish();
+  statePath = identity.state_path;
   baseline = await readFile(statePath);
   assert.ok(!baseline.includes(Buffer.from(capability)), "Windows service state must remain encrypted");
   const verified = await readLocalServiceMetadata(repositoryRoot, catalogPath);
-  assert.deepEqual(verified, { port, capability, catalogId: identity.catalog_id, stateFingerprint: fingerprint(baseline) });
+  assert.deepEqual(verified, { port, capability, catalogId: identity.catalog_id, statePath, stateFingerprint: fingerprint(baseline) });
   const rejectSafely = async () => assert.rejects(readLocalServiceMetadata(repositoryRoot, catalogPath), error => {
     assert.ok(!String(error).includes(capability));
     return /本地会计服务不可用/.test(error.message);

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from hashlib import sha256
 from pathlib import Path
 
 from ai_accounting_modular.contracts.public import ContractError
@@ -70,6 +71,29 @@ def discover(catalog_path):
         # A former port may now belong to another service; this is not an owner login failure.
         raise ContractError("service_unavailable", "所选目录的本机后台地址当前不可用。") from None
     return metadata
+
+
+def development_proxy_info(catalog_path):
+    """Expose one verified connection and its opaque change probe to local dev tooling."""
+    catalog = _state.catalog_path(Path(catalog_path))
+    state_path = _state.state_path(catalog)
+    try:
+        fingerprint = sha256(_state._read_bytes(catalog)).hexdigest()
+        metadata = discover(catalog)
+        current = sha256(_state._read_bytes(catalog)).hexdigest()
+    except OSError:
+        raise ContractError("service_unavailable", "所选目录的本机后台地址当前不可用。") from None
+    if fingerprint != current:
+        raise ContractError("service_unavailable", "本机后台连接资料已变化，请重新连接。")
+    return {
+        "protocol": metadata["protocol"],
+        "catalog_id": metadata["catalog_id"],
+        "catalog_path": metadata["catalog_path"],
+        "port": metadata["port"],
+        "capability": metadata["capability"],
+        "state_path": str(state_path),
+        "state_fingerprint": fingerprint,
+    }
 
 
 def ensure_service(catalog_path, *, timeout=20):

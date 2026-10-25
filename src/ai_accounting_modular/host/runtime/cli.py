@@ -48,6 +48,9 @@ def main():
     commands.add_parser("serve", help="打开同源看板；密码只在本机窗口输入")
     commands.add_parser("mcp", help="指定目录时连接同一后台；省略目录时只提供离线恢复和重建")
     commands.add_parser("service-info", help="核验本机服务，不输出连接能力")
+    commands.add_parser(
+        "dev-proxy-info", help="仅向本机开发代理输出已核验连接及变化探针，不启动后台"
+    )
     commands.add_parser("stop", help="安全停止明确目录的新体系后台")
     security = commands.add_parser("security", help="请求或查询本机身份窗口")
     security.add_argument(
@@ -103,6 +106,10 @@ def main():
                 # Background owns current durable tasks; the main thread waits only for shutdown.
                 runtime.thread.join()
                 return
+            elif args.mode == "dev-proxy-info":
+                from ._client import development_proxy_info
+
+                result = development_proxy_info(args.catalog)
             else:
                 from ._client import Client
 
