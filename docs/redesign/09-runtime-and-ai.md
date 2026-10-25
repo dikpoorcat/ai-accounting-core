@@ -108,7 +108,7 @@ $company.database_id
 
 单笔核算和资金核对失败时，现有问题字段会指明已知的业务身份；已有更具体的字段、来源和错误原因继续保留。问题字段也可用于定位程序或文档冲突，不能仅因返回了字段就向老板追问，应先核对已有资料与错误性质。
 
-资料的整理和退出条件见[资料工作说明](08-ai-work-and-materials.md#资料如何进入系统)。确已选定无用来源并接续好当前引用后，可提交 `{"company_id":"实际公司UUID","action":"discard","source_ids":["已选来源UUID"]}` 给 `call accounting-sources --input <请求.json>`；MCP 使用同一内容调用 `accounting_command(command="accounting_sources", payload=请求)`。只按返回的file_cleanup.state判断文件是否清完；pending由后台接续，也可沿原source_ids重调，不通过主机命令自行删原件。
+资料的整理和退出条件见[资料工作说明](08-ai-work-and-materials.md#资料如何进入系统)。确已选定无用来源并接续好当前引用后，可提交 `{"company_id":"实际公司UUID","action":"discard","source_ids":["已选来源UUID"]}` 给 `call accounting-sources --input <请求.json>`；MCP 使用同一内容调用 `accounting_command(command="accounting_sources", payload=请求)`。只按返回的file_cleanup.state判断文件是否清完；pending由后台沿旧清理标识接续，重新导入的登记及原件受到保护。不能重复discard来催清理，也不通过主机命令自行删原件。
 
 ## MCP 接入与按需操作说明
 

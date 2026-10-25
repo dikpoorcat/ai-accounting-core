@@ -31,6 +31,7 @@ from . import (
     _backup_capture,
     _documents,
     _execution,
+    _month_cancel,
     _payment_exports,
     _period,
     _queries,
@@ -142,6 +143,9 @@ class Application:
 
     def accounting_period(self, request):
         return _period.run(self, request)
+
+    def accounting_cancel_month(self, request):
+        return _month_cancel.run(self, request)
 
     def capture_backup_snapshot(self, company_id, expected_database_id):
         return _backup_capture.capture(self, company_id, expected_database_id)

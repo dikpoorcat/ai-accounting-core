@@ -73,29 +73,6 @@ def discard(application, request):
             ),
             protected_paths=paths,
         )
-    pending, issues = False, set()
-    for offset in range(0, len(prepared.marker_ids), 500):
-        try:
-            cleanup = finish(
-                application,
-                request["company_id"],
-                marker_ids=prepared.marker_ids[offset : offset + 500],
-            )
-        except (ContractError, OSError) as error:
-            # Registration has already committed. Preserve that truthful outcome
-            # while the durable markers allow this same request to resume later.
-            pending = True
-            issues.add(
-                (error.code, error.message)
-                if isinstance(error, ContractError)
-                else (
-                    "source_cleanup_unavailable",
-                    "来源登记已退出，原件暂时无法清理，可稍后重试。",
-                )
-            )
-            break
-        pending = pending or bool(cleanup.pending_marker_ids)
-        issues.update((error.code, error.message) for error in cleanup.errors)
     return validate_contract(
         "core.schema.json",
         "SourceDiscardResult",
@@ -103,9 +80,38 @@ def discard(application, request):
             "company_id": request["company_id"],
             "discarded_source_ids": list(prepared.discarded_source_ids),
             "missing_source_ids": list(prepared.missing_source_ids),
-            "file_cleanup": {
-                "state": "pending" if pending else "complete",
-                "issues": [{"code": code, "message": message} for code, message in sorted(issues)],
-            },
+            "file_cleanup": cleanup(application, request["company_id"], prepared.marker_ids),
         },
     )
+
+
+def cleanup_issue(error):
+    return (
+        (error.code, error.message)
+        if isinstance(error, ContractError)
+        else ("source_cleanup_unavailable", "来源登记已退出，原件暂时无法清理，可稍后重试。")
+    )
+
+
+def cleanup(application, company_id, marker_ids):
+    """Report committed retirement separately from resumable physical cleanup."""
+    pending, issues = False, set()
+    for offset in range(0, len(marker_ids), 500):
+        try:
+            completed = finish(
+                application,
+                company_id,
+                marker_ids=marker_ids[offset : offset + 500],
+            )
+        except (ContractError, OSError) as error:
+            # Registration has already committed. Preserve that truthful outcome
+            # while the durable markers allow this same request to resume later.
+            pending = True
+            issues.add(cleanup_issue(error))
+            break
+        pending = pending or bool(completed.pending_marker_ids)
+        issues.update((error.code, error.message) for error in completed.errors)
+    return {
+        "state": "pending" if pending else "complete",
+        "issues": [{"code": code, "message": message} for code, message in sorted(issues)],
+    }

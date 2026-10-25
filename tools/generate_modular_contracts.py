@@ -277,6 +277,7 @@ def guide_outputs(root, business_document):
         for heading in (
             "开始工作时取得什么",
             "给老板看的办理清单",
+            "撤回、整月撤销与重新记账",
             "资料如何进入系统",
             "不让老板承担程序协调",
             "当前待办只保留还需要做的事",

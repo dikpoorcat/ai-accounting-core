@@ -22,6 +22,7 @@ from ai_accounting_modular.contracts.public import (
     content_digest,
     loads_json,
     validate_contract,
+    validate_contract_items,
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
@@ -29,6 +30,7 @@ from . import (
     _backup,
     _changes,
     _documents,
+    _period_issues,
     _periods,
     _prepared_sources,
     _snapshot,
@@ -143,6 +145,39 @@ class Records:
     def sources(self, request: SourcesRequest, read_context: ReadContext) -> SourcesResult:
         return _source_queries.query(self, request, read_context)
 
+    def period_sources(self, period: str, read_context: ReadContext) -> tuple[Source, ...]:
+        """Return this archive month's complete registrations without opening originals."""
+        validate_contract("core.schema.json", "Month", period)
+        sources = read_context.repository("records").period_sources(period)
+        for source in sources:
+            _sources.validate_source(source)
+        return sources
+
+    def source_discard_protection(
+        self,
+        source_ids: Sequence[str],
+        read_context: ReadContext,
+        *,
+        retained_source_ids: Sequence[str],
+        protected_paths: Sequence[str],
+    ) -> tuple[str, ...]:
+        """Observe current references, supplied protections and active source leases together."""
+        root = self._root(read_context)
+        publication = _publication(root)
+        with publication.lock:
+            return _source_discards.protection(
+                source_ids,
+                read_context,
+                root,
+                publication,
+                retained_source_ids=retained_source_ids,
+                protected_paths=protected_paths,
+            )
+
+    def clear_period_issues(self, period: str, command_id: str, uow: UnitOfWork) -> tuple[str, ...]:
+        """Clear this month's issues across scopes; preserve notes and other months' issues."""
+        return _period_issues.clear(self, period, command_id, uow)
+
     def discard_sources(
         self,
         source_ids: Sequence[str],
@@ -150,6 +185,7 @@ class Records:
         *,
         retained_source_ids: Sequence[str],
         protected_paths: Sequence[str],
+        retain_protected: bool = False,
     ) -> SourceDiscards:
         """Retire only explicitly selected unused sources; never unlink before commit."""
         root = self._root(uow)
@@ -162,6 +198,7 @@ class Records:
                 publication,
                 retained_source_ids=retained_source_ids,
                 protected_paths=protected_paths,
+                retain_protected=retain_protected,
             )
 
     def has_source_discards(self, read_context: ReadContext) -> bool:
@@ -170,6 +207,14 @@ class Records:
         root = self._root(read_context)
         with _publication(root).lock:
             return _source_discards.has_pending(root)
+
+    def pending_source_discard_markers(
+        self, archive_month: str, read_context: ReadContext
+    ) -> tuple[str, ...]:
+        """Select this month's durable cleanup markers without deleting any files."""
+        root = self._root(read_context)
+        with _publication(root).lock:
+            return _source_discards.pending_for_period(root, archive_month, read_context)
 
     def finish_source_discards(
         self,
@@ -285,6 +330,19 @@ class Records:
         return tuple(
             _changes.note_current(row, repository, uses[scope]) for scope, row in rows.items()
         )
+
+    def note_written_by(self, scope: str, command_id: str, read_context: ReadContext) -> bool:
+        """Prove this command still owns the current note, without returning private metadata."""
+        validate_contract_items(
+            "core.schema.json", "NoteChange", [{"scope": scope}], fields=("scope",)
+        )
+        validate_contract("core.schema.json", "Id", command_id)
+        repository = read_context.repository("records")
+        row = repository.notes((scope,)).get(scope)
+        if row is None:
+            return False
+        current = _changes.note_current(row, repository)
+        return current["state"] == "current" and row["latest_command_id"] == command_id
 
     def current_issues(self, scope: str, read_context: ReadContext) -> dict:
         repository = read_context.repository("records")

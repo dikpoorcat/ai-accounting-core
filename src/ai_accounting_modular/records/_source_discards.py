@@ -80,7 +80,20 @@ def has_pending(root):
     return next(_marker_ids(root), None) is not None
 
 
-def _read_marker(root, marker_id, uow):
+def pending_for_period(root, period, read):
+    validate_contract("core.schema.json", "Month", period)
+    selected = []
+    for marker_id in _marker_ids(root):
+        try:
+            value = _read_marker(root, marker_id, read)
+        except FileNotFoundError:
+            continue
+        if PurePosixPath(value["relative_path"]).parts[1] == period:
+            selected.append(marker_id)
+    return tuple(sorted(selected))
+
+
+def _read_marker(root, marker_id, read):
     path = _marker_path(root, marker_id)
     with path.open("rb") as stream:
         raw = stream.read(8193)
@@ -90,8 +103,8 @@ def _read_marker(root, marker_id, uow):
             raise ValueError("marker_fields")
         if (
             value["format"] != _FORMAT
-            or value["company_id"] != uow.company_id
-            or value["database_id"] != uow.database_id
+            or value["company_id"] != read.company_id
+            or value["database_id"] != read.database_id
             or value["marker_id"] != marker_id
             or value["source_id"] != _marker_source(marker_id)
         ):
@@ -116,26 +129,69 @@ def _read_marker(root, marker_id, uow):
     return value
 
 
-def discard(source_ids, uow, root, publication, *, retained_source_ids, protected_paths):
-    _writer(uow)
-    if uow.next_head <= uow.head:
-        raise ContractError("invalid_operation", "来源登记退出必须使用正式写事务。")
+def _selection(source_ids, read, root, publication, *, retained_source_ids, protected_paths):
     wanted = _changes.source_ids(source_ids)
     retained = _changes.source_ids(retained_source_ids)
     protected = _protected(protected_paths, root, publication)
-    repository = uow.repository("records")
+    repository = read.repository("records")
     stored = repository.sources(wanted)
     referenced = set(repository.referenced_source_ids(wanted)) | set(retained)
+    protected_ids = set()
     for source_id, source in stored.items():
         _sources.validate_source(source)
         if source_id in referenced or source.get("relative_path") in protected:
-            raise ContractError(
-                "source_in_use", f"来源{source_id}仍被当前工作、正式账本或原件任务使用，不能退出。"
-            )
-    markers = {marker_id for marker_id in _marker_ids(root) if _marker_source(marker_id) in wanted}
+            protected_ids.add(source_id)
+    return wanted, stored, protected_ids
+
+
+def protection(source_ids, read, root, publication, *, retained_source_ids, protected_paths):
+    _, _, protected_ids = _selection(
+        source_ids,
+        read,
+        root,
+        publication,
+        retained_source_ids=retained_source_ids,
+        protected_paths=protected_paths,
+    )
+    return tuple(sorted(protected_ids))
+
+
+def discard(
+    source_ids,
+    uow,
+    root,
+    publication,
+    *,
+    retained_source_ids,
+    protected_paths,
+    retain_protected=False,
+):
+    _writer(uow)
+    if uow.next_head <= uow.head:
+        raise ContractError("invalid_operation", "来源登记退出必须使用正式写事务。")
+    if type(retain_protected) is not bool:
+        raise ContractError("invalid_input", "保留受保护来源须使用明确布尔值。")
+    wanted, stored, protected_ids = _selection(
+        source_ids,
+        uow,
+        root,
+        publication,
+        retained_source_ids=retained_source_ids,
+        protected_paths=protected_paths,
+    )
+    if protected_ids and not retain_protected:
+        raise ContractError(
+            "source_in_use",
+            f"来源{min(protected_ids)}仍被当前工作、正式账本或原件任务使用，不能退出。",
+        )
+    selected = {key: value for key, value in stored.items() if key not in protected_ids}
+    eligible_ids = set(wanted) - protected_ids
+    markers = {
+        marker_id for marker_id in _marker_ids(root) if _marker_source(marker_id) in eligible_ids
+    }
     # Complete every durable marker before the single atomic DELETE statement.
-    for source_id in sorted(stored):
-        source = stored[source_id]
+    for source_id in sorted(selected):
+        source = selected[source_id]
         if source["kind"] != "file":
             continue
         marker_id = source_id + "--" + str(uuid4())
@@ -159,10 +215,13 @@ def discard(source_ids, uow, root, publication, *, retained_source_ids, protecte
         if _read_marker(root, marker_id, uow) != value:
             raise ContractError("source_cleanup_invalid", "待清理原件标识已存在且内容不一致。")
         markers.add(marker_id)
-    if stored:
-        repository.delete_sources(tuple(stored))
+    if selected:
+        uow.repository("records").delete_sources(tuple(selected))
     return SourceDiscards(
-        tuple(sorted(stored)), tuple(sorted(set(wanted) - stored.keys())), tuple(sorted(markers))
+        tuple(sorted(selected)),
+        tuple(sorted(set(wanted) - stored.keys())),
+        tuple(sorted(markers)),
+        tuple(sorted(protected_ids)),
     )
 
 

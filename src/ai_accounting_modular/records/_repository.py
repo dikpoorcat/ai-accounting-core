@@ -45,6 +45,14 @@ class RecordsRepository:
             for row in self._session.fetchall("SELECT * FROM source ORDER BY source_id")
         )
 
+    def period_sources(self, period):
+        return tuple(
+            _source(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM source WHERE archive_month=? ORDER BY source_id", (period,)
+            )
+        )
+
     @staticmethod
     def _source_scope(first, last):
         clauses, values = [], []
@@ -170,6 +178,17 @@ class RecordsRepository:
             row["scope_key"]
             for row in self._session.fetchall(
                 "SELECT scope_key FROM current_issue_scope ORDER BY scope_key"
+            )
+        )
+
+    def issue_scopes_for_period(self, period):
+        return tuple(
+            row["scope_key"]
+            for row in self._session.fetchall(
+                "SELECT scope_key FROM current_issue WHERE period=? "
+                "UNION SELECT scope_key FROM current_issue WHERE scope_key=? AND period IS NULL "
+                "ORDER BY scope_key",
+                (period, "period:" + period),
             )
         )
 

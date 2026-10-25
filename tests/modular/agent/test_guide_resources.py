@@ -84,6 +84,32 @@ def test_mcp_bundles_discard_input_without_executing_a_business_command():
     asyncio.run(check())
 
 
+def test_mcp_declares_month_cancellation_without_company_reads_or_extra_tools():
+    class MonthApplication:
+        def accounting_cancel_month(self, request):
+            raise AssertionError("Contract discovery must not cancel or read a month")
+
+    async def check():
+        server = create_mcp(create_agent(MonthApplication()))
+        commands = json.loads(list(await server.read_resource("accounting://contracts"))[0].content)
+        assert [row["command"] for row in commands["commands"]] == ["accounting_cancel_month"]
+        schema = commands["commands"][0]["request_schema"]
+        branches = {row["properties"]["action"]["const"]: row for row in schema["oneOf"]}
+        assert set(branches) == {"inspect", "cancel"}
+        assert branches["inspect"]["required"] == ["company_id", "action", "period"]
+        assert branches["cancel"]["properties"]["expected_head"]["type"] == "integer"
+        assert "command_id" in branches["cancel"]["required"]
+        assert "expected_head" in branches["cancel"]["required"]
+        assert {tool.name for tool in await server.list_tools()} == {
+            "accounting_schema",
+            "accounting_new_ids",
+            "accounting_command",
+            "accounting_security",
+        }
+
+    asyncio.run(check())
+
+
 def test_offline_resources_include_only_relevant_runtime_guidance():
     async def check():
         server = create_offline_mcp()

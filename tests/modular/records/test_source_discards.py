@@ -425,6 +425,81 @@ def test_read_only_units_cannot_retire_or_finish_sources(records_case):
         assert error.value.code == "invalid_operation"
 
 
+@pytest.mark.parametrize("protection", ["current", "retained", "path", "lease"])
+def test_retain_mode_uses_shared_current_protection_and_still_retires_other_sources(
+    records_case, protection
+):
+    storage, (company, _), records = records_case
+    retained = store(records_case, file=True, label="本次应保留的原件")
+    unused = store(records_case, file=True, label="本次可以退出的原件")
+    retained_ids = (retained["source_id"],) if protection == "retained" else ()
+    protected_paths = (retained["relative_path"],) if protection == "path" else ()
+    wanted = (retained["source_id"], unused["source_id"])
+    if protection == "current":
+        with storage.write_unit(company.company_id) as unit:
+            records.replace_source_uses("note", "company", (retained["source_id"],), unit)
+    with ExitStack() as stack:
+        if protection == "lease":
+            read = stack.enter_context(storage.read_unit(company.company_id))
+            assert (
+                records.source_discard_protection(
+                    wanted, read, retained_source_ids=(), protected_paths=()
+                )
+                == ()
+            )
+            stack.enter_context(records.prepare_sources((retained,), read))
+        with storage.read_unit(company.company_id) as read:
+            assert records.source_discard_protection(
+                wanted,
+                read,
+                retained_source_ids=retained_ids,
+                protected_paths=protected_paths,
+            ) == (retained["source_id"],)
+        with storage.write_unit(company.company_id) as unit:
+            result = records.discard_sources(
+                wanted,
+                unit,
+                retained_source_ids=retained_ids,
+                protected_paths=protected_paths,
+                retain_protected=True,
+            )
+        assert result.retained_source_ids == (retained["source_id"],)
+        assert result.discarded_source_ids == (unused["source_id"],)
+        assert result.missing_source_ids == ()
+        assert all(value.startswith(unused["source_id"]) for value in result.marker_ids)
+        assert (company.company_root / unused["relative_path"]).exists()
+        with storage.write_unit(company.company_id) as unit:
+            cleaned = records.finish_source_discards(
+                unit, marker_ids=result.marker_ids, protected_paths=()
+            )
+        assert cleaned.pending_marker_ids == ()
+        assert not (company.company_root / unused["relative_path"]).exists()
+        assert (company.company_root / retained["relative_path"]).exists()
+        with storage.read_unit(company.company_id) as read:
+            assert records.resolve_sources(wanted, read) == (retained,)
+
+
+def test_default_discard_rejects_a_live_preparation_lease_atomically(records_case):
+    storage, (company, _), records = records_case
+    retained = store(records_case, file=True, label="正在核验的原件")
+    unused = store(records_case, file=True, label="同批未用原件")
+    wanted = (unused["source_id"], retained["source_id"])
+    with storage.read_unit(company.company_id) as read:
+        before = read.head
+        with records.prepare_sources((retained,), read):
+            with pytest.raises(ContractError) as error:
+                discard(records_case, wanted)
+            assert error.value.code == "source_in_use"
+    with storage.read_unit(company.company_id) as read:
+        assert read.head == before
+        assert set(value["source_id"] for value in records.resolve_sources(wanted, read)) == set(
+            wanted
+        )
+    assert not (company.company_root / "runtime/source-discards").exists()
+    assert (company.company_root / retained["relative_path"]).exists()
+    assert (company.company_root / unused["relative_path"]).exists()
+
+
 @pytest.mark.parametrize("committed", [False, True])
 def test_real_process_loss_before_or_after_commit_resumes_exact_original_cleanup(
     records_case, committed

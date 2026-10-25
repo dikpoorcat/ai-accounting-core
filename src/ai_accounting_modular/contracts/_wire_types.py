@@ -654,6 +654,21 @@ class ServiceRevenueWorkDefaults(TypedDict):
     vat_period_basis: Literal['income_recognition_month']
     vat_preference: Literal['retain_applicable_reliefs']
 
+type MonthCancelRequest = MonthCancelRequestVariant1 | MonthCancelRequestVariant2
+
+class MonthCancelResult(TypedDict):
+    company_id: Id
+    database_id: Id
+    period: Month
+    head: int
+    state: Literal['inspected', 'cancelled']
+    business_ids: list[Id]
+    source_ids: list[Id]
+    discarded_source_ids: list[Id]
+    retained_source_ids: list[Id]
+    documents: Literal['ready', 'pending']
+    file_cleanup: MonthCancelResultFileCleanup
+
 type NoteFormat = Literal['plain_text', 'markdown']
 
 class CompanyNoteQuery(TypedDict):
@@ -10136,6 +10151,22 @@ class SchemaResultSchemasItem(TypedDict):
     kind: str
     schema_document: dict[str, JsonValue]
 
+class MonthCancelRequestVariant1(TypedDict):
+    company_id: Id
+    action: Literal['inspect']
+    period: Month
+
+class MonthCancelRequestVariant2(TypedDict):
+    company_id: Id
+    action: Literal['cancel']
+    period: Month
+    command_id: Id
+    expected_head: int
+
+class MonthCancelResultFileCleanup(TypedDict):
+    state: Literal['not_started', 'complete', 'pending']
+    issues: list[MonthCancelResultFileCleanupIssuesItem]
+
 class PaymentExportLayoutColumns(TypedDict):
     payee_name: int
     payee_account: int
@@ -11425,6 +11456,10 @@ class CurrentObjectVariant8Data(TypedDict):
     project_id: NotRequired[Id]
     code: NotRequired[str]
 
+class MonthCancelResultFileCleanupIssuesItem(TypedDict):
+    code: str
+    message: str
+
 class TargetAssetsActivationValuesAssetsItem(TypedDict):
     asset_id: Id
     cost_fen: PositiveFen
@@ -11550,6 +11585,8 @@ __all__ = [
     'PaymentExportPlan',
     'PaymentExportResult',
     'ServiceRevenueWorkDefaults',
+    'MonthCancelRequest',
+    'MonthCancelResult',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',

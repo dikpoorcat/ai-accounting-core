@@ -38,6 +38,7 @@ class SourceDiscards:
     discarded_source_ids: tuple[str, ...]
     missing_source_ids: tuple[str, ...]
     marker_ids: tuple[str, ...]
+    retained_source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

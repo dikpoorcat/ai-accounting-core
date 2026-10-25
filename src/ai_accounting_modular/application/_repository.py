@@ -151,6 +151,16 @@ class ApplicationRepository:
             )
         )
 
+    def month_heads(self, period):
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM business_head WHERE state='active' AND period=? "
+                "ORDER BY business_id",
+                (period,),
+            )
+        )
+
     def scope_heads(self, kinds, period_from, period_to):
         return tuple(
             dict(row)

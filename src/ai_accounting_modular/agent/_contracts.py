@@ -11,6 +11,7 @@ REQUESTS = {
     "accounting_context": "ContextRequest",
     "accounting_objects": "ObjectsRequest",
     "accounting_apply": "ApplyRequest",
+    "accounting_cancel_month": "MonthCancelRequest",
     "accounting_get": "BusinessGet",
     "accounting_find": "BusinessQuery",
     "accounting_remuneration": "RemunerationRequest",

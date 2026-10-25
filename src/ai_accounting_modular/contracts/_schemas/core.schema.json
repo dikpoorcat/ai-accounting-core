@@ -5957,6 +5957,224 @@
         "vat_period_basis",
         "vat_preference"
       ]
+    },
+    "MonthCancelRequest": {
+      "description": "撤销指定开放月份的全部所属月业务，并退出该月可清理的原件、说明和待办。inspect只读取；cancel使用实际公司头防止撤掉后来新记的业务，不是老板批准步骤。",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "inspect"
+            },
+            "period": {
+              "$ref": "#/$defs/Month"
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "period"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "action": {
+              "const": "cancel"
+            },
+            "period": {
+              "$ref": "#/$defs/Month"
+            },
+            "command_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "expected_head": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "required": [
+            "company_id",
+            "action",
+            "period",
+            "command_id",
+            "expected_head"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "MonthCancelResult": {
+      "type": "object",
+      "properties": {
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "period": {
+          "$ref": "#/$defs/Month"
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        "state": {
+          "enum": [
+            "inspected",
+            "cancelled"
+          ]
+        },
+        "business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "uniqueItems": true,
+          "description": "该月归档的完整来源候选；不是全部已删除的承诺。"
+        },
+        "discarded_source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "uniqueItems": true,
+          "description": "本次实际退出的来源。inspect为空。"
+        },
+        "retained_source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 0,
+          "uniqueItems": true,
+          "description": "cancel撤去本月引用后，仍因跨月、长期、模板、冻结或其他有效保护而保留的来源。inspect为空，届时尚未作删除判定。"
+        },
+        "documents": {
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "file_cleanup": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "not_started",
+                "complete",
+                "pending"
+              ]
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            }
+          },
+          "required": [
+            "state",
+            "issues"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "company_id",
+        "database_id",
+        "period",
+        "head",
+        "state",
+        "business_ids",
+        "source_ids",
+        "discarded_source_ids",
+        "retained_source_ids",
+        "documents",
+        "file_cleanup"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "inspected"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discarded_source_ids": {
+                "maxItems": 0
+              },
+              "retained_source_ids": {
+                "maxItems": 0
+              },
+              "file_cleanup": {
+                "properties": {
+                  "state": {
+                    "const": "not_started"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "file_cleanup": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "complete",
+                      "pending"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

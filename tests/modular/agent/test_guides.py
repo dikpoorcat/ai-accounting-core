@@ -48,6 +48,7 @@ def test_all_actual_fact_inputs_have_exact_guides_and_generated_bytes():
     )
     assert "## 税费和期间口径" in read_guide("business", kind="taxes.income_tax_policy")
     assert "## 期初与报表接续" in read_guide("business", kind="reports.continuation")
+    assert "## 撤回、整月撤销与重新记账" in read_guide("work")
     assert (
         "[合作项目投资](accounting://guides/business/investment.cooperation_contract)"
         in read_guide("business", kind="operations.expense")
@@ -74,11 +75,25 @@ def test_shipped_material_guidance_separates_owner_facts_from_dialogue_and_clean
     assert "真正的原始文件不改写" in work
     assert "accounting_sources(action=discard)" in work
     assert "不能自动扫删尚未处理的原件" in work
-    assert "实际文件清理仍待程序接续" in work
+    assert "实际文件清理仍待后台接续" in work
     commands = read_guide("commands")
     assert "SourcesCommandResult" in commands and "SourceDiscardResult" in commands
-    assert "登记已退出但文件清理尚待程序接续" in commands
+    assert "登记已退出但文件清理尚待后台接续" in commands
     assert "call accounting-sources" in read_guide("runtime")
+
+
+def test_installed_work_guide_includes_month_cancel_and_local_withdrawal_distinction():
+    work = read_guide("work")
+    operations = generator().markdown_section(work, "## 撤回、整月撤销与重新记账")
+    assert "accounting_cancel_month" in operations and "expected_head" in operations
+    assert "单笔或指定多笔撤回是局部自纠" in operations
+    assert "继续原办理位置，不把整月退回第1项" in operations
+    assert "整月撤销后重新开始，才从第1项收集和核对本期资料" in operations
+    assert "retained_source_ids" in operations
+    assert "文件 pending 由后台自动接续旧清理，不能重复discard来催清理" in operations
+    assert "保护重新导入的登记与原件" in work
+    assert "pending由后台沿旧清理标识接续" in read_guide("runtime")
+    assert "不要求恢复已删除的旧正文或旧编号映射" in operations
 
 
 def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries():
@@ -158,6 +173,14 @@ def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
         text + "\n### 合作项目投资\n",
     ):
         file.write_text(changed, encoding="utf-8")
+        with pytest.raises(ValueError, match="heading must exist exactly once"):
+            generator().guide_outputs(tmp_path, schema_document("business-facts.schema.json"))
+    shutil.copyfile(ROOT / "docs/redesign/05-business-rules.md", file)
+    work = source / "08-ai-work-and-materials.md"
+    text = work.read_text(encoding="utf-8")
+    heading = "## 撤回、整月撤销与重新记账"
+    for changed in (text.replace(heading, "## 尚未打包的撤销规则"), text + "\n" + heading + "\n"):
+        work.write_text(changed, encoding="utf-8")
         with pytest.raises(ValueError, match="heading must exist exactly once"):
             generator().guide_outputs(tmp_path, schema_document("business-facts.schema.json"))
 
