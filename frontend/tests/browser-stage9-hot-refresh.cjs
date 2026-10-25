@@ -1860,11 +1860,15 @@ async function run(config) {
       }
     } else if (module.key === "reports") {
       const summary = data.summary;
-      assert.equal(await page.locator(".summary-grid article").count(), summary === null ? 0 : 3, "reports: default summary incomplete");
+      assert.equal(await page.locator(".summary-grid article").count(), summary === null ? 0 : 4, "reports: default summary incomplete");
       if (summary) {
-        for (const [index, value] of [summary.assets_total_fen, summary.current_net_profit_fen, summary.current_cash_change_fen].entries()) {
+        const profitRows = data.statements.find(statement => statement.key === "profit_statement")?.rows;
+        const revenue = profitRows?.find(row => row.line === 1)?.values.current_fen ?? null;
+        const cost = profitRows?.find(row => row.line === 2)?.values.current_fen ?? null;
+        for (const [index, value] of [summary.assets_total_fen, revenue, summary.current_net_profit_fen, summary.current_cash_change_fen].entries()) {
           assert.equal((await page.locator(".summary-grid article strong").nth(index).textContent())?.trim(), formatFen(value), "reports: summary amount differs");
         }
+        assert.equal((await page.locator(".summary-grid article small").nth(1).textContent())?.trim(), `营业成本 ${formatFen(cost)}`, "reports: operating cost differs from the current-quarter statement");
       }
     }
   }

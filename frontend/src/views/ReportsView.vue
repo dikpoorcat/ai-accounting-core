@@ -20,6 +20,7 @@ import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen } from "../utils/money";
 
 interface SummaryCard {
+  key: string;
   source: string;
   label: string;
   value: string;
@@ -140,8 +141,13 @@ const checkedAt = computed(() => {
 const summaryCards = computed<SummaryCard[]>(() => {
   const summary = report.value?.summary;
   if (!summary) return [];
+  const profitRows = report.value?.statements.find((statement) => statement.key === "profit_statement")?.rows;
+  const revenue = profitRows?.find((row) => row.line === 1)?.values.current_fen ?? null;
+  const cost = profitRows?.find((row) => row.line === 2)?.values.current_fen ?? null;
+  const netProfit = summary.current_net_profit_fen === null ? null : fen(summary.current_net_profit_fen);
   return [
     {
+      key: "assets",
       source: "资产负债表",
       label: "资产合计",
       value: formatFen(summary.assets_total_fen),
@@ -149,13 +155,23 @@ const summaryCards = computed<SummaryCard[]>(() => {
       note: `负债合计 ${formatFen(summary.liabilities_total_fen)}`,
     },
     {
+      key: "operating",
+      source: "利润表",
+      label: "本季度营业收入",
+      value: formatFen(revenue),
+      tone: "",
+      note: `营业成本 ${formatFen(cost)}`,
+    },
+    {
+      key: "profit",
       source: "利润表",
       label: "本季度净利润",
       value: formatFen(summary.current_net_profit_fen),
-      tone: summary.current_net_profit_fen === null ? "" : fen(summary.current_net_profit_fen) < 0n ? "loss" : "gain",
+      tone: netProfit === null || netProfit === 0n ? "" : netProfit < 0n ? "loss" : "gain",
       note: `本年累计 ${formatFen(summary.year_to_date_net_profit_fen)}`,
     },
     {
+      key: "cash",
       source: "现金流量表",
       label: "本季度现金净增加额",
       value: formatFen(summary.current_cash_change_fen),
@@ -649,14 +665,14 @@ onBeforeUnmount(() => {
           <div v-if="exportNotice" class="export-notice" :class="exportNoticeKind" role="status">
             {{ exportNotice }}
           </div>
-        <section v-if="summaryCards.length" class="summary-grid" aria-label="季度报表摘要">
-          <article v-for="item in summaryCards" :key="item.source">
-            <span>{{ item.source }} · {{ item.label }}</span>
-            <strong :class="item.tone">{{ item.value }}</strong>
-            <small>{{ item.note }}</small>
-          </article>
-        </section>
+          <section v-if="summaryCards.length" class="summary-grid" aria-label="季度报表摘要">
+            <article v-for="item in summaryCards" :key="item.key">
+              <span>{{ item.source }} · {{ item.label }}</span>
+              <strong :class="item.tone">{{ item.value }}</strong>
+              <small>{{ item.note }}</small>
+            </article>
           </section>
+        </section>
 
 
 
@@ -872,7 +888,7 @@ onBeforeUnmount(() => {
 .state-panel.error { border-color: var(--danger); }
 .state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: var(--radius-control); background: var(--accent); color: var(--surface); cursor: pointer; }
 .report-dashboard { display: grid; min-width: 0; gap: 12px; }
-.report-hero { padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));  }
+.report-hero { container-type: inline-size; padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));  }
 .report-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .report-heading .dashboard-hero-note { max-width: 710px; }
 .report-readiness-title { font-size: clamp(28px, 3.3vw, 36px); }
@@ -915,26 +931,8 @@ onBeforeUnmount(() => {
 .export-notice { margin-top: 8px; padding: 10px 13px; border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent); font-size: 12px; }
 .export-notice.attention { background: var(--warning-soft); color: var(--warning); }
 .export-notice.error { background: var(--danger-soft); color: var(--danger); }
-.summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 28px;
-  overflow: visible;
-
-  border: 0;
-
-  border-radius: 0;
-
-  background: transparent;
-
-  grid-column: 1 / -1;
-
-  margin-top: 8px;
-}
-.summary-grid article { position: relative; display: grid; min-height: 0; align-content: start; gap: 6px; overflow: hidden; padding: 0; border: 0; border-radius: 0; background: transparent;
-  min-width: 0;
-
-  border-left: 0;
-
-  grid-template-rows: auto auto 1fr;
-}
+.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 32px; }
+.summary-grid article { display: grid; min-width: 0; align-content: start; gap: 6px; }
 .summary-grid span, .summary-grid small { color: var(--muted); }
 .summary-grid span { display: block; font-size: 12px; font-weight: 750; }
 .summary-grid small { font-size: 11px; }
@@ -980,15 +978,11 @@ th:first-child { width: 54%; }
 .number { text-align: right; font-variant-numeric: tabular-nums; }
 tr.total td { background: var(--surface-soft); font-weight: 750; }
 @media (max-width: 960px) { .statement-buttons { grid-template-columns: 1fr; } }
-@media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 1043px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .report-review { padding: 0; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .statement-buttons button { min-height: 64px; } }
 
-
-.report-hero .summary-grid { margin-top: 32px; }
-.report-hero .summary-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
-.report-hero .summary-grid strong { font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) {
-  .summary-grid, .report-hero .summary-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .summary-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .table-wrap { overflow: hidden; }
   table, tbody, tr, td { display: block; width: auto; min-width: 0; }
   thead { display: none; }
