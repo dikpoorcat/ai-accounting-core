@@ -760,7 +760,15 @@ class Files:
             if not _plans.is_current(producer, plan, context):
                 self._expire(metadata, row, ExpireTask())
                 raise ContractError("plan_expired", "文件计划已失效，不能下载旧结果。")
-            yield VerifiedDownload(stream, self._describe(plan).file_name, digest, size)
+            yield VerifiedDownload(
+                stream,
+                self._describe(plan).file_name,
+                digest,
+                size,
+                plan["company_id"],
+                plan["database_id"],
+                task_id,
+            )
         finally:
             if stream is not None:
                 stream.close()

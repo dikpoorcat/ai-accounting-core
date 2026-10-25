@@ -5,13 +5,12 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 
 from . import (
     _context,
-    _financial_projection,
     _materials,
     _models,
     _month_queries,
     _monthly,
-    _report_exports,
 )
+from ._report_exports import ReportExports, create_report_exports
 from ._report_producer import create_report_producer
 from ._repository import ReadingRepository
 from ._types import (
@@ -32,9 +31,11 @@ __all__ = [
     "ReadingImpact",
     "SourceDownload",
     "ReportDownload",
+    "ReportExports",
     "Reading",
     "create_reading",
     "create_report_producer",
+    "create_report_exports",
     "repository_factory",
     "reset_for_restore",
 ]
@@ -63,10 +64,15 @@ class Reading:
         investment=None,
         assets=None,
         people=None,
+        reports=None,
     ):
         self.storage, self.ledger = storage, ledger
         self.records, self.businesses = records, businesses
-        self.files = files
+        self.reports = (
+            reports
+            if reports is not None
+            else create_report_exports(storage=storage, ledger=ledger, files=files)
+        )
         self.identity, self.money, self.investment = identity, money, investment
         self.assets = assets
         self.people = people
@@ -117,7 +123,7 @@ class Reading:
         if page_key == "context":
             return _context.context(self, scope)
         if page_key == "quarterly_report":
-            return _models.page(self, scope)
+            return self.reports.page(scope)
         raise ContractError("unsupported_business", "此看板页面尚未接入新读取模型。")
 
     def detail(self, detail_key, scope, query):
@@ -161,13 +167,13 @@ class Reading:
         return _materials.content(self, query)
 
     def export_report(self, scope, head, request_id, *, epochs):
-        return _report_exports.export(self, scope, head, request_id, epochs=epochs)
+        return self.reports.export(scope, head, request_id, epochs=epochs)
 
     def report_task(self, company_id, job_id):
-        return _report_exports.task(self, company_id, job_id)
+        return self.reports.task(company_id, job_id)
 
     def report_download(self, company_id, job_id):
-        return _report_exports.download(self, company_id, job_id)
+        return self.reports.download(company_id, job_id)
 
     def mark_targets(self, impact: ReadingImpact, uow):
         return _models.mark_targets(self, impact, uow)
@@ -181,9 +187,7 @@ class Reading:
         if page_key == "quarterly_report":
             if query:
                 raise ContractError("invalid_input", "季度重试不接受额外筛选。")
-            normalized = _models.normalize(scope)
-            scope_key = _models.key(normalized)
-            company_id = scope["company_id"]
+            return self.reports.retry(scope)
         else:
             if not isinstance(scope, MonthScope) or scope.period is None:
                 raise ContractError("invalid_input", "月页重试须明确公司和月份。")
@@ -212,10 +216,6 @@ class Reading:
                 }
             )
             return _monthly.retry(self, normalized, components)
-        with self.storage.maintenance_unit(company_id) as unit:
-            _financial_projection.retry(
-                self, normalized, "snapshot", scope_key, _models.FORMAT_VERSION, unit
-            )
 
 
 def create_reading(
@@ -230,6 +230,7 @@ def create_reading(
     investment=None,
     assets=None,
     people=None,
+    reports=None,
 ):
     return Reading(
         storage=storage,
@@ -242,4 +243,5 @@ def create_reading(
         investment=investment,
         assets=assets,
         people=people,
+        reports=reports,
     )

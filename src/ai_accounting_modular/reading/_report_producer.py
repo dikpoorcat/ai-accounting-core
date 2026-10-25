@@ -37,7 +37,7 @@ class ReportProducer:
         return FileScope(
             f"quarter:{scope['period_from']}:{plan['variant']}",
             plan["scope_head"],
-            _report_plans.file_name(scope),
+            _report_plans.file_name(scope, plan["organization"]),
         )
 
     def recover_lease(self, plan, context):

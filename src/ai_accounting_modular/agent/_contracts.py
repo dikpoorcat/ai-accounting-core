@@ -23,6 +23,7 @@ REQUESTS = {
     "accounting_backup": "BackupRequest",
     "accounting_jobs": "JobsRequest",
     "accounting_report": "ReportRequest",
+    "accounting_report_export": "ReportExportRequest",
 }
 
 

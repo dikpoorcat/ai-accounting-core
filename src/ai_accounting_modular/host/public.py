@@ -22,6 +22,8 @@ from ai_accounting_modular.reading import public as reading
 from ai_accounting_modular.records import public as records
 from ai_accounting_modular.storage.public import Storage, company_metadata
 
+from ._desktop_export import save_report
+
 __all__ = ["Kernel", "create_kernel", "create_offline_application"]
 
 
@@ -157,13 +159,18 @@ def create_kernel(
     }
     file_tasks = files.create_files(storage, producers)
 
+    report_exports = reading.create_report_exports(
+        storage=storage, ledger=modules.ledger, files=file_tasks
+    )
     app.files, app.payments = file_tasks, payment_files
+    app.reports, app.save_report = report_exports, save_report
     read_models = reading.create_reading(
         storage=storage,
         ledger=modules.ledger,
         records=modules.records,
         businesses=app,
         files=file_tasks,
+        reports=report_exports,
         identity=modules.identity,
         money=modules.money,
         investment=modules.investment,

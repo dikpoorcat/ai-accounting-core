@@ -1,9 +1,27 @@
+<!-- @format -->
+
 <script setup lang="ts">
 import { AUTOMATIC_DASHBOARD_PAGE_LIMIT } from "../api/dashboardContracts";
-import { computed, onBeforeUnmount, onMounted, ref, shallowReactive, shallowRef, watch } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowReactive,
+  shallowRef,
+  watch,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { fetchDeferredBrief, type BriefOverviewResponse, type BriefQuery, type BriefVoucher } from "../api/brief";
-import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
+import {
+  fetchDeferredBrief,
+  type BriefOverviewResponse,
+  type BriefQuery,
+  type BriefVoucher,
+} from "../api/brief";
+import {
+  dashboardErrorMessage,
+  isDashboardSnapshotChanged,
+} from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
@@ -18,15 +36,23 @@ import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
 
-
-const route = useRoute(), router = useRouter();
-const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
+const route = useRoute(),
+  router = useRouter();
+const {
+  context,
+  load: loadContext,
+  refresh: refreshContext,
+} = useDashboardContext();
 const response = shallowRef<BriefOverviewResponse | null>(null);
-const voucherPreviewIndex = shallowRef(shallowReactive(new Map<string, BriefVoucher>()));
+const voucherPreviewIndex = shallowRef(
+  shallowReactive(new Map<string, BriefVoucher>()),
+);
 const vouchersReady = ref(false);
 const preparing = ref(false);
 const focusedVoucherSelection = ref(0);
-const loading = ref(false), error = ref(""), updateNotice = ref("");
+const loading = ref(false),
+  error = ref(""),
+  updateNotice = ref("");
 type BriefSection = NonNullable<BriefQuery["section"]>;
 const sectionLoading = ref<Partial<Record<BriefSection, boolean>>>({});
 const sectionErrors = ref<Partial<Record<BriefSection, string>>>({});
@@ -34,34 +60,64 @@ const pageControllers = new Map<BriefSection, AbortController>();
 const showMonthlyReview = ref(false);
 const managementCommentaryDialog = ref<HTMLDialogElement | null>(null);
 let commentaryPreviousOverflow: string | undefined;
-let controller: AbortController | null = null, initialized = false, mounted = true, requestGeneration = 0, voucherPagingGeneration = 0;
-const selectedPeriod = computed(() => response.value?.selected_period?.key || "");
+let controller: AbortController | null = null,
+  initialized = false,
+  mounted = true,
+  requestGeneration = 0,
+  voucherPagingGeneration = 0;
+const selectedPeriod = computed(
+  () => response.value?.selected_period?.key || "",
+);
 const data = computed(() => response.value?.data ?? null);
 const hasManagementCommentary = computed(() => {
   const notes = data.value?.management_commentary_details;
-  return !!(notes && (notes.current || (notes.status === "stale" && notes.latest) || notes.supplements.length));
+  return !!(
+    notes &&
+    (notes.current ||
+      (notes.status === "stale" && notes.latest) ||
+      notes.supplements.length)
+  );
 });
-const reviewRequest = computed(() => !loading.value && data.value?.month_state === "open" ? data.value.owner_review_request : null);
+const reviewRequest = computed(() =>
+  !loading.value && data.value?.month_state === "open"
+    ? data.value.owner_review_request
+    : null,
+);
 const needsMonthlyReview = computed(() => reviewRequest.value !== null);
 const activity = computed(() => data.value?.collections.activity?.items ?? []);
-const vouchers = computed(() => vouchersReady.value ? data.value?.collections.vouchers?.items ?? [] : []);
-const openItems = computed(() => data.value?.collections.open_items?.items ?? []);
+const vouchers = computed(() =>
+  vouchersReady.value ? (data.value?.collections.vouchers?.items ?? []) : [],
+);
+const openItems = computed(
+  () => data.value?.collections.open_items?.items ?? [],
+);
 const refreshGeneration = ref(0);
 const openItemCountUnit = computed(() => "笔");
 const periodOptions = computed(() => context.value?.periods || []);
 const briefTitle = computed(() => {
-  const month = /\d{4}-(\d{2})/.exec(selectedPeriod.value || queryPeriod() || "")?.[1];
+  const month = /\d{4}-(\d{2})/.exec(
+    selectedPeriod.value || queryPeriod() || "",
+  )?.[1];
   return month ? `${Number(month)} 月经营简报` : "经营简报";
 });
-const sectionLinks = computed(() => data.value ? [
-  { id: "overview", label: "概览" },
-  ...(data.value.financial_position ? [{ id: "financial-overview", label: "资金与资产负债" }] : []),
-  { id: "activity", label: "本月发生" },
-  ...(data.value.workforce_cost?.has_activity ? [{ id: "workforce", label: "用工成本" }] : []),
-  { id: "open-items", label: "应收应付" },
-  { id: "owner-tasks", label: "老板待办" },
-] : []);
-const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "overview");
+const sectionLinks = computed(() =>
+  data.value
+    ? [
+        { id: "overview", label: "概览" },
+        ...(data.value.financial_position
+          ? [{ id: "financial-overview", label: "资金与资产负债" }]
+          : []),
+        { id: "activity", label: "本月发生" },
+        ...(data.value.workforce_cost?.has_activity
+          ? [{ id: "workforce", label: "用工成本" }]
+          : []),
+        { id: "open-items", label: "应收应付" },
+        { id: "owner-tasks", label: "老板待办" },
+      ]
+    : [],
+);
+const { activeSection, focusSection, focusSelectedPanel } =
+  useDashboardSections(sectionLinks, "overview");
 function openManagementCommentary() {
   const dialog = managementCommentaryDialog.value;
   if (!dialog || dialog.open) return;
@@ -71,7 +127,11 @@ function openManagementCommentary() {
   dialog.querySelector(".commentary-body")?.scrollTo(0, 0);
 }
 function restoreCommentaryScrolling() {
-  if (managementCommentaryDialog.value?.open || commentaryPreviousOverflow === undefined) return;
+  if (
+    managementCommentaryDialog.value?.open ||
+    commentaryPreviousOverflow === undefined
+  )
+    return;
   document.body.style.overflow = commentaryPreviousOverflow;
   commentaryPreviousOverflow = undefined;
 }
@@ -82,63 +142,140 @@ function closeManagementCommentary() {
 function dismissCommentaryBackdrop(event: MouseEvent) {
   if (event.target !== managementCommentaryDialog.value) return;
   const bounds = managementCommentaryDialog.value?.getBoundingClientRect();
-  if (bounds && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) closeManagementCommentary();
+  if (
+    bounds &&
+    (event.clientX < bounds.left ||
+      event.clientX > bounds.right ||
+      event.clientY < bounds.top ||
+      event.clientY > bounds.bottom)
+  )
+    closeManagementCommentary();
 }
-function queryPeriod() { return typeof route.query.period === "string" ? route.query.period : null; }
-function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
-function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
+function queryPeriod() {
+  return typeof route.query.period === "string" ? route.query.period : null;
+}
+function selectionKey() {
+  return JSON.stringify([
+    route.query.company_id,
+    route.query.period,
+    route.query.voucher,
+  ]);
+}
+function isCurrent(generation: number, selection: string) {
+  return (
+    mounted && requestGeneration === generation && selectionKey() === selection
+  );
+}
 function addVouchers(items: BriefVoucher[]) {
-  for (const voucher of items) if (!voucherPreviewIndex.value.has(voucher.voucher_version_id)) voucherPreviewIndex.value.set(voucher.voucher_version_id, voucher);
+  for (const voucher of items)
+    if (!voucherPreviewIndex.value.has(voucher.voucher_version_id))
+      voucherPreviewIndex.value.set(voucher.voucher_version_id, voucher);
 }
 function indexVouchers(result: Awaited<ReturnType<typeof fetchDeferredBrief>>) {
   if (result.scope !== "overview" && result.scope !== "vouchers") return;
   const index = voucherPreviewIndex.value;
   for (const voucher of result.data?.collections.vouchers?.items ?? []) {
-    if (!index.has(voucher.voucher_version_id)) index.set(voucher.voucher_version_id, voucher);
+    if (!index.has(voucher.voucher_version_id))
+      index.set(voucher.voucher_version_id, voucher);
   }
-  const focused = result.scope === "overview" ? result.data?.focused_voucher : null;
-  if (focused && !index.has(focused.voucher_version_id)) index.set(focused.voucher_version_id, focused);
+  const focused =
+    result.scope === "overview" ? result.data?.focused_voucher : null;
+  if (focused && !index.has(focused.voucher_version_id))
+    index.set(focused.voucher_version_id, focused);
 }
 function invalidateRequests(keepContent = false) {
   refreshGeneration.value++;
-  requestGeneration += 1; controller?.abort(); controller = null;
+  requestGeneration += 1;
+  controller?.abort();
+  controller = null;
   for (const request of pageControllers.values()) request.abort();
-  pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
+  pageControllers.clear();
+  sectionLoading.value = {};
+  sectionErrors.value = {};
   voucherPreviewIndex.value = shallowReactive(new Map());
-  if (!keepContent) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
-  if (!keepContent) { response.value = null }
-  showMonthlyReview.value = false; closeManagementCommentary(); loading.value = keepContent; preparing.value = false;
+  if (!keepContent) {
+    vouchersReady.value = false;
+    focusedVoucherSelection.value = 0;
+  }
+  if (!keepContent) {
+    response.value = null;
+  }
+  showMonthlyReview.value = false;
+  closeManagementCommentary();
+  loading.value = keepContent;
+  preparing.value = false;
 }
-async function loadData(period: string | null, contextGate?: Promise<void>, retryModel = false) {
+async function loadData(
+  period: string | null,
+  contextGate?: Promise<void>,
+  retryModel = false,
+) {
   refreshGeneration.value++;
-  const generation = ++requestGeneration, selection = selectionKey(), companyId = route.query.company_id;
-  const retainedVouchers = contextGate && response.value ? {
-    companyId: response.value.read_context.company_id, period: selectedPeriod.value,
-    snapshotVersion: response.value.snapshot_version,
-    collection: vouchersReady.value ? response.value.data?.collections.vouchers : null,
-    focusedVoucher: response.value.data?.focused_voucher,
-  } : null;
+  const generation = ++requestGeneration,
+    selection = selectionKey(),
+    companyId = route.query.company_id;
+  const retainedVouchers =
+    contextGate && response.value
+      ? {
+          companyId: response.value.read_context.company_id,
+          period: selectedPeriod.value,
+          snapshotVersion: response.value.snapshot_version,
+          collection: vouchersReady.value
+            ? response.value.data?.collections.vouchers
+            : null,
+          focusedVoucher: response.value.data?.focused_voucher,
+        }
+      : null;
   controller?.abort();
   for (const request of pageControllers.values()) request.abort();
-  pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
+  pageControllers.clear();
+  sectionLoading.value = {};
+  sectionErrors.value = {};
   voucherPreviewIndex.value = shallowReactive(new Map());
-  if (!contextGate) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
-  const request = new AbortController(); controller = request;
-  loading.value = true; preparing.value = false;
-  if (!contextGate) { response.value = null }
-  showMonthlyReview.value = false; closeManagementCommentary(); error.value = "";
+  if (!contextGate) {
+    vouchersReady.value = false;
+    focusedVoucherSelection.value = 0;
+  }
+  const request = new AbortController();
+  controller = request;
+  loading.value = true;
+  preparing.value = false;
+  if (!contextGate) {
+    response.value = null;
+  }
+  showMonthlyReview.value = false;
+  closeManagementCommentary();
+  error.value = "";
   try {
     if (typeof companyId !== "string") throw new Error("请先选择公司。");
-    const target = typeof route.query.voucher === "string" ? route.query.voucher : undefined;
-    const options = target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {};
-    const mainRequest = fetchDeferredBrief(companyId, period, request.signal, undefined, options, () => {
-      if (!isCurrent(generation, selection) || controller !== request) return;
-      preparing.value = true; response.value = null; vouchersReady.value = false;
-      voucherPreviewIndex.value = shallowReactive(new Map());
-    }, retryModel);
-    const result = contextGate ? (await Promise.all([mainRequest, contextGate]))[0] : await mainRequest;
+    const target =
+      typeof route.query.voucher === "string" ? route.query.voucher : undefined;
+    const options = target
+      ? /^\d+$/.test(target)
+        ? { voucher_number: Number(target) }
+        : { voucher_version_id: target }
+      : {};
+    const mainRequest = fetchDeferredBrief(
+      companyId,
+      period,
+      request.signal,
+      undefined,
+      options,
+      () => {
+        if (!isCurrent(generation, selection) || controller !== request) return;
+        preparing.value = true;
+        response.value = null;
+        vouchersReady.value = false;
+        voucherPreviewIndex.value = shallowReactive(new Map());
+      },
+      retryModel,
+    );
+    const result = contextGate
+      ? (await Promise.all([mainRequest, contextGate]))[0]
+      : await mainRequest;
     if (!isCurrent(generation, selection) || controller !== request) return;
-    if (result.scope !== "overview") throw new Error("经营简报范围不一致，请重新读取。");
+    if (result.scope !== "overview")
+      throw new Error("经营简报范围不一致，请重新读取。");
     if (result.data) {
       const { activity, open_items, vouchers } = result.data.collections;
       if (activity) activity.items = shallowReactive(activity.items);
@@ -146,14 +283,23 @@ async function loadData(period: string | null, contextGate?: Promise<void>, retr
       if (vouchers) vouchers.items = shallowReactive(vouchers.items);
     }
     indexVouchers(result);
-    const sameVoucherScope = !!(retainedVouchers && result.data
-      && retainedVouchers.companyId === result.read_context.company_id
-      && retainedVouchers.period === result.selected_period?.key
-      && retainedVouchers.snapshotVersion === result.snapshot_version);
+    const sameVoucherScope = !!(
+      retainedVouchers &&
+      result.data &&
+      retainedVouchers.companyId === result.read_context.company_id &&
+      retainedVouchers.period === result.selected_period?.key &&
+      retainedVouchers.snapshotVersion === result.snapshot_version
+    );
     if (sameVoucherScope && result.data && retainedVouchers) {
-      if (retainedVouchers.collection) result.data.collections.vouchers = retainedVouchers.collection;
+      if (retainedVouchers.collection)
+        result.data.collections.vouchers = retainedVouchers.collection;
       const focused = retainedVouchers.focusedVoucher;
-      if (focused && (!result.data.focused_voucher || result.data.focused_voucher.voucher_version_id === focused.voucher_version_id)) {
+      if (
+        focused &&
+        (!result.data.focused_voucher ||
+          result.data.focused_voucher.voucher_version_id ===
+            focused.voucher_version_id)
+      ) {
         result.data.focused_voucher = focused;
       }
       indexVouchers(result);
@@ -165,25 +311,54 @@ async function loadData(period: string | null, contextGate?: Promise<void>, retr
     if (target) focusSection("activity");
   } catch (caught) {
     request.abort();
-    if (!isCurrent(generation, selection) || (caught instanceof DOMException && caught.name === "AbortError")) return;
-    response.value = null; vouchersReady.value = false; preparing.value = false; error.value = dashboardErrorMessage(caught);
-  } finally { if (isCurrent(generation, selection) && controller === request) loading.value = false; }
+    if (
+      !isCurrent(generation, selection) ||
+      (caught instanceof DOMException && caught.name === "AbortError")
+    )
+      return;
+    response.value = null;
+    vouchersReady.value = false;
+    preparing.value = false;
+    error.value = dashboardErrorMessage(caught);
+  } finally {
+    if (isCurrent(generation, selection) && controller === request)
+      loading.value = false;
+  }
 }
 async function initializeVouchers() {
   const current = response.value;
   if (vouchersReady.value) return true;
   if (!current?.data || sectionLoading.value.vouchers) return false;
-  const generation = requestGeneration, selection = selectionKey(), request = new AbortController();
-  pageControllers.set("vouchers", request); sectionLoading.value.vouchers = true; sectionErrors.value.vouchers = "";
-  const valid = () => isCurrent(generation, selection) && pageControllers.get("vouchers") === request;
+  const generation = requestGeneration,
+    selection = selectionKey(),
+    request = new AbortController();
+  pageControllers.set("vouchers", request);
+  sectionLoading.value.vouchers = true;
+  sectionErrors.value.vouchers = "";
+  const valid = () =>
+    isCurrent(generation, selection) &&
+    pageControllers.get("vouchers") === request;
   try {
-    const first = await fetchDeferredBrief(current.read_context.company_id, selectedPeriod.value, request.signal, current.snapshot_version, { section: "vouchers" });
+    const first = await fetchDeferredBrief(
+      current.read_context.company_id,
+      selectedPeriod.value,
+      request.signal,
+      current.snapshot_version,
+      { section: "vouchers" },
+    );
     const latest = response.value;
-    if (!valid() || first.scope !== "vouchers" || !first.data || !latest?.data) return false;
+    if (!valid() || first.scope !== "vouchers" || !first.data || !latest?.data)
+      return false;
     const before = latest.data;
     const collection = first.data.collections.vouchers;
     collection.items = shallowReactive(collection.items);
-    response.value = { ...latest, data: { ...before, collections: { ...before.collections, vouchers: collection } } };
+    response.value = {
+      ...latest,
+      data: {
+        ...before,
+        collections: { ...before.collections, vouchers: collection },
+      },
+    };
     indexVouchers(first);
     vouchersReady.value = true;
     return true;
@@ -192,10 +367,18 @@ async function initializeVouchers() {
     if (isDashboardSnapshotChanged(caught)) await refreshChanged();
     else sectionErrors.value.vouchers = dashboardErrorMessage(caught);
     return false;
-  } finally { if (valid()) { sectionLoading.value.vouchers = false; pageControllers.delete("vouchers"); } }
+  } finally {
+    if (valid()) {
+      sectionLoading.value.vouchers = false;
+      pageControllers.delete("vouchers");
+    }
+  }
 }
 // Call only after the API contract and the caller's live request scope pass.
-function applyBriefPage(section: BriefSection, next: Awaited<ReturnType<typeof fetchDeferredBrief>>) {
+function applyBriefPage(
+  section: BriefSection,
+  next: Awaited<ReturnType<typeof fetchDeferredBrief>>,
+) {
   const latest = response.value;
   if (!next.data || !latest?.data) return false;
   const before = latest.data;
@@ -203,53 +386,133 @@ function applyBriefPage(section: BriefSection, next: Awaited<ReturnType<typeof f
     const collection = next.data.collections.activity;
     const previous = before.collections.activity;
     if (!previous) return false;
-    response.value = { ...latest, data: { ...before, collections: { ...before.collections, activity: appendDashboardCollection(previous, collection) } } };
+    response.value = {
+      ...latest,
+      data: {
+        ...before,
+        collections: {
+          ...before.collections,
+          activity: appendDashboardCollection(previous, collection),
+        },
+      },
+    };
   } else if (section === "open_items" && next.scope === "open_items") {
     const collection = next.data.collections.open_items;
     const previous = before.collections.open_items;
     if (!previous) return false;
-    response.value = { ...latest, data: { ...before, collections: { ...before.collections, open_items: appendDashboardCollection(previous, collection) } } };
+    response.value = {
+      ...latest,
+      data: {
+        ...before,
+        collections: {
+          ...before.collections,
+          open_items: appendDashboardCollection(previous, collection),
+        },
+      },
+    };
   } else if (section === "vouchers" && next.scope === "vouchers") {
     const collection = next.data.collections.vouchers;
     const previous = before.collections.vouchers;
     if (!previous) return false;
-    response.value = { ...latest, data: { ...before, collections: { ...before.collections, vouchers: appendDashboardCollection(previous, collection) } } };
+    response.value = {
+      ...latest,
+      data: {
+        ...before,
+        collections: {
+          ...before.collections,
+          vouchers: appendDashboardCollection(previous, collection),
+        },
+      },
+    };
   } else {
     return false;
   }
   indexVouchers(next);
   return true;
 }
-async function loadMore(section: BriefSection, limit = section === "vouchers" ? 20 : AUTOMATIC_DASHBOARD_PAGE_LIMIT) {
-  if (section === "vouchers" && !vouchersReady.value) return initializeVouchers();
-  const current = response.value, page = current?.data?.collections[section]?.page;
-  if (!current?.data || !page?.has_more || !page.next_cursor || sectionLoading.value[section]) return false;
-  const generation = requestGeneration, selection = selectionKey(), request = new AbortController();
-  pageControllers.set(section, request); sectionLoading.value[section] = true; sectionErrors.value[section] = "";
-  const valid = () => isCurrent(generation, selection) && pageControllers.get(section) === request;
+async function loadMore(
+  section: BriefSection,
+  limit = section === "vouchers" ? 20 : AUTOMATIC_DASHBOARD_PAGE_LIMIT,
+) {
+  if (section === "vouchers" && !vouchersReady.value)
+    return initializeVouchers();
+  const current = response.value,
+    page = current?.data?.collections[section]?.page;
+  if (
+    !current?.data ||
+    !page?.has_more ||
+    !page.next_cursor ||
+    sectionLoading.value[section]
+  )
+    return false;
+  const generation = requestGeneration,
+    selection = selectionKey(),
+    request = new AbortController();
+  pageControllers.set(section, request);
+  sectionLoading.value[section] = true;
+  sectionErrors.value[section] = "";
+  const valid = () =>
+    isCurrent(generation, selection) &&
+    pageControllers.get(section) === request;
   try {
-    const next = await fetchDeferredBrief(current.read_context.company_id, selectedPeriod.value, request.signal, current.snapshot_version, { section, cursor: page.next_cursor, limit });
+    const next = await fetchDeferredBrief(
+      current.read_context.company_id,
+      selectedPeriod.value,
+      request.signal,
+      current.snapshot_version,
+      { section, cursor: page.next_cursor, limit },
+    );
     return valid() && applyBriefPage(section, next);
   } catch (caught) {
     if (!valid()) return false;
-    if (isDashboardSnapshotChanged(caught)) { await refreshChanged(); }
-    else sectionErrors.value[section] = dashboardErrorMessage(caught);
+    if (isDashboardSnapshotChanged(caught)) {
+      await refreshChanged();
+    } else sectionErrors.value[section] = dashboardErrorMessage(caught);
     return false;
-  } finally { if (valid()) { sectionLoading.value[section] = false; pageControllers.delete(section); } }
+  } finally {
+    if (valid()) {
+      sectionLoading.value[section] = false;
+      pageControllers.delete(section);
+    }
+  }
 }
 async function loadAllVouchers() {
-  const generation = requestGeneration, selection = selectionKey(), pagingGeneration = voucherPagingGeneration, cursors = new Set<string>();
-  if (!vouchersReady.value && !await initializeVouchers()) return;
-  const current = response.value, page = current?.data?.collections.vouchers?.page;
-  if (!isCurrent(generation, selection) || pagingGeneration !== voucherPagingGeneration
-    || !current?.data || !page?.has_more || !page.next_cursor || sectionLoading.value.vouchers) return;
-  const request = new AbortController(), version = current.snapshot_version, company = current.read_context.company_id, period = selectedPeriod.value;
-  pageControllers.set("vouchers", request); sectionLoading.value.vouchers = true; sectionErrors.value.vouchers = "";
-  const valid = () => isCurrent(generation, selection) && pagingGeneration === voucherPagingGeneration
-    && pageControllers.get("vouchers") === request && response.value?.snapshot_version === version;
+  const generation = requestGeneration,
+    selection = selectionKey(),
+    pagingGeneration = voucherPagingGeneration,
+    cursors = new Set<string>();
+  if (!vouchersReady.value && !(await initializeVouchers())) return;
+  const current = response.value,
+    page = current?.data?.collections.vouchers?.page;
+  if (
+    !isCurrent(generation, selection) ||
+    pagingGeneration !== voucherPagingGeneration ||
+    !current?.data ||
+    !page?.has_more ||
+    !page.next_cursor ||
+    sectionLoading.value.vouchers
+  )
+    return;
+  const request = new AbortController(),
+    version = current.snapshot_version,
+    company = current.read_context.company_id,
+    period = selectedPeriod.value;
+  pageControllers.set("vouchers", request);
+  sectionLoading.value.vouchers = true;
+  sectionErrors.value.vouchers = "";
+  const valid = () =>
+    isCurrent(generation, selection) &&
+    pagingGeneration === voucherPagingGeneration &&
+    pageControllers.get("vouchers") === request &&
+    response.value?.snapshot_version === version;
   const fetchPage = (cursor: string) => {
-    const pending = fetchDeferredBrief(company, period, request.signal, version,
-      { section: "vouchers", cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT });
+    const pending = fetchDeferredBrief(
+      company,
+      period,
+      request.signal,
+      version,
+      { section: "vouchers", cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT },
+    );
     // A queued continuation can reject if applying the preceding page throws.
     // Observe it immediately; the loop still handles its rejection when awaited.
     void pending.catch(() => {});
@@ -261,9 +524,16 @@ async function loadAllVouchers() {
     pending = fetchPage(page.next_cursor);
     while (pending) {
       const next = await pending;
-      if (!valid() || next.scope !== "vouchers" || !next.data || next.snapshot_version !== version
-        || next.read_context.company_id !== company || next.selected_period?.key !== period
-        || !response.value?.data?.collections.vouchers) return;
+      if (
+        !valid() ||
+        next.scope !== "vouchers" ||
+        !next.data ||
+        next.snapshot_version !== version ||
+        next.read_context.company_id !== company ||
+        next.selected_period?.key !== period ||
+        !response.value?.data?.collections.vouchers
+      )
+        return;
       const nextPage = next.data.collections.vouchers.page;
       const cursor = nextPage.has_more ? nextPage.next_cursor : null;
       const repeated = !!cursor && cursors.has(cursor);
@@ -275,7 +545,10 @@ async function loadAllVouchers() {
         pending = fetchPage(cursor);
       }
       if (!applyBriefPage("vouchers", next)) return;
-      if (repeated) { sectionErrors.value.vouchers = "凭证分页没有推进，请刷新后重新读取。"; return; }
+      if (repeated) {
+        sectionErrors.value.vouchers = "凭证分页没有推进，请刷新后重新读取。";
+        return;
+      }
     }
   } catch (caught) {
     if (!valid()) return;
@@ -283,28 +556,49 @@ async function loadAllVouchers() {
     else sectionErrors.value.vouchers = dashboardErrorMessage(caught);
   } finally {
     if (pending) request.abort();
-    if (pageControllers.get("vouchers") === request) { sectionLoading.value.vouchers = false; pageControllers.delete("vouchers"); }
+    if (pageControllers.get("vouchers") === request) {
+      sectionLoading.value.vouchers = false;
+      pageControllers.delete("vouchers");
+    }
   }
 }
-function paginationScope() { return JSON.stringify([selectionKey(), response.value?.snapshot_version, requestGeneration]); }
+function paginationScope() {
+  return JSON.stringify([
+    selectionKey(),
+    response.value?.snapshot_version,
+    requestGeneration,
+  ]);
+}
 function pausePages(section: BriefSection, scope: string) {
   if (scope !== paginationScope()) return;
   if (section === "vouchers") voucherPagingGeneration += 1;
-  pageControllers.get(section)?.abort(); pageControllers.delete(section); sectionLoading.value[section] = false;
+  pageControllers.get(section)?.abort();
+  pageControllers.delete(section);
+  sectionLoading.value[section] = false;
 }
 watch(activeSection, (section, previous) => {
-  if (previous === "activity" && section !== "activity") pausePages("vouchers", paginationScope());
+  if (previous === "activity" && section !== "activity")
+    pausePages("vouchers", paginationScope());
 });
 function openVoucher(voucherVersionId: string) {
   const current = response.value;
   if (!current?.data || !selectedPeriod.value) return;
   const voucher = voucherPreviewIndex.value.get(voucherVersionId);
-  if (!voucher) { sectionErrors.value.vouchers = "未找到这项业务的对应凭证，请刷新后重新查看。"; return; }
+  if (!voucher) {
+    sectionErrors.value.vouchers =
+      "未找到这项业务的对应凭证，请刷新后重新查看。";
+    return;
+  }
   sectionErrors.value.vouchers = "";
-  response.value = { ...current, data: { ...current.data, focused_voucher: voucher } };
+  response.value = {
+    ...current,
+    data: { ...current.data, focused_voucher: voucher },
+  };
   focusedVoucherSelection.value += 1;
 }
-function refresh() { return refreshCurrent(true, true); }
+function refresh() {
+  return refreshCurrent(true, true);
+}
 function refreshChanged() {
   updateNotice.value = "资料已更新，正在重新读取。";
   return refreshCurrent(false);
@@ -312,121 +606,516 @@ function refreshChanged() {
 async function refreshCurrent(keepContent: boolean, retryModel = false) {
   invalidateRequests(keepContent);
   loading.value = true;
-  const generation = requestGeneration, selection = selectionKey();
+  const generation = requestGeneration,
+    selection = selectionKey();
   try {
-    const company = route.query.company_id, period = queryPeriod() ?? context.value?.default_period ?? null;
-    if (typeof company === "string" && period && context.value?.current_company?.company_id === company && context.value.periods.some(item => item.key === period)) {
-      const contextGate = refreshContext().then(fresh => {
-        if (fresh.current_company?.company_id !== company || !fresh.periods.some(item => item.key === period)) throw new Error("当前公司或期间已变化，请重新选择。");
+    const company = route.query.company_id,
+      period = queryPeriod() ?? context.value?.default_period ?? null;
+    if (
+      typeof company === "string" &&
+      period &&
+      context.value?.current_company?.company_id === company &&
+      context.value.periods.some((item) => item.key === period)
+    ) {
+      const contextGate = refreshContext().then((fresh) => {
+        if (
+          fresh.current_company?.company_id !== company ||
+          !fresh.periods.some((item) => item.key === period)
+        )
+          throw new Error("当前公司或期间已变化，请重新选择。");
       });
       await loadData(period, contextGate, retryModel);
     } else {
       const fresh = await refreshContext();
       const nextPeriod = queryPeriod() ?? fresh.default_period;
-      if (isCurrent(generation, selection)) await loadData(nextPeriod, undefined, retryModel && nextPeriod !== null);
+      if (isCurrent(generation, selection))
+        await loadData(
+          nextPeriod,
+          undefined,
+          retryModel && nextPeriod !== null,
+        );
     }
-  } catch (caught) { if (isCurrent(generation, selection)) { response.value = null; vouchersReady.value = false; preparing.value = false; loading.value = false; error.value = dashboardErrorMessage(caught); } }
+  } catch (caught) {
+    if (isCurrent(generation, selection)) {
+      response.value = null;
+      vouchersReady.value = false;
+      preparing.value = false;
+      loading.value = false;
+      error.value = dashboardErrorMessage(caught);
+    }
+  }
 }
 async function initialize() {
   initialized = true;
-  const generation = requestGeneration, selection = selectionKey();
+  const generation = requestGeneration,
+    selection = selectionKey();
   try {
     const loadedContext = await loadContext();
     if (!isCurrent(generation, selection)) return;
-    const requested = queryPeriod(), target = requested || loadedContext.default_period;
-    if (!requested && target) { await router.replace({ query: { ...route.query, period: target } }); return; }
+    const requested = queryPeriod(),
+      target = requested || loadedContext.default_period;
+    if (!requested && target) {
+      await router.replace({ query: { ...route.query, period: target } });
+      return;
+    }
     await loadData(target);
-  } catch (caught) { if (isCurrent(generation, selection)) { preparing.value = false; error.value = dashboardErrorMessage(caught); loading.value = false; } }
+  } catch (caught) {
+    if (isCurrent(generation, selection)) {
+      preparing.value = false;
+      error.value = dashboardErrorMessage(caught);
+      loading.value = false;
+    }
+  }
 }
-function changePeriod(value: string) { void router.push({ query: { company_id: route.query.company_id, period: value }, hash: "" }); }
-watch(() => [route.query.company_id, route.query.period, route.query.voucher], (value, previous) => {
-  if (value.some((item, index) => item !== previous[index])) invalidateRequests();
-}, { flush: "sync" });
-watch(() => [context.value?.current_company?.company_id, route.query.period, route.query.voucher], (value, previous) => {
-  if (initialized && value[0] && value.some((item, index) => item !== previous[index])) void loadData(queryPeriod());
-});
+function changePeriod(value: string) {
+  void router.push({
+    query: { company_id: route.query.company_id, period: value },
+    hash: "",
+  });
+}
+watch(
+  () => [route.query.company_id, route.query.period, route.query.voucher],
+  (value, previous) => {
+    if (value.some((item, index) => item !== previous[index]))
+      invalidateRequests();
+  },
+  { flush: "sync" },
+);
+watch(
+  () => [
+    context.value?.current_company?.company_id,
+    route.query.period,
+    route.query.voucher,
+  ],
+  (value, previous) => {
+    if (
+      initialized &&
+      value[0] &&
+      value.some((item, index) => item !== previous[index])
+    )
+      void loadData(queryPeriod());
+  },
+);
 onMounted(() => void initialize());
-onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
+onBeforeUnmount(() => {
+  mounted = false;
+  invalidateRequests();
+});
 </script>
 
 <template>
   <section class="brief-page" @click="focusSelectedPanel">
-    <DashboardModuleHeader :title="briefTitle" :options="periodOptions" :selected="selectedPeriod" :period-status="data?.month_state" :loading="loading" select-label="查看月份" @change="changePeriod" @refresh="refresh">
-      <template #navigation><DashboardSectionNav v-if="data" v-show="!loading" :items="sectionLinks" :active="activeSection" label="经营简报区段" @select="focusSection" /></template>
+    <DashboardModuleHeader
+      :title="briefTitle"
+      :options="periodOptions"
+      :selected="selectedPeriod"
+      :period-status="data?.month_state"
+      :loading="loading"
+      select-label="查看月份"
+      @change="changePeriod"
+      @refresh="refresh"
+    >
+      <template #navigation
+        ><DashboardSectionNav
+          v-if="data"
+          v-show="!loading"
+          :items="sectionLinks"
+          :active="activeSection"
+          label="经营简报区段"
+          @select="focusSection"
+      /></template>
     </DashboardModuleHeader>
-    <div v-if="error" class="state-panel error" role="alert"><h2>经营简报加载失败</h2><p>{{ error }}</p><button type="button" @click="refresh">重新加载</button></div>
-    <div v-else-if="loading" class="state-panel" role="status">{{ preparing ? "经营简报正在更新，请稍候…" : "正在读取经营简报…" }}</div>
-    <div v-else-if="!data" class="state-panel"><h2>还没有可查看的月份</h2><p>录入公司业务后，即可按月份查看经营情况。</p></div>
-    <div v-if="data" v-show="!loading && !error" class="brief-content" :data-month-state="data.month_state" :data-owner-review-required="needsMonthlyReview">
+    <div v-if="error" class="state-panel error" role="alert">
+      <h2>经营简报加载失败</h2>
+      <p>{{ error }}</p>
+      <button type="button" @click="refresh">重新加载</button>
+    </div>
+    <div v-else-if="loading" class="state-panel" role="status">
+      {{ preparing ? "经营简报正在更新，请稍候…" : "正在读取经营简报…" }}
+    </div>
+    <div v-else-if="!data" class="state-panel">
+      <h2>还没有可查看的月份</h2>
+      <p>录入公司业务后，即可按月份查看经营情况。</p>
+    </div>
+    <div
+      v-if="data"
+      v-show="!loading && !error"
+      class="brief-content"
+      :data-month-state="data.month_state"
+      :data-owner-review-required="needsMonthlyReview"
+    >
       <p v-if="updateNotice" role="status">{{ updateNotice }}</p>
-      <section id="overview" class="section-anchor" tabindex="-1" aria-label="经营概览">
+      <section
+        id="overview"
+        class="section-anchor"
+        tabindex="-1"
+        aria-label="经营概览"
+      >
         <div class="brief-hero">
-        <div class="hero-header">
-          <p class="scope">{{ response?.selected_period?.label }}期末 · 全公司</p>
-          <button v-if="hasManagementCommentary" class="commentary-toggle" type="button" aria-haspopup="dialog" aria-controls="management-commentary" @click="openManagementCommentary">
-            AI做账中…
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M10 4H4v16h16v-6" /></svg>
-          </button>
+          <div class="hero-header">
+            <p class="scope">
+              {{ response?.selected_period?.label }}期末 · 全公司
+            </p>
+            <button
+              v-if="hasManagementCommentary"
+              class="commentary-toggle"
+              type="button"
+              aria-haspopup="dialog"
+              aria-controls="management-commentary"
+              @click="openManagementCommentary"
+            >
+              AI说明
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                aria-hidden="true"
+              >
+                <path d="M14 4h6v6M20 4l-9 9M10 4H4v16h16v-6" />
+              </svg>
+            </button>
+          </div>
+          <div class="hero">
+            <span>本月账面盈亏</span
+            ><strong
+              :class="{
+                loss:
+                  data.position.month_result_fen !== null &&
+                  fen(data.position.month_result_fen) < 0n,
+              }"
+              >{{ formatFen(data.position.month_result_fen) }}</strong
+            >
+            <p>
+              收入
+              <span class="income-amount">{{
+                formatFen(data.position.month_revenue_fen)
+              }}</span>
+              · 费用
+              <span class="cost-amount">{{
+                formatFen(data.position.month_expense_fen)
+              }}</span>
+            </p>
+            <p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p>
+          </div>
+          <div class="kpi-grid">
+            <button
+              class="kpi funds"
+              type="button"
+              @click="
+                router.push({
+                  name: 'funds',
+                  query: {
+                    company_id: route.query.company_id,
+                    period: selectedPeriod,
+                  },
+                })
+              "
+            >
+              <span>月末账面资金</span
+              ><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong
+              ><small>银行、现金与支付平台</small>
+            </button>
+            <button
+              v-if="data.long_term_assets"
+              class="kpi asset"
+              type="button"
+              @click="
+                router.push({
+                  name: 'assets',
+                  query: {
+                    company_id: route.query.company_id,
+                    period: selectedPeriod,
+                  },
+                  hash: '#assets-overview',
+                })
+              "
+            >
+              <span>长期资产净值</span
+              ><strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong
+              ><small
+                >固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形
+                {{ data.long_term_assets.intangible_active_count }} 项</small
+              >
+            </button>
+            <button
+              class="kpi receivable"
+              type="button"
+              @click="focusSection('open-items')"
+            >
+              <span>月末待收</span
+              ><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong
+              ><small
+                >{{ data.open_items.receivable_count }}
+                {{ openItemCountUnit }}</small
+              >
+            </button>
+            <button
+              class="kpi payable"
+              type="button"
+              @click="focusSection('open-items')"
+            >
+              <span>月末待付</span
+              ><strong>{{ formatFen(data.open_items.payable_fen) }}</strong
+              ><small
+                >{{ data.open_items.payable_count }}
+                {{ openItemCountUnit }}</small
+              >
+            </button>
+          </div>
         </div>
-        <div class="hero"><span>本月账面盈亏</span><strong :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong><p>收入 <span class="income-amount">{{ formatFen(data.position.month_revenue_fen) }}</span> · 费用 <span class="cost-amount">{{ formatFen(data.position.month_expense_fen) }}</span></p><p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p></div>
-        <div class="kpi-grid">
-          <button class="kpi funds" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod } })"><span>月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金与支付平台</small></button>
-          <button v-if="data.long_term_assets" class="kpi asset" type="button" @click="router.push({ name: 'assets', query: { company_id: route.query.company_id, period: selectedPeriod }, hash: '#assets-overview' })"><span>长期资产净值</span><strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong><small>固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形 {{ data.long_term_assets.intangible_active_count }} 项</small></button>
-          <button class="kpi receivable" type="button" @click="focusSection('open-items')"><span>月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} {{ openItemCountUnit }}</small></button>
-          <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} {{ openItemCountUnit }}</small></button>
-        </div>
-        </div>
-        <dialog v-if="hasManagementCommentary" id="management-commentary" ref="managementCommentaryDialog" class="commentary-dialog" aria-labelledby="management-commentary-title" @cancel.prevent="closeManagementCommentary" @close="restoreCommentaryScrolling" @click.stop="dismissCommentaryBackdrop">
+        <dialog
+          v-if="hasManagementCommentary"
+          id="management-commentary"
+          ref="managementCommentaryDialog"
+          class="commentary-dialog"
+          aria-labelledby="management-commentary-title"
+          @cancel.prevent="closeManagementCommentary"
+          @close="restoreCommentaryScrolling"
+          @click.stop="dismissCommentaryBackdrop"
+        >
           <header class="commentary-heading">
-            <div><h2 id="management-commentary-title">经营说明</h2><p>{{ response?.selected_period?.label }} · 全公司</p></div>
-            <button class="commentary-close" type="button" aria-label="关闭经营说明" autofocus @click="closeManagementCommentary">×</button>
+            <div>
+              <h2 id="management-commentary-title">经营说明</h2>
+              <p>{{ response?.selected_period?.label }} · 全公司</p>
+            </div>
+            <button
+              class="commentary-close"
+              type="button"
+              aria-label="关闭经营说明"
+              autofocus
+              @click="closeManagementCommentary"
+            >
+              ×
+            </button>
           </header>
           <div class="commentary-body">
-            <div v-if="data.management_commentary_details.current" class="note"><strong>经营说明</strong><p>{{ data.management_commentary_details.current.text }}</p></div>
-            <div v-if="data.management_commentary_details.status === 'stale' && data.management_commentary_details.latest" class="note"><strong>之前的经营说明已过期</strong><p>{{ data.management_commentary_details.latest.text }}</p></div>
-            <div v-for="note in data.management_commentary_details.supplements" :key="note.id" class="note"><strong>关账后的补充说明<template v-if="note.status === 'stale'">（依据已变化）</template></strong><p>{{ note.text }}</p></div>
+            <div v-if="data.management_commentary_details.current" class="note">
+              <strong>经营说明</strong>
+              <p>{{ data.management_commentary_details.current.text }}</p>
+            </div>
+            <div
+              v-if="
+                data.management_commentary_details.status === 'stale' &&
+                data.management_commentary_details.latest
+              "
+              class="note"
+            >
+              <strong>之前的经营说明已过期</strong>
+              <p>{{ data.management_commentary_details.latest.text }}</p>
+            </div>
+            <div
+              v-for="note in data.management_commentary_details.supplements"
+              :key="note.id"
+              class="note"
+            >
+              <strong
+                >关账后的补充说明<template v-if="note.status === 'stale'"
+                  >（依据已变化）</template
+                ></strong
+              >
+              <p>{{ note.text }}</p>
+            </div>
           </div>
         </dialog>
         <div v-if="data.risks.length" class="risks" aria-label="风险与核对进展">
-          <h3>风险与核对进展</h3><article v-for="risk in data.risks" :key="risk.key"><strong>{{ risk.title }}</strong><p>{{ risk.impact }} · {{ risk.status === 'ai_reviewing' ? 'AI 会计核对中' : '需要关注' }}</p></article>
+          <h3>风险与核对进展</h3>
+          <article v-for="risk in data.risks" :key="risk.key">
+            <strong>{{ risk.title }}</strong>
+            <p>
+              {{ risk.impact }} ·
+              {{
+                risk.status === "ai_reviewing" ? "AI 会计核对中" : "需要关注"
+              }}
+            </p>
+          </article>
         </div>
-        <BriefFinancialOverview v-if="data.financial_position" id="financial-overview" class="section-anchor selectable-section" :funds="data.funds_overview" :position="data.financial_position" />
+        <BriefFinancialOverview
+          v-if="data.financial_position"
+          id="financial-overview"
+          class="section-anchor selectable-section"
+          :funds="data.funds_overview"
+          :position="data.financial_position"
+        />
       </section>
-      <section id="activity" class="section-anchor selectable-section" tabindex="-1">
-        <BriefActivityWorkbench :groups="data.activity_groups" :items="activity" :activity-count="data.activity_count" :group-count="data.group_count" :refresh-generation="refreshGeneration" @vouchers="addVouchers" :focused-activity="data.focused_activity" :focused-activity-group="data.focused_activity_group" :vouchers="vouchers" :vouchers-ready="vouchersReady" :refreshing="loading" :active="activeSection === 'activity'" :voucher-preview-index="voucherPreviewIndex" :voucher-count="data.voucher_count" :focused-voucher="data.focused_voucher" :focused-voucher-selection="focusedVoucherSelection" :vouchers-loading="sectionLoading.vouchers" :vouchers-error="sectionErrors.vouchers" :vouchers-has-more="vouchersReady && data.collections.vouchers?.page.has_more" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @request-voucher="openVoucher" @initialize-vouchers="initializeVouchers" @pause-vouchers="pausePages('vouchers', paginationScope())" @more-vouchers="loadMore('vouchers')" @all-vouchers="loadAllVouchers" @changed="refreshChanged">
-          <template #pagination="{ needsMore }"><DashboardPagination v-show="needsMore" automatic :active="!loading && activeSection === 'activity' && needsMore" :scope="paginationScope()" @pause="pausePages('activity', $event)" compact item-label="项业务" :page="data.collections.activity?.page" :loaded="activity.length" :loading="sectionLoading.activity" :error="sectionErrors.activity" @retry="loadMore('activity')" @more="loadMore('activity')" /></template>
+      <section
+        id="activity"
+        class="section-anchor selectable-section"
+        tabindex="-1"
+      >
+        <BriefActivityWorkbench
+          :groups="data.activity_groups"
+          :items="activity"
+          :activity-count="data.activity_count"
+          :group-count="data.group_count"
+          :refresh-generation="refreshGeneration"
+          @vouchers="addVouchers"
+          :focused-activity="data.focused_activity"
+          :focused-activity-group="data.focused_activity_group"
+          :vouchers="vouchers"
+          :vouchers-ready="vouchersReady"
+          :refreshing="loading"
+          :active="activeSection === 'activity'"
+          :voucher-preview-index="voucherPreviewIndex"
+          :voucher-count="data.voucher_count"
+          :focused-voucher="data.focused_voucher"
+          :focused-voucher-selection="focusedVoucherSelection"
+          :vouchers-loading="sectionLoading.vouchers"
+          :vouchers-error="sectionErrors.vouchers"
+          :vouchers-has-more="
+            vouchersReady && data.collections.vouchers?.page.has_more
+          "
+          :period="selectedPeriod"
+          :snapshot-version="response?.snapshot_version"
+          @request-voucher="openVoucher"
+          @initialize-vouchers="initializeVouchers"
+          @pause-vouchers="pausePages('vouchers', paginationScope())"
+          @more-vouchers="loadMore('vouchers')"
+          @all-vouchers="loadAllVouchers"
+          @changed="refreshChanged"
+        >
+          <template #pagination="{ needsMore }"
+            ><DashboardPagination
+              v-show="needsMore"
+              automatic
+              :active="!loading && activeSection === 'activity' && needsMore"
+              :scope="paginationScope()"
+              @pause="pausePages('activity', $event)"
+              compact
+              item-label="项业务"
+              :page="data.collections.activity?.page"
+              :loaded="activity.length"
+              :loading="sectionLoading.activity"
+              :error="sectionErrors.activity"
+              @retry="loadMore('activity')"
+              @more="loadMore('activity')"
+          /></template>
         </BriefActivityWorkbench>
       </section>
-      <section v-if="data.workforce_cost?.has_activity" id="workforce" class="section-anchor" tabindex="-1">
-        <BriefWorkforceSection :workforce="data.workforce_cost" :period-label="response?.selected_period?.short_label || ''" />
+      <section
+        v-if="data.workforce_cost?.has_activity"
+        id="workforce"
+        class="section-anchor"
+        tabindex="-1"
+      >
+        <BriefWorkforceSection
+          :workforce="data.workforce_cost"
+          :period-label="response?.selected_period?.short_label || ''"
+        />
       </section>
-      <section id="open-items" class="section-anchor selectable-section" tabindex="-1">
-        <BriefOpenItems :open-items="data.open_items" :items="openItems" :period-label="response?.selected_period?.short_label || ''" :period-status="response?.selected_period?.status || ''" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" :refresh-generation="refreshGeneration" :refreshing="loading" :voucher-index="voucherPreviewIndex" @vouchers="addVouchers" @request-voucher="openVoucher" @changed="refreshChanged">
-          <template #pagination="{ needsMore }"><DashboardPagination v-show="needsMore" automatic :active="!loading && activeSection === 'open-items' && needsMore" :scope="paginationScope()" @pause="pausePages('open_items', $event)" compact item-label="项款项" :page="data.collections.open_items?.page" :loaded="openItems.length" :loading="sectionLoading.open_items" :error="sectionErrors.open_items" @retry="loadMore('open_items')" @more="loadMore('open_items')" /></template>
+      <section
+        id="open-items"
+        class="section-anchor selectable-section"
+        tabindex="-1"
+      >
+        <BriefOpenItems
+          :open-items="data.open_items"
+          :items="openItems"
+          :period-label="response?.selected_period?.short_label || ''"
+          :period-status="response?.selected_period?.status || ''"
+          :period="selectedPeriod"
+          :snapshot-version="response?.snapshot_version"
+          :refresh-generation="refreshGeneration"
+          :refreshing="loading"
+          :voucher-index="voucherPreviewIndex"
+          @vouchers="addVouchers"
+          @request-voucher="openVoucher"
+          @changed="refreshChanged"
+        >
+          <template #pagination="{ needsMore }"
+            ><DashboardPagination
+              v-show="needsMore"
+              automatic
+              :active="!loading && activeSection === 'open-items' && needsMore"
+              :scope="paginationScope()"
+              @pause="pausePages('open_items', $event)"
+              compact
+              item-label="项款项"
+              :page="data.collections.open_items?.page"
+              :loaded="openItems.length"
+              :loading="sectionLoading.open_items"
+              :error="sectionErrors.open_items"
+              @retry="loadMore('open_items')"
+              @more="loadMore('open_items')"
+          /></template>
         </BriefOpenItems>
       </section>
-      <section id="owner-tasks" class="section-anchor selectable-section tasks" tabindex="-1" aria-labelledby="tasks-title">
+      <section
+        id="owner-tasks"
+        class="section-anchor selectable-section tasks"
+        tabindex="-1"
+        aria-labelledby="tasks-title"
+      >
         <h2 id="tasks-title">老板待办</h2>
-        <article v-for="task in data.owner_tasks" :key="task.key" data-section-focus tabindex="-1">
+        <article
+          v-for="task in data.owner_tasks"
+          :key="task.key"
+          data-section-focus
+          tabindex="-1"
+        >
           <strong>{{ task.title }} · {{ task.object }}</strong>
-          <p>{{ task.period ?? '未明确所属月' }}<template v-if="task.amount_status === 'known'"> · {{ formatFen(task.amount_fen) }}</template><template v-else-if="task.amount_status === 'unknown'"> · 金额待确认</template><template v-if="task.deadline"> · 截止 {{ task.deadline }}</template></p>
-          <p>{{ task.impact }}</p><p class="next-step">{{ task.next_step }}</p>
-          <BusinessStatusDetails v-if="task.subject_id" :subject-id="task.subject_id" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refreshChanged" />
+          <p>
+            {{ task.period ?? "未明确所属月"
+            }}<template v-if="task.amount_status === 'known'">
+              · {{ formatFen(task.amount_fen) }}</template
+            ><template v-else-if="task.amount_status === 'unknown'">
+              · 金额待确认</template
+            ><template v-if="task.deadline">
+              · 截止 {{ task.deadline }}</template
+            >
+          </p>
+          <p>{{ task.impact }}</p>
+          <p class="next-step">{{ task.next_step }}</p>
+          <BusinessStatusDetails
+            v-if="task.subject_id"
+            :subject-id="task.subject_id"
+            :period="selectedPeriod"
+            :snapshot-version="response?.snapshot_version"
+            @changed="refreshChanged"
+          />
         </article>
-        <article v-if="needsMonthlyReview" class="owner-review-request" data-section-focus tabindex="-1">
+        <article
+          v-if="needsMonthlyReview"
+          class="owner-review-request"
+          data-section-focus
+          tabindex="-1"
+        >
           <strong>核对本月业务 · {{ selectedPeriod }}</strong>
           <p>查看本月经营金额和已入账业务，确认后告知 AI 会计。</p>
-          <button type="button" :aria-expanded="showMonthlyReview" @click="showMonthlyReview = !showMonthlyReview">{{ showMonthlyReview ? '收起本次核对' : '查看本次核对内容' }}</button>
-          <CloseReviewPanel v-if="showMonthlyReview && reviewRequest && typeof route.query.company_id === 'string'" :company-id="route.query.company_id" :period="selectedPeriod" :preview-digest="reviewRequest.preview_digest" />
+          <button
+            type="button"
+            :aria-expanded="showMonthlyReview"
+            @click="showMonthlyReview = !showMonthlyReview"
+          >
+            {{ showMonthlyReview ? "收起本次核对" : "查看本次核对内容" }}
+          </button>
+          <CloseReviewPanel
+            v-if="
+              showMonthlyReview &&
+              reviewRequest &&
+              typeof route.query.company_id === 'string'
+            "
+            :company-id="route.query.company_id"
+            :period="selectedPeriod"
+            :preview-digest="reviewRequest.preview_digest"
+          />
         </article>
-        <p v-if="!data.owner_tasks.length && !needsMonthlyReview" data-section-focus tabindex="-1">目前没有明确需要您处理的事项。</p>
+        <p
+          v-if="!data.owner_tasks.length && !needsMonthlyReview"
+          data-section-focus
+          tabindex="-1"
+        >
+          目前没有明确需要您处理的事项。
+        </p>
       </section>
     </div>
   </section>
 </template>
 
 <style scoped>
-.brief-content { display: contents; }
+.brief-content {
+  display: contents;
+}
 .brief-page {
   --brief-page: var(--background);
   --brief-anchor-offset: 78px;
@@ -477,14 +1166,52 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
   outline: none;
 }
 
-.section-anchor { min-width: 0; scroll-margin-top: var(--brief-anchor-offset); }
-#overview { display: grid; gap: 20px; }
-.scope { margin: 0; color: var(--brief-muted); font-size: 11px; }
-.hero-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.commentary-toggle { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); color: var(--brief-green); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
-.commentary-toggle:hover { background: var(--brief-green-soft); }
-.commentary-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.commentary-toggle svg { width: 14px; height: 14px; }
+.section-anchor {
+  min-width: 0;
+  scroll-margin-top: var(--brief-anchor-offset);
+}
+#overview {
+  display: grid;
+  gap: 20px;
+}
+.scope {
+  margin: 0;
+  color: var(--brief-muted);
+  font-size: 11px;
+}
+.hero-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.commentary-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-control-radius);
+  background: var(--brief-surface);
+  color: var(--brief-green);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.commentary-toggle:hover {
+  background: var(--brief-green-soft);
+}
+.commentary-toggle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.commentary-toggle svg {
+  width: 14px;
+  height: 14px;
+}
 .brief-hero {
   display: grid;
   gap: 24px;
@@ -493,17 +1220,55 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
   border-radius: 20px;
   background:
-    radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%),
-    linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));
+    radial-gradient(
+      circle at 7% 12%,
+      color-mix(in srgb, var(--accent) 11%, transparent),
+      transparent 32%
+    ),
+    linear-gradient(
+      125deg,
+      var(--surface),
+      color-mix(in srgb, var(--accent-soft) 66%, var(--surface))
+    );
 }
-.hero { display: grid; min-width: 0; gap: 8px; }
-.hero > span { color: var(--brief-muted); font-size: 12px; font-weight: 750; }
-.hero > strong { font-size: clamp(31px, 4vw, 42px); color: var(--brief-green); line-height: 1.15; letter-spacing: -0.04em; overflow-wrap: anywhere; }
-.hero > strong.loss { color: var(--brief-red); }
-.hero .income-amount { color: var(--brief-green); }
-.hero .cost-amount { color: var(--brief-cost); }
-.hero p { margin: 0; color: var(--brief-muted); font-size: 12px; line-height: 1.6; }
-.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px; }
+.hero {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.hero > span {
+  color: var(--brief-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.hero > strong {
+  font-size: clamp(31px, 4vw, 42px);
+  color: var(--brief-green);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+}
+.hero > strong.loss {
+  color: var(--brief-red);
+}
+.hero .income-amount {
+  color: var(--brief-green);
+}
+.hero .cost-amount {
+  color: var(--brief-cost);
+}
+.hero p {
+  margin: 0;
+  color: var(--brief-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px 28px;
+  margin-top: 8px;
+}
 .kpi {
   --kpi-accent: var(--brief-green);
   --kpi-accent-soft: var(--brief-green-soft);
@@ -522,60 +1287,301 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background-color 160ms ease, border-color 160ms ease;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
 }
-.kpi:first-child { border-left: 0; }
-.kpi.asset { --kpi-accent: var(--brief-asset); --kpi-accent-soft: var(--brief-asset-soft); }
-.kpi.receivable { --kpi-accent: var(--brief-blue); --kpi-accent-soft: var(--brief-blue-soft); }
-.kpi.payable { --kpi-accent: var(--brief-amber); --kpi-accent-soft: var(--brief-amber-soft); }
-.kpi::before { position: absolute; top: 2px; bottom: 2px; left: 0; width: 3px; border-radius: 999px; background: var(--kpi-accent); opacity: 0; transform: scaleY(0.4); transition: opacity 160ms ease, transform 160ms ease; content: ""; }
-.kpi:hover, .kpi:focus-visible { border-color: color-mix(in srgb, var(--kpi-accent) 18%, transparent); background: color-mix(in srgb, var(--kpi-accent-soft) 70%, transparent); }
-.kpi:hover::before, .kpi:focus-visible::before { opacity: 0.85; transform: scaleY(1); }
-.kpi:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.kpi > span { color: var(--brief-muted); font-size: 12px; font-weight: 750; }
-.kpi > strong { margin: 4px 0; color: var(--kpi-accent); font-size: clamp(20px, 2vw, 26px); line-height: 1.15; letter-spacing: -0.025em; overflow-wrap: anywhere; }
-.kpi > small { color: var(--brief-muted); font-size: 11px; line-height: 1.45; }
-.commentary-dialog { width: min(840px, calc(100% - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--brief-line); border-radius: var(--brief-panel-radius); background: var(--brief-surface); color: var(--brief-text); box-shadow: var(--brief-overlay-shadow); }
-.commentary-dialog[open] { display: flex; flex-direction: column; }
-.commentary-dialog::backdrop { background: rgb(12 24 17 / 38%); }
-.commentary-heading { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--brief-line); }
-.commentary-heading h2 { margin: 0; font-size: 20px; }
-.commentary-heading p { margin: 6px 0 0; color: var(--brief-muted); font-size: 12px; }
-.commentary-close { display: grid; flex: none; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--brief-control-radius); background: var(--brief-soft); color: var(--brief-muted); font: inherit; font-size: 26px; line-height: 1; cursor: pointer; }
-.commentary-close:hover { background: var(--brief-green-soft); color: var(--brief-green); }
-.commentary-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.commentary-body { display: grid; gap: 20px; min-height: 0; padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
-.note { min-width: 0; overflow-wrap: anywhere; }
-.note + .note { padding-top: 20px; border-top: 1px solid var(--brief-line); }
-.note > strong { color: var(--brief-muted); font-size: 12px; font-weight: 650; }
-.note p { margin: 6px 0 0; font-size: 15px; line-height: 1.75; white-space: pre-line; }
-.risks { padding: 14px 16px; border-radius: var(--brief-control-radius); background: color-mix(in srgb, var(--brief-amber-soft) 38%, var(--brief-surface)); }
-.risks h3 { margin: 0 0 9px; font-size: 12px; font-weight: 650; }
-.risks article { padding: 9px 0; }
-.risks strong { color: var(--brief-amber); font-size: 12px; }
-.risks p { margin: 4px 0 0; color: var(--brief-muted); font-size: 11px; line-height: 1.55; }
-.tasks h2 { margin: 0 0 16px; font-size: 22px; letter-spacing: -0.03em; }
-.tasks > article { display: grid; gap: 6px; margin: 10px 0; padding: 14px 16px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: color-mix(in srgb, var(--brief-amber-soft) 38%, var(--brief-surface)); }
-.tasks strong { font-size: 12px; }
-.tasks p { margin: 0; color: var(--brief-muted); font-size: 12px; line-height: 1.6; }
-.tasks > p { padding: 16px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); }
-.tasks .next-step { color: var(--brief-green); font-weight: 650; }
-.tasks button, .state-panel button { justify-self: start; min-height: 40px; padding: 0 13px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); color: var(--brief-green); font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
-.tasks button:hover { background: var(--brief-green-soft); }
-article { min-width: 0; overflow-wrap: anywhere; }
-.state-panel { padding: 28px; border: 1px solid var(--brief-line); border-radius: var(--brief-panel-radius); background: var(--brief-surface); }
-.state-panel h2, .state-panel p { margin-top: 0; }
-.state-panel.error { border-color: var(--brief-red); }
-@media (max-width: 1199px) { .brief-page { --brief-anchor-offset: 124px; } }
+.kpi:first-child {
+  border-left: 0;
+}
+.kpi.asset {
+  --kpi-accent: var(--brief-asset);
+  --kpi-accent-soft: var(--brief-asset-soft);
+}
+.kpi.receivable {
+  --kpi-accent: var(--brief-blue);
+  --kpi-accent-soft: var(--brief-blue-soft);
+}
+.kpi.payable {
+  --kpi-accent: var(--brief-amber);
+  --kpi-accent-soft: var(--brief-amber-soft);
+}
+.kpi::before {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--kpi-accent);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+  content: "";
+}
+.kpi:hover,
+.kpi:focus-visible {
+  border-color: color-mix(in srgb, var(--kpi-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--kpi-accent-soft) 70%, transparent);
+}
+.kpi:hover::before,
+.kpi:focus-visible::before {
+  opacity: 0.85;
+  transform: scaleY(1);
+}
+.kpi:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.kpi > span {
+  color: var(--brief-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.kpi > strong {
+  margin: 4px 0;
+  color: var(--kpi-accent);
+  font-size: clamp(20px, 2vw, 26px);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+.kpi > small {
+  color: var(--brief-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.commentary-dialog {
+  width: min(840px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-panel-radius);
+  background: var(--brief-surface);
+  color: var(--brief-text);
+  box-shadow: var(--brief-overlay-shadow);
+}
+.commentary-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.commentary-dialog::backdrop {
+  background: rgb(12 24 17 / 38%);
+}
+.commentary-heading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--brief-line);
+}
+.commentary-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.commentary-heading p {
+  margin: 6px 0 0;
+  color: var(--brief-muted);
+  font-size: 12px;
+}
+.commentary-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--brief-control-radius);
+  background: var(--brief-soft);
+  color: var(--brief-muted);
+  font: inherit;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+.commentary-close:hover {
+  background: var(--brief-green-soft);
+  color: var(--brief-green);
+}
+.commentary-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.commentary-body {
+  display: grid;
+  gap: 20px;
+  min-height: 0;
+  padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.note + .note {
+  padding-top: 20px;
+  border-top: 1px solid var(--brief-line);
+}
+.note > strong {
+  color: var(--brief-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.note p {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+.risks {
+  padding: 14px 16px;
+  border-radius: var(--brief-control-radius);
+  background: color-mix(
+    in srgb,
+    var(--brief-amber-soft) 38%,
+    var(--brief-surface)
+  );
+}
+.risks h3 {
+  margin: 0 0 9px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.risks article {
+  padding: 9px 0;
+}
+.risks strong {
+  color: var(--brief-amber);
+  font-size: 12px;
+}
+.risks p {
+  margin: 4px 0 0;
+  color: var(--brief-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.tasks h2 {
+  margin: 0 0 16px;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+.tasks > article {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-control-radius);
+  background: color-mix(
+    in srgb,
+    var(--brief-amber-soft) 38%,
+    var(--brief-surface)
+  );
+}
+.tasks strong {
+  font-size: 12px;
+}
+.tasks p {
+  margin: 0;
+  color: var(--brief-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tasks > p {
+  padding: 16px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-control-radius);
+  background: var(--brief-surface);
+}
+.tasks .next-step {
+  color: var(--brief-green);
+  font-weight: 650;
+}
+.tasks button,
+.state-panel button {
+  justify-self: start;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-control-radius);
+  background: var(--brief-surface);
+  color: var(--brief-green);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.tasks button:hover {
+  background: var(--brief-green-soft);
+}
+article {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.state-panel {
+  padding: 28px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-panel-radius);
+  background: var(--brief-surface);
+}
+.state-panel h2,
+.state-panel p {
+  margin-top: 0;
+}
+.state-panel.error {
+  border-color: var(--brief-red);
+}
+@media (max-width: 1199px) {
+  .brief-page {
+    --brief-anchor-offset: 124px;
+  }
+}
 @media (max-width: 760px) {
-  .brief-page { width: min(calc(100% - 24px), 1320px); gap: 28px; padding: 16px 0 24px; }
-  .brief-hero { padding: 20px; border-radius: 17px; }
-  .kpi-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .kpi { padding: 13px 0 13px 14px; border-left: 0; }
-  .kpi + .kpi { border-top: 1px solid var(--brief-line); }
-  .commentary-dialog { max-height: calc(100dvh - 24px); }
-  .commentary-heading, .commentary-body { padding: 16px; }
+  .brief-page {
+    width: min(calc(100% - 24px), 1320px);
+    gap: 28px;
+    padding: 16px 0 24px;
+  }
+  .brief-hero {
+    padding: 20px;
+    border-radius: 17px;
+  }
+  .kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .kpi {
+    padding: 13px 0 13px 14px;
+    border-left: 0;
+  }
+  .kpi + .kpi {
+    border-top: 1px solid var(--brief-line);
+  }
+  .commentary-dialog {
+    max-height: calc(100dvh - 24px);
+  }
+  .commentary-heading,
+  .commentary-body {
+    padding: 16px;
+  }
 }
-@media (max-width: 720px) { .brief-page { --brief-anchor-offset: 174px; } }
-@media (prefers-reduced-motion: reduce) { .kpi, .kpi::before { transition: none; } }
+@media (max-width: 720px) {
+  .brief-page {
+    --brief-anchor-offset: 174px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kpi,
+  .kpi::before {
+    transition: none;
+  }
+}
 </style>

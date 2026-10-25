@@ -199,7 +199,11 @@
             "同一范围的导出前核对结果、程序成功状态、交付位置及实际交付",
             "老板实际报送结果或回执"
           ],
-          "if_unmet": "文件缺失接续当前任务；文件已交付与实际报送分别说明，不等未来税务申报回执来否定有效财报。待外部办理说明现实动作，确属后期安排时保留依据、接续节点及未完成状态。"
+          "if_unmet": "缺少文件时用accounting_report_export(action=generate)生成当前季度报表；取得任务编号后用accounting_jobs查询同一任务，成功后用accounting_report_export(action=save,destination=desktop)交付，不模拟浏览器点击或重复解析Excel。准备失败后明确再次生成可接续重试；保存只接受指定任务，失效时不自动换新任务。copied或reused及实际位置才证明桌面交付，文件已交付与实际报送分别说明，不等未来税务申报回执来否定有效财报。待外部办理说明现实动作，确属后期安排时保留依据、接续节点及未完成状态。",
+          "actions": [
+            { "command": "accounting_report_export", "action": "generate", "when": "本期需要交付的报表文件尚未生成，或明确重新生成当前季度报表。" },
+            { "command": "accounting_report_export", "action": "save", "when": "指定任务已成功，保存已核快照到真实桌面并确认实际交付位置。" }
+          ]
         }
       ]
     },

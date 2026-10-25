@@ -26,7 +26,7 @@ from ai_accounting_modular.contracts.public import (
     schema_document,
     validate_contract,
 )
-from ai_accounting_modular.reading.public import ReadingImpact
+from ai_accounting_modular.reading.public import ReadingImpact, ReportDownload, ReportExports
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
 from . import (
@@ -38,6 +38,7 @@ from . import (
     _period,
     _queries,
     _rebuild,
+    _report_exports,
     _review,
     _schema,
     _source_discards,
@@ -85,6 +86,8 @@ class Application:
         backup_verifier=None,
         repositories=(),
         payments=None,
+        reports: ReportExports | None = None,
+        save_report: Callable[[ReportDownload], dict] | None = None,
     ):
         self.storage, self.identity, self.ledger, self.records = storage, identity, ledger, records
         self.registry = DomainRegistry(domains)
@@ -94,6 +97,7 @@ class Application:
         self.backup_verifier = backup_verifier
         self.repositories = tuple(repositories)
         self.payments = payments
+        self.reports, self.save_report = reports, save_report
 
     def _notify_reading(self, impact, unit):
         return (
@@ -336,6 +340,9 @@ class Application:
     def accounting_payment_export(self, request):
         return _payment_exports.run(self, request)
 
+    def accounting_report_export(self, request):
+        return _report_exports.run(self, request)
+
     def accounting_documents(self, request):
         validate_contract("core.schema.json", "DocumentsRequest", request)
         if request["action"] == "finish":
@@ -357,6 +364,8 @@ def create_application(
     backup_verifier=None,
     repositories=(),
     payments=None,
+    reports: ReportExports | None = None,
+    save_report: Callable[[ReportDownload], dict] | None = None,
 ):
     return Application(
         storage,
@@ -370,4 +379,6 @@ def create_application(
         backup_verifier,
         repositories,
         payments,
+        reports,
+        save_report,
     )

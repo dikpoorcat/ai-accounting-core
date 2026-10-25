@@ -53,6 +53,32 @@ Vue、TypeScript 和样式修改由 Vite 热更新。Python 常驻后台源码�
 
 后台重启会结束旧登录会话，需要在本机密码窗口重新登录并刷新页面。原生密码窗口每次独立启动，表单修改在下次打开窗口时生效。独立运行包和普通看板继续使用各自随包的静态页面。
 
+## 程序生成财报并保存到桌面
+
+CLI与MCP使用同一常驻后台，不需要浏览器。先按工作指南核对报表，再用 `accounting_report_export` 生成当前季度报表。以下公司编号为合成示例，实际使用目录中已登记的公司身份：
+
+```json
+{"action":"generate","company_id":"00000000-0000-4000-8000-000000000001","year":2026,"quarter":3}
+```
+
+将请求保存为UTF-8的 `report-generate.json`，使用已指定的 `$program` 和 `$catalog`：
+
+```powershell
+& $program --catalog $catalog call accounting_report_export --input '.\report-generate.json'
+```
+
+MCP通过 `accounting_command(command="accounting_report_export", payload=上述对象)` 调用。返回 `preparing` 时等待读取准备；`partial` 按具体缺项和勾稽核查，不能补零导出；准备失败保留原因，明确再次生成可接续既有重试。`generate` 表示取得当前报表，不接收请求编号或网页预览版本；尚未收到任务编号时再次调用可以取得后来变化的当前结果。
+
+收到 `task.task_id` 后，使用 `accounting_jobs` 及相同公司、精确任务编号查询，不能反复生成充当轮询。只有 `succeeded` 后才保存；保存请求为：
+
+```json
+{"action":"save","company_id":"00000000-0000-4000-8000-000000000001","task_id":"00000000-0000-4000-8000-000000000002","destination":"desktop"}
+```
+
+同样通过CLI `call accounting_report_export --input` 或MCP调用。程序在当前Windows用户的真实桌面保存含公司标识和季度的独立文件，支持桌面重定向；同内容复用、不同内容另名保留。回执 `copied/reused` 包含实际绝对位置、摘要、大小及公司/数据库/任务身份，才代表桌面交付完成。失效或已清理的任务明确报错，不自动换成其他报表。保存失败不改变源任务，修复桌面问题后接续同一个任务即可。文件交付不代表已经向外报送。
+
+该能力随同版Python后台加载。源码更新及隔离验收不会自动重启当前服务；启用时沿本文件既有重启和本机登录流程，不迁移或替换账套。
+
 ## 新建公司和登记独立目标
 
 登录后，将以下完整 JSON 保存为 UTF-8 的 `company-create.json`。`company_root` 必须是尚不存在的明确新目录；`backup_directory` 是可选的独立备份目录，不是备份文件名。公司和数据库身份由程序建立，不需要 AI 生成。

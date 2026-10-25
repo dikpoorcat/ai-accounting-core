@@ -678,6 +678,35 @@ class MonthCancelResult(TypedDict):
     documents: Literal['ready', 'pending']
     file_cleanup: MonthCancelResultFileCleanup
 
+type ReportExportRequest = ReportExportRequestVariant1 | ReportExportRequestVariant2
+
+class ReportExportPreparation(TypedDict):
+    company_id: Id
+    year: int
+    quarter: int
+    state: Literal['preparing', 'failed', 'partial']
+    reason: NotRequired[str]
+    issues: NotRequired[list[FactIssue]]
+    checks: NotRequired[list[Check]]
+
+class ReportExportTask(TypedDict):
+    company_id: Id
+    year: int
+    quarter: int
+    state: Literal['pending', 'running', 'succeeded', 'failed', 'expired']
+    task: TaskReceipt
+
+class ReportExportSaved(TypedDict):
+    company_id: Id
+    database_id: Id
+    task_id: Id
+    state: Literal['copied', 'reused']
+    path: str
+    sha256: Digest
+    byte_size: int
+
+type ReportExportResult = ReportExportPreparation | ReportExportTask | ReportExportSaved
+
 type ReviewRequest = AccountingReviewReviewRequest
 
 type ReviewResult = AccountingReviewReviewResult
@@ -10299,6 +10328,18 @@ class MonthCancelResultFileCleanup(TypedDict):
     state: Literal['not_started', 'complete', 'pending']
     issues: list[MonthCancelResultFileCleanupIssuesItem]
 
+class ReportExportRequestVariant1(TypedDict):
+    action: Literal['generate']
+    company_id: Id
+    year: int
+    quarter: int
+
+class ReportExportRequestVariant2(TypedDict):
+    action: Literal['save']
+    company_id: Id
+    task_id: Id
+    destination: Literal['desktop']
+
 class PaymentExportLayoutColumns(TypedDict):
     payee_name: int
     payee_account: int
@@ -11876,6 +11917,11 @@ __all__ = [
     'ServiceRevenueWorkDefaults',
     'MonthCancelRequest',
     'MonthCancelResult',
+    'ReportExportRequest',
+    'ReportExportPreparation',
+    'ReportExportTask',
+    'ReportExportSaved',
+    'ReportExportResult',
     'ReviewRequest',
     'ReviewResult',
     'NoteFormat',

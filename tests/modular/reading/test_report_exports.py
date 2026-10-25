@@ -174,6 +174,17 @@ def test_real_preview_task_download_uses_exact_seen_formal_amounts(report_case):
         assert "filename*=UTF-8''" in response.headers["Content-Disposition"]
         raw = response.body.read()
         assert sha256(raw).hexdigest() == done["sha256"] == response.headers["X-Content-SHA256"]
+    with case.kernel.reading.reports.download(case.company.company_id, job) as download:
+        assert (download.company_id, download.database_id, download.task_id) == (
+            case.company.company_id,
+            case.company.database_id,
+            job,
+        )
+        assert download.file_name == preview["export"]["file_name"]
+        assert download.file_name == (
+            "真实导出合成公司_913100000000000001_2026年第1季度财务报表.xlsx"
+        )
+        assert download.stream.read() == raw
     book = load_workbook(io.BytesIO(raw), data_only=True)
     try:
         assert book.worksheets[0]["H3"].value == "真实导出合成公司"
@@ -185,6 +196,99 @@ def test_real_preview_task_download_uses_exact_seen_formal_amounts(report_case):
         book.close()
     with case.kernel.storage.read_unit(case.company.company_id) as read:
         assert read.head == before
+
+
+def test_programmatic_generation_shares_the_dashboard_plan_and_current_task(report_case):
+    case = report_case
+    reports = case.kernel.reading.reports
+    assert reports.generate_current(case.company.company_id, 2026, 1) == {"state": "preparing"}
+    case.kernel.reading.run_pending(case.company.company_id)
+    generated = reports.generate_current(case.company.company_id, 2026, 1)
+    assert generated["state"] == "pending", generated
+    task_id = generated["task"]["task_id"]
+    assert case.post(case.request()).body["job_id"] == task_id
+    assert reports.generate_current(case.company.company_id, 2026, 1) == generated
+    case.kernel.files.run(case.company.company_id, task_id)
+    completed = reports.generate_current(case.company.company_id, 2026, 1)
+    assert completed["state"] == "succeeded" and completed["task"]["task_id"] == task_id
+    assert reports.task(case.company.company_id, task_id)["status"] == "succeeded"
+
+
+def test_download_identity_and_name_remain_with_the_verified_snapshot(report_case):
+    case = report_case
+    preview = case.preview()
+    task_id = case.post(case.request(preview)).body["job_id"]
+    case.kernel.files.run(case.company.company_id, task_id)
+    reports = case.kernel.reading.reports
+    with reports.download(case.company.company_id, task_id) as download:
+        with closing(sqlite3.connect(case.company.database_path)) as connection:
+            connection.execute(
+                "UPDATE company_profile SET legal_name=?,profile_seq=2", ("改名后公司",)
+            )
+            connection.commit()
+        assert download.file_name == preview["export"]["file_name"]
+        assert download.company_id == case.company.company_id
+        assert download.database_id == case.company.database_id
+        assert download.task_id == task_id
+        assert sha256(download.stream.read()).hexdigest() == download.sha256
+    with pytest.raises(ContractError) as stale:
+        with reports.download(case.company.company_id, task_id):
+            pytest.fail("已失效的报表不能再按新的公司资料交付")
+    assert stale.value.code == "preview_expired"
+
+
+def test_programmatic_partial_report_retains_issues_and_checks_without_a_file(report_case):
+    case = report_case
+    fact = deepcopy(case.expense)
+    fact["data"].pop("report_details")
+    result = case.kernel.application.accounting_apply(
+        {
+            "contract": "ai-accounting-modular/1",
+            "company_id": case.company.company_id,
+            "command_id": str(uuid4()),
+            "mutations": [{"op": "replace", "expected_seq": 1, "fact": fact}],
+        }
+    )
+    assert result["completion"] == "complete", result
+    reports = case.kernel.reading.reports
+    assert reports.generate_current(case.company.company_id, 2026, 1)["state"] == "preparing"
+    case.kernel.reading.run_pending(case.company.company_id)
+    partial = reports.generate_current(case.company.company_id, 2026, 1)
+    assert partial["state"] == "partial" and partial["issues"]
+    snapshot = case.kernel.application.accounting_report(
+        {"company_id": case.company.company_id, "year": 2026, "quarter": 1}
+    )
+    assert partial["checks"] == snapshot["checks"]
+    assert "task" not in partial
+    assert case.kernel.files.run_pending(case.company.company_id) == ()
+
+
+def test_explicit_programmatic_generation_retries_failed_preparation_once_and_keeps_reason(
+    report_case,
+    monkeypatch,
+):
+    case = report_case
+    reports = case.kernel.reading.reports
+    assert reports.generate_current(case.company.company_id, 2026, 1)["state"] == "preparing"
+    original = case.kernel.ledger.prepare_financial_projection
+
+    def failure(*args, **kwargs):
+        raise ContractError("synthetic_projection_failure", "合成财务准备失败，正式数据未改变。")
+
+    monkeypatch.setattr(case.kernel.ledger, "prepare_financial_projection", failure)
+    case.kernel.reading.run_pending(case.company.company_id)
+    for _ in range(2):
+        with case.kernel.dashboard.get(
+            "/api/dashboard/quarterly-report",
+            {"company_id": case.company.company_id, "year": "2026", "quarter": "1"},
+        ) as response:
+            assert response.body["state"] == "failed"
+    retried = reports.generate_current(case.company.company_id, 2026, 1)
+    assert retried == {"state": "preparing", "reason": "synthetic_projection_failure"}
+    assert reports.generate_current(case.company.company_id, 2026, 1) == {"state": "preparing"}
+    monkeypatch.setattr(case.kernel.ledger, "prepare_financial_projection", original)
+    case.kernel.reading.run_pending(case.company.company_id)
+    assert reports.generate_current(case.company.company_id, 2026, 1)["state"] == "pending"
 
 
 def test_related_change_expires_status_and_download_then_replaces_only_current_task(report_case):

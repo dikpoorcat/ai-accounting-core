@@ -33,6 +33,37 @@ def plan():
     return value
 
 
+@pytest.mark.parametrize("name", ['公司/名\\称:*?"<>|', "企业" + "😀" * 80, "..."])
+def test_delivery_name_is_safe_bounded_and_keeps_company_and_quarter_identity(plan, name):
+    plan["organization"]["legal_name"] = name
+    plan["scope_head"] = _report_plans.scope_head(plan)
+    delivered = create_report_producer(None).describe(plan).file_name
+    assert not any(character in delivered for character in '\\/:*?"<>|')
+    assert len(delivered.encode("utf-16-le")) // 2 < 200
+    assert delivered.endswith(f"_{plan['organization']['credit_code']}_2026年第1季度财务报表.xlsx")
+
+
+@pytest.mark.parametrize(
+    ("name", "prefix"),
+    [
+        ("CON.技术公司", "_CON.技术公司_"),
+        ("NUL.技术公司", "_NUL.技术公司_"),
+        ("COM1.技术公司", "_COM1.技术公司_"),
+        ("COM².技术公司", "_COM².技术公司_"),
+        ("CON", "CON_"),
+        ("正常公司", "正常公司_"),
+    ],
+)
+def test_delivery_name_escapes_windows_devices_without_renaming_ordinary_companies(
+    plan, name, prefix
+):
+    plan["organization"]["legal_name"] = name
+    plan["scope_head"] = _report_plans.scope_head(plan)
+    delivered = create_report_producer(None).describe(plan).file_name
+    assert delivered.startswith(prefix)
+    assert delivered.endswith(f"_{plan['organization']['credit_code']}_2026年第1季度财务报表.xlsx")
+
+
 def test_retained_template_all_cells_formula_caches_and_exact_unchanged_parts(plan):
     _report_plans.validate(plan)
     original = _report_workbook._template_bytes()

@@ -51,7 +51,7 @@ def test_real_expense_payment_three_tables_match_all_214_formal_cells(tmp_path):
     validate_contract("dashboard-response-v2.json", "dashboard_quarterly_report", response)
     assert response["export"] == {
         "available": False,
-        "file_name": "2026年第1季度财务报表.xlsx",
+        "file_name": "合成读取验收公司_913100000000000001_2026年第1季度财务报表.xlsx",
         "preview_digest": None,
         "epochs": None,
     }

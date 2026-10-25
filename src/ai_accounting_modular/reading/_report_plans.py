@@ -1,5 +1,8 @@
 """One report meaning for previews, saved plans and lightweight validity checks."""
 
+import re
+from pathlib import PureWindowsPath
+
 from ai_accounting_modular.contracts.public import (
     ContractError,
     content_digest,
@@ -135,15 +138,19 @@ def plan(snapshot, metadata):
     return result
 
 
-def file_name(scope):
+def file_name(scope, organization):
     first = scope["period_from"]
-    return f"{int(first[:4])}年第{(int(first[5:]) - 1) // 3 + 1}季度财务报表.xlsx"
+    period = f"{int(first[:4])}年第{(int(first[5:]) - 1) // 3 + 1}季度财务报表.xlsx"
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", organization["legal_name"])
+    name = name.strip(" .")[:64].rstrip(" .") or "公司"
+    value = f"{name}_{organization['credit_code']}_{period}"
+    return "_" + value if PureWindowsPath(value).is_reserved() else value
 
 
 def preview(snapshot, state, metadata):
     result = {
         "available": False,
-        "file_name": file_name(snapshot["scope"]),
+        "file_name": file_name(snapshot["scope"], organization(metadata)),
         "preview_digest": None,
         "epochs": None,
     }
