@@ -134,17 +134,17 @@ def vat():
 
 
 @pytest.mark.parametrize(
-    "status,point,with_vat,error",
+    "status,point,with_vat",
     [
-        ("not_due", "2026-01", True, "invalid_input"),
-        ("not_due", "2026-01", False, "invalid_input"),
-        ("not_due", "2025-12", False, "invalid_input"),
-        ("not_due", "2026-02", True, "needs_information"),
-        ("not_due", "derived", False, "needs_information"),
-        ("not_due", None, True, "needs_information"),
-        ("due", "2026-02", True, "invalid_input"),
-        ("due", "2025-12", True, "needs_information"),
-        ("due", "derived", True, "needs_information"),
+        ("not_due", "2026-01", True),
+        ("not_due", "2026-01", False),
+        ("not_due", "2025-12", False),
+        ("not_due", "2026-02", True),
+        ("not_due", "derived", False),
+        ("not_due", None, True),
+        ("due", "2026-02", True),
+        ("due", "2025-12", True),
+        ("due", "derived", True),
     ],
 )
 def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission(
@@ -152,7 +152,6 @@ def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission
     status,
     point,
     with_vat,
-    error,
 ):
     app, company = application
     party, source = obj(), evidence()
@@ -179,15 +178,15 @@ def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission
     command = request(company, values, objects=[party], sources=[source])
     validate_contract("core.schema.json", "ApplyRequest", command)
     result = app.accounting_apply(command)
-    assert result["error"] == error, result
+    assert result["error"] == "needs_information", result
     assert result["completion"] == "not_saved" and result["changes"] == "none"
     assert get(app, company, values)["businesses"] == []
     assert get(app, company, values)["head"] == 0
     with app.storage.read_unit(company) as read:
         assert app.identity.get_batch([party["object_id"]], read) == ()
         assert app.records.resolve_sources([source["source_id"]], read) == ()
-    if error == "invalid_input":
-        assert result["fact_issues"][0]["field"] == "/data/tax_status"
+    if point not in {None, "derived"} and not with_vat:
+        assert result["fact_issues"][0]["field"] == "/data/vat"
     if point is None:
         assert result["fact_issues"][0]["field"] == "/data/vat/policy_id"
 

@@ -101,7 +101,7 @@ def context(application, request, read_context=None):
                     "recognition_period": "business_month",
                     "planned_receipt_period": "following_month",
                     "receipt_action": "settle_existing_receivable",
-                    "vat_period_basis": "verified_settlement_terms",
+                    "vat_period_basis": "income_recognition_month",
                     "vat_preference": "retain_applicable_reliefs",
                 },
             },

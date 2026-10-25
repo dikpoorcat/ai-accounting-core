@@ -594,11 +594,16 @@ def test_untaxed_advance_independent_fulfillment_can_have_a_future_tax_month(sys
     assert result(app, company, fulfilled, "tax:2026-03")["target"]["values"]["vat_fen"] == "100"
 
 
-def test_future_advance_without_vat_is_valid_until_its_true_tax_month_requires_it(system):
+@pytest.mark.parametrize("status", [None, "not_due", "due"])
+def test_future_advance_without_vat_is_valid_until_its_true_tax_month_requires_it(system, status):
     app, company, ids = system
     rule = policy(ids)
     advance = sale(ids, rule, advance=True)
     vat = advance["data"].pop("vat")
+    if status is None:
+        advance["data"].pop("tax_status")
+    else:
+        advance["data"]["tax_status"] = status
     saved = app.accounting_apply(command(company, advance))
     assert saved.get("completion") == "complete", saved.get("message", saved)
     attempted = app.accounting_apply(command(company, reach(ids, "2026-03")))

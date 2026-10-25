@@ -3,6 +3,7 @@
 
 def publications(fact, slots):
     collections = []
+    point = fact["data"].get("tax_point")
     if fact["kind"] in {
         "operations.expense",
         "operations.service_sale",
@@ -20,7 +21,11 @@ def publications(fact, slots):
     } or (
         fact["kind"] == "operations.advance"
         and fact["data"]["side"] == "customer"
-        and fact["data"]["tax_status"] == "due"
+        and point is not None
+        and (
+            point["type"] == "derived"
+            or (point["type"] == "explicit" and point["tax_period"] == fact["period"])
+        )
     ):
         collections.append("tax_sales")
     result = [

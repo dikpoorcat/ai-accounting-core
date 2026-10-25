@@ -5,8 +5,8 @@ from ai_accounting_modular.contracts.public import ContractError, format_fen
 from ._common import amount, base_plan, issue, line, obligation, reject
 from ._cooperation import COOPERATION_SETTLEMENTS, original_share, publish
 from ._current_tax import adjustments, adopt_adjustments, apply_current_sales
-from ._tax_lifecycle import adopt_details, resolution, tax_details, totals
-from ._vat import _adopt_policy, _check_tax_day, _policy, _policy_reference
+from ._tax_lifecycle import adopt_details, measure_resolution, resolution, tax_details, totals
+from ._vat import _adopt_policy, _policy, _policy_reference
 
 
 def service_sale(fact, context):
@@ -113,8 +113,8 @@ def _zero_cooperation_sale(fact, context):
 def advance(fact, context):
     data, gross = fact["data"], amount(fact["data"])
     customer = data["side"] == "customer"
-    check_advance_tax_status(fact)
-    net, tax, details, resolved, source = gross, 0, [], None, None
+    tax, details, resolved, source = 0, [], None, None
+    tax_status = data.get("tax_status")
     if customer:
         if "tax_point" in data:
             resolved, source = resolution(fact, context, data["tax_point"], gross)
@@ -122,19 +122,21 @@ def advance(fact, context):
                 segment["state"] == "due" and segment["tax_period"] <= fact["period"]
                 for segment in resolved["segments"]
             )
-            if current_due != (data["tax_status"] == "due"):
-                problem = issue(fact, "/data/tax_status", "预收状态与正式税点范围矛盾。")
-                problem["code"] = "inconsistent_fact"
+            tax_status = "due" if current_due else "not_due"
+            if current_due and "vat" not in data:
                 raise ContractError(
-                    "invalid_input", "预收税务状态与税点矛盾。", fact_issues=[problem]
+                    "needs_information",
+                    "已到税点的预收需要适用VAT资料。",
+                    fact_issues=[
+                        issue(fact, "/data/vat", "本笔预收已到计税月份，需明确适用增值税资料。")
+                    ],
                 )
             if "vat" in data:
-                resolved, source, details = tax_details(
-                    fact, context, data["vat"], data["tax_point"], gross, include_not_due=False
+                details = measure_resolution(
+                    fact, context, data["vat"], resolved, gross, include_not_due=False
                 )
                 _, _, _, tax = totals(details, fact["period"])
-                net = gross - tax
-        elif "vat" in data:
+        if "vat" in data and not details:
             _policy_reference(fact, context, data["vat"])
     changes, observed = (
         adjustments(fact, context, resolved, details, gross) if details else ({}, [])
@@ -152,6 +154,10 @@ def advance(fact, context):
             "vat_fen": format_fen(tax),
         },
     )
+    if customer:
+        plan["basis"]["input"]["tax_status"] = tax_status
+        if not details:
+            plan["basis"]["input"].pop("vat", None)
     party = data["counterparty_id"]
     if customer:
         line(plan, "1122", debit=gross, party=party, summary="确认客户预收收款权")
@@ -194,19 +200,3 @@ def advance(fact, context):
         )
         obligation(plan, "primary", party, "payable", gross, "2202", cashflow=cashflow)
     return plan
-
-
-def check_advance_tax_status(fact):
-    data = fact["data"]
-    if data["side"] != "customer" or "tax_point" not in data:
-        return
-    point = data["tax_point"]
-    if point["type"] == "derived":
-        return
-    period = point["tax_period"]
-    _check_tax_day(fact, point)
-    not_due = data["tax_status"] == "not_due"
-    if (not_due and period <= fact["period"]) or (not not_due and period > fact["period"]):
-        problem = issue(fact, "data/tax_status", "预收税务状态与已给明确税点月份矛盾。")
-        problem["code"] = "inconsistent_fact"
-        raise ContractError("invalid_input", "预收税务状态与明确税点矛盾。", fact_issues=[problem])

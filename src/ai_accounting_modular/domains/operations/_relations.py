@@ -78,11 +78,11 @@ def resource_uses(fact):
 
 
 def reference_edge(fact, ref):
+    point = fact["data"].get("tax_point")
     policy_only = (
         fact["kind"] == "operations.advance"
         and fact["data"]["side"] == "customer"
-        and fact["data"]["tax_status"] == "not_due"
-        and "tax_point" not in fact["data"]
+        and (point is None or point["type"] == "owner_recognition_default")
     )
     money_sensitive = fact["kind"] in {
         "operations.pass_through_return",

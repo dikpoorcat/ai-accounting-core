@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import runpy
+from inspect import signature
 from pathlib import Path
+from typing import get_type_hints
+
+from ai_accounting_modular.contracts.public import EvaluationContext, Fact
+from ai_accounting_modular.domains.taxes.public import tax_point_periods
 
 CHECK = runpy.run_path(
     str(Path(__file__).resolve().parents[3] / "tools/check_modular_boundaries.py")
@@ -12,6 +17,41 @@ CHECK = runpy.run_path(
 
 def test_implemented_modules_obey_declared_boundaries():
     assert CHECK["check_tree"]() == []
+
+
+def test_tax_period_query_is_a_documented_public_fact_port():
+    port = tax_point_periods.__name__
+    public = "ai_accounting_modular.domains.taxes.public"
+    assert tax_point_periods.__module__ == public
+    call = signature(tax_point_periods)
+    assert tuple(call.parameters) == ("fact", "context")
+    assert get_type_hints(tax_point_periods) == {
+        "fact": Fact,
+        "context": EvaluationContext,
+        "return": tuple[str, ...],
+    }
+
+    documents = Path(__file__).resolve().parents[3] / "docs/redesign"
+    responsibilities = next(
+        row
+        for row in (documents / "02-architecture.md").read_text(encoding="utf-8").splitlines()
+        if row.startswith("| `domains/operations` |")
+    )
+    assert f"`domains/taxes.public.{port}`" in responsibilities
+    contract = next(
+        row
+        for row in (documents / "03-contracts.md").read_text(encoding="utf-8").splitlines()
+        if row.startswith("| domains.taxes.public |")
+    )
+    documented_call = f"{port}({', '.join(call.parameters)}) -> {call.return_annotation}"
+    assert f"`{documented_call}`" in contract
+
+    consumer = "ai_accounting_modular.domains.operations._tax_lifecycle"
+    scan = CHECK["violations"]
+    assert scan(f"from {public} import {port}", consumer) == []
+    assert scan(
+        "from ai_accounting_modular.domains.taxes._receipt_basis import receipts", consumer
+    )
 
 
 def test_quoted_current_ddl_tables_still_have_their_declared_owners():

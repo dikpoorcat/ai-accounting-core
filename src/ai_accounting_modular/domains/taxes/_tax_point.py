@@ -1,10 +1,11 @@
-"""2026 sourced service events resolve disjoint gross-amount tax intervals."""
+"""Resolve service tax intervals from sourced events or the owner's receipt convention."""
 
 from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import format_fen
 
 from ._common import amount, fact_for, missing, plan_for, reject, total
+from ._receipt_basis import receipt_point
 
 RULE_URLS = (
     "https://fgk.chinatax.gov.cn/zcfgk/c100009/c5237365/content.html",
@@ -80,6 +81,8 @@ def tax_point(fact, context):
         gross = amount(target["data"]["amount_fen"])
     else:
         reject("详细服务税点只能对应服务销售、客户预收或其履约。", "invalid_input")
+    if data.get("type") == "owner_receipt_default":
+        return receipt_point(fact, context, target, gross)
     events = deepcopy(data["events"])
     if len({event["event_id"] for event in events}) != len(events):
         reject("税点事件身份不能重复。", "invalid_input")

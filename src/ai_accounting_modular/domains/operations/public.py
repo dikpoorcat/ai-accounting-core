@@ -30,7 +30,7 @@ from ._relationships import deposit, overpayment, pass_through, pass_through_ret
 from ._repository import OperationsRepository
 from ._returns import expense_recovery, sale_return
 from ._roles import object_roles, role_issues
-from ._sales import advance, check_advance_tax_status, service_sale
+from ._sales import advance, service_sale
 from ._tax_description import dependencies as tax_dependencies
 from ._tax_description import slots as tax_slots
 from ._tax_release import releases
@@ -124,8 +124,6 @@ class Operations:
                 raise ContractError("unsupported_business", f"经营模块尚未实现：{fact['kind']}")
             if fact["kind"] == "operations.expense":
                 check_expense(fact)
-            elif fact["kind"] == "operations.advance":
-                check_advance_tax_status(fact)
             slots = tax_slots(fact, context)
             responsibility.update(fact=deepcopy(fact), complete_result_slots=slots)
             responsibilities.append(responsibility)

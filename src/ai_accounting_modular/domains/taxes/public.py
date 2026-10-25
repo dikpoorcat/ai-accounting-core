@@ -32,6 +32,7 @@ from ._netting import SLOT as NETTING_SLOT
 from ._netting import dependencies as netting_dependencies
 from ._netting import netting
 from ._policies import POLICIES, check_policy, policy
+from ._receipt_basis import receipts
 from ._repository import TaxesRepository
 from ._tax_point import tax_point
 from ._vat import vat
@@ -44,6 +45,18 @@ _CALCULATORS = {
     "taxes.tax_credit": credit,
     "taxes.assessment": None,
 }
+
+
+def tax_point_periods(fact: Fact, context: EvaluationContext) -> tuple[str, ...]:
+    """Declare tax-release months from the same facts used by tax-point evaluation."""
+    if fact["kind"] != "taxes.tax_point":
+        reject("详细税点必须引用税点推导业务。", "invalid_input")
+    data = fact["data"]
+    if data.get("type") == "owner_receipt_default":
+        return tuple(
+            sorted({row["period"] for row, _ in receipts(data["target_business_id"], context)})
+        )
+    return tuple(sorted({event["month"] for event in data["events"]}))
 
 
 def repository_factory() -> RepositoryFactory:
@@ -95,7 +108,7 @@ def _direct_dependencies(fact):
     edges = []
     if kind == "taxes.tax_point":
         edges.append(_edge(fact, data["target_business_id"], mode="fact", relation="reference"))
-        for event in data["events"]:
+        for event in data.get("events", ()):
             if event["type"] == "receipt":
                 edges.append(
                     _edge(
@@ -164,7 +177,13 @@ def _fact_relations(fact):
 def _dependencies(fact, context, actuals=()):
     data, kind = fact["data"], fact["kind"]
     edges = _direct_dependencies(fact)
-    if kind == "taxes.tax_credit":
+    if kind == "taxes.tax_point" and data.get("type") == "owner_receipt_default":
+        edges.append(_collection(fact, data["target_business_id"], relation="settlement"))
+        edges.extend(
+            _edge(fact, receipt["business_id"], mode="fact", relation="reference")
+            for receipt, _ in receipts(data["target_business_id"], context)
+        )
+    elif kind == "taxes.tax_credit":
         periods = set()
         edges.append(_collection(fact, data["original_assessment_id"]))
         for row in data["returns"]:

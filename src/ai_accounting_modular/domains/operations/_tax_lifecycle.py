@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from ai_accounting_modular.domains.taxes.public import tax_point_periods
 
 from ._common import adopt_source, issue, reject, sum_amounts
 from ._tax_ranges import gross, intersect, original_ranges, ranges, validate_resolution, wire
@@ -39,7 +40,21 @@ def day_used(segment, fact):
 
 def resolution(fact, context, point, capacity):
     source = None
-    if point["type"] == "explicit":
+    if point["type"] == "owner_recognition_default":
+        segment = {"state": "not_due", "ranges": wire([(0, capacity)])}
+        if fact["kind"] != "operations.advance":
+            segment.update(
+                state="due",
+                tax_period=fact["period"],
+                trigger="owner_recognition_default",
+                event_ids=[],
+            )
+        value = {
+            "target_business_id": fact["business_id"],
+            "basis": "owner_recognition_default",
+            "segments": [segment] if capacity else [],
+        }
+    elif point["type"] == "explicit":
         _check_tax_day(fact, point)
         segment = {
             "state": "due",
@@ -110,7 +125,12 @@ def measure_resolution(
                         issue(
                             fact,
                             "/period",
-                            "请核对合同收款权真实成立月份，或提供已有预收税务接续依据；不能用录入月替代。",
+                            "实际收款早于本次收入月份，应沿真实客户预收及其履约接续税源；不能改动收款月或收入月。"
+                            if resolved.get("basis") == "owner_receipt_default"
+                            else (
+                                "请核对合同收款权真实成立月份，或提供已有预收税务接续依据；"
+                                "不能用录入月替代。"
+                            ),
                             precision=("month", "source"),
                         )
                     ],
@@ -120,6 +140,11 @@ def measure_resolution(
                 selected["tax_on"] = segment["tax_on"]
         else:
             selected = {"type": "explicit", "tax_period": fact["period"]}
+        valuation_day_used = False
+        uses_business_day = segment["state"] == "not_due" or (
+            segment.get("trigger") == "owner_recognition_default"
+        )
+        if uses_business_day:
             reference = _policy_reference(fact, context, vat)
             if not covers_month(reference["data"], fact["period"]) and "effective_on" in fact:
                 if fact["effective_on"][:7] != fact["period"]:
@@ -131,8 +156,9 @@ def measure_resolution(
                         "invalid_input", "真实履约日与政策核算月份不一致。", fact_issues=[problem]
                     )
                 selected["tax_on"] = fact["effective_on"]
+                valuation_day_used = True
         day_fact, day_field = fact, "/data/tax_point/tax_on"
-        if segment["state"] == "not_due":
+        if uses_business_day:
             day_field = "/effective_on"
         elif point["type"] == "derived":
             day_fact = context.get_fact(point["tax_point_id"])
@@ -180,8 +206,7 @@ def measure_resolution(
                 "net": net,
                 "tax": tax,
                 "sale": sale,
-                "valuation_day_used": segment["state"] == "not_due"
-                and not covers_month(policy["data"], fact["period"]),
+                "valuation_day_used": valuation_day_used,
             }
         )
     return details
@@ -246,11 +271,13 @@ def future_months(fact, context):
     point = fact["data"].get("tax_point")
     if not point:
         return []
+    if point["type"] == "owner_recognition_default":
+        return []
     if point["type"] == "explicit":
         months = [point["tax_period"]]
     else:
         source = context.get_fact(point["tax_point_id"])
-        months = [event["month"] for event in (source or {}).get("data", {}).get("events", ())]
+        months = tax_point_periods(source, context) if source is not None else ()
     return sorted({month for month in months if month > fact["period"]})
 
 

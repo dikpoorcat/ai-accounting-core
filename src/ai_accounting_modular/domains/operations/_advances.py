@@ -106,7 +106,10 @@ def _inherit_resolution(fact, original, positions, unresolved, resolved):
     """New tax responsibility cannot replace the adopted tax on inherited gross."""
     capacity = amount(original.target["values"], "gross_fen")
     gross = amount(fact["data"], "gross_fen")
-    strict = fact["data"]["tax_point"]["type"] == "derived" or not unresolved
+    point_type = fact["data"]["tax_point"]["type"]
+    strict = point_type != "owner_recognition_default" and (
+        point_type == "derived" or not unresolved
+    )
     inherited = []
     for segment in adopted_resolution(original)["segments"]:
         if segment["state"] != "due":
@@ -134,6 +137,7 @@ def _inherit_resolution(fact, original, positions, unresolved, resolved):
         if used:
             inherited.append({**deepcopy(segment), "ranges": wire(used)})
     value = {
+        **resolved,
         "target_business_id": fact["business_id"],
         "segments": sorted(inherited, key=lambda item: amount(item["ranges"][0], "from_fen")),
     }

@@ -219,6 +219,9 @@
         },
         {
           "$ref": "#/$defs/DerivedTaxPoint"
+        },
+        {
+          "$ref": "#/$defs/OwnerRecognitionTaxPoint"
         }
       ]
     },
@@ -398,7 +401,8 @@
           "enum": [
             "not_due",
             "due"
-          ]
+          ],
+          "description": "仅在未提供tax_point时明确表示not_due；提供税点后，程序统一从正式税点范围计算状态，不采用重复填写的tax_status。正式核算依据保存程序计算的状态。"
         },
         "vat": {
           "$ref": "#/$defs/VatTreatment"
@@ -410,26 +414,26 @@
       "required": [
         "side",
         "counterparty_id",
-        "amount_fen",
-        "tax_status"
+        "amount_fen"
       ],
       "allOf": [
         {
           "if": {
-            "properties": {
-              "tax_status": {
-                "const": "due"
-              }
-            },
-            "required": [
-              "tax_status"
-            ]
+            "not": {
+              "required": [
+                "tax_point"
+              ]
+            }
           },
           "then": {
             "required": [
-              "vat",
-              "tax_point"
-            ]
+              "tax_status"
+            ],
+            "properties": {
+              "tax_status": {
+                "const": "not_due"
+              }
+            }
           }
         }
       ]
@@ -3162,48 +3166,13 @@
       ]
     },
     "TaxesTaxPoint": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "target_business_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EventTaxPoint"
         },
-        "transaction_mode": {
-          "type": "string",
-          "enum": [
-            "ordinary_service",
-            "phased_prepaid_service"
-          ]
-        },
-        "service_state": {
-          "type": "string",
-          "enum": [
-            "not_started",
-            "started"
-          ]
-        },
-        "contractual_entitlement": {
-          "type": "string",
-          "enum": [
-            "established",
-            "not_set"
-          ]
-        },
-        "events": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/TaxPointEvent"
-          },
-          "minItems": 0,
-          "maxItems": 10000
+        {
+          "$ref": "#/$defs/OwnerReceiptTaxPoint"
         }
-      },
-      "required": [
-        "target_business_id",
-        "transaction_mode",
-        "service_state",
-        "contractual_entitlement",
-        "events"
       ]
     },
     "OpeningBank": {
@@ -5874,6 +5843,9 @@
         },
         {
           "$ref": "#/$defs/PartialDerivedTaxPoint"
+        },
+        {
+          "$ref": "#/$defs/PartialOwnerRecognitionTaxPoint"
         }
       ]
     },
@@ -6016,7 +5988,8 @@
           "enum": [
             "not_due",
             "due"
-          ]
+          ],
+          "description": "仅在未提供tax_point时明确表示not_due；提供税点后，程序统一从正式税点范围计算状态，不采用重复填写的tax_status。正式核算依据保存程序计算的状态。"
         },
         "vat": {
           "$ref": "#/$defs/PartialVatTreatment"
@@ -8071,42 +8044,14 @@
       }
     },
     "PartialTaxesTaxPoint": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "target_business_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PartialEventTaxPoint"
         },
-        "transaction_mode": {
-          "type": "string",
-          "enum": [
-            "ordinary_service",
-            "phased_prepaid_service"
-          ]
-        },
-        "service_state": {
-          "type": "string",
-          "enum": [
-            "not_started",
-            "started"
-          ]
-        },
-        "contractual_entitlement": {
-          "type": "string",
-          "enum": [
-            "established",
-            "not_set"
-          ]
-        },
-        "events": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/PartialTaxPointEvent"
-          },
-          "minItems": 0,
-          "maxItems": 10000
+        {
+          "$ref": "#/$defs/PartialOwnerReceiptTaxPoint"
         }
-      }
+      ]
     },
     "PartialOpeningBank": {
       "type": "object",
@@ -13839,6 +13784,9 @@
         },
         {
           "$ref": "#/$defs/AccountingDerivedTaxPoint"
+        },
+        {
+          "$ref": "#/$defs/AccountingOwnerRecognitionTaxPoint"
         }
       ]
     },
@@ -14018,7 +13966,8 @@
           "enum": [
             "not_due",
             "due"
-          ]
+          ],
+          "description": "本次正式采用的预收税务状态；提供税点时由程序按正式税点范围计算，不直接采用输入中的重复状态。"
         },
         "vat": {
           "$ref": "#/$defs/AccountingVatTreatment"
@@ -16643,48 +16592,13 @@
       ]
     },
     "AccountingTaxesTaxPoint": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "target_business_id": {
-          "$ref": "core.schema.json#/$defs/Id"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AccountingEventTaxPoint"
         },
-        "transaction_mode": {
-          "type": "string",
-          "enum": [
-            "ordinary_service",
-            "phased_prepaid_service"
-          ]
-        },
-        "service_state": {
-          "type": "string",
-          "enum": [
-            "not_started",
-            "started"
-          ]
-        },
-        "contractual_entitlement": {
-          "type": "string",
-          "enum": [
-            "established",
-            "not_set"
-          ]
-        },
-        "events": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AccountingTaxPointEvent"
-          },
-          "minItems": 0,
-          "maxItems": 10000
+        {
+          "$ref": "#/$defs/AccountingOwnerReceiptTaxPoint"
         }
-      },
-      "required": [
-        "target_business_id",
-        "transaction_mode",
-        "service_state",
-        "contractual_entitlement",
-        "events"
       ]
     },
     "AccountingOpeningBank": {
@@ -23812,7 +23726,9 @@
                 "receipt",
                 "service_start",
                 "completion",
-                "explicit"
+                "explicit",
+                "owner_receipt_default",
+                "owner_recognition_default"
               ]
             },
             "event_ids": {
@@ -23822,6 +23738,15 @@
               },
               "minItems": 0,
               "uniqueItems": true
+            },
+            "receipt_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "core.schema.json#/$defs/Id"
+              },
+              "minItems": 1,
+              "uniqueItems": true,
+              "description": "程序实际采用的已关联收款业务身份，不是伪造的合同或开票事件。"
             }
           },
           "required": [
@@ -23836,7 +23761,11 @@
               "if": {
                 "properties": {
                   "trigger": {
-                    "const": "explicit"
+                    "enum": [
+                      "explicit",
+                      "owner_receipt_default",
+                      "owner_recognition_default"
+                    ]
                   }
                 },
                 "required": [
@@ -23855,6 +23784,30 @@
                   "event_ids": {
                     "minItems": 1
                   }
+                }
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "trigger"
+                ],
+                "properties": {
+                  "trigger": {
+                    "const": "owner_receipt_default"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "receipt_ids"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "receipt_ids"
+                  ]
                 }
               }
             }
@@ -23895,6 +23848,13 @@
             "$ref": "#/$defs/TaxPointSegment"
           },
           "minItems": 0
+        },
+        "basis": {
+          "description": "本次业务选用的老板口径；继承的已税范围保留各段trigger和原来源，不表示全部范围都按本次口径重新计税。不是已核实的合同条款或普遍法定结论。",
+          "enum": [
+            "owner_receipt_default",
+            "owner_recognition_default"
+          ]
         }
       },
       "required": [
@@ -25581,6 +25541,223 @@
         "source",
         "period",
         "values"
+      ]
+    },
+    "EventTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "transaction_mode": {
+          "type": "string",
+          "enum": [
+            "ordinary_service",
+            "phased_prepaid_service"
+          ]
+        },
+        "service_state": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "started"
+          ]
+        },
+        "contractual_entitlement": {
+          "type": "string",
+          "enum": [
+            "established",
+            "not_set"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxPointEvent"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "target_business_id",
+        "transaction_mode",
+        "service_state",
+        "contractual_entitlement",
+        "events"
+      ]
+    },
+    "OwnerReceiptTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "实际收款月安排：程序按目标业务关联的真实收款月份和分配额接续，不代表已核实合同或法定税点结论。保留已采用业务的含义，不是当前通用默认；新业务仅在老板明确采用这种安排时选用。source可省，不补造确认。",
+      "properties": {
+        "type": {
+          "const": "owner_receipt_default"
+        },
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceLocation"
+        }
+      },
+      "required": [
+        "type",
+        "target_business_id"
+      ]
+    },
+    "PartialEventTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "transaction_mode": {
+          "type": "string",
+          "enum": [
+            "ordinary_service",
+            "phased_prepaid_service"
+          ]
+        },
+        "service_state": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "started"
+          ]
+        },
+        "contractual_entitlement": {
+          "type": "string",
+          "enum": [
+            "established",
+            "not_set"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PartialTaxPointEvent"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      }
+    },
+    "PartialOwnerReceiptTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "实际收款月安排：程序按目标业务关联的真实收款月份和分配额接续，不代表已核实合同或法定税点结论。保留已采用业务的含义，不是当前通用默认；新业务仅在老板明确采用这种安排时选用。source可省，不补造确认。",
+      "properties": {
+        "type": {
+          "const": "owner_receipt_default"
+        },
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "source": {
+          "$ref": "#/$defs/PartialSourceLocation"
+        }
+      }
+    },
+    "AccountingEventTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "transaction_mode": {
+          "type": "string",
+          "enum": [
+            "ordinary_service",
+            "phased_prepaid_service"
+          ]
+        },
+        "service_state": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "started"
+          ]
+        },
+        "contractual_entitlement": {
+          "type": "string",
+          "enum": [
+            "established",
+            "not_set"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccountingTaxPointEvent"
+          },
+          "minItems": 0,
+          "maxItems": 10000
+        }
+      },
+      "required": [
+        "target_business_id",
+        "transaction_mode",
+        "service_state",
+        "contractual_entitlement",
+        "events"
+      ]
+    },
+    "AccountingOwnerReceiptTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "实际收款月安排：程序按目标业务关联的真实收款月份和分配额接续，不代表已核实合同或法定税点结论。保留已采用业务的含义，不是当前通用默认；新业务仅在老板明确采用这种安排时选用。source可省，不补造确认。",
+      "properties": {
+        "type": {
+          "const": "owner_receipt_default"
+        },
+        "target_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        }
+      },
+      "required": [
+        "type",
+        "target_business_id"
+      ]
+    },
+    "OwnerRecognitionTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "按老板设定的默认口径处理：增值税归收入计提确认的业务月份，不随操作、申报或到账月份改变；客户预收尚未确认收入时不计税，履约确认收入时采用该月。不是已核实合同条款或普遍法定结论，不另造来源、税月或税日。",
+      "properties": {
+        "type": {
+          "const": "owner_recognition_default"
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "PartialOwnerRecognitionTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "按老板设定的默认口径处理：增值税归收入计提确认的业务月份，不随操作、申报或到账月份改变；客户预收尚未确认收入时不计税，履约确认收入时采用该月。不是已核实合同条款或普遍法定结论，不另造来源、税月或税日。",
+      "properties": {
+        "type": {
+          "const": "owner_recognition_default"
+        }
+      }
+    },
+    "AccountingOwnerRecognitionTaxPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "按老板设定的默认口径处理：增值税归收入计提确认的业务月份，不随操作、申报或到账月份改变；客户预收尚未确认收入时不计税，履约确认收入时采用该月。不是已核实合同条款或普遍法定结论，不另造来源、税月或税日。",
+      "properties": {
+        "type": {
+          "const": "owner_recognition_default"
+        }
+      },
+      "required": [
+        "type"
       ]
     }
   }

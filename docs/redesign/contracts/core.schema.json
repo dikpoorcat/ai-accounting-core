@@ -5931,7 +5931,7 @@
     "ServiceRevenueWorkDefaults": {
       "type": "object",
       "additionalProperties": false,
-      "description": "常规服务按业务月确认收入和应收，计划次月到账并核销已有应收。税期按已核实的长期条款及真实事件确定，优惠默认不主动放弃；不生成实际收款、合同付款日、免税资格或税期，已明确的其他安排优先。",
+      "description": "常规服务在业务月确认收入和应收，计划次月到账并核销；增值税默认归收入计提确认月，如实记录老板设定口径，明确其他安排及长期规则优先。不虚构合同、收款或免税资格，优惠不主动放弃。",
       "properties": {
         "recognition_period": {
           "const": "business_month"
@@ -5943,7 +5943,8 @@
           "const": "settle_existing_receivable"
         },
         "vat_period_basis": {
-          "const": "verified_settlement_terms"
+          "const": "income_recognition_month",
+          "description": "按老板设定的默认口径归收入确认的业务月份，不是操作、到账或申报办理月；明确其他安排优先，不逐笔追问合同付款日。"
         },
         "vat_preference": {
           "const": "retain_applicable_reliefs"

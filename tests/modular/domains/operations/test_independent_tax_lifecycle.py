@@ -236,6 +236,7 @@ def test_fully_refunded_future_advance_does_not_require_an_irrelevant_tax_rate(s
     app, company, ids = system
     original = sale(ids, policy(ids), "2026-03", advance=True)
     del original["data"]["vat"]
+    del original["data"]["tax_status"]
     refunded = fact(
         ids,
         "operations.advance_refund",

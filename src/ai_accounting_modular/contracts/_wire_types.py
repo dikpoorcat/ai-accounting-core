@@ -651,7 +651,7 @@ class ServiceRevenueWorkDefaults(TypedDict):
     recognition_period: Literal['business_month']
     planned_receipt_period: Literal['following_month']
     receipt_action: Literal['settle_existing_receivable']
-    vat_period_basis: Literal['verified_settlement_terms']
+    vat_period_basis: Literal['income_recognition_month']
     vat_preference: Literal['retain_applicable_reliefs']
 
 type NoteFormat = Literal['plain_text', 'markdown']
@@ -795,7 +795,7 @@ class DerivedTaxPoint(TypedDict):
     type: Literal['derived']
     tax_point_id: Id
 
-type BusinessTaxPoint = ExplicitTaxPoint | DerivedTaxPoint
+type BusinessTaxPoint = ExplicitTaxPoint | DerivedTaxPoint | OwnerRecognitionTaxPoint
 
 class OperationsServiceSale(TypedDict):
     customer_id: Id
@@ -825,7 +825,7 @@ class CustomerAdvance(TypedDict):
     side: Literal['customer']
     counterparty_id: Id
     amount_fen: PositiveFen
-    tax_status: Literal['not_due', 'due']
+    tax_status: NotRequired[Literal['not_due', 'due']]
     vat: NotRequired[VatTreatment]
     tax_point: NotRequired[BusinessTaxPoint]
 
@@ -1354,12 +1354,7 @@ class TaxPointEvent(TypedDict):
     receipt_source: NotRequired[BusinessRef]
     receipt_stage: NotRequired[Literal['before_transaction', 'during_or_after_transaction']]
 
-class TaxesTaxPoint(TypedDict):
-    target_business_id: Id
-    transaction_mode: Literal['ordinary_service', 'phased_prepaid_service']
-    service_state: Literal['not_started', 'started']
-    contractual_entitlement: Literal['established', 'not_set']
-    events: list[TaxPointEvent]
+type TaxesTaxPoint = EventTaxPoint | OwnerReceiptTaxPoint
 
 class OpeningBank(TypedDict):
     type: Literal['bank']
@@ -1885,7 +1880,7 @@ class PartialDerivedTaxPoint(TypedDict):
     type: NotRequired[Literal['derived']]
     tax_point_id: NotRequired[Id]
 
-type PartialBusinessTaxPoint = PartialExplicitTaxPoint | PartialDerivedTaxPoint
+type PartialBusinessTaxPoint = PartialExplicitTaxPoint | PartialDerivedTaxPoint | PartialOwnerRecognitionTaxPoint
 
 class PartialOperationsServiceSale(TypedDict):
     customer_id: NotRequired[Id]
@@ -2444,12 +2439,7 @@ class PartialTaxPointEvent(TypedDict):
     receipt_source: NotRequired[PartialBusinessRef]
     receipt_stage: NotRequired[Literal['before_transaction', 'during_or_after_transaction']]
 
-class PartialTaxesTaxPoint(TypedDict):
-    target_business_id: NotRequired[Id]
-    transaction_mode: NotRequired[Literal['ordinary_service', 'phased_prepaid_service']]
-    service_state: NotRequired[Literal['not_started', 'started']]
-    contractual_entitlement: NotRequired[Literal['established', 'not_set']]
-    events: NotRequired[list[PartialTaxPointEvent]]
+type PartialTaxesTaxPoint = PartialEventTaxPoint | PartialOwnerReceiptTaxPoint
 
 class PartialOpeningBank(TypedDict):
     type: NotRequired[Literal['bank']]
@@ -3429,7 +3419,7 @@ class AccountingDerivedTaxPoint(TypedDict):
     type: Literal['derived']
     tax_point_id: Id
 
-type AccountingBusinessTaxPoint = AccountingExplicitTaxPoint | AccountingDerivedTaxPoint
+type AccountingBusinessTaxPoint = AccountingExplicitTaxPoint | AccountingDerivedTaxPoint | AccountingOwnerRecognitionTaxPoint
 
 class AccountingOperationsServiceSale(TypedDict):
     customer_id: Id
@@ -3964,12 +3954,7 @@ class AccountingTaxPointEvent(TypedDict):
     receipt_source: NotRequired[BusinessRef]
     receipt_stage: NotRequired[Literal['before_transaction', 'during_or_after_transaction']]
 
-class AccountingTaxesTaxPoint(TypedDict):
-    target_business_id: Id
-    transaction_mode: Literal['ordinary_service', 'phased_prepaid_service']
-    service_state: Literal['not_started', 'started']
-    contractual_entitlement: Literal['established', 'not_set']
-    events: list[AccountingTaxPointEvent]
+type AccountingTaxesTaxPoint = AccountingEventTaxPoint | AccountingOwnerReceiptTaxPoint
 
 class AccountingOpeningBank(TypedDict):
     type: Literal['bank']
@@ -5128,6 +5113,7 @@ type TaxPointSegment = TaxPointSegmentVariant1 | TaxPointSegmentVariant2
 class TaxPointResolution(TypedDict):
     target_business_id: Id
     segments: list[TaxPointSegment]
+    basis: NotRequired[Literal['owner_receipt_default', 'owner_recognition_default']]
 
 type KnownReportContribution = KnownReportContributionVariant1 | KnownReportContributionVariant2 | KnownReportContributionVariant3 | KnownReportContributionVariant4 | KnownReportContributionVariant5 | KnownReportContributionVariant6 | KnownReportContributionVariant7 | KnownReportContributionVariant8
 
@@ -5336,6 +5322,50 @@ class AdoptedRemunerationQuantity(TypedDict):
     values: TargetPeopleRemunerationValues
     expense_area: NotRequired[Literal['administration', 'sales', 'service']]
     project_id: NotRequired[Id]
+
+class EventTaxPoint(TypedDict):
+    target_business_id: Id
+    transaction_mode: Literal['ordinary_service', 'phased_prepaid_service']
+    service_state: Literal['not_started', 'started']
+    contractual_entitlement: Literal['established', 'not_set']
+    events: list[TaxPointEvent]
+
+class OwnerReceiptTaxPoint(TypedDict):
+    type: Literal['owner_receipt_default']
+    target_business_id: Id
+    source: NotRequired[SourceLocation]
+
+class PartialEventTaxPoint(TypedDict):
+    target_business_id: NotRequired[Id]
+    transaction_mode: NotRequired[Literal['ordinary_service', 'phased_prepaid_service']]
+    service_state: NotRequired[Literal['not_started', 'started']]
+    contractual_entitlement: NotRequired[Literal['established', 'not_set']]
+    events: NotRequired[list[PartialTaxPointEvent]]
+
+class PartialOwnerReceiptTaxPoint(TypedDict):
+    type: NotRequired[Literal['owner_receipt_default']]
+    target_business_id: NotRequired[Id]
+    source: NotRequired[PartialSourceLocation]
+
+class AccountingEventTaxPoint(TypedDict):
+    target_business_id: Id
+    transaction_mode: Literal['ordinary_service', 'phased_prepaid_service']
+    service_state: Literal['not_started', 'started']
+    contractual_entitlement: Literal['established', 'not_set']
+    events: list[AccountingTaxPointEvent]
+
+class AccountingOwnerReceiptTaxPoint(TypedDict):
+    type: Literal['owner_receipt_default']
+    target_business_id: Id
+
+class OwnerRecognitionTaxPoint(TypedDict):
+    type: Literal['owner_recognition_default']
+
+class PartialOwnerRecognitionTaxPoint(TypedDict):
+    type: NotRequired[Literal['owner_recognition_default']]
+
+class AccountingOwnerRecognitionTaxPoint(TypedDict):
+    type: Literal['owner_recognition_default']
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
@@ -10536,8 +10566,9 @@ class TaxPointSegmentVariant1(TypedDict):
     ranges: list[AmountRange]
     tax_period: Month
     tax_on: NotRequired[Date]
-    trigger: Literal['contractual_entitlement', 'invoice', 'receipt', 'service_start', 'completion', 'explicit']
+    trigger: Literal['contractual_entitlement', 'invoice', 'receipt', 'service_start', 'completion', 'explicit', 'owner_receipt_default', 'owner_recognition_default']
     event_ids: list[Id]
+    receipt_ids: NotRequired[list[Id]]
 
 class TaxPointSegmentVariant2(TypedDict):
     state: Literal['not_due']
@@ -12195,6 +12226,15 @@ __all__ = [
     'TargetPeopleRemunerationTax',
     'BasisPeopleRemunerationTax',
     'AdoptedRemunerationQuantity',
+    'EventTaxPoint',
+    'OwnerReceiptTaxPoint',
+    'PartialEventTaxPoint',
+    'PartialOwnerReceiptTaxPoint',
+    'AccountingEventTaxPoint',
+    'AccountingOwnerReceiptTaxPoint',
+    'OwnerRecognitionTaxPoint',
+    'PartialOwnerRecognitionTaxPoint',
+    'AccountingOwnerRecognitionTaxPoint',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

@@ -1,4 +1,4 @@
-"""Work defaults guide the AI without changing facts, tax periods or owner notes."""
+"""Context exposes work defaults without rewriting business facts or owner notes."""
 
 from ._working_case import case as case
 from .test_notes_context import note
@@ -17,7 +17,7 @@ def test_context_exposes_work_defaults_without_creating_any_business(case):
             "recognition_period": "business_month",
             "planned_receipt_period": "following_month",
             "receipt_action": "settle_existing_receivable",
-            "vat_period_basis": "verified_settlement_terms",
+            "vat_period_basis": "income_recognition_month",
             "vat_preference": "retain_applicable_reliefs",
         },
     }

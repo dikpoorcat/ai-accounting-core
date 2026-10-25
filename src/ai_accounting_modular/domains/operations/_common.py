@@ -128,13 +128,6 @@ def base_plan(fact, context, values, *, adopt_effective_on=False):
     accounting_input = deepcopy(fact["data"])
     if "vat" in accounting_input:
         accounting_input["vat"] = resolve_vat_choices(accounting_input["vat"])
-    if (
-        kind == "operations.advance"
-        and accounting_input["side"] == "customer"
-        and accounting_input["tax_status"] == "not_due"
-        and "tax_point" not in accounting_input
-    ):
-        accounting_input.pop("vat", None)
     tax_point = accounting_input.get("tax_point", {})
     tax_source = tax_point.pop("source", None)
     source_ids = list(fact["evidence_ids"])
