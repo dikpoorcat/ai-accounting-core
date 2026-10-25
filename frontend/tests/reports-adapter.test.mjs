@@ -173,12 +173,13 @@ async function reportView(stubs) {
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const formatFen = String;
   `;
-  const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, invalidateRequests, report, needsRegeneration, exportNotice, visibleStatementRows, activeStatementKey, statementValue, taxTemplateMode, activeTemplateMeta, balanceTemplateRows, templateStatementValue, templateSectionLabel };", {
+  const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, invalidateRequests, report, needsRegeneration, exportNotice, expandedStatementRows, activeStatementKey, taxTemplateMode, activeTemplateMeta, balanceTemplateRows, templateStatementValue, templateSectionLabel };", {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   const view = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
   view.report.value = {
     period: { year: 2026, quarter: 3 },
+    read_context: { company_id: "company-a", read_version: "same-preview" },
     export: { available: true, preview_digest: "same-preview", file_name: "report.xlsx", epochs: {} },
   };
   return view;
@@ -190,15 +191,37 @@ function exportEnvironment() {
   return { DashboardApiError: client.DashboardApiError, LocalApiError: local.LocalApiError, dashboardErrorMessage: client.dashboardErrorMessage };
 }
 
-test("the default report view retains unknown amounts while hiding proved zero rows", async () => {
+test("ordinary statement expansion follows the report scope while local display changes preserve it", async () => {
   const view = await reportView(exportEnvironment());
-  const unknown = { line: 39, name: "其他应付款", values: { ending_fen: null, beginning_fen: "0" }, has_amount: false, is_total: false };
-  const zero = { line: 38, name: "应付利润", values: { ending_fen: "0", beginning_fen: "0" }, has_amount: false, is_total: false };
-  const total = { line: 47, name: "负债合计", values: { ending_fen: null, beginning_fen: "0" }, has_amount: false, is_total: true };
-  view.report.value.statements = [{ key: "balance_sheet", rows: [zero, unknown, total] }];
+  const firstReport = structuredClone(Vue.toRaw(view.report.value));
+  const expanded = { balance_sheet: [15, 9], profit_statement: [3] };
+  view.expandedStatementRows.value = structuredClone(expanded);
   view.activeStatementKey.value = "balance_sheet";
-  assert.deepEqual(view.visibleStatementRows.value.map((row) => row.line), [39, 47]);
-  assert.equal(view.statementValue(view.visibleStatementRows.value[0].values.ending_fen), "—");
+  view.activeStatementKey.value = "profit_statement";
+  view.taxTemplateMode.value = true;
+  view.taxTemplateMode.value = false;
+  assert.deepEqual(view.expandedStatementRows.value, expanded);
+  view.invalidateRequests(true);
+  view.report.value = structuredClone(firstReport);
+  assert.deepEqual(view.expandedStatementRows.value, expanded, "a same-snapshot refresh keeps reading choices");
+  view.report.value = null;
+  view.report.value = structuredClone(firstReport);
+  assert.deepEqual(view.expandedStatementRows.value, expanded, "temporary preparation does not change the report scope");
+  for (const update of [
+    report => { report.read_context.read_version = "updated-preview"; },
+    report => { report.period.quarter = 4; },
+    report => { report.read_context.company_id = "company-b"; },
+  ]) {
+    view.expandedStatementRows.value = structuredClone(expanded);
+    const nextReport = structuredClone(firstReport);
+    update(nextReport);
+    view.report.value = nextReport;
+    assert.deepEqual(view.expandedStatementRows.value, {});
+    view.report.value = structuredClone(firstReport);
+  }
+  view.expandedStatementRows.value = structuredClone(expanded);
+  view.invalidateRequests();
+  assert.deepEqual(view.expandedStatementRows.value, {}, "selection invalidation clears expansion immediately");
 });
 
 test("a terminal failure creates a new task on explicit regeneration", async () => {
@@ -331,9 +354,7 @@ test("tax template mode restores full rows, form identities and exact yuan amoun
   const rows = Array.from({ length: 53 }, (_, index) => ({ line: index + 1, name: `项目${index + 1}`, values: { ending_fen: "0", beginning_fen: "0" }, has_amount: false, is_total: false }));
   view.report.value.statements = [{ key: "balance_sheet", columns, rows }];
   view.activeStatementKey.value = "balance_sheet";
-  assert.equal(view.visibleStatementRows.value.length, 0);
   view.taxTemplateMode.value = true;
-  assert.equal(view.visibleStatementRows.value.length, 53);
   assert.equal(view.activeTemplateMeta.value.formCode, "会小企01表");
   assert.deepEqual(view.balanceTemplateRows.value.flatMap(pair => [pair.left, pair.right]).filter(cell => cell.kind === "row").map(cell => cell.row.line).sort((a, b) => a - b), rows.map(row => row.line));
   assert.equal(view.templateStatementValue("900719925474099301"), "9,007,199,254,740,993.01");
@@ -346,5 +367,4 @@ test("tax template mode restores full rows, form identities and exact yuan amoun
   }
   assert.equal(view.templateSectionLabel("cash_flow_statement", 14), "三、筹资活动产生的现金流量：");
   view.taxTemplateMode.value = false;
-  assert.equal(view.visibleStatementRows.value.length, 0);
 });

@@ -2953,10 +2953,16 @@ async function run(config) {
             verify: async function () {
               assert.equal(await page.locator(`#report-statement-button-${index}`).getAttribute("aria-selected"), "true");
               assert.equal(await page.locator(".template-switch input").isChecked(), template);
-              const expectedRows = this.statement.rows.filter(row => template || row.has_amount || row.is_total || Object.values(row.values).includes(null));
+              const mainLines = {
+                balance_sheet: [15, 29, 30, 41, 46, 47, 52, 53],
+                profit_statement: [1, 2, 3, 11, 14, 18, 20, 21, 22, 24, 30, 31, 32],
+                cash_flow_statement: [7, 13, 19, 20, 21, 22],
+              }[this.statement.key];
+              const expectedRows = template || !mainLines ? this.statement.rows
+                : mainLines.map(line => this.statement.rows.find(row => row.line === line)).filter(Boolean);
               const expected = expectedRows.map(row => this.statement.columns.map(column => {
                 const value = row.values[column.key];
-                if (value === null) return "—";
+                if (value === null) return template ? "—" : "暂无法确定";
                 const formatted = formatFen(value);
                 return template ? formatted.replace("¥", "").replace("−", "-") : formatted;
               }));
@@ -2967,8 +2973,8 @@ async function run(config) {
                 assert.equal(actual.length, expectedRows.length, "report: template omitted or duplicated lines");
                 assert.deepEqual(actual.toSorted((a, b) => a.line - b.line), expectedRows.map((row, offset) => ({ line: row.line, values: expected[offset] })).toSorted((a, b) => a.line - b.line), "report: full visible template amounts differ");
               } else {
-                const actual = await page.locator("#report-full .table-wrap > table tbody tr").evaluateAll(nodes => nodes
-                  .map(node => Array.from(node.querySelectorAll("td.number")).map(cell => cell.textContent.trim())));
+                const actual = await page.locator("#report-full .statement-table-wrap > table tbody tr").evaluateAll(nodes => nodes
+                  .map(node => Array.from(node.querySelectorAll("td.statement-number")).map(cell => cell.textContent.trim())));
                 assert.deepEqual(actual, expected, "report: complete visible statement amounts differ");
               }
             },

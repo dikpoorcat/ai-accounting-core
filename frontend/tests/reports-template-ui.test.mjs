@@ -25,7 +25,7 @@ test("report templates and quarterly summary preserve their formal statement val
   Object.assign(globalThis.reportTemplateUi.organization, { name: "合成报表测试公司", taxpayer_identification_number: "合成识别号" });
   globalThis.reportTemplateUi.statements = ["balance_sheet", "profit_statement", "cash_flow_statement"].map(key => ({
     key, label: key, columns: [{ key: "current_fen", label: "本期金额" }, { key: "previous_fen", label: "上期金额" }],
-    rows: Array.from({ length: key === "balance_sheet" ? 53 : 32 }, (_, index) => ({
+    rows: Array.from({ length: key === "balance_sheet" ? 53 : key === "profit_statement" ? 32 : 22 }, (_, index) => ({
       line: index + 1, name: `合成项目${index + 1}`, has_amount: false, is_total: false,
       values: { current_fen: index === 0 ? "900719925474099301" : "0", previous_fen: index === 0 ? null : "0" },
     })),
@@ -61,15 +61,16 @@ test("report templates and quarterly summary preserve their formal statement val
       assert.match(html, /纳税人识别号/);
       assert.match(html, /9,007,199,254,740,993\.01/);
       assert.match(html, /mobile-template-table/);
-      assert.match(html, /合成项目32/);
-      if (key === "balance_sheet") assert.match(html, /合成项目53/);
+      assert.match(html, new RegExp(`合成项目${key === "balance_sheet" ? 53 : key === "profit_statement" ? 32 : 22}`));
     }
     templateMode = false;
     server.moduleGraph.invalidateAll();
     const html = await render();
     assert.doesNotMatch(html, /class="tax-template-sheet/);
     assert.match(html, /税务局模板格式/);
-    assert.doesNotMatch(html, /合成项目32/);
+    assert.match(html, /class="statement-table-wrap/);
+    assert.match(html, /data-line="7"/);
+    assert.doesNotMatch(html, /data-line="1"/);
     for (const source of ["provisional", "mixed", "actual", "unestablished"]) {
       globalThis.reportTemplateUi.income_tax_source = source;
       const withTaxSource = await render();

@@ -15,6 +15,7 @@ import {
 } from "../api/reports";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
+import ReportStatementTable from "../components/ReportStatementTable.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen } from "../utils/money";
@@ -85,6 +86,8 @@ const exportNoticeKind = ref<"success" | "attention" | "error">("success");
 const statementsExpanded = ref(false);
 const taxTemplateMode = ref(false);
 const activeStatementKey = ref("");
+const expandedStatementRows = ref<Record<string, number[]>>({});
+let statementRowsScope = "";
 let mounted = false;
 let previewController: AbortController | null = null;
 let exportController: AbortController | null = null;
@@ -96,7 +99,11 @@ function invalidateRequests(keepContent = false) {
   requestGeneration += 1;
   previewController?.abort(); exportController?.abort();
   previewController = null; exportController = null;
-  if (!keepContent) report.value = null;
+  if (!keepContent) {
+    report.value = null;
+    expandedStatementRows.value = {};
+    statementRowsScope = "";
+  }
   loading.value = keepContent; preparing.value = false; exporting.value = false;
   exportNotice.value = ""; errorMessage.value = "";
 }
@@ -183,13 +190,6 @@ const summaryCards = computed<SummaryCard[]>(() => {
 const activeStatement = computed<ReportStatement | null>(() => {
   if (!report.value) return null;
   return report.value.statements.find((item) => item.key === activeStatementKey.value) ?? null;
-});
-const visibleStatementRows = computed(() => {
-  if (!activeStatement.value) return [];
-  return activeStatement.value.rows.filter(
-    (row) => taxTemplateMode.value || row.has_amount || row.is_total
-      || Object.values(row.values).some((value) => value === null),
-  );
 });
 const activeTemplateMeta = computed<StatementTemplateMeta | null>(() => {
   if (!activeStatement.value) return null;
@@ -479,10 +479,6 @@ async function exportReport() {
   }
 }
 
-function statementValue(value: string | null | undefined) {
-  return value === null || value === undefined ? "—" : formatFen(value);
-}
-
 function templateStatementValue(value: string | null | undefined) {
   if (value === null || value === undefined) return "—";
   const amount = BigInt(value);
@@ -562,6 +558,19 @@ onMounted(() => {
   void synchronizeQuarter();
 });
 
+watch(
+  report,
+  (current) => {
+    if (!current) return;
+    const scope = JSON.stringify([
+      current.read_context.company_id, current.period.year, current.period.quarter,
+      current.read_context.read_version,
+    ]);
+    if (scope !== statementRowsScope) expandedStatementRows.value = {};
+    statementRowsScope = scope;
+  },
+  { flush: "sync" },
+);
 watch(
   () => [route.query.company_id, route.query.period, route.query.quarter],
   (value, previous) => {
@@ -705,9 +714,12 @@ onBeforeUnmount(() => {
                 <strong>{{ statement.label }}</strong>
                 <small>{{ activeStatement?.key === statement.key ? "收起报表" : "查看完整报表" }}</small>
               </span>
-              <span class="statement-arrow" aria-hidden="true">
-                {{ activeStatement?.key === statement.key ? "↑" : "↓" }}
-              </span>
+              <svg
+                class="business-list-arrow"
+                :class="{ expanded: activeStatement?.key === statement.key && statementsExpanded }"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              ><path d="m6 4 4 4-4 4" /></svg>
             </button>
           </div>
 
@@ -849,26 +861,12 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div v-else class="table-wrap" data-section-focus tabindex="-1">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>项目</th>
-                      <th v-for="column in activeStatement.columns" :key="column.key" class="number">
-                        {{ column.label }}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="row in visibleStatementRows" :key="row.line" :class="{ total: row.is_total }">
-                      <td>{{ row.name }}</td>
-                      <td v-for="column in activeStatement.columns" :key="column.key" class="number" :data-label="column.label">
-                        {{ statementValue(row.values[column.key]) }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              <ReportStatementTable
+                v-else
+                :statement="activeStatement"
+                :expanded-rows="expandedStatementRows[activeStatement.key] ?? []"
+                @update:expanded-rows="expandedStatementRows[activeStatement.key] = $event"
+              />
             </template>
 
           </div>
@@ -963,16 +961,11 @@ onBeforeUnmount(() => {
 .statement-button-copy { display: grid; gap: 4px; min-width: 0; }
 .statement-button-copy strong { font-size: 16px; }
 .statement-button-copy small { color: var(--muted); font-size: 11px; }
-.statement-arrow { color: var(--muted); font-size: 18px; }
-.statement-buttons button.active .statement-arrow { color: var(--accent); }
+.statement-buttons .business-list-arrow { grid-column: 3; grid-row: 1; }
 .report-full { min-width: 0; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 10px; }
-.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding-inline: var(--dashboard-list-gutter); border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
 table { width: 100%; min-width: 0; border-collapse: collapse; background: var(--surface); font-size: 12px; }
 th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }
-.table-wrap th:first-child, .table-wrap td:first-child { padding-left: 4px; }
-.table-wrap th:last-child, .table-wrap td:last-child { padding-right: 4px; }
-.table-wrap tbody tr:last-child > td { border-bottom: 0; }
 th { position: sticky; top: 0; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
 th:first-child { width: 54%; }
 .number { text-align: right; font-variant-numeric: tabular-nums; }
@@ -983,14 +976,10 @@ tr.total td { background: var(--surface-soft); font-weight: 750; }
 
 @media (max-width: 760px) {
   .summary-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-  .table-wrap { overflow: hidden; }
   table, tbody, tr, td { display: block; width: auto; min-width: 0; }
   thead { display: none; }
   tr { padding: 12px; border-bottom: 1px solid var(--line); }
   td { border: 0; padding: 5px 0; overflow-wrap: anywhere; }
-  .table-wrap tr { padding: 12px 4px; }
-  .table-wrap tr:last-child { border-bottom: 0; }
-  .table-wrap td:first-child, .table-wrap td:last-child { padding-inline: 0; }
   td:first-child { font-weight: 750; }
   td[data-label] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
   td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; }
