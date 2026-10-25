@@ -29,7 +29,7 @@ from ._relations import direct_relations, fact_relations, reference_edge, refere
 from ._relationships import deposit, overpayment, pass_through, pass_through_return, reimbursement
 from ._repository import OperationsRepository
 from ._returns import expense_recovery, sale_return
-from ._roles import object_roles, role_issues
+from ._roles import check_roles, object_roles
 from ._sales import advance, service_sale
 from ._tax_description import dependencies as tax_dependencies
 from ._tax_description import slots as tax_slots
@@ -98,7 +98,7 @@ class Operations:
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         context = DescriptionContext(context, changes)
-        responsibilities, dependencies, issues, published = [], [], [], []
+        responsibilities, dependencies, published = [], [], []
         for change in changes:
             business_id, op = (
                 change.get("business_id", change.get("fact", {}).get("business_id")),
@@ -133,7 +133,7 @@ class Operations:
             if fact["kind"] == "operations.overpayment":
                 dependencies.append(balance_dependency(fact))
             roles = object_roles(fact)
-            issues.extend(role_issues(fact, context, roles))
+            check_roles(fact, context, roles)
             dependencies.extend(direct_relations(fact, context))
             if fact["kind"] == "operations.other_income":
                 account_id = fact["data"]["funds_account_id"]
@@ -192,7 +192,7 @@ class Operations:
             "businesses": responsibilities,
             "dependencies": dependencies,
             "publications": published,
-            "issues": issues,
+            "issues": [],
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)
         return result
@@ -207,14 +207,7 @@ class Operations:
         calculator = _CALCULATORS.get(fact["kind"])
         if calculator is None:
             raise ContractError("unsupported_business", f"经营模块尚未实现：{fact['kind']}")
-        issues = role_issues(fact, context, object_roles(fact))
-        if issues:
-            invalid_kind = any(item["code"] == "incompatible_object_kind" for item in issues)
-            raise ContractError(
-                "invalid_input" if invalid_kind else "needs_information",
-                "经营业务引用的对象不符合其业务角色。",
-                fact_issues=issues,
-            )
+        check_roles(fact, context, object_roles(fact))
         if result_slot == "main":
             plan = calculator(fact, context)
         elif result_slot in tax_slots(fact, context) and result_slot.startswith("tax:"):

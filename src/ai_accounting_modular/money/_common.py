@@ -61,7 +61,7 @@ def issue(fact, field, message, code="missing_fact", precision=()):
         "meaning": "决定实际资金或清偿含义的业务事实",
         "message": message,
         "allowed_precision": list(precision),
-        "reusable_sources": [{"source_id": x} for x in fact["evidence_ids"]],
+        "reusable_sources": [{"source_id": x} for x in fact["evidence_ids"][:500]],
         "blocking_scope": "business",
     }
 
@@ -70,13 +70,15 @@ def require_object(fact, context, object_id, kinds, field):
     obj = context.get_object(object_id)
     if obj is None or obj["kind"] not in kinds:
         raise ContractError(
-            "needs_information" if obj is None else "invalid_input",
+            "invalid_input",
             "资金业务引用的对象缺失或种类不符。",
             fact_issues=[
                 issue(
                     fact,
                     field,
-                    "请提供实际对象身份。" if obj is None else "对象种类与此业务角色不符。",
+                    "引用的对象不存在；先查询已登记对象并使用有效引用。"
+                    if obj is None
+                    else "对象种类与此业务角色不符。",
                     "object_not_found" if obj is None else "incompatible_object_kind",
                     ("identity",),
                 )

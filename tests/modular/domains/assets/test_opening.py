@@ -91,6 +91,19 @@ class OpeningContext(Context):
         return self.results[key]
 
 
+def test_supplied_opening_asset_identity_must_be_registered():
+    item = asset_opening()
+    context = OpeningContext(item)
+    context.objects.pop(FIXED)
+    with pytest.raises(ContractError) as caught:
+        create_opening(asset_accounting=create_assets()).evaluate_slot(
+            item["business_id"], "main", context
+        )
+    assert caught.value.code == "invalid_input"
+    assert caught.value.fact_issues[0]["code"] == "reference_not_found"
+    assert caught.value.fact_issues[0]["field"] == "/data/members/0/data/asset_id"
+
+
 def results(app, company, item):
     return {
         result["reference"]["result_slot"]: result

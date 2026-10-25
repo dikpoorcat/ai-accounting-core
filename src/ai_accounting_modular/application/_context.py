@@ -507,8 +507,8 @@ class SubmissionContext:
                     issue["business_id"] = business_id
                 issues.append(issue)
             raise ContractError(
-                "needs_information",
-                "所引用来源尚未在本公司登记。",
+                "invalid_input",
+                "所填来源身份尚未在本公司登记；先查已有来源或登记实际资料，再使用有效引用。",
                 fact_issues=issues,
             )
         return [deepcopy(mapped[source_id]) for source_id in ids]

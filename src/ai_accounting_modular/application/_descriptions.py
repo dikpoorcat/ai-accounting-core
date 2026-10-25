@@ -66,9 +66,11 @@ def describe(grouped, context):
             description["publications"], description["businesses"]
         )
         if description["issues"]:
+            # Owners raise typed input, dependency and capability errors where
+            # their cause is known. Only unprovided accounting facts belong here.
             raise ContractError(
                 "needs_information",
-                "本单业务尚有会影响核算的资料缺项。",
+                "本单所需核算事实尚未提供，请先核查已有资料。",
                 fact_issues=description["issues"],
             )
         descriptions.append((owner, description))

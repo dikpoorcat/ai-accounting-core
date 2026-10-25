@@ -144,7 +144,7 @@ def test_missing_payment_arrangement_source_rolls_back_whole_command(assembled):
     wage["data"]["disbursement_basis"] = current_payable(str(uuid4()))
     saved = app.accounting_apply(request(company_id, no_contributions(), wage))
     assert saved["completion"] == "not_saved", saved
-    assert saved["error"] == "needs_information", saved
+    assert saved["error"] == "invalid_input", saved
     with app.storage.read_unit(company_id) as read:
         assert app.identity.get_batch([PERSON], read) == ()
         assert app.ledger.get_results([wage["business_id"], EMPLOYMENT], read) == ()

@@ -210,7 +210,12 @@ def test_wrong_continuation_is_rejected_atomically_before_any_current_data(assem
         data["income_tax_carry"]["source"]["source_id"] = uid("unregistered")
     response = app.accounting_apply(request(company, initial, current))
     assert response.get("completion") == "not_saved", response
-    assert response["error"] in {"dependency_conflict", "needs_information"}, response
+    if mutation == "missing_carry_source":
+        assert response["error"] == "invalid_input", response
+        assert response["fact_issues"][0]["code"] == "source_not_found"
+        assert response["fact_issues"][0]["field"].endswith("/income_tax_carry/source/source_id")
+    else:
+        assert response["error"] in {"dependency_conflict", "needs_information"}, response
     assert response.get("fact_issues"), response
     with app.storage.read_unit(company) as read:
         assert read.head == 0

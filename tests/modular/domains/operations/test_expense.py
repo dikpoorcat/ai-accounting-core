@@ -314,18 +314,21 @@ def test_actual_date_not_invented_and_query_is_company_scoped(store):
         assert "effective_on" not in create_operations().export_current([BUSINESS], unit)[0]
 
 
-def test_describe_declares_missing_object_without_calculating():
+def test_unregistered_object_is_an_input_reference_error_without_calculating():
     current = fact()
     current["data"]["creditor_id"] = str(uuid4())
     context = Context(None, current)
-    description = create_operations().describe_change(
-        [{"business_id": BUSINESS, "expected_seq": 0, "op": "create", "fact": current}], context
-    )
-    validate_contract("business-facts.schema.json", "ChangeDescription", description)
-    assert description["issues"][0]["field"] == "/data/creditor_id"
+    with pytest.raises(ContractError) as failure:
+        create_operations().describe_change(
+            [{"business_id": BUSINESS, "expected_seq": 0, "op": "create", "fact": current}],
+            context,
+        )
+    assert failure.value.code == "invalid_input"
+    assert failure.value.fact_issues[0]["field"] == "/data/creditor_id"
+    assert failure.value.fact_issues[0]["code"] == "reference_not_found"
     with pytest.raises(ContractError) as failure:
         create_operations().evaluate_slot(BUSINESS, "main", context)
-    assert failure.value.code == "needs_information"
+    assert failure.value.code == "invalid_input"
 
 
 def test_facts_do_not_commit_independently(store):
@@ -761,10 +764,12 @@ def test_shared_role_checks_cover_all_non_tax_operating_paths(store, kind, data,
     current = other_fact(kind, data)
     with store.read_unit(COMPANY) as unit:
         context = Context(unit, current)
-        description = create_operations().describe_change(
-            [{"op": "create", "expected_seq": 0, "fact": current}], context
-        )
-        assert description["issues"][0]["field"] == field
+        with pytest.raises(ContractError) as rejected:
+            create_operations().describe_change(
+                [{"op": "create", "expected_seq": 0, "fact": current}], context
+            )
+        assert rejected.value.code == "invalid_input"
+        assert rejected.value.fact_issues[0]["field"] == field
         with pytest.raises(ContractError) as rejected:
             create_operations().evaluate_slot(current["business_id"], "main", context)
         assert rejected.value.code == "invalid_input"
@@ -833,7 +838,9 @@ def test_future_tax_point_missing_policy_cannot_leave_partial_fact_or_voucher(st
     current = sale_fact("2026-02")
     with pytest.raises(ContractError) as rejected:
         apply(store, current)
-    assert rejected.value.code == "needs_information"
+    assert rejected.value.code == "invalid_input"
+    assert rejected.value.fact_issues[0]["code"] == "reference_not_found"
+    assert rejected.value.fact_issues[0]["field"] == "/data/vat/policy_id"
     with store.read_unit(COMPANY) as unit:
         assert create_operations().export_current([current["business_id"]], unit) == ()
         assert create_ledger().get_results([current["business_id"]], unit) == ()

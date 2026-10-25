@@ -106,7 +106,7 @@ def test_funding_cannot_precede_contract_effectiveness_and_correct_month_restore
     funded = funding(agreement)
     actual = app.accounting_apply(submitted(company, agreement, funded))
     assert actual["completion"] == "not_saved", actual
-    assert actual["error"] == "needs_information", actual
+    assert actual["error"] == "dependency_conflict", actual
     assert any(
         issue["business_id"] == funded["business_id"]
         and issue["field"] == "/data/contract_id"
@@ -139,7 +139,7 @@ def test_actual_agency_cannot_clear_a_source_from_a_later_accounting_month(tmp_p
     paid = agency_payment(agreement, charged)
     actual = app.accounting_apply(submitted(company, agreement, funding(agreement), charged, paid))
     assert actual["completion"] == "not_saved", actual
-    assert actual["error"] == "needs_information", actual
+    assert actual["error"] == "dependency_conflict", actual
     assert any(
         issue["business_id"] == paid["business_id"]
         and issue["field"] == "/data/source"

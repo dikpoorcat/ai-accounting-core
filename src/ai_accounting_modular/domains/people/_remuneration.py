@@ -2,9 +2,14 @@
 
 from copy import deepcopy
 
-from ai_accounting_modular.contracts.public import format_fen, parse_fen, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    format_fen,
+    parse_fen,
+    validate_contract,
+)
 
-from ._common import line, missing, payable, plan_for, reject, total, use_location
+from ._common import line, missing, payable, plan_for, problem, reject, total, use_location
 from ._contributions import ContributionAmounts, wage_contributions
 
 _WAGE_ACCOUNTS = {"administration": "560201", "sales": "560101", "service": "540101"}
@@ -16,18 +21,59 @@ def read_declaration_allocation(
 ):
     declaration = context.get_fact(reference["declaration_id"])
     if declaration is None:
-        missing(fact, field, "所引用的实际个税申报资料尚不存在。")
+        message = "所填个税申报身份不在当前事实中，须查已有资料并修正引用。"
+        raise ContractError(
+            "invalid_input",
+            message,
+            fact_issues=[
+                problem(
+                    fact,
+                    field + "/declaration_id",
+                    message,
+                    code="reference_not_found",
+                    meaning="所填实际个税申报身份",
+                )
+            ],
+        )
     validate_contract("business-facts.schema.json", "Fact", declaration)
     data = declaration["data"]
     if declaration["kind"] != "taxes.actual_declaration" or data["type"] != "payroll":
-        reject("报酬只能引用实际薪酬个税申报行。")
+        message = "报酬只能引用实际薪酬个税申报行。"
+        raise ContractError(
+            "invalid_input",
+            message,
+            fact_issues=[
+                problem(
+                    fact,
+                    field + "/declaration_id",
+                    message,
+                    code="incompatible_business_kind",
+                    meaning="所填实际个税申报身份",
+                )
+            ],
+        )
     rows = data["rows"]
     if len({row["row_id"] for row in rows}) != len(rows):
         reject("实际申报资料的行身份重复。")
-    selected = [row for row in rows if row["row_id"] == reference["row_id"]]
+    selected = [
+        (index, row) for index, row in enumerate(rows) if row["row_id"] == reference["row_id"]
+    ]
     if not selected:
-        missing(fact, field, "引用的实际个税申报行尚不存在。")
-    row = selected[0]
+        message = "所填行身份不在已引用个税申报中，须核对正确的人员行引用。"
+        raise ContractError(
+            "invalid_input",
+            message,
+            fact_issues=[
+                problem(
+                    fact,
+                    field + "/row_id",
+                    message,
+                    code="reference_not_found",
+                    meaning="所填实际个税申报行身份",
+                )
+            ],
+        )
+    row_index, row = selected[0]
     if (
         row["person_id"] != person_id
         or row["income_category"] != remuneration_type
@@ -44,7 +90,11 @@ def read_declaration_allocation(
         reject("实际申报行分配合计必须等于该行税额。")
     own = next((item for item in allocations if item["remuneration_id"] == remuneration_id), None)
     if own is None:
-        missing(fact, field, "申报行没有分配给当前报酬的明确税额。")
+        missing(
+            declaration,
+            f"/data/rows/{row_index}/allocations",
+            "申报行没有分配给当前报酬的明确税额。",
+        )
     return parse_fen(own["tax_fen"]), (data["source"], row["source"])
 
 

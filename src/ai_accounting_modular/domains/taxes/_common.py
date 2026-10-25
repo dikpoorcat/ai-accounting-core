@@ -15,16 +15,25 @@ from ai_accounting_modular.contracts.public import (
 )
 
 
-def reject(message, code="dependency_conflict"):
-    raise ContractError(code, message)
+def reject(message, code="dependency_conflict", *, fact_issues=()):
+    raise ContractError(code, message, fact_issues=fact_issues)
 
 
-def issue(fact, field, message, *, code="missing_fact", precision=(), blocking_scope="business"):
+def issue(
+    fact,
+    field,
+    message,
+    *,
+    code="missing_fact",
+    precision=(),
+    meaning="税务采用依据",
+    blocking_scope="business",
+):
     return {
         "business_id": fact["business_id"],
         "code": code,
         "field": field,
-        "meaning": "税务采用依据",
+        "meaning": meaning,
         "message": message,
         "allowed_precision": list(precision),
         "reusable_sources": [{"source_id": x} for x in fact["evidence_ids"][:500]],
@@ -159,7 +168,19 @@ def adopt_source(plan, source):
 def result_for(fact, context, business_id, kind, field):
     result = context.get_result(business_id, "main")
     if result is None:
-        missing(fact, field, "需要所引用的已采用税务或业务结果。")
+        message = "所引用业务尚无当前可用的正式结果；先核对业务身份及其上游办理结果。"
+        reject(
+            message,
+            fact_issues=[
+                issue(
+                    fact,
+                    field,
+                    message,
+                    code="result_not_ready",
+                    meaning="引用业务的正式结果",
+                )
+            ],
+        )
     if result.target["kind"] != kind:
         reject("所引用的正式结果不属于所需业务类型。", "invalid_input")
     return result
@@ -202,7 +223,20 @@ def obligation(
 def fact_for(fact, context, business_id, kind, field):
     source = context.get_fact(business_id)
     if source is None:
-        missing(fact, field, "需要所引用的有据税务资料。")
+        message = "所填业务身份不在本公司当前事实中；先查已有业务或登记实际资料，再使用有效引用。"
+        reject(
+            message,
+            "invalid_input",
+            fact_issues=[
+                issue(
+                    fact,
+                    field,
+                    message,
+                    code="reference_not_found",
+                    meaning="所填税务或业务身份",
+                )
+            ],
+        )
     if source["kind"] != kind:
         reject("税务资料引用的业务类型不正确。", "invalid_input")
     return source

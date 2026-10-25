@@ -6,7 +6,7 @@ import pytest
 from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, ResourceDefinition
 from ai_accounting_modular.money.public import create_money, stable_occurrence_id
 
-from .conftest import Context, objects
+from .conftest import Context, objects, payment
 
 
 class ReconciliationContext(Context):
@@ -121,6 +121,32 @@ def validate(context, check):
     money.validate_candidate(change, context)
     assert change == before
     return plan
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("missing", "business_not_found"),
+        ("wrong_kind", "incompatible_business_kind"),
+        ("wrong_period", "incompatible_period"),
+    ],
+)
+def test_invalid_statement_reference_is_not_missing_reality(ids, case, expected):
+    statement, check = pair(ids)
+    if case == "missing":
+        facts = [check]
+    else:
+        if case == "wrong_kind":
+            statement = payment(ids)
+            check["data"]["statement_id"] = statement["business_id"]
+        else:
+            statement["period"] = "2026-02"
+        facts = [statement, check]
+    with pytest.raises(ContractError) as caught:
+        create_money().evaluate_slot(check["business_id"], "main", Context(facts))
+    assert caught.value.code == "invalid_input"
+    assert caught.value.fact_issues[0]["code"] == expected
+    assert caught.value.fact_issues[0]["field"] == "/data/statement_id"
 
 
 @pytest.mark.parametrize("row_values,fund_values", [((300,), (100, 200)), ((100, 200), (300,))])

@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import parse_fen
 
-from ._common import ACCOUNTS, balance, fail, missing, obligation
+from ._common import ACCOUNTS, balance, fail, issue, obligation
 
 OBLIGATIONS = {
     "customer_receivable": ("receivable", "1122", "trade", "customer_receipts"),
@@ -89,7 +89,26 @@ def loan(plan, member, context):
     data = member["data"]
     source = context.get_result(data["contract_id"], "main")
     if source is None:
-        missing(plan_basis_fact(plan), "/data/members", "期初贷款缺少可采用的真实合同条款。")
+        fact = plan_basis_fact(plan)
+        index = next(
+            i
+            for i, row in enumerate(plan["basis"]["input"]["members"])
+            if row["member_id"] == member["member_id"]
+        )
+        registered = context.get_fact(data["contract_id"]) is not None
+        message = "先核查期初贷款引用及其合同正式结果；引用未就绪不代表现实合同资料不存在。"
+        fail(
+            message,
+            "dependency_conflict" if registered else "invalid_input",
+            fact_issues=[
+                issue(
+                    fact,
+                    f"/data/members/{index}/data/contract_id",
+                    message,
+                    code="result_not_ready" if registered else "reference_not_found",
+                )
+            ],
+        )
     if source.target["kind"] != "financing.loan_contract":
         fail("期初贷款合同引用必须指向机构贷款合同。")
     terms = source.target["values"]

@@ -24,3 +24,15 @@ def test_later_declaration_still_cannot_relabel_wages_as_bonus():
     actual["data"]["rows"][0]["income_category"] = "bonus"
     with pytest.raises(ContractError, match="类别"):
         create_taxes().evaluate_slot(actual["business_id"], "main", Context(original, actual))
+
+
+def test_payroll_declaration_person_reference_is_not_a_missing_owner_fact():
+    original = wage(initial="10000")
+    actual, _ = declaration(original, "2000")
+    context = Context(original, actual)
+    context.objects.pop(actual["data"]["rows"][0]["person_id"])
+    with pytest.raises(ContractError) as caught:
+        create_taxes().evaluate_slot(actual["business_id"], "main", context)
+    assert caught.value.code == "invalid_input"
+    assert caught.value.fact_issues[0]["code"] == "reference_not_found"
+    assert caught.value.fact_issues[0]["field"] == "/data/rows/0/person_id"

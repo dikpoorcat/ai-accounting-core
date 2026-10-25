@@ -15,8 +15,8 @@ from ._common import (
     checked,
     consume,
     cost_definition,
+    issue,
     line,
-    missing,
     month_number,
     obligation,
     reject,
@@ -81,7 +81,14 @@ def _vat(fact, context, plan):
     data = fact["data"]
     policy = context.get_fact(data["used_asset_vat_policy_id"])
     if policy is None:
-        missing(fact, "/data/used_asset_vat_policy_id", "需要资产处置采用的旧资产VAT规则。")
+        message = "所填旧资产VAT政策编号不存在；先核对已有政策，再使用有效引用。"
+        reject(
+            message,
+            "invalid_input",
+            fact_issues=[
+                issue(fact, "/data/used_asset_vat_policy_id", message, code="reference_not_found")
+            ],
+        )
     if policy["kind"] != "taxes.used_asset_vat_policy":
         reject("资产处置须引用旧资产VAT政策。", "invalid_input")
     params, day = policy["data"], fact["effective_on"]

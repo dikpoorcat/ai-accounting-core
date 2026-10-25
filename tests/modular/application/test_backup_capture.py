@@ -60,9 +60,7 @@ def test_capture_of_an_empty_company_has_complete_standard_materials_without_a_b
         manifest = loads_json((root / "standard/current.json").read_bytes())
         assert {item["key"] for item in manifest["shards"]} == {
             "objects",
-            "sources",
             "work",
-            "notes",
         }
         with open_database_unit(
             root / "runtime/company.sqlite3",

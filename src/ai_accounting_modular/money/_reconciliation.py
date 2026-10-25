@@ -12,13 +12,20 @@ def previous_period(period):
 
 def statement_for(fact, context):
     statement = context.get_fact(fact["data"]["statement_id"])
-    if (
-        statement is None
-        or statement["kind"] != "money.bank_statement"
-        or statement["period"] != fact["period"]
-    ):
-        fail("银行核对必须引用本月有效的银行原始清单。")
-    return statement
+    if statement is None:
+        code = "business_not_found"
+        message = "引用的银行清单不存在；先查询已登记业务并使用有效引用。"
+    elif statement["kind"] != "money.bank_statement":
+        code, message = "incompatible_business_kind", "引用的业务不是银行原始清单。"
+    elif statement["period"] != fact["period"]:
+        code, message = "incompatible_period", "银行核对必须引用同月的银行原始清单。"
+    else:
+        return statement
+    raise ContractError(
+        "invalid_input",
+        message,
+        fact_issues=[issue(fact, "/data/statement_id", message, code, ("identity",))],
+    )
 
 
 def reconcile_plan(fact, context):

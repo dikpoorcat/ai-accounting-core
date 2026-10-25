@@ -14,6 +14,7 @@ from jsonschema import Draft202012Validator
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from ai_accounting_modular.agent.public import INSTRUCTIONS
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.host.runtime import _state
 from ai_accounting_modular.host.runtime._client import Client
@@ -129,11 +130,10 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
         params = StdioServerParameters(command=sys.executable, args=command[1:] + ["mcp"])
         async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
             initialized = await session.initialize()
-            assert "月度办事清单" in initialized.instructions
-            assert "等待资料或没有推进时也展示进度" in initialized.instructions
-            assert "✅ / 🔄 / ⬜ / ⏰ / ➖" in initialized.instructions
-            assert "当前步骤用 🔄，即使等待资料也保留" in initialized.instructions
-            assert "清单图标和下一步共用该结论" in initialized.instructions
+            assert initialized.instructions == INSTRUCTIONS
+            assert "accounting://guides/work" in initialized.instructions
+            assert "accounting_review" in initialized.instructions
+            assert all(icon in initialized.instructions for icon in ("✅", "🔄", "⬜", "⏰", "➖"))
             resource = await session.read_resource("accounting://contracts")
             catalog = json.loads(resource.contents[0].text)
             assert catalog["instructions"] == initialized.instructions

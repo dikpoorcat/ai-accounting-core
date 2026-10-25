@@ -72,10 +72,16 @@ def resolution(fact, context, point, capacity):
     else:
         source = context.get_result(point["tax_point_id"], "main")
         if source is None:
+            problem = issue(
+                fact,
+                "/data/tax_point/tax_point_id",
+                "所引用的详细税点业务尚无正式推导结果，请检查上游核算。",
+            )
+            problem["code"] = "result_not_ready"
             raise ContractError(
-                "needs_information",
+                "dependency_conflict",
                 "详细税点需要对应的正式推导结果。",
-                fact_issues=[issue(fact, "/data/tax_point/tax_point_id", "详细税点结果尚未取得。")],
+                fact_issues=[problem],
             )
         if source.target["kind"] != "taxes.tax_point":
             reject("详细税点必须引用税点推导业务。", "invalid_input")
@@ -118,22 +124,19 @@ def measure_resolution(
             continue
         if segment["state"] == "due":
             if segment["tax_period"] < fact["period"]:
+                problem = issue(
+                    fact,
+                    "/data/tax_point",
+                    "已明确的税点早于本次业务所属月，本入口不能替代此前税源的接续。"
+                    "请先核查已登记的客户预收及其履约，或接账税源；"
+                    "只有确有该业务时才沿对应入口接续，不能自动创建预收或改动已知月份。",
+                    precision=("source",),
+                )
+                problem["code"] = "tax_source_required"
                 raise ContractError(
-                    "needs_information",
-                    "更早税点需要对应当时已成立的预收或接账税源。",
-                    fact_issues=[
-                        issue(
-                            fact,
-                            "/period",
-                            "实际收款早于本次收入月份，应沿真实客户预收及其履约接续税源；不能改动收款月或收入月。"
-                            if resolved.get("basis") == "owner_receipt_default"
-                            else (
-                                "请核对合同收款权真实成立月份，或提供已有预收税务接续依据；"
-                                "不能用录入月替代。"
-                            ),
-                            precision=("month", "source"),
-                        )
-                    ],
+                    "dependency_conflict",
+                    "更早税点缺少对应的正式税源接续。",
+                    fact_issues=[problem],
                 )
             selected = {"type": "explicit", "tax_period": segment["tax_period"]}
             if "tax_on" in segment:

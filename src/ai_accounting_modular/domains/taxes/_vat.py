@@ -25,6 +25,22 @@ from ._filing import filing
 from ._policies import adopt_policy
 
 
+def _unsupported_calculation(fact, message):
+    reject(
+        message,
+        "unsupported_business",
+        fact_issues=[
+            issue(
+                fact,
+                "/",
+                message,
+                code="unsupported_calculation",
+                meaning="本期VAT参考算法的适用范围",
+            )
+        ],
+    )
+
+
 def _period(fact, policy):
     start, end = fact["data"]["start_month"], fact["data"]["end_month"]
     interval(start, end, same_year=True)
@@ -50,10 +66,10 @@ def calculate(fact, sales, policy, surtax):
         total(amount(row["vat_fen"]) for row in sales),
     )
     if min(net, accrued) < 0:
-        missing(
+        _unsupported_calculation(
             fact,
-            "/data/credit_ids",
-            "净退回需要明确实际退抵处置；本次税费计算暂未确定，不影响真实退回。",
+            "当前参考算法未覆盖净退回税源；已有完整实际税务处置可沿实际路线采用，"
+            "尚无结果时只暂停本项税费定稿，不影响真实退回记账。",
         )
     threshold = amount(policy["threshold_fen"])
     below = (
@@ -63,7 +79,7 @@ def calculate(fact, sales, policy, surtax):
     relief = total(amount(row["vat_fen"]) for row in exempt)
     exempt_net = total(amount(row["net_sales_fen"]) for row in exempt)
     if min(relief, exempt_net) < 0 or relief > accrued:
-        missing(fact, "/data/credit_ids", "退回与免税分类不能按当前规则正确归集，需要实际来源。")
+        _unsupported_calculation(fact, "当前参考算法未覆盖这组退回与免税分类，不能按现规则归集。")
     groups = defaultdict(int)
     used_tax = 0
     standard, special, ordinary = 0, 0, 0
@@ -81,8 +97,8 @@ def calculate(fact, sales, policy, surtax):
         elif row["invoice_kind"] == "ordinary":
             ordinary = total((ordinary, amount(row["net_sales_fen"])))
     if used_tax < 0 or any(value < 0 for value in groups.values()):
-        missing(
-            fact, "/data/credit_ids", "不同计税类别或税率的净退回需要明确实际处理，不能互相套率。"
+        _unsupported_calculation(
+            fact, "当前参考算法未覆盖不同类别或税率的净退回，不能互相套率。"
         )
     nominal_groups, reduction_groups = defaultdict(int), defaultdict(int)
     for (nominal, payable), value in groups.items():
@@ -99,7 +115,9 @@ def calculate(fact, sales, policy, surtax):
     )
     payable = total((nominal_tax, -reduction, used_tax))
     if payable < 0:
-        missing(fact, "/data/credit_ids", "本期净应纳不能按已支持规则确定，需要实际处置。")
+        _unsupported_calculation(
+            fact, "当前参考算法不能确定本期负的净应纳，不将其推断为实际退税权利。"
+        )
     urban = multiply(payable, surtax["urban_rate"], surtax["payable_fraction"])
     education = multiply(payable, surtax["education_rate"], surtax["payable_fraction"])
     local = multiply(payable, surtax["local_education_rate"], surtax["payable_fraction"])
@@ -380,13 +398,18 @@ def vat(fact, context):
     plan["target"]["values"] = metrics
     filing(fact, metrics, sales, policy, fields, source["data"] if source else None)
     if reference_error is not None:
-        metrics["filing_issues"].append(
+        problems = reference_error.fact_issues or (
             issue(
                 fact,
-                "/data/calculation_reference",
-                "实际税额已采用；计算参考尚缺明确退抵或适用条件。",
+                "/",
+                reference_error.message,
+                code=reference_error.code,
+                meaning="实际税额已采用，参考算法的独立核查问题",
                 blocking_scope="none",
-            )
+            ),
+        )
+        metrics["filing_issues"].extend(
+            {**problem, "blocking_scope": "none"} for problem in problems
         )
     if (
         source is not None

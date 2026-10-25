@@ -23,6 +23,7 @@ SCHEMAS = (
     "business-facts.schema.json",
     "reporting.schema.json",
     "review-materials.schema.json",
+    "accounting-review.schema.json",
     "dashboard-response-v2.json",
 )
 BASE = "https://ai-accounting.local/design/"

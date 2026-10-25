@@ -673,6 +673,10 @@ class MonthCancelResult(TypedDict):
     documents: Literal['ready', 'pending']
     file_cleanup: MonthCancelResultFileCleanup
 
+type ReviewRequest = AccountingReviewReviewRequest
+
+type ReviewResult = AccountingReviewReviewResult
+
 type NoteFormat = Literal['plain_text', 'markdown']
 
 class CompanyNoteQuery(TypedDict):
@@ -5640,6 +5644,123 @@ class SourceFileReceipt(TypedDict):
     file_name: str
     content_type: Literal['application/octet-stream']
     disposition: Literal['attachment']
+
+class ReviewObligationCriteria(TypedDict):
+    direction: Literal['receivable', 'payable']
+    status: Literal['unsettled', 'settled', 'all']
+    categories: NotRequired[list[str]]
+    party_ids: NotRequired[list[Id]]
+    period_from: NotRequired[Month]
+    period_to: NotRequired[Month]
+
+class ReviewMovementCriteria(TypedDict):
+    account_id: Id
+    period_from: Month
+    period_to: Month
+
+class ReviewRowCriteria(TypedDict):
+    account_id: Id
+    period_from: Month
+    period_to: Month
+    kind: NotRequired[Literal['bank', 'platform']]
+
+type ReviewSubject = ReviewSubjectVariant1 | ReviewSubjectVariant2 | ReviewSubjectVariant3 | ReviewSubjectVariant4
+
+class ReviewRelatedScope(TypedDict):
+    obligations: NotRequired[ReviewRelatedScopeObligationsVariant1 | ReviewRelatedScopeObligationsVariant2]
+    movements: NotRequired[ReviewMovementCriteria]
+
+type AccountingReviewReviewRequest = AccountingReviewReviewRequestVariant1 | AccountingReviewReviewRequestVariant2 | AccountingReviewReviewRequestVariant3 | AccountingReviewReviewRequestVariant4
+
+type ReviewScope = ReviewScopeVariant1 | ReviewScopeVariant2 | ReviewScopeVariant3 | ReviewScopeVariant4
+
+class ReviewAmounts(TypedDict):
+    amount_fen: Fen
+    money_settled_fen: Fen
+    agency_settled_fen: Fen
+    offset_settled_fen: Fen
+    transferred_out_fen: Fen
+    excess_reclassified_fen: Fen
+    consumed_fen: Fen
+    remaining_fen: Fen
+
+class ReviewObligationItem(TypedDict):
+    relationship: Literal['direct', 'candidate']
+    reference: BusinessRef
+    source: ResultSourceRef
+    obligation: Obligation
+    amounts: ReviewAmounts
+    origin: ResultRef
+
+class ReviewFund(TypedDict):
+    reference: BusinessRef
+    source: ResultSourceRef
+    movement: FundMovement
+    origin: ResultRef
+
+class ReviewSettlementItem(TypedDict):
+    relationship: Literal['direct', 'candidate']
+    use: ReviewSettlementItemUseVariant1 | ReviewSettlementItemUseVariant2
+    movement: ReviewFund | None
+    origin: ResultRef
+
+class ReviewAllocation(TypedDict):
+    source: BusinessRef
+    amount_fen: Fen
+    party_id: Id | None
+
+class ReviewMovementItem(TypedDict):
+    relationship: Literal['direct', 'candidate']
+    reference: BusinessRef
+    source: ResultSourceRef
+    movement: FundMovement
+    allocations: list[ReviewAllocation]
+    origin: ResultRef
+
+class ReviewRowItem(TypedDict):
+    relationship: Literal['direct', 'candidate']
+    business_id: Id
+    adopted: ResultRef
+    row_id: Id
+    account_id: Id
+    kind: Literal['bank', 'platform']
+    actual_on: Date
+    direction: Literal['inflow', 'outflow']
+    amount_fen: Fen
+    reference: str | None
+    counterparty_text: str | None
+    memo: str | None
+    source_location: SourceLocator | None
+    match_group_id: Id | None
+
+class ReviewLinkItem(TypedDict):
+    statement_business_id: Id
+    row_id: Id
+    relation: Literal['reconciliation', 'platform_consumption']
+    movement_ids: list[Id]
+    linked_business_ids: list[Id]
+    reconciliation: ResultRef | None
+    group_id: Id | None
+
+class ReviewPage(TypedDict):
+    total_count: int
+    filtered_count: int
+    returned_count: int
+    has_more: bool
+    next_cursor: str | None
+
+class ReviewObject(TypedDict):
+    object_id: Id
+    kind: str
+    name: str
+
+class ReviewSource(TypedDict):
+    source_id: Id
+    kind: Literal['file', 'owner_statement']
+    name: str
+    locations: list[str]
+
+type AccountingReviewReviewResult = AccountingReviewReviewResultVariant1 | AccountingReviewReviewResultVariant2 | AccountingReviewReviewResultVariant3 | AccountingReviewReviewResultVariant4 | AccountingReviewReviewResultVariant5
 
 class TaxFilingData__CalculationTarget(TypedDict):
     calculation_id: str
@@ -11309,6 +11430,160 @@ class ReviewMaterialsSelectionVariant3(TypedDict):
     generation: int
     posting_period: Month
 
+class ReviewSubjectVariant1(TypedDict):
+    type: Literal['business']
+    business_id: Id
+
+class ReviewSubjectVariant2(TypedDict):
+    type: Literal['obligation']
+    business_id: Id
+    slot: Slot
+
+class ReviewSubjectVariant3(TypedDict):
+    type: Literal['movement']
+    movement_id: Id
+
+class ReviewSubjectVariant4(TypedDict):
+    type: Literal['statement_row']
+    statement_business_id: Id
+    row_id: Id
+
+class ReviewRelatedScopeObligationsVariant1(TypedDict):
+    references: list[BusinessRef]
+
+class ReviewRelatedScopeObligationsVariant2(TypedDict):
+    criteria: ReviewObligationCriteria
+
+class AccountingReviewReviewRequestVariant1(TypedDict):
+    company_id: Id
+    cutoff_period: Month
+    limit: NotRequired[int]
+    cursor: NotRequired[str]
+    expected_version: NotRequired[Digest]
+    action: Literal['find']
+    collection: Literal['obligations']
+    criteria: ReviewObligationCriteria
+
+class AccountingReviewReviewRequestVariant2(TypedDict):
+    company_id: Id
+    cutoff_period: Month
+    limit: NotRequired[int]
+    cursor: NotRequired[str]
+    expected_version: NotRequired[Digest]
+    action: Literal['find']
+    collection: Literal['movements']
+    criteria: ReviewMovementCriteria
+
+class AccountingReviewReviewRequestVariant3(TypedDict):
+    company_id: Id
+    cutoff_period: Month
+    limit: NotRequired[int]
+    cursor: NotRequired[str]
+    expected_version: NotRequired[Digest]
+    action: Literal['find']
+    collection: Literal['statement_rows']
+    criteria: ReviewRowCriteria
+
+class AccountingReviewReviewRequestVariant4(TypedDict):
+    company_id: Id
+    cutoff_period: Month
+    limit: NotRequired[int]
+    cursor: NotRequired[str]
+    expected_version: NotRequired[Digest]
+    action: Literal['inspect']
+    subject: ReviewSubject
+    related_scope: NotRequired[ReviewRelatedScope]
+    collection: Literal['obligations', 'settlements', 'movements', 'statement_rows', 'links']
+
+class ReviewScopeVariant1(TypedDict):
+    action: Literal['find']
+    cutoff_period: Month
+    collection: Literal['obligations']
+    criteria: ReviewObligationCriteria
+
+class ReviewScopeVariant2(TypedDict):
+    action: Literal['find']
+    cutoff_period: Month
+    collection: Literal['movements']
+    criteria: ReviewMovementCriteria
+
+class ReviewScopeVariant3(TypedDict):
+    action: Literal['find']
+    cutoff_period: Month
+    collection: Literal['statement_rows']
+    criteria: ReviewRowCriteria
+
+class ReviewScopeVariant4(TypedDict):
+    action: Literal['inspect']
+    cutoff_period: Month
+    subject: ReviewSubject
+    related_scope: ReviewRelatedScope
+
+class ReviewSettlementItemUseVariant1(TypedDict):
+    kind: Literal['settlement']
+    source: ResultSourceRef
+    value: Settlement
+
+class ReviewSettlementItemUseVariant2(TypedDict):
+    kind: Literal['reclassification']
+    source: ResultSourceRef
+    value: ObligationReclassification
+
+class AccountingReviewReviewResultVariant1(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: ReviewScope
+    basis_version: Digest
+    page: ReviewPage
+    objects: list[ReviewObject]
+    sources: list[ReviewSource]
+    collection: Literal['obligations']
+    items: list[ReviewObligationItem]
+
+class AccountingReviewReviewResultVariant2(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: ReviewScope
+    basis_version: Digest
+    page: ReviewPage
+    objects: list[ReviewObject]
+    sources: list[ReviewSource]
+    collection: Literal['settlements']
+    items: list[ReviewSettlementItem]
+
+class AccountingReviewReviewResultVariant3(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: ReviewScope
+    basis_version: Digest
+    page: ReviewPage
+    objects: list[ReviewObject]
+    sources: list[ReviewSource]
+    collection: Literal['movements']
+    items: list[ReviewMovementItem]
+
+class AccountingReviewReviewResultVariant4(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: ReviewScope
+    basis_version: Digest
+    page: ReviewPage
+    objects: list[ReviewObject]
+    sources: list[ReviewSource]
+    collection: Literal['statement_rows']
+    items: list[ReviewRowItem]
+
+class AccountingReviewReviewResultVariant5(TypedDict):
+    company_id: Id
+    database_id: Id
+    scope: ReviewScope
+    basis_version: Digest
+    page: ReviewPage
+    objects: list[ReviewObject]
+    sources: list[ReviewSource]
+    collection: Literal['links']
+    items: list[ReviewLinkItem]
+
 class ObjectVariant1Data(TypedDict):
     identity_document: NotRequired[str]
     phone: NotRequired[str]
@@ -11593,6 +11868,8 @@ __all__ = [
     'ServiceRevenueWorkDefaults',
     'MonthCancelRequest',
     'MonthCancelResult',
+    'ReviewRequest',
+    'ReviewResult',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',
@@ -12300,6 +12577,25 @@ __all__ = [
     'SourceContentQuery',
     'SourceTextContent',
     'SourceFileReceipt',
+    'ReviewObligationCriteria',
+    'ReviewMovementCriteria',
+    'ReviewRowCriteria',
+    'ReviewSubject',
+    'ReviewRelatedScope',
+    'AccountingReviewReviewRequest',
+    'ReviewScope',
+    'ReviewAmounts',
+    'ReviewObligationItem',
+    'ReviewFund',
+    'ReviewSettlementItem',
+    'ReviewAllocation',
+    'ReviewMovementItem',
+    'ReviewRowItem',
+    'ReviewLinkItem',
+    'ReviewPage',
+    'ReviewObject',
+    'ReviewSource',
+    'AccountingReviewReviewResult',
     'TaxFilingDataWire',
     'PrepareFactRegistrationWire',
     'PrepareReplayWire',

@@ -354,7 +354,8 @@ def test_asset_account_cannot_be_used_as_supplier_or_card():
         create_assets().evaluate_slot(acquired["business_id"], "main", context)
 
 
-def test_sale_reduced_vat_retains_tax_sales_and_actual_gross_receivable():
+@pytest.mark.parametrize("policy_registered", [True, False])
+def test_sale_reduced_vat_retains_tax_sales_and_actual_gross_receivable(policy_registered):
     acquired, enabled, sold, policy = case("B20"), case("B21"), case("B22"), case("B37")
     sold["data"].update(
         type="sale",
@@ -364,6 +365,13 @@ def test_sale_reduced_vat_retains_tax_sales_and_actual_gross_receivable():
         exemption_eligible=False,
         invoice_kind="ordinary",
     )
+    if not policy_registered:
+        with pytest.raises(ContractError) as caught:
+            evaluate(sold, acquired, enabled)
+        assert caught.value.code == "invalid_input"
+        assert caught.value.fact_issues[0]["code"] == "reference_not_found"
+        assert caught.value.fact_issues[0]["field"] == "/data/used_asset_vat_policy_id"
+        return
     plan = evaluate(sold, acquired, enabled, policy)
     values = plan["target"]["values"]
     assert values["gross_proceeds_fen"] == "10300"

@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from ai_accounting_modular.contracts.public import ContractError
+
 from ._common import issue
 
 _KINDS = {
@@ -61,12 +63,13 @@ def object_roles(fact):
     return roles
 
 
-def role_issues(fact, context, roles):
+def check_roles(fact, context, roles):
     issues = []
     for ref in roles:
         obj = context.get_object(ref.object_id)
         if obj is None:
             problem = issue(fact, ref.field, "引用对象不存在于当前公司。")
+            problem["code"] = "reference_not_found"
         elif obj["kind"] not in _KINDS[ref.role]:
             problem = issue(
                 fact, ref.field, f"该业务角色必须引用{_LABELS[ref.role]}，不能使用账户或其他对象。"
@@ -75,4 +78,7 @@ def role_issues(fact, context, roles):
         else:
             continue
         issues.append(problem)
-    return issues
+    if issues:
+        raise ContractError(
+            "invalid_input", "经营业务所填对象身份不符合其业务角色。", fact_issues=issues
+        )

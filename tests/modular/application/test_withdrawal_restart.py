@@ -253,6 +253,25 @@ def test_withdraw_does_not_break_a_still_active_payment_or_statement_dependency(
         assert case.get(*(fact["business_id"] for fact in original)) == before
 
 
+def test_new_reconciliation_with_unknown_statement_is_still_an_input_error(case):
+    case.seed(expense=False)
+    reconciliation = _fact(
+        "money.reconciliation",
+        case.source_id,
+        {"statement_id": str(uuid4()), "matches": []},
+    )
+    with case.kernel.storage.read_unit(case.company) as read:
+        head = read.head
+    result = case.app.accounting_apply(case.request(reconciliation))
+    assert result["completion"] == "not_saved" and result["error"] == "invalid_input", result
+    (problem,) = result["fact_issues"]
+    assert problem["business_id"] == reconciliation["business_id"]
+    assert problem["field"] == "/data/statement_id" and problem["code"] == "business_not_found"
+    with case.kernel.storage.read_unit(case.company) as read:
+        assert read.head == head
+    assert case.get(reconciliation["business_id"])["businesses"] == []
+
+
 def test_withdraw_does_not_silently_remove_a_later_month_payment(case):
     _, materials, _ = _seed_payroll(case)
     bank = materials[3]

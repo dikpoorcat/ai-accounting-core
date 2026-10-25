@@ -16,6 +16,8 @@ from ai_accounting_modular.contracts.public import (
     JobsRequest,
     ReadContext,
     ReportRequest,
+    ReviewRequest,
+    ReviewResult,
     SourcesCommandResult,
     SourcesRequest,
     TaskReceipt,
@@ -36,6 +38,7 @@ from . import (
     _period,
     _queries,
     _rebuild,
+    _review,
     _schema,
     _source_discards,
     _sources,
@@ -113,6 +116,9 @@ class Application:
 
     def accounting_find(self, request):
         return _queries.find(self, request)
+
+    def accounting_review(self, request: ReviewRequest) -> ReviewResult:
+        return _review.run(self, request)
 
     def find_businesses(self, query, read_context):
         return _queries.find(self, query, read_context)

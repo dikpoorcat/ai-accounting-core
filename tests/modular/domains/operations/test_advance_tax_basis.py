@@ -137,5 +137,6 @@ def test_revenue_month_prepayment_optional_vat_must_still_reference_a_real_polic
     context = Context(None, current)
     with pytest.raises(ContractError) as caught:
         create_operations().evaluate_slot(current["business_id"], "main", context)
-    assert caught.value.code == "needs_information"
+    assert caught.value.code == "invalid_input"
+    assert caught.value.fact_issues[0]["code"] == "reference_not_found"
     assert caught.value.fact_issues[0]["field"] == "/data/vat/policy_id"

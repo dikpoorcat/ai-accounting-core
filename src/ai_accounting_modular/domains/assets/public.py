@@ -7,7 +7,6 @@ from ai_accounting_modular.contracts.public import (
     BusinessQuery,
     ChangeDescription,
     ChangePlan,
-    ContractError,
     DirectRelation,
     EvaluationContext,
     Fact,
@@ -28,7 +27,7 @@ from ._common import assets_in, finalize_plan, reject
 from ._consumption import consumption, slot_for
 from ._description import DescriptionContext, activation_months, direct_dependencies, publications
 from ._description import dependencies as dependency_edges
-from ._facts import CALCULATORS, natural_key, role_issues, validate_fact
+from ._facts import CALCULATORS, check_roles, natural_key, validate_fact
 from ._inputs import AssetInputs, batches, reference_key
 from ._opening import cards as opening_cards
 from ._opening import describe as describe_opening
@@ -111,7 +110,7 @@ class Assets:
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
         context = DescriptionContext(context, changes)
-        businesses, dependencies, issues, published = [], [], [], []
+        businesses, dependencies, published = [], [], []
         for change in changes:
             business_id = change.get("business_id", change.get("fact", {}).get("business_id"))
             responsibility = {
@@ -127,30 +126,27 @@ class Assets:
             fact = change.get("fact") or context.get_fact(business_id)
             if fact is None or fact["business_id"] != business_id:
                 reject("资产变更缺少相同业务身份的完整事实。", "invalid_input")
-            found = role_issues(fact, context)
-            issues.extend(found)
+            check_roles(fact, context)
             if (
-                not found
-                and change["op"] in {"replace", "restore", "recalculate"}
+                change["op"] in {"replace", "restore", "recalculate"}
                 and fact["kind"] in {"assets.activation", "assets.disposal"}
             ):
                 require_existing_origins(fact, context)
             slots = ["main"]
-            if fact["kind"] == "assets.activation" and not found:
+            if fact["kind"] == "assets.activation":
                 slots.extend(slot_for(month) for month in activation_months(fact, context))
             responsibility.update(
                 fact=deepcopy(fact), complete_result_slots=slots, natural_key=natural_key(fact)
             )
             businesses.append(responsibility)
-            if not found:
-                dependencies.extend(dependency_edges(fact, slots, context))
-                published.extend(publications(fact, slots))
+            dependencies.extend(dependency_edges(fact, slots, context))
+            published.extend(publications(fact, slots))
         result = {
             "domain": "assets",
             "businesses": businesses,
             "dependencies": dependencies,
             "publications": published,
-            "issues": issues,
+            "issues": [],
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)
         return result
@@ -164,15 +160,7 @@ class Assets:
         validate_fact(fact)
         context = AssetInputs(context, facts=(fact,))
         context.load_assets(item["asset_id"] for item in assets_in(fact))
-        issues = role_issues(fact, context)
-        if issues:
-            raise ContractError(
-                "invalid_input"
-                if any(x["code"] == "incompatible_object_kind" for x in issues)
-                else "needs_information",
-                "资产引用对象不符合业务角色。",
-                fact_issues=issues,
-            )
+        check_roles(fact, context)
         if result_slot == "main":
             plan = CALCULATORS[fact["kind"]](fact, context)
         elif fact["kind"] == "assets.activation" and result_slot.startswith("depreciation:"):

@@ -218,6 +218,23 @@ def test_fact_only_reference_is_redescribed_when_its_current_source_changes(syst
     assert all(description["dependencies"] == [] for _, description in descriptions)
 
 
+@pytest.mark.parametrize("owner_order", [False, True])
+def test_withdrawal_rejects_an_implicit_consumer_of_a_direct_fact_source(system, owner_order):
+    root, child = fact(1), member(2, 1)
+    seed(system, [root, child], relations=link(child))
+    owners = [Owner("operations.expense", [root]), Owner("operations.deposit", [child])]
+    if owner_order:
+        owners.reverse()
+    with pytest.raises(ContractError) as failed:
+        run(
+            system,
+            owners,
+            [{"op": "withdraw", "expected_seq": 1, "business_id": root["business_id"]}],
+        )
+    assert failed.value.code == "dependency_conflict"
+    assert failed.value.fact_issues[0]["business_id"] == child["business_id"]
+
+
 def test_direct_declaration_cannot_borrow_another_owner_responsibility(system, monkeypatch):
     root, child = fact(1), member(2, 1)
     roots, children = Owner("operations.expense", []), Owner("operations.deposit", [])

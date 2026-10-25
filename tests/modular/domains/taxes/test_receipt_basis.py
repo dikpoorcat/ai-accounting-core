@@ -221,7 +221,9 @@ def test_earlier_receipt_requires_real_advance_handoff_instead_of_an_invented_ta
     context = ReceiptContext(current, target, policy(), paid)
     with pytest.raises(ContractError) as caught:
         create_operations().evaluate_slot(target["business_id"], "main", context)
-    assert caught.value.code == "needs_information"
+    assert caught.value.code == "dependency_conflict"
+    assert caught.value.fact_issues[0]["code"] == "tax_source_required"
+    assert caught.value.fact_issues[0]["field"] == "/data/tax_point"
     assert "客户预收" in caught.value.fact_issues[0]["message"]
     assert "合同" not in caught.value.fact_issues[0]["message"]
 

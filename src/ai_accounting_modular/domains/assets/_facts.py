@@ -42,13 +42,15 @@ def roles(fact):
     return roles
 
 
-def role_issues(fact, context):
+def check_roles(fact, context):
     issues = []
     cards = {item["asset_id"]: item for item in assets_in(fact)}
     for field, object_id, kinds in roles(fact):
         obj = context.get_object(object_id)
         if obj is None:
-            issues.append(issue(fact, field, "引用的资产、项目、人员或交易方尚未在本公司登记。"))
+            problem = issue(fact, field, "引用的资产、项目、人员或交易方尚未在本公司登记。")
+            problem["code"] = "reference_not_found"
+            issues.append(problem)
         elif obj["kind"] not in kinds:
             problem = issue(
                 fact, field, "引用对象不符合本项资产业务角色，账户不能冒充资产或交易方。"
@@ -65,7 +67,10 @@ def role_issues(fact, context):
                 problem = issue(fact, field, "资产事实类型须与稳定资产档案一致。")
                 problem["code"] = "incompatible_object_kind"
                 issues.append(problem)
-    return issues
+    if issues:
+        raise ContractError(
+            "invalid_input", "资产所填对象身份不符合其业务角色。", fact_issues=issues
+        )
 
 
 def validate_fact(fact):

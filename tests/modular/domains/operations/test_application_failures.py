@@ -134,17 +134,17 @@ def vat():
 
 
 @pytest.mark.parametrize(
-    "status,point,with_vat",
+    "status,point,with_vat,error",
     [
-        ("not_due", "2026-01", True),
-        ("not_due", "2026-01", False),
-        ("not_due", "2025-12", False),
-        ("not_due", "2026-02", True),
-        ("not_due", "derived", False),
-        ("not_due", None, True),
-        ("due", "2026-02", True),
-        ("due", "2025-12", True),
-        ("due", "derived", True),
+        ("not_due", "2026-01", True, "invalid_input"),
+        ("not_due", "2026-01", False, "needs_information"),
+        ("not_due", "2025-12", False, "needs_information"),
+        ("not_due", "2026-02", True, "invalid_input"),
+        ("not_due", "derived", False, "dependency_conflict"),
+        ("not_due", None, True, "invalid_input"),
+        ("due", "2026-02", True, "invalid_input"),
+        ("due", "2025-12", True, "dependency_conflict"),
+        ("due", "derived", True, "dependency_conflict"),
     ],
 )
 def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission(
@@ -152,6 +152,7 @@ def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission
     status,
     point,
     with_vat,
+    error,
 ):
     app, company = application
     party, source = obj(), evidence()
@@ -178,7 +179,7 @@ def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission
     command = request(company, values, objects=[party], sources=[source])
     validate_contract("core.schema.json", "ApplyRequest", command)
     result = app.accounting_apply(command)
-    assert result["error"] == "needs_information", result
+    assert result["error"] == error, result
     assert result["completion"] == "not_saved" and result["changes"] == "none"
     assert get(app, company, values)["businesses"] == []
     assert get(app, company, values)["head"] == 0
@@ -187,8 +188,15 @@ def test_advance_checks_every_supplied_tax_point_and_rolls_back_whole_submission
         assert app.records.resolve_sources([source["source_id"]], read) == ()
     if point not in {None, "derived"} and not with_vat:
         assert result["fact_issues"][0]["field"] == "/data/vat"
-    if point is None:
+    if error == "invalid_input":
         assert result["fact_issues"][0]["field"] == "/data/vat/policy_id"
+        assert result["fact_issues"][0]["code"] == "reference_not_found"
+    if point == "derived":
+        assert result["fact_issues"][0]["field"] == "/data/tax_point/tax_point_id"
+        assert result["fact_issues"][0]["code"] == "result_not_ready"
+    if with_vat and point == "2025-12":
+        assert result["fact_issues"][0]["field"] == "/data/tax_point"
+        assert result["fact_issues"][0]["code"] == "tax_source_required"
 
 
 def test_not_due_advance_without_tax_point_does_not_require_invented_policy_or_date(application):

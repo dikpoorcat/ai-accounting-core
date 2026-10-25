@@ -423,7 +423,7 @@ def test_missing_source_identifies_the_actual_business_in_a_mixed_submission(ass
         added.append(mutation)
     request["mutations"].extend(added)
     failed = app.accounting_apply(request)
-    assert failed["completion"] == "not_saved" and failed["error"] == "needs_information"
+    assert failed["completion"] == "not_saved" and failed["error"] == "invalid_input"
     issue = failed["fact_issues"][0]
     assert issue["business_id"] == added[1]["fact"]["business_id"]
     assert issue["field"] == "/mutations/2/fact/evidence_ids/0"
@@ -442,7 +442,7 @@ def test_missing_object_source_identifies_the_actual_object_input(assembled):
     missing = str(uuid4())
     request["objects"][0]["evidence_ids"] = [missing]
     failed = app.accounting_apply(request)
-    assert failed["error"] == "needs_information"
+    assert failed["error"] == "invalid_input"
     issue = failed["fact_issues"][0]
     assert issue["field"] == "/objects/0/evidence_ids/0"
     assert missing in issue["message"] and "business_id" not in issue

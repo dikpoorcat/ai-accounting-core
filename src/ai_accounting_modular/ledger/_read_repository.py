@@ -125,7 +125,7 @@ class ReadRepository:
             )
         ]
 
-    def read_event_scope(self, query, selection):
+    def read_event_scope(self, query, selection, *, relations=False):
         parts, parameters = [], []
         for table, event_id, period, component in (
             ("settlement", "x.settlement_id", "x.period", "x.method"),
@@ -186,6 +186,19 @@ class ReadRepository:
                     "target_digest",
                 )
             )
+            if relations:
+                consumer_slot = (
+                    "x.consumer_public_slot" if table == "settlement" else "r.result_slot"
+                )
+                movement = "x.movement_id" if table == "settlement" else "NULL"
+                target_business = "NULL" if table == "settlement" else "x.target_business_id"
+                target_slot = "NULL" if table == "settlement" else "x.target_public_slot"
+                metadata += (
+                    ",r.business_period,x.source_business_id,x.source_public_slot,"
+                    f"{consumer_slot} AS consumer_public_slot,{movement} AS movement_id,"
+                    f"{component} AS component,{target_business} AS target_business_id,"
+                    f"{target_slot} AS target_public_slot"
+                )
             sql = (
                 f"SELECT r.result_id,{metadata},'{table}' AS use_table,"
                 f"{period} AS event_period,{event_id} AS event_id,"
@@ -263,6 +276,68 @@ class ReadRepository:
             categories=categories,
             direction=direction,
         )
+
+    def read_review_obligation_rows(self, query):
+        return self._position_rows(
+            "obligation",
+            query.cutoff_period,
+            QuerySelection("current"),
+            business_ids=query.business_ids,
+            references=query.references,
+            directory=True,
+            categories=query.categories,
+            direction=query.direction,
+            party_ids=query.party_ids,
+            obligation_from=query.period_from,
+            obligation_to=query.period_to,
+        )
+
+    def read_review_movement_rows(self, query):
+        predicate, args = selected("r", None)
+        clauses = [predicate, "m.period>=?", "m.period<=?"]
+        parameters = [*args, query.period_from, query.period_to]
+        if query.account_id is not None:
+            clauses.append("m.account_id=?")
+            parameters.append(query.account_id)
+        identity_clauses, identity_args = [], []
+        _in("m.movement_id", query.movement_ids, identity_clauses, identity_args)
+        _in("r.business_id", query.business_ids, identity_clauses, identity_args)
+        if identity_clauses:
+            clauses.append("(" + " OR ".join(identity_clauses) + ")")
+            parameters.extend(identity_args)
+        if query.direction is not None:
+            clauses.append("m.direction=?")
+            parameters.append("in" if query.direction == "inflow" else "out")
+        sql = (
+            f"SELECT {HEAD_FIELDS},m.movement_id,m.public_slot,m.account_id,m.actual_on,"
+            "m.direction,m.amount_fen,m.party_id,m.transfer_group_id,"
+            "json_extract(r.basis_json,'$.input.platform_row_ids') AS platform_rows_json "
+            "FROM result_fund_movement m JOIN adopted_result r ON r.result_id=m.result_id "
+            "WHERE " + " AND ".join(clauses) + " ORDER BY m.actual_on,m.movement_id"
+        )
+        return [dict(row) for row in self._session.fetchall(sql, tuple(parameters))]
+
+    def read_review_obligation_definitions(self, keys):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT d.* FROM json_each(?) wanted JOIN obligation d "
+                "ON d.result_id=json_extract(wanted.value,'$.result_id') "
+                "AND d.public_slot=json_extract(wanted.value,'$.slot')",
+                (canonical_json(list(keys)),),
+            )
+        ]
+
+    def read_review_source_locations(self, result_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT DISTINCT result_id,source_id,location FROM result_source "
+                "WHERE result_id IN (SELECT value FROM json_each(?)) "
+                "ORDER BY result_id,source_id,location",
+                (canonical_json(list(result_ids)),),
+            )
+        ]
 
     def read_cost_directory_rows(self, query, selection):
         return self._position_rows(
@@ -359,6 +434,9 @@ class ReadRepository:
         categories=(),
         direction=None,
         object_ids=(),
+        party_ids=(),
+        obligation_from=None,
+        obligation_to=None,
     ):
         table = "obligation" if kind == "obligation" else "cost_lot"
         predicate, source_args = selected("r", selection.as_of)
@@ -367,10 +445,24 @@ class ReadRepository:
             "r.business_id", "d.public_slot", business_ids, references
         )
         candidate, candidate_args = "", ()
-        if categories or direction is not None or object_ids:
+        if (
+            categories
+            or direction is not None
+            or object_ids
+            or party_ids
+            or obligation_from
+            or obligation_to
+        ):
             clauses, candidate_values = [], []
             _in("d.category", categories, clauses, candidate_values)
             _in("d.object_id", object_ids, clauses, candidate_values)
+            _in("d.party_id", party_ids, clauses, candidate_values)
+            if obligation_from is not None:
+                clauses.append("d.business_period>=?")
+                candidate_values.append(obligation_from)
+            if obligation_to is not None:
+                clauses.append("d.business_period<=?")
+                candidate_values.append(obligation_to)
             if direction is not None:
                 clauses.append("d.direction=?")
                 candidate_values.append(direction)

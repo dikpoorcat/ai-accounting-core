@@ -143,6 +143,24 @@ def test_company_account_cannot_be_replaced_by_a_person_or_project(ids):
     assert error.value.fact_issues[0]["field"] == "/data/funds_account_id"
 
 
+@pytest.mark.parametrize("field", ["funds_account_id", "counterparty_id"])
+def test_missing_supplied_object_is_a_reference_error_not_an_owner_question(ids, field):
+    fact = payment(ids)
+    missing = fact["data"][field]
+    context = Context(
+        [fact],
+        objects=[obj for obj in objects(ids) if obj["object_id"] != missing],
+        obligations=[payable(ids)],
+    )
+    with pytest.raises(ContractError) as caught:
+        create_money().evaluate_slot(fact["business_id"], "main", context)
+    assert caught.value.code == "invalid_input"
+    issue = caught.value.fact_issues[0]
+    assert issue["code"] == "object_not_found"
+    assert issue["field"] == "/data/" + field
+    assert "先查询已登记对象" in issue["message"]
+
+
 def test_date_must_be_actual_and_in_month(ids):
     fact = payment(ids)
     fact["period"] = "2026-02"

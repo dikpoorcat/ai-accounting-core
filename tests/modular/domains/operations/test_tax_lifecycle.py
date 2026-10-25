@@ -732,7 +732,13 @@ def test_mixed_fulfillment_validates_inherited_segments_even_outside_its_new_tax
     fulfilled["data"]["tax_point"] = {"type": "derived", "tax_point_id": stated["business_id"]}
     refused = app.accounting_apply(command(company, fulfilled, stated, original, first, rule))
     assert refused["completion"] == "not_saved", refused
-    assert refused["error"] == ("needs_information" if changed == "new_month" else "invalid_input")
+    assert refused["error"] == (
+        "dependency_conflict" if changed == "new_month" else "invalid_input"
+    )
+    if changed == "new_month":
+        assert refused["fact_issues"][0]["code"] == "tax_source_required"
+        assert refused["fact_issues"][0]["business_id"] == fulfilled["business_id"]
+        assert refused["fact_issues"][0]["field"] == "/data/tax_point"
     assert (
         app.accounting_get(
             {

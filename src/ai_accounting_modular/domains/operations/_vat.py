@@ -12,10 +12,12 @@ from ._common import adopt_source, checked_amount, issue, reject, resolve_vat_ch
 def _policy_reference(fact, context, vat):
     policy = context.get_fact(vat["policy_id"])
     if policy is None:
+        problem = issue(
+            fact, "data/vat/policy_id", "已填写的VAT政策编号尚未登记，请核对编号或登记实际政策。"
+        )
+        problem["code"] = "reference_not_found"
         raise ContractError(
-            "needs_information",
-            "需要所引用的增值税政策资料。",
-            fact_issues=[issue(fact, "data/vat/policy_id", "所引用VAT政策尚不存在。")],
+            "invalid_input", "增值税政策引用的业务编号不存在。", fact_issues=[problem]
         )
     if policy["kind"] != "taxes.vat_policy":
         problem = issue(fact, "data/vat/policy_id", "所引用业务不是增值税政策。")

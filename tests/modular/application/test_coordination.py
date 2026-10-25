@@ -337,7 +337,7 @@ def test_nested_source_missing_pointer_rolls_back_then_get_and_documents_keep_so
         ],
     )
     rejected = app.accounting_apply(request(company, statement, objects=[account]))
-    assert rejected["completion"] == "not_saved" and rejected["error"] == "needs_information"
+    assert rejected["completion"] == "not_saved" and rejected["error"] == "invalid_input"
     assert rejected["fact_issues"][0]["field"] == "/mutations/0/fact/data/rows/0/source/source_id"
     assert rejected["fact_issues"][0]["business_id"] == statement["business_id"]
     with storage.read_unit(company) as read:

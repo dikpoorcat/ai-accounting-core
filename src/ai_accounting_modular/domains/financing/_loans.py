@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import parse_rate
 
-from ._common import add_funds, adopt, amount, base_plan, fail, line, missing, obligation
+from ._common import add_funds, adopt, amount, base_plan, fact_error, fail, line, obligation
 
 TERM_FIELDS = ("lender_id", "annual_rate", "day_count", "matures_on", "repayment", "term")
 
@@ -57,11 +57,30 @@ def contract_result(fact, context):
     contract_id = fact["data"]["contract_id"]
     result = context.get_result(contract_id, "main")
     if result is None:
-        missing(fact, "/data/contract_id", "贷款需要已明确的机构固定利率合同。")
+        fact_error(
+            fact,
+            "/data/contract_id",
+            "所引用的机构贷款合同尚无正式结果，请检查该合同的登记和核算结果。",
+            error="dependency_conflict",
+            code="result_not_ready",
+        )
     if result.target["kind"] != "financing.loan_contract":
-        fail("放款引用的来源不是机构贷款合同。")
+        fact_error(
+            fact,
+            "/data/contract_id",
+            "放款引用的来源不是机构贷款合同。",
+            error="invalid_input",
+            code="incompatible_business_kind",
+        )
     if result.basis["period"] > fact["period"]:
-        fail("实际放款不能早于有据合同成立月份。")
+        fact_error(
+            fact,
+            "/data/contract_id",
+            "实际放款月份早于已知合同成立月份，请核对当前事项和来源，不能自动改动日期。",
+            error="dependency_conflict",
+            code="inconsistent_fact",
+            precision=("month", "source"),
+        )
     return result
 
 

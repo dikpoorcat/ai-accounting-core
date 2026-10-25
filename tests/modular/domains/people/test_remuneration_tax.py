@@ -169,15 +169,20 @@ def test_target_below_initial_tax_never_invents_an_employee_refund():
         plan(goal(original, "9000", tax_period="2026-01"), original)
 
 
-@pytest.mark.parametrize("missing", ["remuneration", "declaration", "allocation"])
-def test_missing_reality_is_a_structured_fact_issue(missing):
+@pytest.mark.parametrize("missing", ["remuneration", "declaration", "row", "allocation"])
+def test_references_and_missing_actual_allocation_keep_distinct_feedback(missing):
     original = wage()
     actual, reference = declaration(original)
     target = goal(original, components=[reference])
     context = Context(target, no_contributions())
     if missing != "remuneration":
         context.facts[original["business_id"]] = original
-    if missing == "allocation":
+    if missing in {"row", "allocation"}:
+        context.facts[actual["business_id"]] = actual
+    if missing == "row":
+        target["data"]["components"][0]["row_id"] = str(uuid4())
+        context.facts[target["business_id"]] = target
+    elif missing == "allocation":
         actual["data"]["rows"][0]["allocations"] = [
             {"remuneration_id": str(uuid4()), "tax_fen": "0"}
         ]
@@ -185,8 +190,23 @@ def test_missing_reality_is_a_structured_fact_issue(missing):
         context.facts[actual["business_id"]] = actual
     with pytest.raises(ContractError) as caught:
         create_people().evaluate_slot(target["business_id"], "main", context)
-    assert caught.value.code == "needs_information"
-    assert caught.value.fact_issues[0]["field"].startswith("/data/")
+    expected = {
+        "remuneration": ("dependency_conflict", "result_not_ready", "/data/remuneration_id"),
+        "declaration": (
+            "invalid_input",
+            "reference_not_found",
+            "/data/components/0/declaration_id",
+        ),
+        "row": ("invalid_input", "reference_not_found", "/data/components/0/row_id"),
+        "allocation": ("needs_information", "missing_fact", "/data/rows/0/allocations"),
+    }
+    code, issue_code, field = expected[missing]
+    assert caught.value.code == code
+    problem = caught.value.fact_issues[0]
+    assert problem["code"] == issue_code and problem["field"] == field
+    assert problem["business_id"] == (
+        actual["business_id"] if missing == "allocation" else target["business_id"]
+    )
 
 
 def tax_payment(business_id, amount="10000"):

@@ -136,7 +136,25 @@ def payable(plan, slot, account, amount, *, category, party=None, period=None, c
 def referenced(fact, context, business_id, kind, *, field):
     result = context.get_result(business_id, "main")
     if result is None:
-        missing(fact, field, "引用的薪酬核算来源尚不存在。")
+        message = "已引用的薪酬或缴费依据尚无当前正式结果，须核对引用及上游办理结果。"
+        raise ContractError(
+            "dependency_conflict",
+            message,
+            fact_issues=[
+                problem(
+                    fact,
+                    field,
+                    message,
+                    code="result_not_ready",
+                    meaning="引用的薪酬或缴费依据结果",
+                )
+            ],
+        )
     if result.target["kind"] != kind:
-        reject("引用的业务不是所需的薪酬来源类型。")
+        message = "引用的业务不是所需的薪酬来源类型。"
+        raise ContractError(
+            "invalid_input",
+            message,
+            fact_issues=[problem(fact, field, message, code="incompatible_business_kind")],
+        )
     return result

@@ -14,6 +14,7 @@ REQUESTS = {
     "accounting_cancel_month": "MonthCancelRequest",
     "accounting_get": "BusinessGet",
     "accounting_find": "BusinessQuery",
+    "accounting_review": "ReviewRequest",
     "accounting_remuneration": "RemunerationRequest",
     "accounting_payment_export": "PaymentExportRequest",
     "accounting_sources": "SourcesRequest",

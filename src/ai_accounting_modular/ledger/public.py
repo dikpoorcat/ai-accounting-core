@@ -43,6 +43,7 @@ from . import (
     _read_obligation_directory,
     _read_origins,
     _read_positions,
+    _read_review,
 )
 from ._adoption import adopt as _adopt
 from ._adoption_changes import FormalChange as FormalChange
@@ -88,6 +89,30 @@ from ._resource_view import (
     validate_resource_refs,
 )
 from ._resource_view import fund_movements as _fund_movements
+from ._review_types import (
+    ReviewMovementHeader as ReviewMovementHeader,
+)
+from ._review_types import (
+    ReviewMovementQuery as ReviewMovementQuery,
+)
+from ._review_types import (
+    ReviewMovementSelection as ReviewMovementSelection,
+)
+from ._review_types import (
+    ReviewObligationQuery as ReviewObligationQuery,
+)
+from ._review_types import (
+    ReviewObligationSelection as ReviewObligationSelection,
+)
+from ._review_types import (
+    ReviewSettlementHeader as ReviewSettlementHeader,
+)
+from ._review_types import (
+    ReviewSettlementSelection as ReviewSettlementSelection,
+)
+from ._review_types import (
+    ReviewSourceMetadata as ReviewSourceMetadata,
+)
 from ._snapshot import AdoptedBusinessVersion as AdoptedBusinessVersion
 from ._snapshot import LedgerSnapshot
 from ._snapshot import verify_snapshot as _verify_snapshot
@@ -261,6 +286,38 @@ def _voucher_wire(voucher, row, repo, reference=None):
 
 
 class Ledger:
+    def capture_review_obligations(self, query, read_context: ReadContext):
+        return _read_review.capture_obligations(query, read_context)
+
+    def merge_review_obligations(self, selections, read_context: ReadContext):
+        return _read_review.merge_obligations(selections, read_context)
+
+    def review_obligation_page(self, selection, page, read_context: ReadContext):
+        return _read_review.obligation_page(selection, page, read_context)
+
+    def capture_review_settlements(self, query, read_context: ReadContext):
+        return _read_review.capture_settlements(query, read_context)
+
+    def merge_review_settlements(self, selections, read_context: ReadContext):
+        return _read_review.merge_settlements(selections, read_context)
+
+    def review_settlement_page(self, selection, page, read_context: ReadContext):
+        return _read_review.settlement_page(selection, page, read_context)
+
+    def capture_review_movements(self, query, read_context: ReadContext):
+        return _read_review.capture_movements(query, read_context)
+
+    def merge_review_movements(self, selections, read_context: ReadContext):
+        return _read_review.merge_movements(selections, read_context)
+
+    def review_movement_page(self, selection, page, read_context: ReadContext):
+        return _read_review.movement_page(selection, page, read_context)
+
+    def get_review_sources(
+        self, sources: Sequence[ResultSourceRef], read_context: ReadContext
+    ) -> tuple[ReviewSourceMetadata, ...]:
+        return _read_review.source_metadata(sources, read_context)
+
     def referenced_source_ids(
         self, source_ids: Sequence[str], read_context: ReadContext
     ) -> tuple[str, ...]:
@@ -471,7 +528,12 @@ class Ledger:
         result_slots=(),
     ) -> ReadPage[AdoptedDirectoryEntry]:
         return _read_contents.query_adopted(
-            scope, kinds, page, read_context, business_ids=business_ids, result_slots=result_slots
+            scope,
+            kinds,
+            page,
+            read_context,
+            business_ids=business_ids,
+            result_slots=result_slots,
         )
 
     def query_adopted_targets(

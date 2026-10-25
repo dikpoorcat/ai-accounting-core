@@ -13,29 +13,21 @@ ACCOUNTS = {"bank_account": "1002", "platform_account": "1012", "cash_account": 
 PARTIES = {"person", "organization"}
 
 
-def fail(message, code="dependency_conflict"):
-    raise ContractError(code, message)
+def fail(message, code="dependency_conflict", *, fact_issues=()):
+    raise ContractError(code, message, fact_issues=fact_issues)
 
 
-def missing(fact, field, message, *, precision=()):
-    raise ContractError(
-        "needs_information",
-        message,
-        fact_issues=[
-            {
-                "code": "missing_opening_basis",
-                "business_id": fact["business_id"],
-                "field": field,
-                "meaning": "建账起点的真实余额及接续依据",
-                "message": message,
-                "allowed_precision": list(precision),
-                "reusable_sources": [
-                    {"source_id": source} for source in fact["evidence_ids"][:500]
-                ],
-                "blocking_scope": "business",
-            }
-        ],
-    )
+def issue(fact, field, message, *, code):
+    return {
+        "code": code,
+        "business_id": fact["business_id"],
+        "field": field,
+        "meaning": "建账起点的真实余额及接续依据",
+        "message": message,
+        "allowed_precision": [],
+        "reusable_sources": [{"source_id": source} for source in fact["evidence_ids"][:500]],
+        "blocking_scope": "business",
+    }
 
 
 def checked(value):
@@ -55,7 +47,12 @@ def total(values):
 def require_object(fact, context, object_id, kinds, field):
     obj = context.get_object(object_id)
     if obj is None:
-        missing(fact, field, "期初引用的真实对象尚未在本公司登记。", precision=("identity",))
+        message = "期初所填对象编号未登记；先核对引用或登记已有来源中的真实对象。"
+        fail(
+            message,
+            "invalid_input",
+            fact_issues=[issue(fact, field, message, code="reference_not_found")],
+        )
     if obj["kind"] not in kinds:
         fail("期初对象的种类与成员的业务角色不一致。", "invalid_input")
     return obj

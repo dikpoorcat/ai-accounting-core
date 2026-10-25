@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import format_fen
 
-from ._common import amount, fact_for, missing, plan_for, reject, total
+from ._common import amount, fact_for, issue, missing, plan_for, reject, total
 from ._receipt_basis import receipt_point
 
 RULE_URLS = (
@@ -74,7 +74,14 @@ def tax_point(fact, context):
     data = fact["data"]
     target = context.get_fact(data["target_business_id"])
     if target is None:
-        missing(fact, "/data/target_business_id", "详细税点需要对应的真实服务或预收事实。")
+        message = "所填税点目标业务不存在；先查询已有服务或预收，再使用有效引用。"
+        reject(
+            message,
+            "invalid_input",
+            fact_issues=[
+                issue(fact, "/data/target_business_id", message, code="reference_not_found")
+            ],
+        )
     if target["kind"] in ("operations.service_sale", "operations.advance_fulfillment"):
         gross = amount(target["data"]["gross_fen"])
     elif target["kind"] == "operations.advance" and target["data"]["side"] == "customer":

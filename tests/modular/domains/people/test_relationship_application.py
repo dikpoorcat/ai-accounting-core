@@ -115,7 +115,15 @@ def test_invalid_person_or_time_rolls_back_sources_objects_and_other_valid_busin
     refused = app.accounting_apply(submitted)
     assert refused["completion"] == "not_saved", refused
     assert refused["fact_issues"]
-    assert any(item["business_id"] == fact["business_id"] for item in refused["fact_issues"])
+    if invalid == "wrong_role":
+        # The already-invalid employment reference is rejected before later facts.
+        problem = refused["fact_issues"][0]
+        assert refused["error"] == "invalid_input"
+        assert problem["business_id"] == no_contributions()["business_id"]
+        assert problem["field"] == "/data/employee_id"
+        assert problem["code"] == "incompatible_object_kind"
+    else:
+        assert any(item["business_id"] == fact["business_id"] for item in refused["fact_issues"])
     assert (
         get(app, company, fact["business_id"], business_case("B17Z")["business_id"])["businesses"]
         == []

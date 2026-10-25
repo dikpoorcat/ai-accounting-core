@@ -253,6 +253,116 @@ class MoneyRepository:
             )
         )
 
+    def review_row_headers(self, query):
+        """Select complete identities through row/account indexes, without row text."""
+        result = []
+        for kind, table in _ROW_TABLES.items():
+            label = "bank" if kind == "money.bank_statement" else "platform"
+            if query.kind is not None and query.kind != label:
+                continue
+            clauses, args = [], []
+            for field, values in (("business_id", query.statement_ids), ("row_id", query.row_ids)):
+                if values:
+                    clauses.append(field + " IN (SELECT value FROM json_each(?))")
+                    args.append(canonical_json(list(values)))
+            if query.account_id is not None:
+                clauses.append("account_id=?")
+                args.append(query.account_id)
+            if query.period_from is not None:
+                clauses.extend(("period>=?", "period<=?"))
+                args.extend((query.period_from, query.period_to))
+            result.extend(
+                dict(row, kind=label)
+                for row in self._session.fetchall(
+                    "SELECT row_id,business_id,account_id,source_id,actual_on,period,direction,"
+                    "amount_fen FROM "
+                    + table
+                    + " WHERE "
+                    + " AND ".join(clauses)
+                    + " ORDER BY actual_on,business_id,row_id",
+                    args,
+                )
+            )
+        return tuple(
+            sorted(result, key=lambda row: (row["actual_on"], row["business_id"], row["row_id"]))
+        )
+
+    def review_parents(self, business_ids):
+        if not business_ids:
+            return ()
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT business_id,schema_key,effective_on,main_object_id,data_json "
+                "FROM money_fact "
+                "WHERE business_id IN (SELECT value FROM json_each(?)) ORDER BY business_id",
+                (canonical_json(list(business_ids)),),
+            )
+        )
+
+    def review_rows(self, row_ids, kind):
+        if not row_ids:
+            return ()
+        table = _ROW_TABLES["money.bank_statement" if kind == "bank" else "money.platform_activity"]
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                f"SELECT * FROM {table} WHERE row_id IN (SELECT value FROM json_each(?))",
+                (canonical_json(list(row_ids)),),
+            )
+        )
+
+    def review_groups(self, row_ids):
+        """All members of groups that actually reference the selected bank rows."""
+        if not row_ids:
+            return ()
+        groups = self._session.fetchall(
+            "SELECT DISTINCT g.group_id,g.business_id,g.account_id,g.direction,g.amount_fen "
+            "FROM money_reconciliation_member m JOIN money_reconciliation g "
+            "ON g.group_id=m.group_id WHERE m.member_kind='bank_row' "
+            "AND m.member_id IN (SELECT value FROM json_each(?)) ORDER BY g.group_id",
+            (canonical_json(list(row_ids)),),
+        )
+        if not groups:
+            return ()
+        members = {}
+        for row in self._session.fetchall(
+            "SELECT group_id,member_kind,member_id FROM money_reconciliation_member "
+            "WHERE group_id IN (SELECT value FROM json_each(?)) "
+            "ORDER BY group_id,member_kind,member_id",
+            (canonical_json([group["group_id"] for group in groups]),),
+        ):
+            members.setdefault(row["group_id"], {}).setdefault(row["member_kind"], []).append(
+                row["member_id"]
+            )
+        return tuple(dict(group, members=members.get(group["group_id"], {})) for group in groups)
+
+    def review_internal_ids(self, account_id, period):
+        """Use this account's current fact directory, never the company-wide result stock."""
+        return tuple(
+            row["business_id"]
+            for row in self._session.fetchall(
+                "SELECT business_id FROM money_fact WHERE main_object_id=? "
+                "AND schema_key='money.reserve_internal' "
+                "AND json_extract(data_json,'$.period')=? ORDER BY business_id",
+                (account_id, period),
+            )
+        )
+
+    def review_internal_consumers(self, business_ids, account_id, period):
+        if not business_ids:
+            return ()
+        return self._facts(
+            self._session.fetchall(
+                "SELECT business_id,schema_key,effective_on,main_object_id,data_json "
+                "FROM money_fact "
+                "WHERE business_id IN (SELECT value FROM json_each(?)) "
+                "AND main_object_id=? AND schema_key='money.reserve_internal' "
+                "AND json_extract(data_json,'$.period')=? ORDER BY business_id",
+                (canonical_json(list(business_ids)), account_id, period),
+            )
+        )
+
     def groups(self, business_id):
         rows = self._session.fetchall(
             "SELECT * FROM money_reconciliation WHERE business_id=? ORDER BY group_id",

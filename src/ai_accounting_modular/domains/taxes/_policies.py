@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import parse_rate
 
-from ._common import adopt_source, fact_for, missing, month_end, plan_for, reject, result_for
+from ._common import adopt_source, fact_for, issue, missing, month_end, plan_for, reject, result_for
 
 POLICIES = (
     "taxes.vat_policy",
@@ -43,21 +43,36 @@ def covers(source, start, end):
 
 
 def adopt_policy(plan, fact, context, business_id, kind, start_month, end_month, *, required=True):
+    field = "/data/" + (
+        "policy_id" if kind == "taxes.income_tax_policy" else kind.removeprefix("taxes.") + "_id"
+    )
     if business_id is None:
         if required:
-            missing(
-                fact, "/data/" + kind.removeprefix("taxes.") + "_id", "计算参考需要明确的政策来源。"
-            )
+            missing(fact, field, "计算参考需要明确的政策来源。")
         return None
     if not required and context.get_fact(business_id) is None:
         return None
-    source = fact_for(fact, context, business_id, kind, "/data/policy_id")
+    source = fact_for(fact, context, business_id, kind, field)
     check_policy(source)
     if not covers(source, start_month + "-01", month_end(end_month)):
         if required:
-            missing(fact, "/data/policy_id", "政策必须完整覆盖本次计算期间。", precision=("day",))
+            message = "所选政策没有完整覆盖本次计算期间，须核对政策引用及实际生效范围。"
+            reject(
+                message,
+                "invalid_input",
+                fact_issues=[
+                    issue(
+                        fact,
+                        field,
+                        message,
+                        code="incompatible_policy_period",
+                        meaning="所选政策的生效期间",
+                        precision=("day",),
+                    )
+                ],
+            )
         return None
-    result = result_for(fact, context, business_id, kind, "/data/policy_id")
+    result = result_for(fact, context, business_id, kind, field)
     adopt_source(plan, result.source)
     row = {
         "policy_business_id": business_id,

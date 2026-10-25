@@ -20,13 +20,13 @@ CONSUMPTION = {
 }
 
 
-def reject(message, code="dependency_conflict"):
-    raise ContractError(code, message)
+def reject(message, code="dependency_conflict", *, fact_issues=()):
+    raise ContractError(code, message, fact_issues=fact_issues)
 
 
-def issue(fact, field, message, *, precision=()):
+def issue(fact, field, message, *, precision=(), code="missing_fact"):
     return {
-        "code": "missing_fact",
+        "code": code,
         "business_id": fact["business_id"],
         "field": field,
         "meaning": "资产核算依据",

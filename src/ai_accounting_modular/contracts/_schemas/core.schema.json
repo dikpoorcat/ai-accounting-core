@@ -6313,6 +6313,12 @@
           }
         }
       ]
+    },
+    "ReviewRequest": {
+      "$ref": "accounting-review.schema.json#/$defs/ReviewRequest"
+    },
+    "ReviewResult": {
+      "$ref": "accounting-review.schema.json#/$defs/ReviewResult"
     }
   }
 }

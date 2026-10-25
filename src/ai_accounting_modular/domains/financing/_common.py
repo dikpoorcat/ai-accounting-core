@@ -44,12 +44,16 @@ def issue(fact, field, message, *, code="missing_fact", precision=()):
     }
 
 
-def missing(fact, field, message, *, precision=(), code="missing_fact"):
+def fact_error(fact, field, message, *, error, code, precision=()):
     raise ContractError(
-        "needs_information",
+        error,
         message,
         fact_issues=[issue(fact, field, message, precision=precision, code=code)],
     )
+
+
+def missing(fact, field, message, *, precision=(), code="missing_fact"):
+    fact_error(fact, field, message, error="needs_information", code=code, precision=precision)
 
 
 def checked(value):
@@ -158,19 +162,21 @@ def adopt_obligation(plan, definition):
 def require_object(fact, context, object_id, kinds, field):
     value = context.get_object(object_id)
     if value is None:
-        missing(fact, field, "所引用的实际对象尚未在本公司登记。", precision=("identity",))
+        fact_error(
+            fact,
+            field,
+            "已填写的对象编号不在本公司登记范围内，请核对编号或先登记实际对象。",
+            error="invalid_input",
+            code="reference_not_found",
+            precision=("identity",),
+        )
     if value["kind"] not in kinds:
-        raise ContractError(
-            "invalid_input",
+        fact_error(
+            fact,
+            field,
             "融资投资引用对象的种类与业务角色不符。",
-            fact_issues=[
-                issue(
-                    fact,
-                    field,
-                    "不能用账户、人员或产品冒充其他业务角色。",
-                    code="incompatible_object_kind",
-                )
-            ],
+            error="invalid_input",
+            code="incompatible_object_kind",
         )
     return value
 

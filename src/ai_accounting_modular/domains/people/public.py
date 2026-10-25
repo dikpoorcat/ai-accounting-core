@@ -95,14 +95,20 @@ def _roles(fact):
     return roles
 
 
-def _role_issues(fact, context):
+def _check_roles(fact, context):
     issues = []
     meaning = "人员关系管理引用" if fact["kind"] == "people.relationship" else "薪酬核算依据"
     for field, object_id, kind in _roles(fact):
         obj = context.get_object(object_id)
         if obj is None:
             issues.append(
-                problem(fact, field, "所引用的人员或项目尚未在本公司登记。", meaning=meaning)
+                problem(
+                    fact,
+                    field,
+                    "所引用的人员或项目尚未在本公司登记。",
+                    code="reference_not_found",
+                    meaning=meaning,
+                )
             )
         elif obj["kind"] != kind:
             issues.append(
@@ -114,7 +120,10 @@ def _role_issues(fact, context):
                     meaning=meaning,
                 )
             )
-    return issues
+    if issues:
+        raise ContractError(
+            "invalid_input", "薪酬所填人员或项目身份不符合其业务角色。", fact_issues=issues
+        )
 
 
 def _references(fact):
@@ -238,7 +247,7 @@ class People:
         return tuple(edges)
 
     def describe_change(self, changes, context: EvaluationContext) -> ChangeDescription:
-        responsibilities, dependencies, issues, publications = [], [], [], []
+        responsibilities, dependencies, publications = [], [], []
         for change in changes:
             business_id = change.get("business_id", change.get("fact", {}).get("business_id"))
             op = change["op"]
@@ -274,7 +283,7 @@ class People:
                         "period_to": fact["period"],
                     }
                 )
-            issues.extend(_role_issues(fact, context))
+            _check_roles(fact, context)
             if fact["kind"] != "people.relationship":
                 dependencies.extend(_direct_dependencies(fact))
         result = {
@@ -282,7 +291,7 @@ class People:
             "businesses": responsibilities,
             "dependencies": dependencies,
             "publications": publications,
-            "issues": issues,
+            "issues": [],
         }
         validate_contract("business-facts.schema.json", "ChangeDescription", result)
         return result
@@ -298,15 +307,7 @@ class People:
         _validate(fact)
         if fact["kind"] == "people.relationship":
             raise ContractError("invalid_input", "人员关系管理事实没有核算结果槽。")
-        issues = _role_issues(fact, context)
-        if issues:
-            raise ContractError(
-                "invalid_input"
-                if any(item["code"] == "incompatible_object_kind" for item in issues)
-                else "needs_information",
-                "薪酬引用的人员或项目不符合其业务角色。",
-                fact_issues=issues,
-            )
+        _check_roles(fact, context)
         plan = _CALCULATORS[fact["kind"]](fact, context)
         validate_contract("business-facts.schema.json", "PostingPlan", plan)
         return plan

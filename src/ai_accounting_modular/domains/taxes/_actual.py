@@ -1,6 +1,6 @@
 """Actual declarations are authoritative facts, never synthetic payments."""
 
-from ._common import amount, fact_for, missing, plan_for, reject, total
+from ._common import amount, fact_for, issue, plan_for, reject, total
 
 
 def declarations(fact, context, additional=()):
@@ -101,7 +101,14 @@ def _payroll(fact, context):
         prefix = f"/data/rows/{index}"
         person = context.get_object(row["person_id"])
         if person is None:
-            missing(fact, prefix + "/person_id", "实际申报行需要已登记的人员身份。")
+            message = "申报行所填人员编号不在本公司；先查询已有人员或登记实际人员，再使用有效引用。"
+            reject(
+                message,
+                "invalid_input",
+                fact_issues=[
+                    issue(fact, prefix + "/person_id", message, code="reference_not_found")
+                ],
+            )
         if person["kind"] != "person":
             reject("实际个税申报行必须引用人员，账户不能冒充。", "invalid_input")
         if row["tax_period"] != data["tax_period"]:

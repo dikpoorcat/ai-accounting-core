@@ -52,6 +52,14 @@ from ._reconciliation import (
     validate_reconciliation,
 )
 from ._repository import MoneyRepository
+from ._review_movements import page as _review_movement_page
+from ._review_rows import capture as _capture_review_rows
+from ._review_rows import link_page as _review_row_link_page
+from ._review_rows import row_page as _review_row_page
+from ._review_types import ReviewRowIdentity as ReviewRowIdentity
+from ._review_types import ReviewRowLink as ReviewRowLink
+from ._review_types import ReviewRowQuery as ReviewRowQuery
+from ._review_types import ReviewRowSelection as ReviewRowSelection
 from ._statements import check_rows, fund_sources, reserve_internal, statement
 
 
@@ -467,6 +475,38 @@ class Money:
         if self._ledger is None:
             fail("原行读取未装配正式账务端口。", "unsupported_business")
         return query_rows(self, scope, query, page, read_context)
+
+    def capture_review_movements(self, query, read_context: ReadContext):
+        if self._ledger is None:
+            fail("真实资金核查未装配正式账务读取端口。", "unsupported_business")
+        return self._ledger.capture_review_movements(query, read_context)
+
+    def merge_review_movements(self, selections, read_context: ReadContext):
+        if self._ledger is None:
+            fail("真实资金核查未装配正式账务读取端口。", "unsupported_business")
+        return self._ledger.merge_review_movements(selections, read_context)
+
+    def review_movement_page(self, selection, page: PageQuery, read_context: ReadContext):
+        if self._ledger is None:
+            fail("真实资金核查未装配正式账务读取端口。", "unsupported_business")
+        return _review_movement_page(self, selection, page, read_context)
+
+    def capture_review_rows(
+        self, query: ReviewRowQuery, read_context: ReadContext
+    ) -> ReviewRowSelection:
+        if self._ledger is None:
+            fail("原行核查未装配正式账务读取端口。", "unsupported_business")
+        return _capture_review_rows(self, query, read_context)
+
+    def review_row_page(
+        self, selection: ReviewRowSelection, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[OriginalRowView]:
+        return _review_row_page(selection, page, read_context)
+
+    def review_row_link_page(
+        self, selection: ReviewRowSelection, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[ReviewRowLink]:
+        return _review_row_link_page(selection, page, read_context)
 
 
 def create_money(*, ledger=None, identity=None) -> Money:

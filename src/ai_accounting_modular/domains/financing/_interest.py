@@ -12,6 +12,7 @@ from ._common import (
     amount,
     base_plan,
     checked,
+    fact_error,
     fail,
     format_fen,
     line,
@@ -42,14 +43,32 @@ def principal_basis(fact, context):
         or ob["category"] != "loan_principal"
         or ob["account_code"] not in {"2001", "2501"}
     ):
-        fail("计息来源必须是机构放款或期初贷款本金，不能将股东往来套入机构利息。")
+        fact_error(
+            fact,
+            "/data/principal_source",
+            "计息来源必须是机构放款或期初贷款本金，不能将股东往来套入机构利息。",
+            error="invalid_input",
+            code="incompatible_source_result",
+        )
     source = context.get_result(definition.source["business_id"], definition.source["result_slot"])
     if source is None:
-        missing(fact, "/data/principal_source", "需要本金来源的公开采用依据。")
+        fact_error(
+            fact,
+            "/data/principal_source",
+            "所引用的本金来源尚无正式采用结果，请检查上游核算。",
+            error="dependency_conflict",
+            code="result_not_ready",
+        )
     quantities = source.basis["adopted_quantities"]
     principals = [x for x in quantities if x["type"] == "loan_principal" and x["source"] == ref]
     if len(principals) != 1:
-        missing(fact, "/data/principal_source", "本金来源须公开唯一的loan_principal采用数量。")
+        fact_error(
+            fact,
+            "/data/principal_source",
+            "所引用的本金正式结果未提供唯一的loan_principal采用数量，需要修正来源结果。",
+            error="dependency_conflict",
+            code="incompatible_source_result",
+        )
     principal = principals[0]
     terms = [
         x
@@ -57,14 +76,26 @@ def principal_basis(fact, context):
         if x["type"] == "loan_terms" and x["contract_id"] == principal["contract_id"]
     ]
     if len(terms) != 1:
-        missing(fact, "/data/principal_source", "本金来源须公开对应loan_terms合同条款。")
+        fact_error(
+            fact,
+            "/data/principal_source",
+            "所引用的本金正式结果未提供对应loan_terms合同条款，需要修正来源结果。",
+            error="dependency_conflict",
+            code="incompatible_source_result",
+        )
     terms = terms[0]
     if (
         terms["lender_id"] != ob.get("party_id")
         or principal["outstanding_fen"] != ob["amount_fen"]
         or principal["end_before"] != terms["matures_on"]
     ):
-        fail("贷款本金、贷款方和公开合同期限不一致。")
+        fact_error(
+            fact,
+            "/data/principal_source",
+            "本金正式结果中的本金、贷款方或合同期限互相矛盾，需要核对来源结果。",
+            error="dependency_conflict",
+            code="inconsistent_fact",
+        )
     return definition, principal, terms
 
 

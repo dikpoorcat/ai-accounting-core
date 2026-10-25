@@ -101,7 +101,8 @@ def test_computed_income_tax_uses_formal_pretax_and_independent_carry_then_recal
     # Removing the only known prior facts would make already-used EIT unknown: atomic rejection.
     rejected = app.accounting_apply(withdraw(company, current, seq=2))
     assert rejected.get("completion") == "not_saved", rejected
-    assert rejected["error"] == "needs_information"
+    assert rejected["error"] == "dependency_conflict"
+    assert all(issue["field"] != "/data/profit_before_tax" for issue in rejected["fact_issues"])
     assert main(app, company, assessed) == second
     assert known(app, company).fields["profit_before_tax"]["amount_fen"] == "980000"
 
@@ -157,4 +158,11 @@ def test_sourced_zero_origin_with_or_without_reports_does_not_guess_existing_com
         assert main(app, company, assessed)["vouchers"] == []
     else:
         assert response.get("completion") == "not_saved", response
-        assert response["error"] == "needs_information"
+        if with_continuation:
+            assert response["error"] == "needs_information"
+            assert response["fact_issues"][0]["field"] == "/data/income_tax_carry"
+        else:
+            assert response["error"] == "dependency_conflict"
+            assert all(
+                issue["field"] != "/data/profit_before_tax" for issue in response["fact_issues"]
+            )

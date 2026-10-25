@@ -8,7 +8,7 @@ from ._common import (
     add_months,
     assets_in,
     finalize_plan,
-    missing,
+    issue,
     month_at,
     month_number,
     reject,
@@ -42,7 +42,19 @@ def cards(fact, context):
             continue
         obj = context.get_object(data["asset_id"])
         if obj is None:
-            missing(fact, f"/data/members/{index}/data/asset_id", "期初资产尚未登记稳定档案。")
+            message = "期初卡片所填资产编号不存在；先查询已有资产档案或登记实际资产。"
+            reject(
+                message,
+                "invalid_input",
+                fact_issues=[
+                    issue(
+                        fact,
+                        f"/data/members/{index}/data/asset_id",
+                        message,
+                        code="reference_not_found",
+                    )
+                ],
+            )
         if obj["kind"] != "asset" or obj["data"]["asset_type"] != data["asset_type"]:
             reject("期初卡片资产类别须与稳定资产档案一致。", "invalid_input")
         if data.get("in_use_on", data["in_use_period"])[:7] != data["in_use_period"]:

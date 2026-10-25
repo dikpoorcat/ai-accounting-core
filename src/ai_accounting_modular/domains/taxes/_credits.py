@@ -4,7 +4,17 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import format_fen
 
-from ._common import adopt_source, amount, fact_for, missing, plan_for, reject, result_for, total
+from ._common import (
+    adopt_source,
+    amount,
+    fact_for,
+    issue,
+    missing,
+    plan_for,
+    reject,
+    result_for,
+    total,
+)
 from ._tax_point import ranges, wire_ranges
 
 
@@ -47,9 +57,9 @@ def selected_rows(fact, item, views):
         and (amount(view.sale["net_sales_fen"]) < 0 or amount(view.sale["vat_fen"]) < 0)
     ]
     if not candidates:
-        missing(fact, "/data/returns", "退抵需要已采用的真实退回税销售，不能用原交易替代。")
+        _source_problem(fact, "退抵引用的真实退回尚无已采用的负向税源；先核查退回核算结果。")
     if any(not view.sale["ranges"] for _, view in candidates):
-        missing(fact, "/data/returns/tax_ranges", "退回税源缺少可核对的原金额范围。")
+        _source_problem(fact, "退回正式税源未提供原金额范围；先核查该正式结果。")
     all_ranges = [
         pair
         for _, view in candidates
@@ -99,6 +109,14 @@ def selected_rows(fact, item, views):
     return selected
 
 
+def _source_problem(fact, message, field="/"):
+    """An unusable adopted source is an upstream dependency, not a new owner fact."""
+    reject(
+        message,
+        fact_issues=[issue(fact, field, message, code="result_not_ready")],
+    )
+
+
 def credit_peers(fact, context):
     original_id = fact["data"]["original_assessment_id"]
     return tuple(
@@ -142,10 +160,10 @@ def credit(fact, context):
             "unsupported_business",
         )
     if original.target["values"]["adopted_basis"] != "actual":
-        missing(
+        _source_problem(
             fact,
-            "/data/original_filing_source",
-            "原税期须已采用实际申报，不能凭参考计算制造退抵权利。",
+            "原税期尚未采用实际申报；先核查已有申报来源及采用结果，不能凭参考计算制造退抵权利。",
+            "/data/original_assessment_id",
         )
     plan = plan_for(
         fact,
@@ -169,10 +187,22 @@ def credit(fact, context):
         plan["target"]["values"].update({field: data[field] for field in details})
     adopt_source(plan, original.source)
     views, periods, original_ranges = [], [], {}
-    for item in data["returns"]:
+    for index, item in enumerate(data["returns"]):
         returned = context.get_fact(item["return_id"])
         if returned is None:
-            missing(fact, "/data/returns", "所引用真实退回事实尚不存在。")
+            message = "所填退回业务编号未登记；先核查引用，不代表现实退回资料不存在。"
+            reject(
+                message,
+                "invalid_input",
+                fact_issues=[
+                    issue(
+                        fact,
+                        f"/data/returns/{index}/return_id",
+                        message,
+                        code="reference_not_found",
+                    )
+                ],
+            )
         if returned["kind"] not in ("operations.sale_return", "operations.advance_refund"):
             reject("退抵来源必须是销售退回或已计税预收退款。", "invalid_input")
         linked = returned["data"].get("sale_id", returned["data"].get("advance_id"))
@@ -196,7 +226,11 @@ def credit(fact, context):
             and q["sale"]["source_business_id"] == item["original_business_id"]
         ]
         if any(not sale["ranges"] for sale in originals):
-            missing(fact, "/data/returns/tax_ranges", "原采用税源缺少可核对的含税金额范围。")
+            _source_problem(
+                fact,
+                "退回采用的原税源未提供含税金额范围；先核查其正式结果。",
+                f"/data/returns/{index}/return_id",
+            )
         allowed = [
             pair
             for sale in originals
@@ -259,7 +293,11 @@ def credit(fact, context):
         cumulative = total([amount(data[field]), *(amount(peer["data"][field]) for peer in peers)])
         if capacity not in metrics:
             if cumulative:
-                missing(fact, "/data/" + field, "原实际申报没有明确可供本次转回的原金额。")
+                _source_problem(
+                    fact,
+                    "原实际申报结果尚未提供可供本次转回的原金额；先核对并接续原申报依据。",
+                    "/data/original_assessment_id",
+                )
         elif cumulative > amount(metrics[capacity]):
             reject("累计退抵或免税转回不能超过原实际已采用金额。")
     for field, capacity in zip(

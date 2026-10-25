@@ -14,6 +14,69 @@ from ai_accounting_modular.ledger.public import LedgerQuery
 CHOICES = ("waive_exemption", "waive_rate_reduction")
 
 
+@pytest.mark.parametrize("reference", ["policy", "tax_point"])
+def test_missing_supplied_reference_keeps_its_program_cause_and_saves_no_sale(system, reference):
+    app, company, ids = system
+    rule = policy(ids)
+    earned = sale(ids, rule, "2026-01")
+    facts = [earned]
+    if reference == "tax_point":
+        facts.append(rule)
+        earned["data"]["tax_point"] = {"type": "derived", "tax_point_id": str(uuid4())}
+    before = deepcopy(earned)
+    with app.storage.read_unit(company) as read:
+        head = read.head
+    rejected = app.accounting_apply(command(company, *facts))
+    assert rejected["error"] == (
+        "invalid_input" if reference == "policy" else "dependency_conflict"
+    ), rejected
+    assert rejected["completion"] == "not_saved" and rejected["changes"] == "none"
+    (problem,) = rejected["fact_issues"]
+    assert problem["business_id"] == earned["business_id"]
+    assert problem["field"] == (
+        "/data/vat/policy_id" if reference == "policy" else "/data/tax_point/tax_point_id"
+    )
+    assert problem["code"] == (
+        "reference_not_found" if reference == "policy" else "result_not_ready"
+    )
+    assert problem["reusable_sources"] == [{"source_id": ids["source"]}]
+    assert earned == before
+    with app.storage.read_unit(company) as read:
+        assert read.head == head
+    assert (
+        app.accounting_get(
+            {"company_id": company, "business_ids": [earned["business_id"]], "include": ["facts"]}
+        )["businesses"]
+        == []
+    )
+
+
+def test_earlier_known_tax_point_requires_real_source_continuity_without_changing_months(system):
+    app, company, ids = system
+    rule = policy(ids)
+    earned = sale(ids, rule, "2026-01")
+    earned["period"] = "2026-02"
+    before = deepcopy(earned)
+    rejected = app.accounting_apply(command(company, earned, rule))
+    assert rejected["error"] == "dependency_conflict", rejected
+    (problem,) = rejected["fact_issues"]
+    assert problem["business_id"] == earned["business_id"]
+    assert problem["field"] == "/data/tax_point"
+    assert problem["code"] == "tax_source_required"
+    assert "客户预收及其履约" in problem["message"] and "不能自动创建预收" in problem["message"]
+    assert earned == before
+    assert (
+        app.accounting_get(
+            {
+                "company_id": company,
+                "business_ids": [earned["business_id"], rule["business_id"]],
+                "include": ["facts"],
+            }
+        )["businesses"]
+        == []
+    )
+
+
 @pytest.mark.parametrize("invoice_kind", ["ordinary", "special", "uninvoiced"])
 @pytest.mark.parametrize("omitted", [(CHOICES[0],), (CHOICES[1],), CHOICES])
 def test_omitted_choices_match_explicit_false_without_changing_source(invoice_kind, omitted):

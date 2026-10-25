@@ -1,0 +1,1275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-accounting.local/design/accounting-review.schema.json",
+  "title": "当前事项的账务核查与共同依据合同",
+  "$ref": "#/$defs/ReviewRequest",
+  "$defs": {
+    "ReviewObligationCriteria": {
+      "type": "object",
+      "properties": {
+        "direction": {
+          "enum": [
+            "receivable",
+            "payable"
+          ]
+        },
+        "status": {
+          "enum": [
+            "unsettled",
+            "settled",
+            "all"
+          ]
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 500,
+          "uniqueItems": true
+        },
+        "party_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 500,
+          "uniqueItems": true
+        },
+        "period_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        }
+      },
+      "required": [
+        "direction",
+        "status"
+      ],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "categories"
+          ]
+        },
+        {
+          "required": [
+            "party_ids"
+          ]
+        }
+      ]
+    },
+    "ReviewMovementCriteria": {
+      "type": "object",
+      "properties": {
+        "account_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "period_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        }
+      },
+      "required": [
+        "account_id",
+        "period_from",
+        "period_to"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewRowCriteria": {
+      "type": "object",
+      "properties": {
+        "account_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "period_from": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "core.schema.json#/$defs/Month"
+        },
+        "kind": {
+          "enum": [
+            "bank",
+            "platform"
+          ]
+        }
+      },
+      "required": [
+        "account_id",
+        "period_from",
+        "period_to"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewSubject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "business"
+            },
+            "business_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "business_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "obligation"
+            },
+            "business_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "slot": {
+              "$ref": "core.schema.json#/$defs/Slot"
+            }
+          },
+          "required": [
+            "type",
+            "business_id",
+            "slot"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "movement"
+            },
+            "movement_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "movement_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "statement_row"
+            },
+            "statement_business_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "row_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            }
+          },
+          "required": [
+            "type",
+            "statement_business_id",
+            "row_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ReviewRelatedScope": {
+      "type": "object",
+      "properties": {
+        "obligations": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "references": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "core.schema.json#/$defs/BusinessRef"
+                  },
+                  "minItems": 1,
+                  "maxItems": 500,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "references"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "criteria": {
+                  "$ref": "#/$defs/ReviewObligationCriteria"
+                }
+              },
+              "required": [
+                "criteria"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "movements": {
+          "$ref": "#/$defs/ReviewMovementCriteria"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ReviewRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 20
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expected_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "action": {
+              "const": "find"
+            },
+            "collection": {
+              "const": "obligations"
+            },
+            "criteria": {
+              "$ref": "#/$defs/ReviewObligationCriteria"
+            }
+          },
+          "required": [
+            "company_id",
+            "cutoff_period",
+            "action",
+            "collection",
+            "criteria"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 20
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expected_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "action": {
+              "const": "find"
+            },
+            "collection": {
+              "const": "movements"
+            },
+            "criteria": {
+              "$ref": "#/$defs/ReviewMovementCriteria"
+            }
+          },
+          "required": [
+            "company_id",
+            "cutoff_period",
+            "action",
+            "collection",
+            "criteria"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 20
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expected_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "action": {
+              "const": "find"
+            },
+            "collection": {
+              "const": "statement_rows"
+            },
+            "criteria": {
+              "$ref": "#/$defs/ReviewRowCriteria"
+            }
+          },
+          "required": [
+            "company_id",
+            "cutoff_period",
+            "action",
+            "collection",
+            "criteria"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 20
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expected_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "action": {
+              "const": "inspect"
+            },
+            "subject": {
+              "$ref": "#/$defs/ReviewSubject"
+            },
+            "related_scope": {
+              "$ref": "#/$defs/ReviewRelatedScope"
+            },
+            "collection": {
+              "enum": [
+                "obligations",
+                "settlements",
+                "movements",
+                "statement_rows",
+                "links"
+              ]
+            }
+          },
+          "required": [
+            "company_id",
+            "cutoff_period",
+            "action",
+            "subject",
+            "collection"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ReviewScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "find"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "collection": {
+              "const": "obligations"
+            },
+            "criteria": {
+              "$ref": "#/$defs/ReviewObligationCriteria"
+            }
+          },
+          "required": [
+            "action",
+            "cutoff_period",
+            "collection",
+            "criteria"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "find"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "collection": {
+              "const": "movements"
+            },
+            "criteria": {
+              "$ref": "#/$defs/ReviewMovementCriteria"
+            }
+          },
+          "required": [
+            "action",
+            "cutoff_period",
+            "collection",
+            "criteria"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "find"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "collection": {
+              "const": "statement_rows"
+            },
+            "criteria": {
+              "$ref": "#/$defs/ReviewRowCriteria"
+            }
+          },
+          "required": [
+            "action",
+            "cutoff_period",
+            "collection",
+            "criteria"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "inspect"
+            },
+            "cutoff_period": {
+              "$ref": "core.schema.json#/$defs/Month"
+            },
+            "subject": {
+              "$ref": "#/$defs/ReviewSubject"
+            },
+            "related_scope": {
+              "$ref": "#/$defs/ReviewRelatedScope"
+            }
+          },
+          "required": [
+            "action",
+            "cutoff_period",
+            "subject",
+            "related_scope"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ReviewAmounts": {
+      "type": "object",
+      "properties": {
+        "amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "money_settled_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "agency_settled_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "offset_settled_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "transferred_out_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "excess_reclassified_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "consumed_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "remaining_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        }
+      },
+      "required": [
+        "amount_fen",
+        "money_settled_fen",
+        "agency_settled_fen",
+        "offset_settled_fen",
+        "transferred_out_fen",
+        "excess_reclassified_fen",
+        "consumed_fen",
+        "remaining_fen"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewObligationItem": {
+      "type": "object",
+      "properties": {
+        "relationship": {
+          "enum": [
+            "direct",
+            "candidate"
+          ]
+        },
+        "reference": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "source": {
+          "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+        },
+        "obligation": {
+          "$ref": "core.schema.json#/$defs/Obligation"
+        },
+        "amounts": {
+          "$ref": "#/$defs/ReviewAmounts"
+        },
+        "origin": {
+          "$ref": "core.schema.json#/$defs/ResultRef"
+        }
+      },
+      "required": [
+        "relationship",
+        "reference",
+        "source",
+        "obligation",
+        "amounts",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewFund": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "source": {
+          "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+        },
+        "movement": {
+          "$ref": "business-facts.schema.json#/$defs/FundMovement"
+        },
+        "origin": {
+          "$ref": "core.schema.json#/$defs/ResultRef"
+        }
+      },
+      "required": [
+        "reference",
+        "source",
+        "movement",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewSettlementItem": {
+      "type": "object",
+      "properties": {
+        "relationship": {
+          "enum": [
+            "direct",
+            "candidate"
+          ]
+        },
+        "use": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "settlement"
+                },
+                "source": {
+                  "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+                },
+                "value": {
+                  "$ref": "core.schema.json#/$defs/Settlement"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "reclassification"
+                },
+                "source": {
+                  "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+                },
+                "value": {
+                  "$ref": "business-facts.schema.json#/$defs/ObligationReclassification"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "movement": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ReviewFund"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "$ref": "core.schema.json#/$defs/ResultRef"
+        }
+      },
+      "required": [
+        "relationship",
+        "use",
+        "movement",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewAllocation": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "party_id": {
+          "oneOf": [
+            {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "amount_fen",
+        "party_id"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewMovementItem": {
+      "type": "object",
+      "properties": {
+        "relationship": {
+          "enum": [
+            "direct",
+            "candidate"
+          ]
+        },
+        "reference": {
+          "$ref": "core.schema.json#/$defs/BusinessRef"
+        },
+        "source": {
+          "$ref": "business-facts.schema.json#/$defs/ResultSourceRef"
+        },
+        "movement": {
+          "$ref": "business-facts.schema.json#/$defs/FundMovement"
+        },
+        "allocations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReviewAllocation"
+          }
+        },
+        "origin": {
+          "$ref": "core.schema.json#/$defs/ResultRef"
+        }
+      },
+      "required": [
+        "relationship",
+        "reference",
+        "source",
+        "movement",
+        "allocations",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewRowItem": {
+      "type": "object",
+      "properties": {
+        "relationship": {
+          "enum": [
+            "direct",
+            "candidate"
+          ]
+        },
+        "business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "adopted": {
+          "$ref": "core.schema.json#/$defs/ResultRef"
+        },
+        "row_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "account_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "bank",
+            "platform"
+          ]
+        },
+        "actual_on": {
+          "$ref": "core.schema.json#/$defs/Date"
+        },
+        "direction": {
+          "enum": [
+            "inflow",
+            "outflow"
+          ]
+        },
+        "amount_fen": {
+          "$ref": "core.schema.json#/$defs/Fen"
+        },
+        "reference": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "counterparty_text": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memo": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_location": {
+          "oneOf": [
+            {
+              "$ref": "core.schema.json#/$defs/SourceLocator"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "match_group_id": {
+          "oneOf": [
+            {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "relationship",
+        "business_id",
+        "adopted",
+        "row_id",
+        "account_id",
+        "kind",
+        "actual_on",
+        "direction",
+        "amount_fen",
+        "reference",
+        "counterparty_text",
+        "memo",
+        "source_location",
+        "match_group_id"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewLinkItem": {
+      "type": "object",
+      "properties": {
+        "statement_business_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "row_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "relation": {
+          "enum": [
+            "reconciliation",
+            "platform_consumption"
+          ]
+        },
+        "movement_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          }
+        },
+        "linked_business_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Id"
+          }
+        },
+        "reconciliation": {
+          "oneOf": [
+            {
+              "$ref": "core.schema.json#/$defs/ResultRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "group_id": {
+          "oneOf": [
+            {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "statement_business_id",
+        "row_id",
+        "relation",
+        "movement_ids",
+        "linked_business_ids",
+        "reconciliation",
+        "group_id"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewPage": {
+      "type": "object",
+      "properties": {
+        "total_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filtered_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "returned_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "total_count",
+        "filtered_count",
+        "returned_count",
+        "has_more",
+        "next_cursor"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewObject": {
+      "type": "object",
+      "properties": {
+        "object_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "object_id",
+        "kind",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewSource": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "$ref": "core.schema.json#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "owner_statement"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source_id",
+        "kind",
+        "name",
+        "locations"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "database_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "scope": {
+              "$ref": "#/$defs/ReviewScope"
+            },
+            "basis_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "page": {
+              "$ref": "#/$defs/ReviewPage"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewObject"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewSource"
+              }
+            },
+            "collection": {
+              "const": "obligations"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewObligationItem"
+              }
+            }
+          },
+          "required": [
+            "company_id",
+            "database_id",
+            "scope",
+            "basis_version",
+            "page",
+            "objects",
+            "sources",
+            "collection",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "database_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "scope": {
+              "$ref": "#/$defs/ReviewScope"
+            },
+            "basis_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "page": {
+              "$ref": "#/$defs/ReviewPage"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewObject"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewSource"
+              }
+            },
+            "collection": {
+              "const": "settlements"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewSettlementItem"
+              }
+            }
+          },
+          "required": [
+            "company_id",
+            "database_id",
+            "scope",
+            "basis_version",
+            "page",
+            "objects",
+            "sources",
+            "collection",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "database_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "scope": {
+              "$ref": "#/$defs/ReviewScope"
+            },
+            "basis_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "page": {
+              "$ref": "#/$defs/ReviewPage"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewObject"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewSource"
+              }
+            },
+            "collection": {
+              "const": "movements"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewMovementItem"
+              }
+            }
+          },
+          "required": [
+            "company_id",
+            "database_id",
+            "scope",
+            "basis_version",
+            "page",
+            "objects",
+            "sources",
+            "collection",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "database_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "scope": {
+              "$ref": "#/$defs/ReviewScope"
+            },
+            "basis_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "page": {
+              "$ref": "#/$defs/ReviewPage"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewObject"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewSource"
+              }
+            },
+            "collection": {
+              "const": "statement_rows"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewRowItem"
+              }
+            }
+          },
+          "required": [
+            "company_id",
+            "database_id",
+            "scope",
+            "basis_version",
+            "page",
+            "objects",
+            "sources",
+            "collection",
+            "items"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "company_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "database_id": {
+              "$ref": "core.schema.json#/$defs/Id"
+            },
+            "scope": {
+              "$ref": "#/$defs/ReviewScope"
+            },
+            "basis_version": {
+              "$ref": "core.schema.json#/$defs/Digest"
+            },
+            "page": {
+              "$ref": "#/$defs/ReviewPage"
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewObject"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewSource"
+              }
+            },
+            "collection": {
+              "const": "links"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ReviewLinkItem"
+              }
+            }
+          },
+          "required": [
+            "company_id",
+            "database_id",
+            "scope",
+            "basis_version",
+            "page",
+            "objects",
+            "sources",
+            "collection",
+            "items"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

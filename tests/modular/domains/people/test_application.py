@@ -217,7 +217,7 @@ def test_missing_tax_source_rolls_back_sources_objects_and_other_business(assemb
     wage["data"]["tax_basis"]["source"]["source_id"] = missing_id
     result = app.accounting_apply(request(company_id, no_contributions(), wage))
     assert result["completion"] == "not_saved", result
-    assert result["error"] == "needs_information", result
+    assert result["error"] == "invalid_input", result
     with app.storage.read_unit(company_id) as read:
         assert app.identity.get_batch([PERSON], read) == ()
         assert app.ledger.get_results([wage["business_id"], EMPLOYMENT], read) == ()

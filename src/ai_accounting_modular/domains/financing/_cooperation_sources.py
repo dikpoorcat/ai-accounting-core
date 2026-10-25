@@ -10,7 +10,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from ._common import amount, fail, missing
+from ._common import amount, fact_error, fail
 from ._cooperation_common import AGENCIES, event_order, require_source_period
 
 
@@ -84,26 +84,54 @@ def source_trade(fact, context):
     reference = fact["data"]["source"]
     definitions = context.resource_definitions([reference], "obligation")
     if len(definitions) != 1:
-        missing(fact, "/data/source", "需要原经营业务公开的净经营义务。", precision=("source",))
+        fact_error(
+            fact,
+            "/data/source",
+            "所引用的原经营义务尚无唯一正式定义，请检查其业务编号、结果槽和正式结果。",
+            error="dependency_conflict",
+            code="result_not_ready",
+            precision=("source",),
+        )
     definition = definitions[0]
     result = context.get_result(definition.source["business_id"], definition.source["result_slot"])
     if result is None:
-        missing(fact, "/data/source", "原经营义务缺少正式采用结果。", precision=("source",))
+        fact_error(
+            fact,
+            "/data/source",
+            "所引用的原经营义务尚无正式采用结果，请检查上游核算。",
+            error="dependency_conflict",
+            code="result_not_ready",
+            precision=("source",),
+        )
     require_source_period(fact, result, "/data/source", "原经营业务核算月")
     found = [trade for trade in result_trades(result, context) if trade.reference == reference]
     if len(found) != 1:
-        missing(
+        fact_error(
             fact,
             "/data/source",
             "原结果没有公开唯一的合作净经营量；不能从摘要或其他模块内部字段推断。",
+            error="invalid_input",
+            code="incompatible_source_result",
             precision=("source",),
         )
     trade = found[0]
     if trade.quantity["contract_id"] != fact["data"]["contract_id"]:
-        fail("代理清偿的原经营结果不属于该合作合同。")
+        fact_error(
+            fact,
+            "/data/source",
+            "代理清偿的原经营结果不属于该合作合同。",
+            error="invalid_input",
+            code="incompatible_source_result",
+        )
     direction = "receivable" if fact["kind"].endswith("collection") else "payable"
     if definition.value["direction"] != direction:
-        fail("经营者实际代收或代付的方向与原净经营义务不一致。")
+        fact_error(
+            fact,
+            "/data/source",
+            "经营者实际代收或代付的方向与原净经营义务不一致。",
+            error="invalid_input",
+            code="incompatible_source_result",
+        )
     return trade
 
 

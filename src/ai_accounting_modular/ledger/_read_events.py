@@ -23,7 +23,7 @@ def _key(row):
     )
 
 
-def query_settlement_events(query, page, read, selection=None, *, business_scope=False):
+def validate_query(query, *, business_scope=False):
     if not isinstance(query, SettlementEventQuery):
         fail("invalid_input", "清偿事件须使用明确的期间及来源查询。")
     for month in (query.period_from, query.period_to):
@@ -41,6 +41,10 @@ def query_settlement_events(query, page, read, selection=None, *, business_scope
         fail("invalid_input", "业务清偿查询须指定实际来源、消费业务或资金身份。")
     if set(query.components) - {"money", "agency", "offset", "transfer", "reclassify_excess"}:
         fail("invalid_input", "清偿事件仅支持实际资金、代理、抵销和义务重分类。")
+
+
+def query_settlement_events(query, page, read, selection=None, *, business_scope=False):
+    validate_query(query, business_scope=business_scope)
     selected = query_selection(read, selection)
     repo = read.repository("ledger")
     sql, args = repo.read_event_scope(query, selected)
@@ -65,6 +69,13 @@ def query_settlement_events(query, page, read, selection=None, *, business_scope
     after = after_key(page, identity, (str, int, str, str, str, str))
     picked = repo.read_event_page(sql, args, after=after, limit=page.limit + 1)
     more, picked = len(picked) > page.limit, picked[: page.limit]
+    items = materialize(repo, picked, selected)
+    next_cursor = cursor(identity, _key(picked[-1])) if more else None
+    return ReadPage(identity, len(full), len(rows), tuple(items), next_cursor)
+
+
+def materialize(repo, picked, selected):
+    """Read only selected event payloads and their own exact actual funds."""
     payloads = repo.read_event_payloads(picked)
     picked = [
         dict(payloads[row["use_table"], row["result_id"], row["event_id"]], **row) for row in picked
@@ -92,5 +103,4 @@ def query_settlement_events(query, page, read, selection=None, *, business_scope
             head = heads[actual["result_id"]]
             movement = resource_definition("funds", head, actual, stored_source_reference(head))
         items.append(SettlementEvent(use, movement))
-    next_cursor = cursor(identity, _key(picked[-1])) if more else None
-    return ReadPage(identity, len(full), len(rows), tuple(items), next_cursor)
+    return tuple(items)

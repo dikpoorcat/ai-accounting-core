@@ -494,4 +494,8 @@ def test_opening_loan_requires_real_corresponding_contract_at_boundary(tmp_path,
         )
     actual = app.accounting_apply(submitted)
     assert actual.get("completion") == "not_saved", actual
+    if fault == "missing_contract":
+        assert actual["error"] == "invalid_input"
+        assert actual["fact_issues"][0]["code"] == "reference_not_found"
+        assert actual["fact_issues"][0]["field"] == "/data/members/0/data/contract_id"
     assert get(app, company, item["business_id"])["businesses"] == []

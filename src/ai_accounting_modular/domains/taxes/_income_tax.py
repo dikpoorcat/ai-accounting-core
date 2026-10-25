@@ -195,11 +195,26 @@ def _computed(fact, context, plan):
     if details["tax_year"] != data["tax_year"] or details["quarter_end"] != end:
         reject("企业适用依据须与本次税年和季度一致。", "invalid_input")
     if details["special_treatments"]:
-        missing(
-            fact, "/data/prepayment_basis_id", "暂计不支持所列特殊所得税处理，需要明确实际累计额。"
+        message = (
+            "当前季度暂计算法尚未实现所列特殊所得税处理。"
+            "已有有源申报前确认暂计额可采用confirmed_provision；"
+            "实际申报已经发生时可采用完整实际结果，不要求先申报，也不能手算或填零替代。"
+        )
+        reject(
+            message,
+            "unsupported_business",
+            fact_issues=[
+                issue(
+                    basis,
+                    "/data/special_treatments",
+                    message,
+                    code="unsupported_calculation",
+                    meaning="季度所得税暂计算法的适用范围",
+                )
+            ],
         )
     if amount(details["loss_deduction_fen"]) and "loss_source" not in details:
-        missing(fact, "/data/prepayment_basis_id", "以前年度亏损扣除需要明确来源。")
+        missing(basis, "/data/loss_source", "以前年度亏损扣除需要明确来源。")
     source = result_for(
         fact, context, basis["business_id"], basis["kind"], "/data/prepayment_basis_id"
     )
@@ -216,18 +231,19 @@ def _computed(fact, context, plan):
     snapshot = context.pre_tax(f"{data['tax_year']:04d}-01", end)
     profit = snapshot.fields["profit_before_tax"]
     if profit["state"] != "known":
+        message = "共享累计税前利润的上游尚未就绪；按原问题核查，不提交替代利润。"
         raise ContractError(
-            "needs_information",
-            "共享累计税前利润尚未明确，不能另算利润代替。",
+            "dependency_conflict",
+            message,
             fact_issues=[{**problem, "blocking_scope": "business"} for problem in snapshot.issues]
             or [
                 {
-                    "code": "missing_fact",
+                    "code": "result_not_ready",
                     "business_id": fact["business_id"],
-                    "field": "/data/profit_before_tax",
-                    "meaning": "共享税前利润",
-                    "message": "需要同一税年的明确累计税前利润。",
-                    "allowed_precision": ["integer_fen"],
+                    "field": "/",
+                    "meaning": "上游共享税前利润结果",
+                    "message": message,
+                    "allowed_precision": [],
                     "reusable_sources": [],
                     "blocking_scope": "business",
                 }
@@ -241,12 +257,35 @@ def _computed(fact, context, plan):
     value = amount(profit["amount_fen"])
     loss = amount(details["loss_deduction_fen"])
     if loss > max(0, value):
-        missing(fact, "/data/prepayment_basis_id", "亏损扣除不能超过正的累计税前利润。")
+        message = "所采用亏损扣除超过共享累计税前利润的正数部分，须核对原依据，不能自动削减。"
+        reject(
+            message,
+            fact_issues=[
+                issue(
+                    basis,
+                    "/data/loss_deduction_fen",
+                    message,
+                    code="inconsistent_fact",
+                    precision=("integer_fen",),
+                    meaning="所采用的以前年度亏损扣除额",
+                )
+            ],
+        )
     taxable = max(0, value) - loss
     small = details["treatment"] == "small_low_profit"
     if small and taxable > amount(params["small_profit_limit_fen"]):
-        missing(
-            fact, "/data/prepayment_basis_id", "累计计税利润超过所采用小微政策上限，需要核对资格。"
+        message = "累计计税利润超过所采用小微政策上限，须核对适用依据，不能自动切换税率。"
+        reject(
+            message,
+            fact_issues=[
+                issue(
+                    basis,
+                    "/data/treatment",
+                    message,
+                    code="inconsistent_fact",
+                    meaning="所采用的小微所得税处理口径",
+                )
+            ],
         )
     rate = params["small_profit_rate"] if small else params["standard_rate"]
     fraction = params["small_profit_taxable_fraction"] if small else "1"
