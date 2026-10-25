@@ -43,7 +43,7 @@ def replace(directory, old_members, new_members, categories, entries, deletes):
         fold = folds.get(identity, totals.empty())
         existing = groups.get(identity)
         if existing is not None:
-            totals.category_adjust(categories, existing.value, -1)
+            totals.category_adjust(categories, existing.value, -1, titles=fold["titles"])
         totals.adjust(fold, previous[identity], -1)
         totals.adjust(fold, proposed[identity], 1)
         deletes.update(((totals.FOLDS, identity), ("activity", identity)))
@@ -112,4 +112,4 @@ def replace(directory, old_members, new_members, categories, entries, deletes):
             else totals.group(representative, fold, order[0])
         )
         entries.extend((value, IndexItem(totals.FOLDS, identity, identity, fold)))
-        totals.category_adjust(categories, value.value, 1)
+        totals.category_adjust(categories, value.value, 1, titles=fold["titles"])

@@ -34,11 +34,11 @@ def status(remaining, paid=0, other=0):
     return "partial" if paid or other else "open"
 
 
-def group_item(value):
+def group_item(value, *, sort_description):
     return IndexItem(
         "open_items",
         value["group_key"],
-        key(*name_key(value["party"]), *name_key(value["description"]), value["group_key"]),
+        key(*name_key(value["party"]), *name_key(sort_description), value["group_key"]),
         value,
         group_key=value["group_key"],
         category=value["category_key"],
@@ -55,10 +55,14 @@ def prepare(member_entries, cutoff_period, current_cutoff, *, complete):
         for member in members:
             totals.adjust(fold, member.value, 1)
         first = min(members, key=lambda item: (item.sort_key, item.item_id))
-        fold["first"] = {"id": first.item_id, "sort": first.sort_key}
+        fold["first"] = {
+            "id": first.item_id,
+            "sort": first.sort_key,
+            "title": first.value["_matter_title"],
+        }
         value = totals.group(first.value, fold)
         totals.category_adjust(categories, value, 1)
-        entries.append(group_item(value))
+        entries.append(group_item(value, sort_description=first.value["_matter_title"]))
     return (
         totals.summary(categories, CATEGORIES, cutoff_period, current_cutoff, complete),
         entries,

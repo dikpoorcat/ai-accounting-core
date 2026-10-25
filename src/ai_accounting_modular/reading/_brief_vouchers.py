@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.ledger.public import VoucherLocator
 
 from . import _brief_vouchers_display, _monthly
+from . import _business_descriptions as descriptions
 from ._brief_activity_amounts import amount, recognition, signed
 from ._brief_activity_parts import category, parts
 from ._brief_activity_sources import Contents, same_reference
@@ -74,7 +75,7 @@ def assets(content):
 
 def descriptor(entry, content, members, *, reverses=None, party_ids=()):
     label, value = business_label(content), amount(content)
-    titles = list(dict.fromkeys(item["row"]["title"] for item in members))
+    titles = list(dict.fromkeys(item["row"]["description"] for item in members))
     summary = "、".join(titles) or label.title
     voucher_summary = entry.summary
     if content.target["kind"] == "assets.activation":
@@ -257,15 +258,38 @@ def descriptors_for_references(reader, references, read, *, known_contents=()):
     cache.reuse(known_contents)
     cache.load([entry.result for entry in entries if entry is not None])
     unique = {token(locator(entry)): entry for entry in entries if entry is not None}
+    prepared = {
+        identity: parts(cache.get(entry.result), cache) for identity, entry in unique.items()
+    }
+    prose = descriptions.Descriptions(
+        reader,
+        (
+            ref
+            for identity, entry in unique.items()
+            if entry.role != "reversal"
+            for part in prepared[identity]
+            for ref in descriptions.part_references(cache.get(entry.result), part, cache)
+        ),
+        read,
+    )
     raw = []
-    for entry in unique.values():
+    for identity, entry in unique.items():
         body = cache.get(entry.result)
-        prepared = parts(body, cache)
-        raw.append(
-            descriptor(
-                entry, body, [], party_ids=_brief_vouchers_display.party_ids(body, prepared, cache)
-            )
+        value = descriptor(
+            entry,
+            body,
+            [],
+            party_ids=_brief_vouchers_display.party_ids(body, prepared[identity], cache),
         )
+        titles = [
+            descriptions.part_display(body, part, cache, prose, entry.role)[0]
+            for part in prepared[identity]
+        ]
+        if titles:
+            value["template"]["type"] = value["template"]["list_summary"] = "、".join(
+                dict.fromkeys(titles)
+            )
+        raw.append(value)
     bound = {
         item["template"]["voucher_version_id"]: item
         for item in _brief_vouchers_display.bind(reader, raw, read)

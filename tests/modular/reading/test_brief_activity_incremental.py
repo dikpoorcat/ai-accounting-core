@@ -457,11 +457,15 @@ def test_closed_correction_and_withdrawal_keep_the_frozen_month(book):
     assert book.close(book.check())["state"] == "closed"
     assert book.kernel.reading.run_pending(book.company)
     january = matches_complete(book)
+    january_display = activity_page(book)
     publish_full(book, "2026-02")
     first["data"].update(amount_fen="80000", expense_class="sales")
     change(book, first, correction_period="2026-02")
     assert book.kernel.reading.run_pending(book.company)
-    assert matches_complete(book) == january
+    revised_january = matches_complete(book)
+    assert activity_page(book) == january_display
+    assert january["_inputs"]["note_scopes"] == ["business:" + first["business_id"]]
+    assert revised_january["_inputs"]["note_scopes"] == []
     february = matches_complete(book, "2026-02")
     assert february["activity_count"] == february["voucher_count"] == 2
     assert {row["title"] for row in activity_page(book, "2026-02")["items"]} == {
@@ -477,7 +481,7 @@ def test_closed_correction_and_withdrawal_keep_the_frozen_month(book):
     )
     assert withdrawn["completion"] == "complete", withdrawn
     assert book.kernel.reading.run_pending(book.company)
-    assert matches_complete(book) == january
+    assert matches_complete(book) == revised_january
     assert matches_complete(book, "2026-02")["activity_count"] == 1
 
 
@@ -521,7 +525,19 @@ def test_no_voucher_business_legs_remain_incremental_after_closing(book):
     assert book.kernel.reading.run_pending(book.company)
     changed = matches_complete(book, "2026-02")
     assert changed["activity_count"] == 2 and changed["voucher_count"] == 0
-    assert matches_complete(book) == january
+    revised_january = matches_complete(book)
+    assert revised_january["_inputs"]["note_scopes"] == []
+    assert january["_inputs"]["note_scopes"] == ["business:" + charged["business_id"]]
+    for collection in index.PUBLIC:
+        assert revised_january["_collections"][collection] == january["_collections"][collection]
+    for field in (
+        "activity_groups",
+        "review_businesses",
+        "activity_count",
+        "group_count",
+        "voucher_count",
+    ):
+        assert revised_january[field] == january[field]
 
 
 @pytest.mark.parametrize("damaged", ["activity_members", index.ROOTS, index.DIRTY])

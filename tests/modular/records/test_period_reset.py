@@ -188,7 +188,7 @@ def test_clear_only_removes_target_month_issues_and_preserves_all_notes(records_
             row["shard_key"]: row["wanted_head"] for row in read.repository("records").targets()
         }
         assert after_targets == before_targets | dict.fromkeys(
-            ("sources", "work"), before_reset + 1
+            ("sources:" + target["source_id"], "work"), before_reset + 1
         )
         before_retry = read.head
     with storage.write_unit(company.company_id) as unit:

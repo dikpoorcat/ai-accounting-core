@@ -68,6 +68,46 @@ def document_note(current):
     }
 
 
+def _cleared_note(scope, seq):
+    return {
+        "scope": scope,
+        "seq": seq,
+        "state": "needs_refresh",
+        "text": None,
+        "basis_head": None,
+        "evidence_ids": [],
+    }
+
+
+def clear_notes(scopes, command_id, uow):
+    """Withdraw business descriptions only, preserving their concurrency sequence."""
+    validate_contract("core.schema.json", "Id", command_id)
+    if not isinstance(scopes, (list, tuple)):
+        raise ContractError("invalid_input", "清除说明须提供明确的业务说明范围集合。")
+    for scope in scopes:
+        validate_contract("core.schema.json", "BusinessNoteScope", scope)
+    if not scopes:
+        return (), ()
+    repository = uow.repository("records")
+    rows = repository.notes(tuple(sorted(set(scopes))))
+    uses = repository.uses_many("note", tuple(rows))
+    changed = []
+    for scope, row in rows.items():
+        current = note_current(row, repository, uses[scope])
+        if current["state"] == "current":
+            changed.append((_cleared_note(scope, _next(row["seq"])), row["seq"]))
+    # Validate the full selection before the first write, even inside a larger transaction.
+    for current, expected_seq in changed:
+        repository.save_note(current, expected_seq, command_id, note_digest(current))
+        repository.replace_uses("note", current["scope"], ())
+    return (
+        tuple(current["scope"] for current, _ in changed),
+        tuple(
+            sorted({source_id for current, _ in changed for source_id in uses[current["scope"]]})
+        ),
+    )
+
+
 def _next(value):
     if value >= MAX_FEN:
         raise ContractError("conflict", "当前序号已达上限。")
@@ -146,7 +186,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             if basis is None or basis != note["expected_basis_head"]:
                 raise ContractError("conflict", "月份说明依据已经变化，请先读取当前业务结果。")
         elif "expected_basis_head" in note:
-            raise ContractError("invalid_input", "公司现实说明不采用月份核算依据。")
+            raise ContractError("invalid_input", "公司及业务说明不采用月份核算依据。")
         old = repository.notes((scope,)).get(scope)
         target = {
             "scope": scope,
@@ -157,6 +197,8 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             "evidence_ids": note["evidence_ids"],
             **_format_fields(note.get("text_format", "plain_text")),
         }
+        if scope.startswith("business:") and note["text"] == "":
+            target = _cleared_note(scope, 1)
         digest = note_digest(target)
         expected = note["expected_seq"]
         old_sources = []
@@ -260,6 +302,16 @@ def apply_current(plan, uow, root):
     ):
         raise ContractError("conflict", "资料计划不属于当前公司的事务快照。")
     repository = uow.repository("records")
+    keys = set()
+    for item in plan._notes:
+        if item.changed:
+            keys.add("notes:" + item.key)
+        if item.source_uses_changed:
+            old_ids = repository.uses("note", item.key)
+            new_ids = loads_json(item.target_json)["current"]["evidence_ids"]
+            keys.update("sources:" + source_id for source_id in set(old_ids) ^ set(new_ids))
+    if plan._issue_scope is not None and plan._issue_scope.changed:
+        keys.add("work")
     if plan._prepared_sources is not None:
         prepared = plan._prepared_sources
         prepared.check(plan.sources, uow, root)
@@ -294,7 +346,7 @@ def apply_current(plan, uow, root):
                 repository.replace_uses("note", item.key, current["evidence_ids"])
     if plan._issue_scope is not None and plan._issue_scope.changed:
         value = loads_json(plan._issue_scope.target_json)
-        repository.replace_issues(
+        changed_source_ids = repository.replace_issues(
             value["scope"],
             value["head"],
             value["expected_head"],
@@ -302,3 +354,9 @@ def apply_current(plan, uow, root):
             content_digest(value["issues"]),
             value["issues"],
         )
+        keys.update("sources:" + source_id for source_id in changed_source_ids)
+    keys.update(
+        "sources:" + source_id
+        for source_id in repository.referenced_source_ids(plan.changed_source_ids)
+    )
+    return tuple(sorted(keys))

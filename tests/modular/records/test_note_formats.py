@@ -166,7 +166,7 @@ def test_standard_note_and_snapshot_use_the_same_canonical_format(records_case, 
         snapshot = records.verify_snapshot(company_identity(company), [], [], read)
         assert snapshot.document_set_id == records.document_status(read)["set_id"]
         with records.lease_document_set(read) as manifest:
-            shard = next(shard for shard in manifest["shards"] if shard["key"] == "notes")
+            shard = next(shard for shard in manifest["shards"] if shard["key"] == "notes:company")
             raw = (company.company_root / shard["path"]).read_bytes()
         notes = loads_json(raw)["notes"]
     assert notes == [
@@ -238,8 +238,10 @@ def test_format_change_reuses_source_links_and_source_target_but_real_source_cha
         targets_after = {
             target["shard_key"]: target for target in read.repository("records").targets()
         }
-        assert records.document_status(read)["pending_scopes"] == ["notes"]
-        assert targets_after["sources"] == targets_before["sources"]
+        assert records.document_status(read)["pending_scopes"] == ["notes:company"]
+        assert {
+            key: value for key, value in targets_after.items() if key.startswith("sources:")
+        } == {key: value for key, value in targets_before.items() if key.startswith("sources:")}
     _publish(records_case, _prepare(records_case, [], None))
     changed = note | {"expected_seq": 2, "evidence_ids": [sources[1]["source_id"]]}
     assert save(records_case, changed).changed_scopes == ("notes", "sources")

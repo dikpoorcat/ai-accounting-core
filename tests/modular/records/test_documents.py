@@ -161,7 +161,7 @@ def test_incremental_correction_reuses_unchanged_parts_and_move_month_has_no_dup
     _publish(records_case, moved)
     current = {item["key"]: item for item in moved.manifest["shards"]}
     assert "facts:operations:2026-01" not in current
-    for key in ("objects", "sources", "notes", "work"):
+    for key in old.keys() - {"facts:operations:2026-01"}:
         assert current[key] == old[key]
         assert (company.company_root / current[key]["path"]).stat().st_mtime_ns == stamps[key]
     assert not (company.company_root / old["facts:operations:2026-01"]["path"]).exists()
@@ -270,14 +270,18 @@ def test_late_failure_does_not_poison_a_newer_target(records_case):
     old_heads = {target.key: target.wanted_head for target in prepared.snapshot.targets}
     _publish(records_case, prepared)
     with storage.write_unit(company.company_id) as unit:
-        source = records.prepare_source(
-            {"kind": "owner_statement", "text": "新的完整业务资料"}, unit
-        )
+        source = records.resolve_sources(fact["evidence_ids"], unit)[0] | {
+            "archive_month": "2026-02"
+        }
         change = RecordsChange(sources=(source,))
         records.apply_current(records.plan_change(change, RecordsContext(unit, str(uuid4()))), unit)
     with storage.maintenance_unit(company.company_id) as unit:
         records.record_document_error(
-            ("sources",), "old_failure", "迟到的旧任务失败", unit, expected_heads=old_heads
+            ("sources:" + fact["evidence_ids"][0],),
+            "old_failure",
+            "迟到的旧任务失败",
+            unit,
+            expected_heads=old_heads,
         )
     with storage.read_unit(company.company_id) as read:
         assert records.document_status(read)["state"] == "pending"
@@ -324,7 +328,7 @@ def test_recreated_capture_can_confirm_a_switch_after_an_existing_set(records_ca
         assert read.head == 2
 
 
-def _publish_company_note(records_case, *, text="新的公司现实说明", expected_seq=0):
+def _save_company_note(records_case, *, text="初始公司说明", expected_seq=0):
     storage, (company, _), records = records_case
     with storage.write_unit(company.company_id) as unit:
         change = RecordsChange(
@@ -338,15 +342,20 @@ def _publish_company_note(records_case, *, text="新的公司现实说明", expe
             )
         )
         records.apply_current(records.plan_change(change, RecordsContext(unit, str(uuid4()))), unit)
+
+
+def _publish_company_note(records_case, *, text="新的公司现实说明", expected_seq=0):
+    _save_company_note(records_case, text=text, expected_seq=expected_seq)
     return _publish(records_case, _prepare(records_case, [], None))
 
 
 def test_nested_set_leases_pin_old_parts_until_last_release_even_on_exception(records_case):
     storage, (company, _), records = records_case
     fact, obj = _first_facts(records_case)
+    _save_company_note(records_case)
     first = _prepare(records_case, [fact], [obj])
     _publish(records_case, first)
-    old_notes = next(shard for shard in first.manifest["shards"] if shard["key"] == "notes")
+    old_notes = next(shard for shard in first.manifest["shards"] if shard["key"] == "notes:company")
     old_path = company.company_root / old_notes["path"]
     old_bytes = old_path.read_bytes()
     with storage.read_unit(company.company_id) as read:
@@ -354,7 +363,7 @@ def test_nested_set_leases_pin_old_parts_until_last_release_even_on_exception(re
             with pytest.raises(RuntimeError, match="synthetic reader interruption"):
                 with records.lease_document_set(read) as inner:
                     assert outer == inner
-                    assert _publish_company_note(records_case)["state"] == "ready"
+                    assert _publish_company_note(records_case, expected_seq=1)["state"] == "ready"
                     assert old_path.read_bytes() == old_bytes
                     raise RuntimeError("synthetic reader interruption")
             assert old_path.read_bytes() == old_bytes
@@ -384,13 +393,19 @@ def test_document_leases_are_shared_by_public_factory_instances_for_the_same_roo
     company = companies[0]
     fact, obj = _first_facts(records_case)
     _publish(records_case, _prepare(records_case, [fact], [obj]))
+    _publish_company_note(records_case)
     other = create_records(
         lambda read: storage.company_metadata(read).company_root / "runtime" / ".."
     )
     with storage.read_unit(company.company_id) as read:
         with records.lease_document_set(read) as leased:
-            old_notes = next(shard for shard in leased["shards"] if shard["key"] == "notes")
-            assert _publish_company_note((storage, companies, other))["state"] == "ready"
+            old_notes = next(shard for shard in leased["shards"] if shard["key"] == "notes:company")
+            assert (
+                _publish_company_note(
+                    (storage, companies, other), expected_seq=1, text="更新公司说明"
+                )["state"]
+                == "ready"
+            )
             assert (company.company_root / old_notes["path"]).exists()
         assert not (company.company_root / old_notes["path"]).exists()
 
@@ -426,7 +441,9 @@ def test_lease_release_keeps_a_prepared_but_not_yet_published_part(
                 assert prepared.manifest == first.manifest
                 del first
                 gc.collect()
-            note = next(shard for shard in prepared.manifest["shards"] if shard["key"] == "notes")
+            note = next(
+                shard for shard in prepared.manifest["shards"] if shard["key"] == "notes:company"
+            )
         assert (company.company_root / note["path"]).exists()
     assert _publish(records_case, prepared)["state"] == "ready"
 
@@ -487,7 +504,7 @@ def test_preparation_can_reuse_old_leased_content_after_an_intermediate_publicat
     _publish(records_case, first)
     with storage.read_unit(company.company_id) as read:
         with records.lease_document_set(read) as leased:
-            old = next(shard for shard in leased["shards"] if shard["key"] == "notes")
+            old = next(shard for shard in leased["shards"] if shard["key"] == "notes:company")
             _publish_company_note(records_case, text="有效说明B", expected_seq=1)
             with storage.write_unit(company.company_id) as unit:
                 change = RecordsChange(
@@ -504,48 +521,114 @@ def test_preparation_can_reuse_old_leased_content_after_an_intermediate_publicat
                     records.plan_change(change, RecordsContext(unit, str(uuid4()))), unit
                 )
             prepared = _prepare(records_case, [], None)
-            future = next(shard for shard in prepared.manifest["shards"] if shard["key"] == "notes")
+            future = next(
+                shard for shard in prepared.manifest["shards"] if shard["key"] == "notes:company"
+            )
             assert future["path"] == old["path"]
         assert (company.company_root / future["path"]).exists()
     assert _publish(records_case, prepared)["state"] == "ready"
 
 
-def test_partial_publication_preserves_another_live_preparation_for_the_same_targets(records_case):
+def test_description_and_source_membership_are_published_as_one_complete_set(records_case):
+    storage, (company, _), records = records_case
+    fact, obj = _first_facts(records_case)
+    _publish(records_case, _prepare(records_case, [fact], [obj]))
+    path = company.company_root / "standard/current.json"
+    original = open_standard_bundle(path)
+    with storage.read_unit(company.company_id) as read:
+        source = records.prepare_source(
+            {"kind": "owner_statement", "text": "已确认这笔费用用于培训。"}, read
+        )
+    scope = "business:" + fact["business_id"]
+    with storage.write_unit(company.company_id) as unit:
+        records.apply_current(
+            records.plan_change(
+                RecordsChange(
+                    sources=(source,),
+                    notes=(
+                        {
+                            "scope": scope,
+                            "text": "员工培训费报销",
+                            "evidence_ids": [source["source_id"]],
+                            "expected_seq": 0,
+                        },
+                    ),
+                ),
+                RecordsContext(unit, str(uuid4())),
+            ),
+            unit,
+        )
+    prepared = _prepare(records_case, [], None)
+    assert set(prepared.snapshot.scopes) == {"notes:" + scope, "sources:" + source["source_id"]}
+    assert set(prepared.snapshot._part_keys) == set(prepared.snapshot.scopes)
+    # Preparing immutable parts leaves the previous complete collection visible.
+    assert open_standard_bundle(path).set_id == original.set_id
+    assert _publish(records_case, prepared)["state"] == "ready"
+    current = open_standard_bundle(path)
+    assert current.notes[0]["text"] == "员工培训费报销"
+    assert source in current.sources and current.facts == original.facts
+    with storage.write_unit(company.company_id) as unit:
+        records.clear_notes((scope,), str(uuid4()), unit)
+    cleared = _prepare(records_case, [], None)
+    assert set(cleared.snapshot.scopes) == set(prepared.snapshot.scopes)
+    assert cleared.snapshot.parts_json == ()
+    assert open_standard_bundle(path).set_id == current.set_id
+    assert _publish(records_case, cleared)["state"] == "ready"
+    final = open_standard_bundle(path)
+    assert final.notes == () and final.sources == original.sources and final.facts == original.facts
+    with storage.read_unit(company.company_id) as read:
+        records.verify_snapshot(company_identity(company), [fact], [obj], read)
+
+
+def test_new_pending_part_after_capture_cannot_be_claimed_or_overwritten_by_old_preparation(
+    records_case,
+):
     storage, (company, _), records = records_case
     fact, obj = _first_facts(records_case)
     first = _prepare(records_case, [fact], [obj])
     _publish(records_case, first)
-    with storage.read_unit(company.company_id) as read:
-        source = records.prepare_source(
-            {"kind": "owner_statement", "text": "尚未用于业务的其他真实资料"}, read
-        )
+    _save_company_note(records_case, text="第一项已确认现实信息")
+    pending = _prepare(records_case, [], None)
     with storage.write_unit(company.company_id) as unit:
+        change = RecordsChange(
+            notes=(
+                {
+                    "scope": "period:2026-01",
+                    "text": "当月已经核对的完整情况",
+                    "evidence_ids": [],
+                    "expected_seq": 0,
+                    "expected_basis_head": "basis",
+                },
+            )
+        )
         records.apply_current(
             records.plan_change(
-                RecordsChange(sources=(source,)), RecordsContext(unit, str(uuid4()))
+                change, RecordsContext(unit, str(uuid4()), {"period:2026-01": "basis"})
             ),
             unit,
         )
-        records.mark_document_targets(("facts:operations:2026-01",), unit)
-    corrected = fact | {"data": fact["data"] | {"amount_fen": "12000"}}
-    with storage.read_unit(company.company_id) as read:
-        fact_snapshot = records.capture_documents(
-            company_identity(company), [corrected], None, read, scopes=("facts:operations:2026-01",)
-        )
-        source_snapshot = records.capture_documents(
-            company_identity(company), [], None, read, scopes=("sources",)
-        )
-    fact_prepared = records.prepare_documents(fact_snapshot)
-    source_prepared = records.prepare_documents(source_snapshot)
-    assert source_prepared.manifest["set_id"] == first.manifest["set_id"]
-    assert _publish(records_case, source_prepared)["state"] == "pending"
-    fact_part = next(
-        shard
-        for shard in fact_prepared.manifest["shards"]
-        if shard["key"] == "facts:operations:2026-01"
+    with pytest.raises(ContractError) as error:
+        _publish(records_case, pending)
+    assert error.value.code == "conflict"
+    assert (
+        open_standard_bundle(company.company_root / "standard/current.json").set_id
+        == first.manifest["set_id"]
     )
-    assert (company.company_root / fact_part["path"]).exists()
-    assert _publish(records_case, fact_prepared)["state"] == "ready"
+    with storage.read_unit(company.company_id) as read:
+        assert records.document_status(read)["state"] == "pending"
+        assert set(records.pending_document_scopes(read)) == {
+            "notes:company",
+            "notes:period:2026-01",
+        }
+    complete = _prepare(records_case, [], None)
+    assert set(complete.snapshot.scopes) == {"notes:company", "notes:period:2026-01"}
+    assert _publish(records_case, complete)["state"] == "ready"
+    assert {
+        note["scope"]
+        for note in open_standard_bundle(company.company_root / "standard/current.json").notes
+    } == {"company", "period:2026-01"}
+    with storage.read_unit(company.company_id) as read:
+        records.verify_snapshot(company_identity(company), [fact], [obj], read)
 
 
 def test_source_shard_and_manifest_are_stable_when_sqlite_reverses_unordered_reads(records_case):
@@ -571,10 +654,10 @@ def test_source_shard_and_manifest_are_stable_when_sqlite_reverses_unordered_rea
         reverse = records.capture_documents(company_identity(company), [fact], [obj], read)
         read._connection.execute("PRAGMA reverse_unordered_selects=OFF")
     assert first.parts_json == reverse.parts_json
-    source_part = next(
-        loads_json(raw) for raw in first.parts_json if loads_json(raw)["key"] == "sources"
-    )
-    assert [source["source_id"] for source in source_part["sources"]] == sorted(
+    source_parts = [
+        loads_json(raw) for raw in first.parts_json if loads_json(raw)["key"].startswith("sources:")
+    ]
+    assert [source["source_id"] for part in source_parts for source in part["sources"]] == sorted(
         fact["evidence_ids"]
     )
     assert records.prepare_documents(first).manifest == records.prepare_documents(reverse).manifest

@@ -17,6 +17,7 @@ from . import _business_status_display as display
 from . import _business_status_events as events
 from . import _business_status_selection as selection
 from . import _business_status_settlements as settlements
+from ._business_descriptions import Descriptions
 from ._context import period
 from ._monthly import normalize
 from ._types import ModelDelivery
@@ -127,8 +128,11 @@ def detail(reader, scope, query):
             raise ContractError("invalid_input", "不能查看建账前缺少逐月正式资料的业务进展。")
         selected = selection.select(reader, normalized, query, read)
         positions = settlements.capture(reader, normalized, selected, read)
+        prose = Descriptions(
+            reader, (body.reference for body in selected.cache.saved.values()), read
+        )
         view = query.get("settlement_view", "current")
-        actual_events = events.capture(reader, selected, positions, view, read)
+        actual_events = events.capture(reader, selected, positions, view, read, descriptions=prose)
         closure = reader.ledger.period_closure(normalized["period_to"], read)
         old_closure = (
             reader.ledger.period_closure(selected.content.reference["posting_period"], read)
@@ -170,7 +174,9 @@ def detail(reader, scope, query):
                 else "checking"
             },
             "settlements": positions.historical,
-            "display_profiles": display.profiles(reader, selected, positions, actual_events, read),
+            "display_profiles": display.profiles(
+                reader, selected, positions, actual_events, read, descriptions=prose
+            ),
             "current_followups": {"settlements": positions.current},
             "settlement_view": view,
             "detail_scope": selected.detail,

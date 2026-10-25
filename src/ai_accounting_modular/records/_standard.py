@@ -52,12 +52,12 @@ def _unique(items, field, meaning):
 
 def _validate_parts(manifest, parts, known_facts=None):
     if not _documents.FIXED_KEYS <= {part["key"] for part in parts}:
-        _bad("完整标准文档必须包含对象、来源、待办和说明四个固定片。")
+        _bad("完整标准文档必须包含对象和待办固定片。")
     collections = {name: [] for name in ("facts", "objects", "sources", "issues", "notes")}
     for part in parts:
         expected_field = (
-            "facts"
-            if part["key"].startswith("facts:")
+            part["key"].split(":", 1)[0]
+            if part["key"].startswith(("facts:", "notes:", "sources:"))
             else {
                 "objects": "objects",
                 "sources": "sources",
@@ -67,6 +67,7 @@ def _validate_parts(manifest, parts, known_facts=None):
         )
         if expected_field is None or expected_field not in part:
             _bad("标准分片的内容类型与归属不一致。")
+        _documents.validate_part_key(part)
         if part["key"].startswith("facts:"):
             if known_facts is not None and (
                 not part["facts"]
@@ -101,6 +102,13 @@ def _validate_parts(manifest, parts, known_facts=None):
         known_facts
     ):
         _bad("标准业务文档遗漏了数据库中的当前事实。")
+    business_ids = {fact["business_id"] for fact in collections["facts"]}
+    if any(
+        note["scope"].startswith("business:")
+        and note["scope"].removeprefix("business:") not in business_ids
+        for note in collections["notes"]
+    ):
+        _bad("业务说明必须对应同一标准文档集合中的当前业务事实。")
     for name in ("objects", "notes"):
         for item in collections[name]:
             required.update(item.get("evidence_ids", ()))

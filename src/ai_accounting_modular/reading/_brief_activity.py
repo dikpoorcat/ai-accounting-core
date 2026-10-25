@@ -9,6 +9,7 @@ from ai_accounting_modular.contracts.public import (
 
 from . import _brief_activity_index as index
 from . import _brief_vouchers, _brief_vouchers_display
+from . import _business_descriptions as descriptions
 from ._brief_activity_amounts import EVENT_KINDS
 from ._brief_activity_parts import ActivityEvent, parts, rows, semantic
 from ._brief_activity_sources import Contents, identities, pages
@@ -215,6 +216,17 @@ def capture(reader, scope, read, *, business_ids=()):
         if body.target["kind"] in EVENT_KINDS
     }
     events = _events(directory, unjournaled, chosen, cache, prepared)
+    prose = descriptions.Descriptions(
+        reader,
+        (
+            ref
+            for event, body in events
+            if event.role != "reversal"
+            for part in prepared[body.reference["result_id"], body.reference["generation"]]
+            for ref in descriptions.part_references(body, part, cache)
+        ),
+        read,
+    )
     obligations = _obligations(reader, scope, read, [body for _, body in events])
     objects = identities(
         reader.identity,
@@ -228,6 +240,7 @@ def capture(reader, scope, read, *, business_ids=()):
     )
     original = _reversed_entries(reader, read, directory, chosen)
     members, raw_vouchers, by_voucher = [], [], {}
+    note_scopes = defaultdict(set)
     for event, body in events:
         actual = rows(
             event,
@@ -236,6 +249,12 @@ def capture(reader, scope, read, *, business_ids=()):
             prepared=prepared[body.reference["result_id"], body.reference["generation"]],
             obligations=obligations.get(body.source["result_id"], ()),
         )
+        for member, part in zip(
+            actual, prepared[body.reference["result_id"], body.reference["generation"]], strict=True
+        ):
+            text, scopes = descriptions.part_display(body, part, cache, prose, event.role)
+            member["row"]["description"] = text
+            note_scopes[body.reference["business_id"]].update(scopes)
         members.extend(actual)
         if event.voucher_token:
             by_voucher[event.voucher_token] = actual
@@ -298,6 +317,7 @@ def capture(reader, scope, read, *, business_ids=()):
                 root_objects[business_id],
                 members=member_ids[business_id],
                 vouchers=voucher_ids[business_id],
+                note_scopes=note_scopes[business_id],
             )
         )
     return members, vouchers, roots

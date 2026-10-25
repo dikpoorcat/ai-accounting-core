@@ -14,7 +14,6 @@ from . import _brief_open_groups as groups
 from . import _brief_open_index as index
 from . import _brief_open_inputs as inputs
 from . import _brief_open_rollover as rollover
-from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_open_totals as totals
 from . import _dependencies, _monthly
@@ -122,7 +121,7 @@ def _groups(directory, old, new_entries, category_folds, entries, deletes):
                             "group_key": identity,
                             "category_key": existing["category_key"],
                             "party": existing["party"],
-                            "_matter_title": existing["description"],
+                            "_matter_title": old_first["title"],
                         },
                     )
                 )
@@ -143,10 +142,15 @@ def _groups(directory, old, new_entries, category_folds, entries, deletes):
         if not candidates:
             index.corrupt()
         order, member_id, first = min(candidates, key=lambda value: value[:2])
-        fold["first"] = {"id": member_id, "sort": order}
+        fold["first"] = {"id": member_id, "sort": order, "title": first["_matter_title"]}
         value = totals.group(first, fold)
         totals.category_adjust(category_folds, value, 1)
-        entries.extend((groups.group_item(value), index.item(index.FOLDS, identity, fold)))
+        entries.extend(
+            (
+                groups.group_item(value, sort_description=first["_matter_title"]),
+                index.item(index.FOLDS, identity, fold),
+            )
+        )
 
 
 def prepare(reader, scope, read, state):
@@ -216,7 +220,7 @@ def prepare_from_base(
         business_ids=dirty - {"@fixed"},
         complete=complete,
     )
-    members = rows.project(captured, scope["company_id"], reader.identity, read)
+    members = brief.project(reader, captured, scope["company_id"], read)
     member_entries = brief.member_items(members, extra)
     members.extend(extra)
     bindings = brief.bind_displays(reader, members, captured, read)
@@ -253,7 +257,12 @@ def prepare_from_base(
     }
     summary["_category_folds"] = category_folds
     summary["_cooperation_inputs"] = cooperation_inputs.wire()
-    summary["_inputs"] = inputs.static(inputs.ORDINARY.merge(cooperation_inputs)).wire()
+    scopes = set(_dependencies.inputs(payload).note_scopes)
+    scopes.difference_update(value.get("_note_scope") for value in old_members.values())
+    scopes.update(member["_note_scope"] for member in members if member.get("_note_scope"))
+    summary["_inputs"] = inputs.static(
+        inputs.ORDINARY.merge(cooperation_inputs, ReadInputs(note_scopes=tuple(sorted(scopes))))
+    ).wire()
     summary["open_items"] = totals.summary(
         category_folds,
         groups.CATEGORIES,

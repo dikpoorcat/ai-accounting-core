@@ -1990,8 +1990,7 @@
           "items": {
             "$ref": "#/$defs/DocumentShard"
           },
-          "minItems": 1,
-          "maxItems": 100000
+          "minItems": 1
         }
       },
       "required": [
@@ -2220,12 +2219,19 @@
       ],
       "additionalProperties": false
     },
+    "BusinessNoteScope": {
+      "type": "string",
+      "pattern": "^business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "NoteScope": {
+      "type": "string",
+      "pattern": "^(company|period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])|business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+    },
     "NoteChange": {
       "type": "object",
       "properties": {
         "scope": {
-          "type": "string",
-          "pattern": "^(company|period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2]))$"
+          "$ref": "#/$defs/NoteScope"
         },
         "expected_seq": {
           "type": "integer",
@@ -2234,7 +2240,6 @@
         },
         "text": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 20000
         },
         "evidence_ids": {
@@ -2280,6 +2285,48 @@
               "required": [
                 "expected_basis_head"
               ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "pattern": "^business:"
+              }
+            }
+          },
+          "then": {
+            "if": {
+              "properties": {
+                "text": {
+                  "const": ""
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "evidence_ids": {
+                  "maxItems": 0
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "text": {
+                  "pattern": "\\S"
+                },
+                "evidence_ids": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "text": {
+                "minLength": 1
+              }
             }
           }
         },
@@ -2797,9 +2844,7 @@
       "type": "object",
       "properties": {
         "scope": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
+          "$ref": "#/$defs/NoteScope"
         },
         "text": {
           "type": "string",
@@ -2825,6 +2870,25 @@
       ],
       "additionalProperties": false,
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "pattern": "^business:"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "pattern": "\\S"
+              },
+              "evidence_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -2877,7 +2941,8 @@
           "const": "ai-accounting-standard/1"
         },
         "key": {
-          "const": "sources"
+          "type": "string",
+          "pattern": "^sources(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$"
         },
         "sources": {
           "type": "array",
@@ -2893,7 +2958,28 @@
         "key",
         "sources"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "key": {
+                "not": {
+                  "const": "sources"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sources": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "WorkShard": {
       "type": "object",
@@ -2927,15 +3013,15 @@
           "const": "ai-accounting-standard/1"
         },
         "key": {
-          "const": "notes"
+          "type": "string",
+          "pattern": "^notes(:(company|period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])|business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$"
         },
         "notes": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/DocumentNote"
           },
-          "minItems": 0,
-          "maxItems": 12000
+          "minItems": 0
         }
       },
       "required": [
@@ -2943,7 +3029,28 @@
         "key",
         "notes"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "key": {
+                "not": {
+                  "const": "notes"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "notes": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "StandardPart": {
       "oneOf": [
@@ -4412,9 +4519,7 @@
       "type": "object",
       "properties": {
         "scope": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
+          "$ref": "#/$defs/NoteScope"
         },
         "seq": {
           "type": "integer",
@@ -4474,6 +4579,39 @@
       ],
       "additionalProperties": false,
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "pattern": "^business:"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "basis_head": {
+                "type": "null"
+              }
+            },
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "current"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "text": {
+                  "pattern": "\\S"
+                },
+                "evidence_ids": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {

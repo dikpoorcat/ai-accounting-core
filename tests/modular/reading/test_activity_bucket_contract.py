@@ -408,7 +408,7 @@ def test_previous_private_format_is_rebuilt_from_current_facts_after_explicit_re
         seen, filters = watch_contents(book, patch)
         assert book.kernel.reading.run_pending(book.company)
     assert filters == [()] and seen == [first["business_id"]]
-    assert state(book)["format_version"] == 9
+    assert state(book)["format_version"] == index.FORMAT_VERSION
     assert matches_complete(book)["review_businesses"][0]["business_amount_fen"] == "9"
 
 

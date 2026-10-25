@@ -36,7 +36,7 @@ def hydrate(reader, members, company_id, read, *, known_contents=()):
                 "source_period": content.reference["business_period"],
                 "voucher_version_id": None,
                 "voucher_number": None,
-                "description": meaning.description,
+                "description": member.get("_description") or meaning.description,
                 "purpose": meaning.purpose,
                 "contribution_group_key": content_digest(
                     [company_id, meaning.person_id, meaning.payroll_period]

@@ -405,7 +405,12 @@ def test_real_backup_download_repair_preserves_previous_and_original_request_fai
         ) as plan:
             saved = deepcopy(plan)
             task = service.ensure_current(plan, plan["scope_head"], request_id)
-        done = service.run(company.company_id, task["task_id"])
+        # run() executes one attempt; finish the existing bounded retry policy
+        # before testing the delivered package and rolling backup guarantees.
+        for _ in range(3):
+            done = service.run(company.company_id, task["task_id"])
+            if done["state"] != "pending":
+                break
         assert done["state"] == "succeeded", done
         return saved, done
 

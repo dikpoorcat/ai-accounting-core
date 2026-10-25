@@ -18,6 +18,7 @@ from ai_accounting_modular.ledger.opening.public import (
 
 from ._brief_open_groups import group_key, status
 from ._brief_open_sources import batches, ref_key
+from ._business_descriptions import allows_component
 from ._business_labels import (
     BusinessLabel,
     ObligationFields,
@@ -314,7 +315,7 @@ def _resource(locator):
     )
 
 
-def project(snapshot, company_id, identity, read):
+def project(snapshot, company_id, identity, read, *, descriptions=None):
     opening = _opening(snapshot.contents.values())
     meanings = {}
     for item in (*snapshot.selected, *snapshot.current.values()):
@@ -346,6 +347,12 @@ def project(snapshot, company_id, identity, read):
             reference,
         )
         contribution = meaning.component if meaning.component in _CONTRIBUTIONS else None
+        note_scope, description = None, None
+        if descriptions is not None and allows_component(
+            content, category=definition.category, component=meaning.component
+        ):
+            note_scope = descriptions.scope(content.reference)
+            description = descriptions.text(content.reference)
         rows.append(
             {
                 "id": reference["business_id"] + ":" + reference["slot"],
@@ -367,6 +374,8 @@ def project(snapshot, company_id, identity, read):
                 else format_fen(current_remaining),
                 "subject_id": reference["business_id"],
                 "_matter_title": meaning.label.title,
+                "_description": description,
+                "_note_scope": note_scope,
                 "_locator": _locator(content, item),
                 "_sort": [
                     meaning.payroll_period or content.reference["business_period"],

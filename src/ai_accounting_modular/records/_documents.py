@@ -22,18 +22,34 @@ from ._sources import atomic_write, controlled_path, issue_source_ids
 from ._types import DocumentSnapshot, PreparedDocuments, ShardTarget
 
 FORMAT = "ai-accounting-standard/1"
-FIXED_KEYS = frozenset({"sources", "objects", "work", "notes"})
+FIXED_KEYS = frozenset({"objects", "work"})
+_AGGREGATE_KEYS = frozenset({"sources", "notes"})
 _FACT_KEY = re.compile(
     r"facts:(operations|people|assets|financing|investment|money|taxes|opening|reports):[0-9]{4}-(0[1-9]|1[0-2])"
 )
-_PART_FILE = re.compile(r"[a-z]+(?:--[0-9]{4}-[0-9]{2})?--[0-9a-f]{64}\.json")
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_PART_FILE = re.compile(
+    r"(?:[a-z]+(?:--[0-9]{4}-[0-9]{2})?|sources--"
+    + _UUID
+    + r"|notes--(?:company|period--[0-9]{4}-[0-9]{2}|business--"
+    + _UUID
+    + r"))--[0-9a-f]{64}\.json"
+)
 
 
 def validate_key(key):
-    if key == "company":
+    if isinstance(key, str) and key in {"company", *_AGGREGATE_KEYS}:
+        return key
+    if isinstance(key, str) and key.startswith("notes:"):
+        validate_contract("core.schema.json", "NoteScope", key.removeprefix("notes:"))
+        return key
+    if isinstance(key, str) and key.startswith("sources:"):
+        validate_contract("core.schema.json", "Id", key.removeprefix("sources:"))
         return key
     if not isinstance(key, str) or (key not in FIXED_KEYS and _FACT_KEY.fullmatch(key) is None):
-        raise ContractError("invalid_input", "标准文档范围必须是固定片或明确的业务领域与月份。")
+        raise ContractError(
+            "invalid_input", "标准文档范围须是对象、待办、明确业务分片或单条说明、来源。"
+        )
     if key.startswith("facts:"):
         validate_contract("core.schema.json", "Month", key.rsplit(":", 1)[1])
     return key
@@ -43,6 +59,8 @@ def mark_targets(keys, uow):
     if uow.next_head <= uow.head:
         raise ContractError("invalid_operation", "文档目标只能随正式业务事务推进。")
     keys = set(validate_key(key) for key in keys)
+    if keys & _AGGREGATE_KEYS:
+        raise ContractError("invalid_input", "说明和来源须按明确身份归档，不再写入汇总片。")
     repository = uow.repository("records")
     if repository.document_set() is None:
         keys.update(FIXED_KEYS)
@@ -68,7 +86,13 @@ def request_repair(uow):
     targets = repository.targets()
     if any(row["wanted_head"] > uow.head for row in targets):
         raise ContractError("storage_corrupt", "标准文档目标不能超过已保存的业务版本。")
-    keys = FIXED_KEYS | {"company"} | {row["shard_key"] for row in targets}
+    keys = (
+        FIXED_KEYS
+        | {"company"}
+        | {row["shard_key"] for row in targets}
+        | {"notes:" + scope for scope in repository.notes()}
+        | {"sources:" + source_id for source_id in repository.used_source_ids()}
+    )
     repository.request_documents(sorted(keys), uow.head)
 
 
@@ -88,7 +112,20 @@ def part_bytes(part):
     return (canonical_json(part) + "\n").encode("utf-8")
 
 
-def capture_documents(company_identity, facts, objects, read, root, scopes=None):
+def validate_part_key(part):
+    """Check the identity relationship which JSON Schema cannot compare across fields."""
+    for prefix, field, identity in (
+        ("notes:", "notes", "scope"),
+        ("sources:", "sources", "source_id"),
+    ):
+        if part["key"].startswith(prefix) and (
+            len(part[field]) != 1 or part["key"] != prefix + part[field][0][identity]
+        ):
+            raise ContractError("documents_corrupt", "标准分片身份与其中的唯一说明或来源不一致。")
+
+
+def capture_documents(company_identity, facts, objects, read, root):
+    """Capture every pending part from this one saved view as a complete publication."""
     validate_contract("core.schema.json", "CompanyIdentity", company_identity)
     repository = read.repository("records")
     targets = tuple(
@@ -102,25 +139,23 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
         for row in repository.targets()
     )
     indexed = {target.key: target for target in targets}
-    selected = (
-        set(
-            target.key
-            for target in targets
-            if target.published_head is None or target.wanted_head > target.published_head
-        )
-        if scopes is None
-        else set(scopes)
-    )
+    selected = {
+        target.key
+        for target in targets
+        if target.published_head is None or target.wanted_head > target.published_head
+    }
     for key in selected:
         validate_key(key)
-        if key not in indexed:
-            raise ContractError("invalid_operation", "文档范围尚未在正式业务事务中建立目标。")
     current = repository.document_set()
     base = None
     if current is not None:
         try:
             base = loads_json(controlled_path(root, current["manifest_path"]).read_bytes())
             verify_manifest(root, base, parts=False)
+            if ({part["key"] for part in base["shards"]} & _AGGREGATE_KEYS) - selected:
+                raise ContractError(
+                    "documents_corrupt", "旧汇总片须显式完整重建后再发布，不能与逐条片并存。"
+                )
             # A process may have switched the manifest before confirming it in SQLite.
             # The same target capture below regenerates the pending parts and confirms once.
         except (OSError, ContractError):
@@ -170,28 +205,33 @@ def capture_documents(company_identity, facts, objects, read, root, scopes=None)
         used_sources.update(issue_source_ids(issue))
     if "work" in selected:
         parts["work"] = {"format": FORMAT, "key": "work", "issues": issues}
-    notes = []
-    note_rows = repository.notes() if "notes" in selected else {}
+    note_scopes = tuple(
+        sorted(key.removeprefix("notes:") for key in selected if key.startswith("notes:"))
+    )
+    note_rows = repository.notes(note_scopes) if note_scopes else {}
     note_uses = repository.uses_many("note", tuple(note_rows))
     for scope, row in note_rows.items():
         current_note = note_current(row, repository, note_uses[scope])
         if current_note["state"] == "current":
             note = document_note(current_note)
-            notes.append(note)
+            key = "notes:" + scope
+            parts[key] = {"format": FORMAT, "key": key, "notes": [note]}
             used_sources.update(note["evidence_ids"])
-    if "notes" in selected:
-        parts["notes"] = {"format": FORMAT, "key": "notes", "notes": notes}
-    if "sources" in selected:
-        used_sources.update(repository.used_source_ids())
+    source_candidates = tuple(
+        sorted(key.removeprefix("sources:") for key in selected if key.startswith("sources:"))
+    )
+    published_source_ids = repository.referenced_source_ids(source_candidates)
+    used_sources.update(published_source_ids)
     sources = repository.sources(tuple(sorted(used_sources)))
     _missing_sources(used_sources, sources)
     for source in sources.values():
         validate_contract("core.schema.json", "Source", source)
-    if "sources" in selected:
-        parts["sources"] = {
+    for source_id in published_source_ids:
+        key = "sources:" + source_id
+        parts[key] = {
             "format": FORMAT,
-            "key": "sources",
-            "sources": [sources[source_id] for source_id in sorted(sources)],
+            "key": key,
+            "sources": [sources[source_id]],
         }
     snapshot = DocumentSnapshot(
         read.company_id,
@@ -302,6 +342,7 @@ def verify_manifest(root, manifest, *, parts=True):
                 raise ContractError("documents_corrupt", "标准文档分片内容与清单不一致。")
             part = loads_json(raw)
             validate_contract("core.schema.json", "StandardPart", part)
+            validate_part_key(part)
             if part["key"] != shard["key"]:
                 raise ContractError("documents_corrupt", "标准文档分片归属与清单不一致。")
 

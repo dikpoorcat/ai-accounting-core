@@ -38,16 +38,20 @@ def root(value):
         "object_ids",
         "members",
         "vouchers",
+        "note_scopes",
     }:
         corrupt()
     validate_contract("core.schema.json", "Id", value["business_id"])
-    for field in ("object_ids", "members", "vouchers"):
+    for field in ("object_ids", "members", "vouchers", "note_scopes"):
         ids(value[field], uuid=field == "object_ids")
     sources = value["sources"]
     if type(sources) is not list or not sources:
         corrupt()
     for source in sources:
         validate_contract("business-facts.schema.json", "ResultSourceRef", source)
+    source_scopes = {"business:" + source["business_id"] for source in sources}
+    if not set(value["note_scopes"]) <= source_scopes:
+        corrupt()
     identities = [(source["result_id"], source["result_generation"]) for source in sources]
     if identities != sorted(set(identities)) or not any(
         source["business_id"] == value["business_id"] for source in sources
@@ -56,7 +60,7 @@ def root(value):
     return value
 
 
-def root_item(business_id, sources, object_ids, *, members=(), vouchers=()):
+def root_item(business_id, sources, object_ids, *, members=(), vouchers=(), note_scopes=()):
     unique = {}
     for source in sources:
         identity = source["result_id"], source["result_generation"]
@@ -70,6 +74,7 @@ def root_item(business_id, sources, object_ids, *, members=(), vouchers=()):
             "object_ids": sorted(set(object_ids)),
             "members": sorted(set(members)),
             "vouchers": sorted(set(vouchers)),
+            "note_scopes": sorted(set(note_scopes)),
         }
     )
     return IndexItem(ROOTS, business_id, business_id, value, business_id=business_id)
@@ -129,11 +134,12 @@ def memberships(roots, collection):
     return grouped
 
 
-def inputs(business_ids, object_ids):
+def inputs(business_ids, object_ids, note_scopes=()):
     return ReadInputs(
         posted_results=True,
         business_ids=tuple(sorted(business_ids)),
         object_ids=tuple(sorted(object_ids)),
+        note_scopes=tuple(sorted(note_scopes)),
     )
 
 
@@ -146,14 +152,20 @@ def complete(roots):
             IndexItem(collection, identity, identity, {"roots": sorted(owners)})
             for identity, owners in values.items()
         )
-    return entries, inputs(keys[BUSINESSES], keys[OBJECTS])
+    return entries, inputs(
+        keys[BUSINESSES],
+        keys[OBJECTS],
+        {scope for item in roots for scope in item.value["note_scopes"]},
+    )
 
 
 def validate_inputs(payload, directories):
     from ._dependencies import inputs as declared_inputs
 
     selected = declared_inputs(payload)
-    if selected != inputs(selected.business_ids, selected.object_ids):
+    if selected != inputs(selected.business_ids, selected.object_ids, selected.note_scopes):
+        corrupt()
+    if not set(selected.note_scopes) <= {"business:" + ident for ident in selected.business_ids}:
         corrupt()
     for collection, identities in (
         (BUSINESSES, selected.business_ids),
@@ -196,4 +208,13 @@ def changes(directory, before, after, entries, deletes):
                 keys[collection].add(identity)
             else:
                 keys[collection].discard(identity)
-    return inputs(keys[BUSINESSES], keys[OBJECTS])
+    scopes = set(selected.note_scopes)
+    # Scope membership follows business dependencies; surviving owners still subscribe.
+    for item in before:
+        scopes.difference_update(item.value["note_scopes"])
+    scopes.update(scope for item in after for scope in item.value["note_scopes"])
+    candidates = {scope for item in before for scope in item.value["note_scopes"]} - scopes
+    owners = directory.dependents(BUSINESSES, {scope[9:] for scope in candidates})
+    survivors = directory.get(ROOTS, owners - {item.item_id for item in before})
+    scopes.update(scope for value in survivors.values() for scope in value["note_scopes"])
+    return inputs(keys[BUSINESSES], keys[OBJECTS], scopes)

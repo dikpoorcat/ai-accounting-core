@@ -23,7 +23,7 @@ DDL 中每张表上方的 owner 是唯一写入者；数据库连接共用不改
 | 存储标识 | system_meta、company_profile、module_schema | 新体系、公司、结构识别和全局提交序号；不是业务操作历史。 |
 | 身份与当前头 | identity_object、business_head | identity 独立维护对象；application 维护业务身份、当前序号、防重前提及已经完成的完整结果槽承诺。 |
 | 领域事实 | op_fact、people_fact、asset_fact、financing_fact、investment_fact、money_fact、tax_fact、opening_fact、report_basis_fact | 各 owner 的严格当前事实；撤去后删除该正文行。 |
-| 来源与当前工作 | source、source_use、current_issue、current_issue_scope、company_note | 固定来源内容、当前引用、未解事项和当前有效经营说明。 |
+| 来源与当前工作 | source、source_use、current_issue、current_issue_scope、company_note | 固定来源内容、当前引用、未解事项，以及当前公司、月份和业务事项说明。 |
 | 当前关系与工作范围 | current_relation、current_dependency、current_publication、application_state | 事实直接引用、结果计算依赖、发布范围及已进入的工作末月；只保当前状态。 |
 | 正式采用 | adopted_result、result_slot_current、result_source、result_basis_ref | 当前完整结果槽头，以及闭期必要采用、原件来源和业务结果来源索引。 |
 | 凭证 | voucher、voucher_line、voucher_sequence | 正式平衡分录、原编号、正式冲正关联和下一编号。 |
@@ -70,6 +70,10 @@ source 的内容身份固定，file 用字节摘要，owner_statement 用规范 
 文件读取/备份获得当前集合使用租约。已经接纳的 pending/running/failed 备份计划仍保护各自实际原件，即使重启后内存租约尚未恢复也不能清理；succeeded/expired 不再依赖原件。Files 只交付同一读取上下文中的严格计划，application 解释备份输入并交给 records 核对，不越界读文件任务表。移月先保住新位置，再发布清单，最后清理旧位置。外部软件改坏原件会在摘要核对时明确报错，不能把被改内容沿用原 source_id。
 
 company_note 只保当前说明及其依据 head。月份说明提交时比较 expected_basis_head；依据变化时原子清空旧正文及其 source_use 边、推进 seq，只保 scope/seq/needs_refresh，AI 更新正确说明；不展示/保存开放期被替代的旧正文。依据头排除说明自身及派生文件状态，避免自我失效。公司现实背景不随普通金额变化失效。NotesShard 只导出当前有效说明。闭期报表需要的实际采用说明可以包含在 period_close 必要附注，不额外保所有编辑版本。
+
+具体业务事项复用 `company_note` 的 `business:<业务UUID>` 范围和 `source_use`，正文只存一份，不新增表或向核算事实复制。业务说明的 `basis_head` 恒为空，序号只用于并发及防重，不绑定完整事实摘要。修改金额不会清空事项，修改说明不会重算账务。明确清除说明或撤回业务时，原子清空正文和来源引用，保留递增序号防止迟到旧请求重新写入；这个空记录不导出、不作为老板待办。读取通过公开档案及正式结果入口取得说明，不跨模块读表。
+
+说明和来源的文档目标复用现有分片头，分别按说明范围和来源身份标记。引用替换只核查旧、新来源的实际集合，发布时按身份读取对应正文；最后引用消失后移除来源片。日常改写不全读说明表或全部来源引用，显式完整修复、重建和备份核验才检查完整集合。
 
 公司说明[格式与接续](11-company-note.md#3-正文格式与已有内容接续)仅新增note_format业务列，note_text仍是唯一正文，不拆段落表或保存HTML；storage同时更新受固定版本约束的系统头。默认纯文本的摘要规范在该节维护。新标准文档、当前结构备份和旧结构ZIP接续分别验证，不能以缺省格式代替数据库结构核验。
 

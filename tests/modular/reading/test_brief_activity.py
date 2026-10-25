@@ -190,10 +190,23 @@ def test_closed_correction_uses_old_and_new_exact_type_and_date(case):
     assert result["completion"] == "complete", json.dumps(result, ensure_ascii=False)
     with case.kernel.storage.read_unit(case.company) as read:
         after = _brief_activity.prepare(case.kernel.reading, selection(case), read)
-        assert after.rows == before.rows
-        assert activity_index.semantic(loads_json(after.payload_json)) == activity_index.semantic(
-            loads_json(before.payload_json)
-        )
+
+        def visible(model):
+            result = []
+            for row in model.rows:
+                if row[0] not in activity_index.PUBLIC:
+                    continue
+                value = loads_json(row[-1])["value"]
+                result.append((row[:7], value["row"] if row[0] == "activity_members" else value))
+            return result
+
+        assert visible(after) == visible(before)
+        # The historical display is unchanged, while its now obsolete subscription
+        # to the current result's prose must leave the rebuildable private index.
+        assert loads_json(before.payload_json)["_inputs"]["note_scopes"] == [
+            "business:" + expense["business_id"]
+        ]
+        assert loads_json(after.payload_json)["_inputs"]["note_scopes"] == []
     capture(case, "2026-02")
     groups = activity(case, "2026-02")["items"]
     assert {(item["title"], item["amount_fen"]) for item in groups} == {

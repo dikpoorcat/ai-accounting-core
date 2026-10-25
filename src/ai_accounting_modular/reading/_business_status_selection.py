@@ -65,7 +65,11 @@ def _member(reader, scope, query, read, cache):
         if template["subject_id"] != subject or key[8:] != template["voucher_version_id"]:
             raise ContractError("snapshot_changed", "指定凭证不属于原业务范围，请刷新原页面。")
         expected = template["voucher_version_id"]
-        selected = {"reference": item["reference"], "voucher": expected}
+        selected = {
+            "reference": item["reference"],
+            "voucher": expected,
+            "voucher_role": "reversal" if template["state"] == "冲正" else "original",
+        }
         amount, title, category = (
             template["business_amount_fen"],
             template["business_amount_label"],
@@ -126,7 +130,7 @@ def select(reader, scope, query, read):
         cache.load([selected["reference"]])
         content = cache.get(selected["reference"])
         if query["detail_scope_key"].startswith("voucher:"):
-            selected = _whole(content, cache)
+            selected = _whole(content, cache) | {"voucher_role": selected["voucher_role"]}
         kind = content.target["kind"]
     else:
         selected_scope = dict(scope) | {"period_from": read.start_period}

@@ -71,6 +71,10 @@ def movements(activity, accounts, objects, sources, presence):
         account = accounts[actual["funds_account_id"]]
         internal = "transfer_group_id" in actual
         label = sources.label(view).title
+        summary = sources.summary(view)
+        full_summary = summary
+        if summary != label and actual.get("memo") and actual["memo"] not in summary:
+            full_summary += "；" + actual["memo"]
         parties = list(
             dict.fromkeys(
                 party_name(part.party_id, objects) for part in view["allocations"] if part.party_id
@@ -102,8 +106,8 @@ def movements(activity, accounts, objects, sources, presence):
                 parse_fen(actual["amount_fen"]) * (1 if actual["direction"] == "inflow" else -1)
             ),
             "type": label,
-            "display_summary": actual.get("memo") or label,
-            "list_summary": label,
+            "display_summary": full_summary if summary != label else actual.get("memo") or label,
+            "list_summary": summary,
             "party": party,
             "internal_transfer": internal,
         }

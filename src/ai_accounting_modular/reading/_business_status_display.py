@@ -4,6 +4,7 @@ from ._brief_activity_amounts import amount
 from ._brief_activity_parts import business_parties
 from ._brief_activity_sources import identities
 from ._brief_vouchers import assets
+from ._business_descriptions import allows_component, merged, source_reference
 from ._business_labels import business_fund_accounts, business_label, business_matter
 
 
@@ -27,7 +28,7 @@ def profile(identifier, name, obj=None, *, note=None):
     }
 
 
-def profiles(reader, selected, settlements, events, read):
+def profiles(reader, selected, settlements, events, read, *, descriptions=None):
     counterparties, employees, cards, accounts = set(), set(), set(), set()
     content = selected.content
     if content is not None and content.target["kind"] != "system.withdrawal":
@@ -92,8 +93,32 @@ def profiles(reader, selected, settlements, events, read):
             data[key] for key in ("note", "memo") if isinstance(data.get(key), str) and data[key]
         ]
         note = "；".join(dict.fromkeys(notes)) or None
+    purpose = None
+    if (
+        descriptions is not None
+        and content is not None
+        and selected.range.get("voucher_role") != "reversal"
+    ):
+        if selected.detail is None:
+            purpose = descriptions.text(content.reference)
+        else:
+            texts = []
+            scoped_entries = (
+                *selected.range.get("allocations", ()),
+                *selected.range.get("obligations", ()),
+            )
+            for entry in scoped_entries:
+                source = entry["producer"]
+                body = selected.cache.saved[source["result_id"], source["result_generation"]]
+                if allows_component(body, component=entry.get("component")):
+                    texts.append(descriptions.text(source_reference(source)))
+            if not scoped_entries:
+                texts.append(descriptions.text(content.reference))
+            purpose = merged(texts) or None
+    business_profile = profile(selected.business["state"]["business_id"], title, note=note)
+    business_profile["values"]["purpose"] = purpose
     return {
-        "business": profile(selected.business["state"]["business_id"], title, note=note),
+        "business": business_profile,
         "counterparties": entries(counterparties),
         "employees": entries(employees),
         "assets": entries(cards),

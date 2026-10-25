@@ -76,7 +76,10 @@ def prepare(reader, scope, read):
                     sorted({entry.reference["business_id"] for entry in sources.entries.values()})
                 ),
                 object_ids=tuple(sorted(objects)),
-                current_business_ids=business_ids,
+                current_business_ids=tuple(
+                    sorted(set(business_ids) | {value[9:] for value in sources.descriptions.scopes})
+                ),
+                note_scopes=sources.descriptions.scopes,
             ),
         ),
     )

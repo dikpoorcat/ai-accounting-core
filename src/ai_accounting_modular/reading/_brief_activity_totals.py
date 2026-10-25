@@ -5,6 +5,7 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import content_digest, format_fen, parse_fen
 
 from ._brief_activity_dependencies import corrupt
+from ._business_descriptions import merged
 from ._collections import IndexItem
 from ._funds_items import date_key, key
 
@@ -81,7 +82,16 @@ def candidates(members):
 
 
 def empty():
-    return {"count": 0, "sum": "0", "unknown": 0, "vouchers": 0, "month": 0, "dates": {}}
+    return {
+        "count": 0,
+        "sum": "0",
+        "unknown": 0,
+        "vouchers": 0,
+        "month": 0,
+        "dates": {},
+        "descriptions": {},
+        "titles": {},
+    }
 
 
 def _sum(value):
@@ -104,6 +114,12 @@ def adjust(fold, members, sign):
     tokens = set()
     for member in members:
         row = member["row"]
+        for field, text in (("descriptions", row["description"]), ("titles", row["title"])):
+            count = _count(fold[field].get(text, 0), sign)
+            if count:
+                fold[field][text] = count
+            else:
+                fold[field].pop(text, None)
         fold["count"] = _count(fold["count"], sign)
         if row["amount_fen"] is None:
             fold["unknown"] = _count(fold["unknown"], sign)
@@ -131,6 +147,8 @@ def validate_fold(value):
         "dates",
         "first",
         "order",
+        "descriptions",
+        "titles",
     }:
         corrupt()
     count = value["count"]
@@ -138,6 +156,16 @@ def validate_fold(value):
         corrupt()
     for field in ("unknown", "vouchers", "month"):
         if type(value[field]) is not int or not 0 <= value[field] <= count:
+            corrupt()
+    for field in ("descriptions", "titles"):
+        if (
+            not isinstance(value[field], dict)
+            or any(
+                type(text) is not str or type(number) is not int or number <= 0
+                for text, number in value[field].items()
+            )
+            or sum(value[field].values()) != count
+        ):
             corrupt()
     _sum(value["sum"])
     dates = value["dates"]
@@ -201,19 +229,20 @@ def group_value(first, fold, order):
         "date_to": max(fold["dates"]) if fold["dates"] else None,
         "has_month_recognition": bool(fold["month"]),
     }
+    value["title"] = merged(fold["descriptions"])
     return IndexItem("activity", value["group_key"], order, value, category=value["group"])
 
 
-def category_adjust(folds, value, sign):
+def category_adjust(folds, value, sign, *, titles):
     fold = folds.setdefault(value["group"], {"events": 0, "groups": 0, "types": {}})
     fold["events"] = _count(fold["events"], sign * value["member_count"])
     fold["groups"] = _count(fold["groups"], sign)
-    title = value["title"]
-    count = _count(fold["types"].get(title, 0), sign * value["member_count"])
-    if count:
-        fold["types"][title] = count
-    else:
-        fold["types"].pop(title, None)
+    for title, number in titles.items():
+        count = _count(fold["types"].get(title, 0), sign * number)
+        if count:
+            fold["types"][title] = count
+        else:
+            fold["types"].pop(title, None)
     if not fold["groups"]:
         if fold["events"] or fold["types"]:
             corrupt()
@@ -337,6 +366,6 @@ def complete(members):
         first = min(values, key=lambda value: member_order(value.value)).value
         item = group(first, fold, ordered[0])
         entries.extend((item, IndexItem(FOLDS, identity, identity, fold)))
-        category_adjust(categories, item.value, 1)
+        category_adjust(categories, item.value, 1, titles=fold["titles"])
     review_adjust(reviews, members, 1)
     return entries, categories, reviews

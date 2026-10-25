@@ -50,17 +50,23 @@ def export(reader, scope, head, request_id, *, epochs):
     return {"status": "queued", "job_id": receipt["task_id"], "preview_digest": head}
 
 
-def task(reader, company_id, job_id):
+def _receipt(reader, company_id, job_id, *, check_current):
     service = _files(reader)
     try:
         receipt = service.get(company_id, job_id)
         if receipt["kind"] != "report_export":
             raise ContractError("not_found", "当前公司没有这个报表任务。")
-        receipt = service.get(company_id, job_id, check_current=True)
+        if check_current:
+            receipt = service.get(company_id, job_id, check_current=True)
     except ContractError as error:
         if error.code in {"not_found", "invalid_contract"}:
             raise ContractError("unknown_report_job", "当前公司没有这个报表任务。") from error
         raise
+    return receipt
+
+
+def task(reader, company_id, job_id):
+    receipt = _receipt(reader, company_id, job_id, check_current=True)
     if receipt["state"] == "expired":
         raise ContractError("preview_expired", "此报表计划已经失效，请重新读取报表后生成。")
     with reader.storage.read_unit(company_id) as read:
@@ -79,7 +85,9 @@ def task(reader, company_id, job_id):
 
 @contextmanager
 def download(reader, company_id, job_id):
-    task(reader, company_id, job_id)
+    # The download owner checks the plan and bytes once. A status precheck would
+    # consume a corruption error and turn it into a generic not-ready response.
+    _receipt(reader, company_id, job_id, check_current=False)
     try:
         with _files(reader).verified_download(company_id, job_id) as verified:
             yield ReportDownload(

@@ -261,8 +261,12 @@ class IssueScope(TypedDict):
     head: int
     issues: list[CurrentIssue]
 
+type BusinessNoteScope = str
+
+type NoteScope = str
+
 class NoteChange(TypedDict):
-    scope: str
+    scope: NoteScope
     expected_seq: int
     text: str
     evidence_ids: list[Id]
@@ -272,7 +276,7 @@ class NoteChange(TypedDict):
 type DocumentObject = DocumentObjectVariant1 | DocumentObjectVariant2 | DocumentObjectVariant3 | DocumentObjectVariant4 | DocumentObjectVariant5 | DocumentObjectVariant6 | DocumentObjectVariant7 | DocumentObjectVariant8
 
 class DocumentNote(TypedDict):
-    scope: str
+    scope: NoteScope
     text: str
     evidence_ids: list[Id]
     text_format: NotRequired[NoteFormat]
@@ -284,7 +288,7 @@ class ObjectShard(TypedDict):
 
 class SourceShard(TypedDict):
     format: Literal['ai-accounting-standard/1']
-    key: Literal['sources']
+    key: str
     sources: list[Source]
 
 class WorkShard(TypedDict):
@@ -294,7 +298,7 @@ class WorkShard(TypedDict):
 
 class NotesShard(TypedDict):
     format: Literal['ai-accounting-standard/1']
-    key: Literal['notes']
+    key: str
     notes: list[DocumentNote]
 
 type StandardPart = FactShard | ObjectShard | SourceShard | WorkShard | NotesShard
@@ -422,7 +426,7 @@ class ObligationView(TypedDict):
 type CurrentObject = CurrentObjectVariant1 | CurrentObjectVariant2 | CurrentObjectVariant3 | CurrentObjectVariant4 | CurrentObjectVariant5 | CurrentObjectVariant6 | CurrentObjectVariant7 | CurrentObjectVariant8
 
 class CurrentNote(TypedDict):
-    scope: str
+    scope: NoteScope
     seq: int
     state: Literal['current', 'needs_refresh']
     text: str | None
@@ -11519,6 +11523,8 @@ __all__ = [
     'TaskReceipt',
     'ContextScope',
     'IssueScope',
+    'BusinessNoteScope',
+    'NoteScope',
     'NoteChange',
     'DocumentObject',
     'DocumentNote',

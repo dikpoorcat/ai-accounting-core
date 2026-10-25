@@ -172,6 +172,7 @@ def mark(repository, scope_key, impact, head, selected, cooperation, directory, 
         for identity in (change.business_id, *change.resource_business_ids)
     }
     identities.update(identity for identity, _, _ in impact.facts)
+    identities.update(value[9:] for value in impact.note_scopes if value in selected.note_scopes)
     repository.open_mark(scope_key, head, identities, full=full)
 
 

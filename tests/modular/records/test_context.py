@@ -182,8 +182,6 @@ def test_legal_501_note_submission_is_saved_and_exported_completely(records_case
             [],
             read,
         )
-    exported = next(
-        loads_json(raw)["notes"] for raw in snapshot.parts_json if loads_json(raw)["key"] == "notes"
-    )
+    exported = [note for raw in snapshot.parts_json for note in loads_json(raw).get("notes", ())]
     assert len(exported) == 501
     assert [note["scope"] for note in exported] == [note["scope"] for note in notes]

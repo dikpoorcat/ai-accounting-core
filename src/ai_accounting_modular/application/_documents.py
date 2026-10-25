@@ -46,9 +46,7 @@ def capture(application, read):
             heads.extend(read.repository("application").active_heads(family, period))
     facts = application.registry.export_heads(heads, read)
     objects = export_objects(application, read) if "objects" in scopes else None
-    return application.records.capture_documents(
-        company_identity(read), facts, objects, read, scopes=scopes
-    )
+    return application.records.capture_documents(company_identity(read), facts, objects, read)
 
 
 def finish(application, company_id, *, verify_ready=False):
@@ -65,9 +63,11 @@ def finish(application, company_id, *, verify_ready=False):
             with application.storage.read_unit(company_id) as read:
                 expected_heads = application.records.document_target_heads(read)
                 status = application.records.document_status(read)
-                if verify_ready and status["state"] == "ready":
-                    with application.records.lease_document_set(read):
-                        return status
+                if status["state"] == "ready":
+                    if verify_ready:
+                        with application.records.lease_document_set(read):
+                            return status
+                    return status
                 snapshot = capture(application, read)
             prepared = application.records.prepare_documents(snapshot)
             with application.storage.maintenance_unit(company_id) as unit:

@@ -27,6 +27,8 @@ def inputs(payload):
 
 
 def affected(selected, month, impact):
+    if set(selected.note_scopes) & set(impact.note_scopes):
+        return True
     objects = set(selected.object_ids)
     if any(
         object_id in objects or kind in selected.object_kinds for object_id, kind in impact.objects

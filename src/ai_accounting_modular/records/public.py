@@ -262,9 +262,9 @@ class Records:
             self._release_paths(root, publication, paths)
 
     def apply_current(self, plan: RecordsPlan, uow: UnitOfWork) -> None:
-        _changes.apply_current(plan, uow, self._root(uow))
-        if plan.changed_scopes:
-            self.mark_document_targets(plan.changed_scopes, uow)
+        keys = _changes.apply_current(plan, uow, self._root(uow))
+        if keys:
+            self.mark_document_targets(keys, uow)
 
     def resolve_sources(self, ids: Sequence[str], read_context: ReadContext) -> tuple[dict, ...]:
         wanted = _changes.source_ids(ids)
@@ -319,9 +319,12 @@ class Records:
         ids = _changes.source_ids(evidence_ids, limit=None if owner_kind == "business" else 1000)
         repository = uow.repository("records")
         _changes._missing_sources(ids, repository.sources(ids))
-        if repository.uses(owner_kind, owner_key) != ids:
+        old_ids = repository.uses(owner_kind, owner_key)
+        if old_ids != ids:
             repository.replace_uses(owner_kind, owner_key, ids)
-            self.mark_document_targets(("sources",), uow)
+            self.mark_document_targets(
+                tuple("sources:" + source_id for source_id in set(old_ids) ^ set(ids)), uow
+            )
 
     def current_notes(self, scopes, read_context: ReadContext) -> tuple[dict, ...]:
         repository = read_context.repository("records")
@@ -330,6 +333,17 @@ class Records:
         return tuple(
             _changes.note_current(row, repository, uses[scope]) for scope, row in rows.items()
         )
+
+    def clear_notes(self, scopes, command_id: str, uow: UnitOfWork) -> tuple[str, ...]:
+        """Clear selected business descriptions; preserve versions and all owner issues."""
+        changed, source_ids = _changes.clear_notes(scopes, command_id, uow)
+        if changed:
+            self.mark_document_targets(
+                tuple("notes:" + scope for scope in changed)
+                + tuple("sources:" + source_id for source_id in source_ids),
+                uow,
+            )
+        return changed
 
     def note_written_by(self, scope: str, command_id: str, read_context: ReadContext) -> bool:
         """Prove this command still owns the current note, without returning private metadata."""
@@ -373,9 +387,10 @@ class Records:
         validate_contract("core.schema.json", "Id", command_id)
         repository = uow.repository("records")
         changed = []
+        source_ids = set()
         for scope, row in repository.notes(tuple(note_basis_heads)).items():
             if (
-                scope == "company"
+                not scope.startswith("period:")
                 or row["state"] != "current"
                 or row["basis_head"] == note_basis_heads[scope]
             ):
@@ -388,11 +403,16 @@ class Records:
                 "basis_head": note_basis_heads[scope],
                 "evidence_ids": [],
             }
+            source_ids.update(repository.uses("note", scope))
             repository.save_note(current, row["seq"], command_id, _changes.note_digest(current))
             repository.replace_uses("note", scope, ())
             changed.append(scope)
         if changed:
-            self.mark_document_targets(("notes", "sources"), uow)
+            self.mark_document_targets(
+                tuple("notes:" + scope for scope in changed)
+                + tuple("sources:" + source_id for source_id in source_ids),
+                uow,
+            )
         return tuple(changed)
 
     def mark_document_targets(self, keys, uow: UnitOfWork) -> None:
@@ -424,12 +444,12 @@ class Records:
         }
 
     def capture_documents(
-        self, company_identity, facts, objects, read_context: ReadContext, *, scopes=None
+        self, company_identity, facts, objects, read_context: ReadContext
     ) -> DocumentSnapshot:
         root = self._root(read_context)
         with _publication(root).lock:
             return _documents.capture_documents(
-                company_identity, facts, objects, read_context, root, scopes
+                company_identity, facts, objects, read_context, root
             )
 
     def prepare_documents(self, snapshot: DocumentSnapshot) -> PreparedDocuments:

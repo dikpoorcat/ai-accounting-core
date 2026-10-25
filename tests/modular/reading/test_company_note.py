@@ -223,7 +223,7 @@ def test_company_note_update_does_not_scan_or_invalidate_five_pages(
 
 
 def test_five_pages_never_load_the_company_note_as_part_of_their_default_reads(case, monkeypatch):
-    case.seed()
+    expense = case.seed()
     save_note(case, "不应混进月页的公司背景。", text_format="markdown")
     scopes = []
     original = case.kernel.records.current_notes
@@ -241,7 +241,9 @@ def test_five_pages_never_load_the_company_note_as_part_of_their_default_reads(c
         response.status == 200 and response.body["state"] == "ready" for response in responses
     )
     assert all("不应混进月页" not in str(response.body) for response in responses)
-    assert scopes == [("period:2026-01",)]
+    assert scopes.count(("period:2026-01",)) == 1
+    assert scopes.count(("business:" + expense["business_id"],)) == 2
+    assert len(scopes) == 3
 
 
 def test_company_note_in_a_mixed_business_update_does_not_hide_the_real_business_impact(case):

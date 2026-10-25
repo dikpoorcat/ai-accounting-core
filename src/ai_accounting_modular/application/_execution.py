@@ -195,7 +195,15 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
         if application._reading_targets is not None and submission.notes
         else {}
     )
-    context_plan, invalidated_notes = _notes.finish(application, submission, adoption, unit)
+    context_plan, invalidated_notes = _notes.finish(
+        application,
+        submission,
+        adoption,
+        unit,
+        withdrawn_business_ids=tuple(
+            change.business_id for change in changes if change.changed and change.fact is None
+        ),
+    )
     keys = set()
     if context.evaluation_period_to > previous_period_to:
         keys.add("company")
@@ -209,8 +217,6 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
                     keys.add(f"facts:{head['family']}:{head['period']}")
     if identity_plan.changed_ids:
         keys.add("objects")
-    if records_plan.changed_source_ids:
-        keys.add("sources")
     if keys:
         application.records.mark_document_targets(sorted(keys), unit)
     final_heads = repo.heads(seen | set(touched))
@@ -238,6 +244,7 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
         or changed_keys
         or adoption.changed
         or projection_changed
+        or records_plan.changed_source_ids
         or context_plan.changed_scopes
         or invalidated_notes
     )

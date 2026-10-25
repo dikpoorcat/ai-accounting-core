@@ -14,7 +14,8 @@ from ai_accounting_modular.ledger.public import (
     AdoptedOriginProjection,
 )
 
-from ._business_labels import business_label, origin_fields, settlement_label
+from ._business_descriptions import Descriptions, allows_component
+from ._business_labels import BusinessLabel, business_label, origin_fields, settlement_label
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class FundSources:
     entries: dict[str, AdoptedDirectoryEntry]
     contents: dict[str, AdoptedOriginProjection | AdoptedContent]
     obligations: dict[tuple[str, str], ResourceDefinition]
+    descriptions: Descriptions
 
     def label(self, view):
         labels = []
@@ -33,6 +35,24 @@ class FundSources:
             labels,
             view["movement"]["direction"],
         )
+
+    def summary(self, view):
+        if not view["allocations"]:
+            return self.descriptions.source_text(view["source"]) or self.label(view).title
+        labels = []
+        for part in view["allocations"]:
+            resource = self.obligations[part.source["business_id"], part.source["slot"]]
+            body = self.contents[resource.source["result_id"]]
+            label = business_label(body, resource)
+            text = (
+                self.descriptions.text(body.reference)
+                if allows_component(body, category=resource.value["category"])
+                else None
+            )
+            labels.append(BusinessLabel(label.code, text or label.title))
+        return settlement_label(
+            self.contents[view["source"]["result_id"]], labels, view["movement"]["direction"]
+        ).title
 
 
 def load(reader, activity, scope, read):
@@ -92,4 +112,14 @@ def load(reader, activity, scope, read):
             contents[content.reference["result_id"]] = content
     if contents.keys() != entries.keys():
         raise ContractError("storage_corrupt", "资金用途所需的正式正文不完整。")
-    return FundSources(entries, contents, obligations)
+    references = []
+    for view in activity.movements:
+        for part in view["allocations"]:
+            resource = obligations[part.source["business_id"], part.source["slot"]]
+            body = contents[resource.source["result_id"]]
+            if allows_component(body, category=resource.value["category"]):
+                references.append(body.reference)
+        if not view["allocations"]:
+            references.append(entries[view["source"]["result_id"]].reference)
+    prose = Descriptions(reader, references, read)
+    return FundSources(entries, contents, obligations, prose)

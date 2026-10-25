@@ -333,7 +333,9 @@ def test_review_query_has_no_approval_or_pagination_inputs(case, query):
     assert error.value.code == "invalid_input"
 
 
-def test_old_month_projection_is_not_read_or_repaired_until_explicit_retry(case, monkeypatch):
+def test_review_leaves_old_projection_untouched_and_month_page_upgrades_on_demand(
+    case, monkeypatch
+):
     case.seed()
     ready(case)
     saved = snapshot(case)
@@ -367,10 +369,8 @@ def test_old_month_projection_is_not_read_or_repaired_until_explicit_retry(case,
     with case.kernel.storage.read_unit(case.company) as read:
         assert (read.head, read.repository("reading").scopes()) == before
     scope = MonthScope(case.company, "2026-01")
-    failed = case.kernel.reading.page("brief", scope, {})
-    assert (failed.state, failed.reason) == ("failed", "corrupt")
-    assert case.kernel.reading.run_pending(case.company) == ()
-    case.kernel.reading.retry("brief", scope)
+    preparing = case.kernel.reading.page("brief", scope, {})
+    assert (preparing.state, preparing.reason) == ("preparing", None)
     assert case.kernel.reading.run_pending(case.company)
     current = case.kernel.reading.page("brief", scope, {})
     assert current.state == "ready"

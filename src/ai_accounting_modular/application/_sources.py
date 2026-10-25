@@ -31,8 +31,6 @@ def run(application, request: SourcesRequest) -> SourcesCommandResult:
                 RecordsContext(unit, str(uuid4()), prepared_sources=prepared),
             )
             application.records.apply_current(plan, unit)
-            if plan.changed_source_ids:
-                application.records.mark_document_targets(("sources",), unit)
     with application.storage.read_unit(company_id) as read:
         status = application.records.document_status(read)
     if status["state"] != "ready":

@@ -20,7 +20,7 @@ from ._brief_activity_dependencies import root_item as root_item
 from ._collections import PreparedModel, _decode, prepare_model, prepare_rows
 
 COMPONENT = "brief_activity"
-FORMAT_VERSION = 11
+FORMAT_VERSION = 12
 NAMESPACE = "ai-accounting-reading-activity-bucket/1"
 DIRTY = "activity_pending"
 BUCKETS = "_activity_buckets"

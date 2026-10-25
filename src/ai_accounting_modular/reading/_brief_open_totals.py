@@ -2,6 +2,8 @@
 
 from ai_accounting_modular.contracts.public import ContractError, format_fen, parse_fen, sum_fen
 
+from ._business_descriptions import merged
+
 FIELDS = (
     "source_amount_fen",
     "paid_fen",
@@ -16,6 +18,7 @@ def empty():
         "count": 0,
         "amounts": {field: {"sum": "0", "unknown": 0} for field in FIELDS},
         "states": {"status": {}, "current_status": {}},
+        "descriptions": {},
     }
 
 
@@ -37,6 +40,12 @@ def _amount(total, value, sign):
 
 def adjust(fold, member, sign):
     fold["count"] = _count(fold["count"], sign)
+    text = member.get("_description") or member["_matter_title"]
+    count = _count(fold["descriptions"].get(text, 0), sign)
+    if count:
+        fold["descriptions"][text] = count
+    else:
+        fold["descriptions"].pop(text, None)
     for field in FIELDS:
         _amount(fold["amounts"][field], member[field], sign)
     for field, counts in fold["states"].items():
@@ -77,7 +86,7 @@ def group(first, fold):
         "group_key": first["group_key"],
         "category_key": first["category_key"],
         "party": first["party"],
-        "description": first["_matter_title"],
+        "description": merged(fold["descriptions"]),
         "member_count": fold["count"],
         **{field: amount(total) for field, total in fold["amounts"].items()},
         "status": _status(fold["states"]["status"]),

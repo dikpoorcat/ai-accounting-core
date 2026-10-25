@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
 
 from . import _brief_open_cooperation as cooperation
 from . import _brief_open_displays as displays
@@ -13,6 +13,7 @@ from . import _brief_open_members as member_rows
 from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_vouchers, _monthly
+from ._business_descriptions import Descriptions, allows_component
 from ._collections import CollectionFilter, IndexItem, wire_page
 from ._funds_items import key
 
@@ -52,7 +53,7 @@ def bind_displays(reader, members, captured, read):
 
 def prepare(reader, scope, read):
     captured = sources.capture(reader, scope, read)
-    members = rows.project(captured, scope["company_id"], reader.identity, read)
+    members = project(reader, captured, scope["company_id"], read)
     extra, cooperation_inputs = cooperation.capture(reader, scope, read, captured.current_cutoff)
     member_entries = member_items(members, extra)
     members.extend(extra)
@@ -75,11 +76,17 @@ def prepare(reader, scope, read):
         index.item(index.VOUCHERS, identity, {"count": count})
         for identity, count in inputs.voucher_counts(records).items()
     )
+    prose_inputs = ReadInputs(
+        note_scopes=tuple(
+            sorted({member["_note_scope"] for member in members if member.get("_note_scope")})
+        )
+    )
+    selected_inputs = inputs.static(inputs.ORDINARY.merge(cooperation_inputs, prose_inputs))
     return index.complete(
         {
             "open_items": summary,
             "_category_folds": categories,
-            "_inputs": inputs.static(inputs.ORDINARY.merge(cooperation_inputs)).wire(),
+            "_inputs": selected_inputs.wire(),
             "_cooperation_inputs": cooperation_inputs.wire(),
         },
         entries,
@@ -87,6 +94,16 @@ def prepare(reader, scope, read):
         repository=read.repository("reading"),
         scope_key=_monthly.key(scope),
     )
+
+
+def project(reader, captured, company_id, read):
+    references = [
+        captured.contents[item.source["result_id"]].reference
+        for item in captured.selected
+        if allows_component(captured.contents[item.source["result_id"]], category=item.category)
+    ]
+    prose = Descriptions(reader, references, read)
+    return rows.project(captured, company_id, reader.identity, read, descriptions=prose)
 
 
 def page(snapshot, read, query):

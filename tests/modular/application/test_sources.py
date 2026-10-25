@@ -10,10 +10,39 @@ from ai_accounting_modular.records.public import open_standard_bundle
 from ai_accounting_modular.storage.public import CompanySpec
 
 from ._working_case import case as case
+from .conftest import source
 
 
 def request(case, action, **values):
     return {"company_id": case.company, "action": action, **values}
+
+
+def test_source_only_apply_reports_saved_without_changing_accounting_or_exporting_unused_input(
+    case,
+):
+    fact = case.seed()
+    before = case.get(fact["business_id"])["businesses"]
+    with case.kernel.storage.read_unit(case.company) as read:
+        root = case.kernel.storage.company_metadata(read).company_root
+    current_files = (root / "standard/current.json", root / "standard/README.md")
+    previous_files = [(path.read_bytes(), path.stat().st_mtime_ns) for path in current_files]
+    evidence = source("合成验收：已收到但尚未用于任何业务的补充资料。")
+    submission = case.request(sources=[evidence])
+    saved = case.app.accounting_apply(submission)
+    assert saved["completion"] == "complete", saved
+    assert saved["changes"] == "committed" and saved["accounting"] == "unchanged"
+    assert case.get(fact["business_id"])["businesses"] == before
+    with case.kernel.storage.read_unit(case.company) as read:
+        head = read.head
+        assert case.kernel.records.resolve_sources((evidence["source_id"],), read) == (evidence,)
+        status = case.kernel.records.document_status(read)
+    assert evidence not in open_standard_bundle(status["manifest_path"]).sources
+    assert [
+        (path.read_bytes(), path.stat().st_mtime_ns) for path in current_files
+    ] == previous_files
+    assert case.app.accounting_apply(submission)["changes"] == "none"
+    with case.kernel.storage.read_unit(case.company) as read:
+        assert read.head == head
 
 
 def incoming(case):
@@ -130,6 +159,12 @@ def test_get_find_and_inspect_use_the_selected_company_and_leave_no_write(case, 
 
 
 def test_whole_source_batch_rolls_back_when_its_document_target_cannot_be_marked(case, monkeypatch):
+    case.seed()
+    original_sources = case.app.accounting_sources(request(case, "find", limit=10))["sources"]
+    adopted = next(item for item in original_sources if item["source_id"] == case.source_id)
+    with case.kernel.storage.read_unit(case.company) as read:
+        before = read.head, case.kernel.records.document_target_heads(read)
+
     def fail(*_args):
         raise ContractError("temporary_failure", "合成标准资料目标暂时不可写。")
 
@@ -141,15 +176,22 @@ def test_whole_source_batch_rolls_back_when_its_document_target_cannot_be_marked
                 "import",
                 sources=[
                     {"kind": "owner_statement", "text": "甲"},
+                    {
+                        "kind": "owner_statement",
+                        "source_id": adopted["source_id"],
+                        "text": adopted["text"],
+                        "archive_month": "2026-02",
+                    },
                     {"kind": "owner_statement", "text": "乙"},
                 ],
             )
         )
     assert failed.value.code == "temporary_failure"
-    assert case.app.accounting_sources(request(case, "find", limit=10))["sources"] == []
+    assert (
+        case.app.accounting_sources(request(case, "find", limit=10))["sources"] == original_sources
+    )
     with case.kernel.storage.read_unit(case.company) as read:
-        assert read.head == 0
-        assert case.kernel.records.document_target_heads(read) == {}
+        assert (read.head, case.kernel.records.document_target_heads(read)) == before
 
 
 def test_source_inputs_are_fully_verified_before_the_writer_and_invalid_batch_saves_nothing(

@@ -236,7 +236,8 @@ def test_current_month_move_contains_only_final_fact_in_its_new_shard(records_ca
     ],
 )
 def test_handmade_corrupt_or_incomplete_archive_is_rejected(records_case, damage):
-    path, _, _, _, _ = publish(records_case)
+    path, source, _, _, _ = publish(records_case)
+    source_key = "sources:" + source["source_id"]
     if damage in {"digest", "size", "set_id", "missing_part"}:
         manifest = loads_json(path.read_bytes())
         shard = manifest["shards"][0]
@@ -258,18 +259,18 @@ def test_handmade_corrupt_or_incomplete_archive_is_rejected(records_case, damage
 
         def edit(manifest, parts):
             if damage == "missing_fixed":
-                del parts["notes"]
+                del parts["objects"]
             elif damage == "wrong_fixed_type":
-                parts["notes"] = {"format": "ai-accounting-standard/1", "key": "notes", "facts": []}
+                parts["work"] = {"format": "ai-accounting-standard/1", "key": "work", "facts": []}
             elif damage == "wrong_month":
                 parts["facts:operations:2026-01"]["facts"][0]["period"] = "2026-02"
             elif damage == "working_month":
                 manifest["company_identity"]["working_period_to"] = "2025-12"
             elif damage == "missing_source":
-                parts["sources"]["sources"] = []
+                del parts[source_key]
             elif damage == "bad_statement":
-                source_id = parts["sources"]["sources"][0]["source_id"]
-                parts["sources"]["sources"] = [
+                source_id = parts[source_key]["sources"][0]["source_id"]
+                parts[source_key]["sources"] = [
                     {
                         "source_id": source_id,
                         "kind": "owner_statement",
@@ -289,9 +290,9 @@ def test_handmade_corrupt_or_incomplete_archive_is_rejected(records_case, damage
                 key, field = {
                     "duplicate_business": ("facts:operations:2026-01", "facts"),
                     "duplicate_object": ("objects", "objects"),
-                    "duplicate_source": ("sources", "sources"),
+                    "duplicate_source": (source_key, "sources"),
                     "duplicate_issue": ("work", "issues"),
-                    "duplicate_note": ("notes", "notes"),
+                    "duplicate_note": ("notes:company", "notes"),
                 }[damage]
                 parts[key][field].append(deepcopy(parts[key][field][0]))
 
@@ -355,7 +356,18 @@ def test_original_streams_are_bounded_and_opened_one_at_a_time(records_case, tmp
     second_path = path.parent.parent / second["relative_path"]
     second_path.parent.mkdir(parents=True, exist_ok=True)
     second_path.write_bytes(second_raw)
-    rewrite(path, lambda _, parts: parts["sources"]["sources"].append(second))
+    rewrite(
+        path,
+        lambda _, parts: parts.update(
+            {
+                "sources:" + second["source_id"]: {
+                    "format": "ai-accounting-standard/1",
+                    "key": "sources:" + second["source_id"],
+                    "sources": [second],
+                }
+            }
+        ),
+    )
     original_open, active, maximum = Path.open, 0, 0
 
     class Bounded:
@@ -469,7 +481,7 @@ def test_known_partial_fact_sources_are_preserved_without_rewriting_explicit_evi
     bundle = open_standard_bundle(path)
     assert bundle.issues == (issue,) and bundle.sources == (source,)
     if not explicit:
-        rewrite(path, lambda _, parts: parts["sources"].update(sources=[]))
+        rewrite(path, lambda _, parts: parts.pop("sources:" + source["source_id"]))
         with pytest.raises(ContractError) as error:
             open_standard_bundle(path)
         assert [issue["message"] for issue in error.value.fact_issues] == [

@@ -54,12 +54,21 @@ def test_notes_return_real_heads_retry_without_writes_and_clear_only_stale_month
     }
     with case.kernel.storage.read_unit(case.company) as read:
         with case.kernel.records.lease_document_set(read) as manifest:
-            shard = next(item for item in manifest["shards"] if item["key"] == "notes")
+            shards = {item["key"]: item for item in manifest["shards"]}
+            assert "notes:period:2026-01" not in shards
+            shard = shards["notes:company"]
             payload = loads_json(
                 (
                     case.kernel.storage.company_metadata(read).company_root / shard["path"]
                 ).read_bytes()
             )
+            assert payload["notes"] == [
+                {
+                    "scope": "company",
+                    "text": "公司经营维修业务。",
+                    "evidence_ids": [case.source_id],
+                }
+            ]
             assert "一月维修费1000元。" not in str(payload)
 
 

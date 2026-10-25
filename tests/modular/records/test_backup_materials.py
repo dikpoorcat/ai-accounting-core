@@ -15,7 +15,10 @@ from test_documents import (
     _first_facts,
     _prepare,
     _publish,
-    _publish_company_note,
+    _save_company_note,
+)
+from test_documents import (
+    _publish_company_note as _publish_changed_company_note,
 )
 
 from ai_accounting_modular.contracts.public import (
@@ -30,9 +33,14 @@ from ai_accounting_modular.storage.public import verify_database
 
 def _ready(case):
     fact, obj = _first_facts(case)
+    _save_company_note(case)
     prepared = _prepare(case, [fact], [obj])
     assert _publish(case, prepared)["state"] == "ready"
     return prepared.manifest
+
+
+def _publish_company_note(case):
+    return _publish_changed_company_note(case, expected_seq=1)
 
 
 def _register_file(case, name, data, *, archive_month="2026-01"):
@@ -113,14 +121,14 @@ def test_same_read_snapshot_copies_mutable_documents_and_allows_new_publication(
     before = _ready(records_case)
     original_manifest = (company.company_root / "standard/current.json").read_bytes()
     original_readme = (company.company_root / "standard/README.md").read_bytes()
-    old_note = next(item for item in before["shards"] if item["key"] == "notes")
+    old_note = next(item for item in before["shards"] if item["key"] == "notes:company")
     with storage.read_unit(company.company_id) as read:
         with records.capture_backup_materials(read, str(uuid4())) as materials:
             assert _publish_company_note(records_case)["state"] == "ready"
             snapshot = storage.capture_database(
                 read, materials.capture_root / "runtime/company.sqlite3"
             )
-            assert snapshot.head == materials.head == 1
+            assert snapshot.head == materials.head == 2
             assert materials.document_set_id == before["set_id"]
             assert (
                 materials.capture_root / "standard/current.json"
@@ -131,7 +139,7 @@ def test_same_read_snapshot_copies_mutable_documents_and_allows_new_publication(
             copied[0]["sha256"] = "f" * 64
             assert copied != materials.inputs
         assert not (company.company_root / old_note["path"]).exists()
-    assert verify_database(company.database_path).head == 2
+    assert verify_database(company.database_path).head == 3
     assert materials.capture_root.exists()
 
 
@@ -208,7 +216,7 @@ def test_restore_exact_saved_parts_survives_new_publication_and_release_keeps_ca
     storage, (company, _), records = records_case
     original = _ready(records_case)
     materials, plan = _capture(records_case)
-    old_notes = next(item for item in original["shards"] if item["key"] == "notes")
+    old_notes = next(item for item in original["shards"] if item["key"] == "notes:company")
     restarted = create_records(lambda read: storage.company_metadata(read).company_root)
     with storage.read_unit(company.company_id) as read:
         with restarted.lease_backup_inputs(plan, read):
@@ -359,7 +367,7 @@ def test_nested_restore_leases_release_only_their_own_parts(records_case):
     storage, (company, _), records = records_case
     manifest = _ready(records_case)
     _, plan = _capture(records_case)
-    old_notes = next(item for item in manifest["shards"] if item["key"] == "notes")
+    old_notes = next(item for item in manifest["shards"] if item["key"] == "notes:company")
     with storage.read_unit(company.company_id) as read:
         with ExitStack() as outer:
             outer.enter_context(records.lease_backup_inputs(plan, read))
@@ -373,7 +381,7 @@ def test_restored_input_lease_can_outlive_its_short_database_read(records_case):
     storage, (company, _), records = records_case
     manifest = _ready(records_case)
     materials, plan = _capture(records_case)
-    old_notes = next(item for item in manifest["shards"] if item["key"] == "notes")
+    old_notes = next(item for item in manifest["shards"] if item["key"] == "notes:company")
     with ExitStack() as leases:
         with storage.read_unit(company.company_id) as read:
             leases.enter_context(records.lease_backup_inputs(plan, read))

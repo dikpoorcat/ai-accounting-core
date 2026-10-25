@@ -223,6 +223,9 @@ class DocumentSnapshot:
                 if isinstance(raw, FactDocumentPart):
                     raise ContractError("invalid_input", "事实文档片必须使用正常构造的精确类型。")
                 part, body = document(raw, "StandardPart")
+                from ._documents import validate_part_key
+
+                validate_part_key(part)
                 key = part["key"]
             parts.append(body)
             keys.append(key)

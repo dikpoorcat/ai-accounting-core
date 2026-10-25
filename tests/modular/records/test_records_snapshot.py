@@ -22,7 +22,9 @@ def test_saved_documents_prove_complete_facts_without_republication(records_case
     with storage.read_unit(company.company_id) as read:
         snapshot = records.verify_snapshot(company_identity(company), [fact], [obj], read)
         assert snapshot.document_set_id == records.document_status(read)["set_id"]
-        assert len(snapshot.files) == 7  # manifest, README, four fixed parts, one fact part
+        assert (
+            len(snapshot.files) == 6
+        )  # manifest, README, objects/work, one source and one fact part
         assert read.head == 1
     assert (company.company_root / "standard/current.json").read_bytes() == before
 
@@ -67,7 +69,7 @@ def test_inbox_originals_are_preserved_even_without_current_fact_reference(recor
     with storage.read_unit(company.company_id) as read:
         snapshot = records.verify_snapshot(company_identity(company), [fact], [obj], read)
         assert source["relative_path"] in {item.relative_path for item in snapshot.files}
-        assert len(snapshot.files) == 8
+        assert len(snapshot.files) == 7
     (company.company_root / source["relative_path"]).write_bytes(b"changed inbox")
     with storage.read_unit(company.company_id) as read, pytest.raises(ContractError):
         records.verify_snapshot(company_identity(company), [fact], [obj], read)

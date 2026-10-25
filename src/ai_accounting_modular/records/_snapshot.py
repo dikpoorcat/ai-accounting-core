@@ -112,22 +112,24 @@ def verify(records, company_identity, facts, objects, read, root, required_sourc
             ),
         },
         "work": {"format": _documents.FORMAT, "key": "work", "issues": issues},
-        "notes": {
-            "format": _documents.FORMAT,
-            "key": "notes",
-            "notes": [document_note(note) for note in notes if note["state"] == "current"],
-        },
-        "sources": {
-            "format": _documents.FORMAT,
-            "key": "sources",
-            "sources": [used_sources[source_id] for source_id in used_ids],
-        },
     }
     for part in parts:
-        if not part["key"].startswith("facts:") and canonical_json(part) != canonical_json(
+        if part["key"] in expected and canonical_json(part) != canonical_json(
             expected[part["key"]]
         ):
             _bad("标准业务文档没有精确对应完整的当前对象、待办、说明及来源。")
+    for field, identity, values in (
+        ("notes", "scope", [document_note(note) for note in notes if note["state"] == "current"]),
+        ("sources", "source_id", [used_sources[source_id] for source_id in used_ids]),
+    ):
+        actual = sorted(
+            (item for part in parts for item in part.get(field, ())),
+            key=lambda item: item[identity],
+        )
+        if canonical_json(actual) != canonical_json(
+            sorted(values, key=lambda item: item[identity])
+        ):
+            _bad("标准业务文档没有精确对应完整的当前说明及来源。")
     files = {item.relative_path: item for item in bundle.files}
     for source in sources:
         if source["source_id"] not in used_sources:

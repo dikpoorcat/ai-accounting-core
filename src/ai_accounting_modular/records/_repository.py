@@ -353,8 +353,10 @@ class RecordsRepository:
         return self._issues(rows), {row["scope_key"]: row["scope_head"] for row in rows}
 
     def replace_issues(self, scope, head, expected_head, command_id, digest, issues):
-        old_ids = [item["issue_id"] for item in self.issues(scope)]
-        for issue_id in old_ids:
+        old_issues = self.issues(scope)
+        old_sources = {source_id for issue in old_issues for source_id in issue_source_ids(issue)}
+        new_sources = {source_id for issue in issues for source_id in issue_source_ids(issue)}
+        for issue_id in (item["issue_id"] for item in old_issues):
             self.replace_uses("issue", issue_id, ())
         self._session.execute("DELETE FROM current_issue WHERE scope_key=?", (scope,))
         for issue in issues:
@@ -386,6 +388,7 @@ class RecordsRepository:
             "latest_expected_head=excluded.latest_expected_head,content_digest=excluded.content_digest",
             (scope, head, command_id, expected_head, digest),
         )
+        return tuple(sorted(old_sources ^ new_sources))
 
     def targets(self):
         return [

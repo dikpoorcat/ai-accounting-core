@@ -1,4 +1,4 @@
-"""A monthly explanation is bound to the actual adopted financial selection."""
+"""Monthly explanations follow accounting; business descriptions follow identity."""
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.records.public import RecordsChange, RecordsContext
@@ -9,8 +9,11 @@ def basis_heads(application, scopes, read):
     for scope in sorted(set(scopes)):
         if scope == "company":
             continue
+        if scope.startswith("business:"):
+            validate_contract("core.schema.json", "BusinessNoteScope", scope)
+            continue
         if not scope.startswith("period:"):
-            raise ContractError("invalid_input", "说明范围须为company或period:YYYY-MM。")
+            raise ContractError("invalid_input", "说明范围须为公司、月份或具体业务。")
         period = scope.removeprefix("period:")
         validate_contract("core.schema.json", "Month", period)
         report = application.ledger.financial_snapshot(
@@ -26,9 +29,19 @@ def basis_heads(application, scopes, read):
     return result
 
 
-def finish(application, submission, adoption, read):
+def finish(application, submission, adoption, read, *, withdrawn_business_ids=()):
     scopes = {note["scope"] for note in submission.notes}
     supplied = scopes.copy()
+    business_ids = {
+        scope.removeprefix("business:") for scope in supplied if scope.startswith("business:")
+    }
+    if business_ids:
+        businesses = read.repository("application").heads(business_ids)
+        if any(
+            identity not in businesses or businesses[identity]["state"] != "active"
+            for identity in business_ids
+        ):
+            raise ContractError("not_found", "业务事项说明须关联本公司当前有效的业务。")
     if adoption.changed:
         first = max(
             read.start_period,
@@ -59,4 +72,9 @@ def finish(application, submission, adoption, read):
         submission.command_id,
         read,
     )
-    return plan, invalidated
+    cleared = application.records.clear_notes(
+        tuple("business:" + identity for identity in withdrawn_business_ids),
+        submission.command_id,
+        read,
+    )
+    return plan, tuple(sorted(set(invalidated) | set(cleared)))
