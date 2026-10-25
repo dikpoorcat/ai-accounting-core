@@ -32,9 +32,15 @@ const sectionLoading = ref<Partial<Record<BriefSection, boolean>>>({});
 const sectionErrors = ref<Partial<Record<BriefSection, string>>>({});
 const pageControllers = new Map<BriefSection, AbortController>();
 const showMonthlyReview = ref(false);
+const managementCommentaryDialog = ref<HTMLDialogElement | null>(null);
+let commentaryPreviousOverflow: string | undefined;
 let controller: AbortController | null = null, initialized = false, mounted = true, requestGeneration = 0, voucherPagingGeneration = 0;
 const selectedPeriod = computed(() => response.value?.selected_period?.key || "");
 const data = computed(() => response.value?.data ?? null);
+const hasManagementCommentary = computed(() => {
+  const notes = data.value?.management_commentary_details;
+  return !!(notes && (notes.current || (notes.status === "stale" && notes.latest) || notes.supplements.length));
+});
 const reviewRequest = computed(() => !loading.value && data.value?.month_state === "open" ? data.value.owner_review_request : null);
 const needsMonthlyReview = computed(() => reviewRequest.value !== null);
 const activity = computed(() => data.value?.collections.activity?.items ?? []);
@@ -56,6 +62,28 @@ const sectionLinks = computed(() => data.value ? [
   { id: "owner-tasks", label: "老板待办" },
 ] : []);
 const { activeSection, focusSection, focusSelectedPanel } = useDashboardSections(sectionLinks, "overview");
+function openManagementCommentary() {
+  const dialog = managementCommentaryDialog.value;
+  if (!dialog || dialog.open) return;
+  dialog.showModal();
+  commentaryPreviousOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  dialog.querySelector(".commentary-body")?.scrollTo(0, 0);
+}
+function restoreCommentaryScrolling() {
+  if (managementCommentaryDialog.value?.open || commentaryPreviousOverflow === undefined) return;
+  document.body.style.overflow = commentaryPreviousOverflow;
+  commentaryPreviousOverflow = undefined;
+}
+function closeManagementCommentary() {
+  managementCommentaryDialog.value?.close();
+  restoreCommentaryScrolling();
+}
+function dismissCommentaryBackdrop(event: MouseEvent) {
+  if (event.target !== managementCommentaryDialog.value) return;
+  const bounds = managementCommentaryDialog.value?.getBoundingClientRect();
+  if (bounds && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) closeManagementCommentary();
+}
 function queryPeriod() { return typeof route.query.period === "string" ? route.query.period : null; }
 function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
@@ -79,7 +107,7 @@ function invalidateRequests(keepContent = false) {
   voucherPreviewIndex.value = shallowReactive(new Map());
   if (!keepContent) { vouchersReady.value = false; focusedVoucherSelection.value = 0; }
   if (!keepContent) { response.value = null }
-  showMonthlyReview.value = false; loading.value = keepContent; preparing.value = false;
+  showMonthlyReview.value = false; closeManagementCommentary(); loading.value = keepContent; preparing.value = false;
 }
 async function loadData(period: string | null, contextGate?: Promise<void>, retryModel = false) {
   refreshGeneration.value++;
@@ -98,7 +126,7 @@ async function loadData(period: string | null, contextGate?: Promise<void>, retr
   const request = new AbortController(); controller = request;
   loading.value = true; preparing.value = false;
   if (!contextGate) { response.value = null }
-  showMonthlyReview.value = false; error.value = "";
+  showMonthlyReview.value = false; closeManagementCommentary(); error.value = "";
   try {
     if (typeof companyId !== "string") throw new Error("请先选择公司。");
     const target = typeof route.query.voucher === "string" ? route.query.voucher : undefined;
@@ -333,7 +361,13 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       <p v-if="updateNotice" role="status">{{ updateNotice }}</p>
       <section id="overview" class="section-anchor" tabindex="-1" aria-label="经营概览">
         <div class="brief-hero">
-        <p class="scope">{{ response?.selected_period?.label }}期末 · 全公司</p>
+        <div class="hero-header">
+          <p class="scope">{{ response?.selected_period?.label }}期末 · 全公司</p>
+          <button v-if="hasManagementCommentary" class="commentary-toggle" type="button" aria-haspopup="dialog" aria-controls="management-commentary" @click="openManagementCommentary">
+            AI做账中…
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M10 4H4v16h16v-6" /></svg>
+          </button>
+        </div>
         <div class="hero"><span>本月账面盈亏</span><strong :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong><p>收入 <span class="income-amount">{{ formatFen(data.position.month_revenue_fen) }}</span> · 费用 <span class="cost-amount">{{ formatFen(data.position.month_expense_fen) }}</span></p><p v-if="!data.position.complete">仅已确认部分 · AI 会计核对中</p></div>
         <div class="kpi-grid">
           <button class="kpi funds" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod } })"><span>月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金与支付平台</small></button>
@@ -342,9 +376,17 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <button class="kpi payable" type="button" @click="focusSection('open-items')"><span>月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} {{ openItemCountUnit }}</small></button>
         </div>
         </div>
-        <div v-if="data.management_commentary_details.current" class="note"><strong>经营说明</strong><p>{{ data.management_commentary_details.current.text }}</p></div>
-        <details v-if="data.management_commentary_details.status === 'stale' && data.management_commentary_details.latest" class="note"><summary>之前的经营说明已过期</summary><p>{{ data.management_commentary_details.latest.text }}</p></details>
-        <div v-for="note in data.management_commentary_details.supplements" :key="note.id" class="note"><strong>关账后的补充说明</strong><p>{{ note.text }}</p></div>
+        <dialog v-if="hasManagementCommentary" id="management-commentary" ref="managementCommentaryDialog" class="commentary-dialog" aria-labelledby="management-commentary-title" @cancel.prevent="closeManagementCommentary" @close="restoreCommentaryScrolling" @click.stop="dismissCommentaryBackdrop">
+          <header class="commentary-heading">
+            <div><h2 id="management-commentary-title">经营说明</h2><p>{{ response?.selected_period?.label }} · 全公司</p></div>
+            <button class="commentary-close" type="button" aria-label="关闭经营说明" autofocus @click="closeManagementCommentary">×</button>
+          </header>
+          <div class="commentary-body">
+            <div v-if="data.management_commentary_details.current" class="note"><strong>经营说明</strong><p>{{ data.management_commentary_details.current.text }}</p></div>
+            <div v-if="data.management_commentary_details.status === 'stale' && data.management_commentary_details.latest" class="note"><strong>之前的经营说明已过期</strong><p>{{ data.management_commentary_details.latest.text }}</p></div>
+            <div v-for="note in data.management_commentary_details.supplements" :key="note.id" class="note"><strong>关账后的补充说明<template v-if="note.status === 'stale'">（依据已变化）</template></strong><p>{{ note.text }}</p></div>
+          </div>
+        </dialog>
         <div v-if="data.risks.length" class="risks" aria-label="风险与核对进展">
           <h3>风险与核对进展</h3><article v-for="risk in data.risks" :key="risk.key"><strong>{{ risk.title }}</strong><p>{{ risk.impact }} · {{ risk.status === 'ai_reviewing' ? 'AI 会计核对中' : '需要关注' }}</p></article>
         </div>
@@ -438,6 +480,11 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .section-anchor { min-width: 0; scroll-margin-top: var(--brief-anchor-offset); }
 #overview { display: grid; gap: 20px; }
 .scope { margin: 0; color: var(--brief-muted); font-size: 11px; }
+.hero-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.commentary-toggle { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--brief-line); border-radius: var(--brief-control-radius); background: var(--brief-surface); color: var(--brief-green); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.commentary-toggle:hover { background: var(--brief-green-soft); }
+.commentary-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.commentary-toggle svg { width: 14px; height: 14px; }
 .brief-hero {
   display: grid;
   gap: 24px;
@@ -488,10 +535,20 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 .kpi > span { color: var(--brief-muted); font-size: 12px; font-weight: 750; }
 .kpi > strong { margin: 4px 0; color: var(--kpi-accent); font-size: clamp(20px, 2vw, 26px); line-height: 1.15; letter-spacing: -0.025em; overflow-wrap: anywhere; }
 .kpi > small { color: var(--brief-muted); font-size: 11px; line-height: 1.45; }
-.note { padding: 20px 24px; border: 1px solid var(--brief-line); border-radius: var(--brief-panel-radius); background: var(--brief-surface); overflow-wrap: anywhere; }
-.note > strong { color: var(--brief-muted); font-size: 11px; font-weight: 650; }
+.commentary-dialog { width: min(840px, calc(100% - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--brief-line); border-radius: var(--brief-panel-radius); background: var(--brief-surface); color: var(--brief-text); box-shadow: var(--brief-overlay-shadow); }
+.commentary-dialog[open] { display: flex; flex-direction: column; }
+.commentary-dialog::backdrop { background: rgb(12 24 17 / 38%); }
+.commentary-heading { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--brief-line); }
+.commentary-heading h2 { margin: 0; font-size: 20px; }
+.commentary-heading p { margin: 6px 0 0; color: var(--brief-muted); font-size: 12px; }
+.commentary-close { display: grid; flex: none; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--brief-control-radius); background: var(--brief-soft); color: var(--brief-muted); font: inherit; font-size: 26px; line-height: 1; cursor: pointer; }
+.commentary-close:hover { background: var(--brief-green-soft); color: var(--brief-green); }
+.commentary-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.commentary-body { display: grid; gap: 20px; min-height: 0; padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
+.note { min-width: 0; overflow-wrap: anywhere; }
+.note + .note { padding-top: 20px; border-top: 1px solid var(--brief-line); }
+.note > strong { color: var(--brief-muted); font-size: 12px; font-weight: 650; }
 .note p { margin: 6px 0 0; font-size: 15px; line-height: 1.75; white-space: pre-line; }
-.note summary { color: var(--brief-muted); font-size: 13px; cursor: pointer; }
 .risks { padding: 14px 16px; border-radius: var(--brief-control-radius); background: color-mix(in srgb, var(--brief-amber-soft) 38%, var(--brief-surface)); }
 .risks h3 { margin: 0 0 9px; font-size: 12px; font-weight: 650; }
 .risks article { padding: 9px 0; }
@@ -516,7 +573,8 @@ article { min-width: 0; overflow-wrap: anywhere; }
   .kpi-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .kpi { padding: 13px 0 13px 14px; border-left: 0; }
   .kpi + .kpi { border-top: 1px solid var(--brief-line); }
-  .note { padding: 16px; }
+  .commentary-dialog { max-height: calc(100dvh - 24px); }
+  .commentary-heading, .commentary-body { padding: 16px; }
 }
 @media (max-width: 720px) { .brief-page { --brief-anchor-offset: 174px; } }
 @media (prefers-reduced-motion: reduce) { .kpi, .kpi::before { transition: none; } }

@@ -129,7 +129,7 @@ async function briefHarness() {
       const dashboardErrorMessage = error => error.message;
       const isDashboardSnapshotChanged = () => false;
       ${briefScript}
-      return { response, reviewRequest, needsMonthlyReview, showMonthlyReview, loadData, refresh, sectionLinks };
+      return { response, reviewRequest, needsMonthlyReview, showMonthlyReview, hasManagementCommentary, loadData, refresh, sectionLinks };
     }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   const module = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
   delete globalThis[key];
@@ -142,6 +142,33 @@ const briefResult = (monthState, request = null) => ({
   schema_version: briefContract.schema_version, snapshot_version: briefContract.snapshot_version,
   read_context: { ...briefContract.read_context, company_id: "a" },
   selected_period: { key: "2026-02" }, data: { month_state: monthState, owner_review_request: request, collections: {} },
+});
+
+test("commentary without returned text stays hidden, while available notes remain reachable", async () => {
+  const h = await briefHarness();
+  try {
+    const empty = { current: null, latest: null, supplements: [] };
+    const note = { id: "note", text: "本月经营情况。", status: "current" };
+    for (const monthState of ["open", "closed", "covered"]) {
+      for (const [notes, visible] of [
+        [{ ...empty, status: "not_provided" }, false],
+        [{ ...empty, status: "stale" }, false],
+        [{ ...empty, status: "stale", latest: { ...note, status: "stale" } }, true],
+        [{ ...empty, status: "current", current: note, latest: note }, true],
+        [{ ...empty, status: "frozen", current: { ...note, status: "frozen" } }, true],
+        [{ ...empty, status: "not_provided", supplements: [note] }, true],
+      ]) {
+        const result = briefResult(monthState);
+        result.data.management_commentary_details = notes;
+        const pending = h.loadData("2026-02");
+        h.calls.at(-1).resolve(result);
+        await pending;
+        assert.equal(h.hasManagementCommentary.value, visible, `${monthState}/${notes.status}`);
+      }
+    }
+    h.response.value = null;
+    assert.equal(h.hasManagementCommentary.value, false);
+  } finally { h.close(); }
 });
 
 test("only an open month with a valid review locator shows a confirmation task", async () => {
