@@ -8,6 +8,18 @@ from ._business_descriptions import allows_component, merged, source_reference
 from ._business_labels import business_fund_accounts, business_label, business_matter
 
 
+def business_kind(selected):
+    """Project the selected adopted remuneration into its existing dashboard category."""
+    content = selected.content
+    if content is None or content.target["kind"] != "people.remuneration":
+        return selected.kind
+    remuneration_type = content.target["values"]["remuneration_type"]
+    if remuneration_type == "labor":
+        destination = content.basis["input"].get("destination", {})
+        return "labor_project_cost" if destination.get("type") == "project" else "labor"
+    return {"wage": "payroll", "bonus": "annual_bonus"}[remuneration_type]
+
+
 def profile(identifier, name, obj=None, *, note=None):
     data = obj.get("data", {}) if obj else {}
     return {

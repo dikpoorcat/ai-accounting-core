@@ -13,10 +13,10 @@ WORKSPACE = Path(__file__).resolve().parents[4]
 # Inputs outside the three source trees below. Keep the actual measurement,
 # oracle and build dependencies together rather than duplicating their lists.
 INPUT_FILES = (
-    "docs/redesign/contracts/core.schema.json",
-    "docs/redesign/contracts/dashboard-response-v2.json",
-    "docs/redesign/contracts/review-materials.schema.json",
-    "docs/redesign/examples/core-acceptance.json",
+    "docs/design/contracts/core.schema.json",
+    "docs/design/contracts/dashboard-response-v2.json",
+    "docs/design/contracts/review-materials.schema.json",
+    "docs/design/examples/core-acceptance.json",
     "frontend/index.html",
     "frontend/local-api-proxy.ts",
     "frontend/local.html",
@@ -28,7 +28,6 @@ INPUT_FILES = (
     "frontend/tsconfig.json",
     "frontend/vite.config.ts",
     "pyproject.toml",
-    "tests/conftest.py",
     "uv.lock",
 )
 

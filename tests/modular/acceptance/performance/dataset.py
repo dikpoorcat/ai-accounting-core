@@ -97,7 +97,7 @@ def build(
     manifest = {
         "format": FORMAT,
         "budget_source": [
-            "docs/redesign/06-dashboard-adapter.md §10",
+            "docs/design/06-dashboard-adapter.md §10",
             "examples/core-acceptance.json C14",
         ],
         "official_scale": False,

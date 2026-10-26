@@ -8,6 +8,7 @@ import * as Vue from "vue";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 import { briefCategoryIndex } from "./helpers/briefCategoryIndex.mjs";
 import { groupContributionMembers, contributionProgressRows } from "./helpers/briefOpenItemGrouping.mjs";
+import { rendererNode } from "./helpers/rendererNode.mjs";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const flush = async () => { await Vue.nextTick(); await Vue.nextTick(); };
@@ -25,7 +26,7 @@ function members(key, more = false, section = "open_items") {
   return { data: { section, collections: { members: { items: section === "activity" ? [] : [{ id: key, group_key: "open-a", subject_id: null, description: key, date: null, recognition: { period: "2026-01", label: "按月确认" }, status: "open", outstanding_fen: "100", contribution_group_key: null }], page: page(more) }, vouchers: { items: [] } } } };
 }
 function renderer() {
-  const make = tag => ({ tag, children: [], parent: null, props: {}, style: {} });
+  const make = rendererNode;
   const root = make("root");
   const host = Vue.createRenderer({ createElement: make, createText: () => make("text"), createComment: () => make("comment"),
     insert(node, target, anchor) { if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1); const at = anchor ? target.children.indexOf(anchor) : -1; target.children.splice(at < 0 ? target.children.length : at, 0, node); node.parent = target; },

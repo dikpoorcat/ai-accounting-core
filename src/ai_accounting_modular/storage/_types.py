@@ -26,7 +26,6 @@ class ModuleSchema:
     objects: tuple[SchemaObject, ...]
     sql_fingerprint: str
     contract_digest: str
-    parent_digest: str | None = None
 
     @property
     def tables(self) -> frozenset[str]:

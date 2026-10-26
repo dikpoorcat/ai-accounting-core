@@ -155,7 +155,7 @@ def test_r01_complete_dto_and_independent_three_statement_numbers(store):
     ]
     assert all(check["status"] == "pass" for check in actual["checks"])
     oracle = json.loads(
-        (Path(__file__).parents[3] / "docs/redesign/examples/reporting-cases.json").read_text(
+        (Path(__file__).parents[3] / "docs/design/examples/reporting-cases.json").read_text(
             encoding="utf-8"
         )
     )["cases"][0]["expected_snapshot"]

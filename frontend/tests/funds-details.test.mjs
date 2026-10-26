@@ -43,6 +43,16 @@ test("fund movement details add precise progress and context without repeating t
       const app = Vue.createSSRApp(component, { subjectId: fundsContext.subject_id, period: "2026-09", presentation: "funds", fundsContext, expanded: true, hideSummary: true, ...other });
       app.use(router); return renderToString(app);
     }
+    await t.test("business titles prefer the backend description and fall back to current fact labels", async () => {
+      const data = scenario([]); data.identity.kind = "operations.expense";
+      const options = { presentation: "default", hideSummary: false };
+      data.display_profiles.business.values.display_name = "合同约定的业务名称";
+      assert.match(await render(data, movement(), options), /<h3\b[^>]*>合同约定的业务名称<\/h3>/);
+      delete data.display_profiles.business.values.display_name;
+      assert.match(await render(data, movement(), options), /<h3\b[^>]*>费用<\/h3>/);
+      data.identity.kind = "unsupported.kind";
+      assert.match(await render(data, movement(), options), /<h3\b[^>]*>其他业务<\/h3>/);
+    });
     await t.test("clicked cash amount does not become business total or salary obligation", async () => {
       const html = await render(scenario([obligation(), obligation({ key: "tax", name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" })]));
       assert.match(html, /款项进度 · 截至2026年9月末/);
@@ -51,6 +61,19 @@ test("fund movement details add precise progress and context without repeating t
       assert.doesNotMatch(html, /当前业务结果金额|¥99,999\.99|业务对象：|9月工资付款|2026-09-15|本次事项/);
       assert.match(html, /相关款项处理[\s\S]*更正原实际收付款[\s\S]*−¥123\.45/);
       assert.match(html, /compact-status-details/);
+    });
+    await t.test("adopted wage bonus and both labor destinations retain their exact payment purpose", async () => {
+      for (const [kind, purpose, category] of [
+        ["payroll", "实发工资", "payroll_payables"],
+        ["annual_bonus", "实发奖金", "payroll_payables"],
+        ["labor", "实发劳务款", "labor_payables"],
+        ["labor_project_cost", "实发劳务款", "labor_payables"],
+      ]) {
+        const data = scenario([obligation({ category_key: category })]); data.identity.kind = kind;
+        const html = await render(data);
+        assert(html.includes(purpose), `${kind} retains ${purpose}`);
+        assert.doesNotMatch(html, /个人实发款/);
+      }
     });
     await t.test("unknown and absent obligations never imply paid or settled", async () => {
       const empty = await render(scenario([]));

@@ -65,7 +65,7 @@ AI 通过 MCP 读取 `accounting://guides/work` 后，指南正文作为工具�
 
 ## 四、以“先查资料，只问必要问题”为例
 
-这条要求的详细正文写在[工作指南的开发文档](docs/redesign/08-ai-work-and-materials.md)中。Skill 和 MCP 总说明保留简短提醒，AI 开始工作时再读取完整指南。
+这条要求的详细正文写在[工作指南的开发文档](docs/design/08-ai-work-and-materials.md)中。Skill 和 MCP 总说明保留简短提醒，AI 开始工作时再读取完整指南。
 
 收到一笔业务后，AI 应结合已经知道的情况判断，再查必要资料。如果现有资料已经足够，它就继续办理；仍有影响当前工作的现实事实无法确定，才向老板提问。
 
@@ -87,7 +87,7 @@ AI 理解完业务，通过 MCP 提交有明确类型的业务事实。内核公
 
 ## 六、规则修改后，怎样才算实际生效
 
-详细规则的原文保存在项目文档中：[工作方法](docs/redesign/08-ai-work-and-materials.md)、[接口说明](docs/redesign/03-contracts.md)、[业务规则](docs/redesign/05-business-rules.md)和[报表规则](docs/redesign/05b-financial-reporting.md)。
+详细规则的原文保存在项目文档中：[工作方法](docs/design/08-ai-work-and-materials.md)、[接口说明](docs/design/03-contracts.md)、[业务规则](docs/design/05-business-rules.md)和[报表规则](docs/design/05b-financial-reporting.md)。
 
 [生成工具](tools/generate_modular_contracts.py)从这些原文提取操作所需内容，形成随内核提供的[指南包](src/ai_accounting_modular/agent/_guides.json)。MCP 再把指南包中的内容提供给 AI。因此，AI 日常读取的是运行版本提供的指南，不是直接翻源码目录中的开发文档。
 

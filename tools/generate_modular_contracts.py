@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import unquote, urldefrag, urljoin
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "docs/redesign/contracts"
+SOURCE = ROOT / "docs/design/contracts"
 TARGET = ROOT / "src/ai_accounting_modular/contracts"
 SCHEMAS = (
     "core.schema.json",
@@ -243,7 +243,7 @@ def render_work_checklist(value):
 
 
 def guide_outputs(root, business_document):
-    source = root / "docs/redesign"
+    source = root / "docs/design"
 
     def read(name):
         return (source / name).read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -263,7 +263,7 @@ def guide_outputs(root, business_document):
 
         return {
             "title": title,
-            "source": "docs/redesign/" + name,
+            "source": "docs/design/" + name,
             "text": re.sub(r"\[([^\]]+)\]\(([^\s)]+)\)", link, text).strip() + "\n",
         }
 

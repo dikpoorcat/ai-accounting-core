@@ -112,10 +112,9 @@ const laborResultRepeated = computed(() => {
   const current = data.value, context = props.laborContext, result = businessAmount.value;
   if (!sameLaborSource.value || !current || !context || !result || result.amount_fen === null) return false;
   const resultPeriod = current.frozen_adoption?.close_period ?? current.current_business_result?.posting_period;
-  const label = current.identity.kind === "labor_project_cost" ? "资本化劳务确认毛额" : "劳务确认毛额";
-  return ["labor", "labor_accrual", "labor_project_cost"].includes(current.identity.kind)
+  return ["labor", "labor_project_cost"].includes(current.identity.kind)
     && context.capitalized === (current.identity.kind === "labor_project_cost")
-    && result.amount_label === label && current.latest_source.period === context.period
+    && result.amount_label === "应发金额" && current.latest_source.period === context.period
     && resultPeriod === context.cutoff_period && result.amount_fen === context.gross_fen;
 });
 function laborCheckingRepeated(settlements: BusinessStatusData["settlements"]) {
@@ -127,10 +126,10 @@ function sameKnownLaborAmount(value: string | null, shown: string | null | undef
 }
 function laborProgressRows(settlements: BusinessStatusData["settlements"]) {
   const context = props.laborContext, kind = data.value?.identity.kind;
-  const category = kind === "labor" || kind === "labor_accrual" || kind === "labor_project_cost" ? "labor_payables" : undefined;
+  const category = kind === "labor" || kind === "labor_project_cost" ? "labor_payables" : undefined;
   return settlements.obligations.flatMap(item => {
     const sameMeaning = context && category && item.direction === "payable" && item.category_key === category
-      && context.capitalized === (kind === "labor_project_cost") && item.key === `${kind}:${context.subject_id}:${item.name}`;
+      && context.capitalized === (kind === "labor_project_cost");
     const shown = sameLaborSource.value && context && sameMeaning && settlements.cutoff_period === context.cutoff_period
       && item.source_period === context.period
       ? context.obligations.find(value => value.key === item.key && value.name === item.name) : undefined;
@@ -332,7 +331,7 @@ function activityTone(item: Obligation, checking: boolean) {
 }
 function movementPurpose(name: string) {
   const kind = data.value?.identity.kind;
-  const netLabel = kind === "annual_bonus" ? "实发奖金" : kind === "payroll" || kind === "payroll_bounded" ? "实发工资" : kind === "labor" || kind === "labor_accrual" ? "实发劳务款" : "个人实发款";
+  const netLabel = kind === "annual_bonus" ? "实发奖金" : kind === "payroll" ? "实发工资" : kind === "labor" || kind === "labor_project_cost" ? "实发劳务款" : "个人实发款";
   const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", collection: "代收款", remittance: "代付款", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return labels[name] || "相关款项";
 }

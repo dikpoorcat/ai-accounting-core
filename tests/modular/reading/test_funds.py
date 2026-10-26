@@ -97,7 +97,7 @@ def page(case, month="2026-01", **query):
 def check_data(value):
     contract = json.loads(
         (
-            Path(__file__).parents[3] / "docs/redesign/contracts/dashboard-response-v2.json"
+            Path(__file__).parents[3] / "docs/design/contracts/dashboard-response-v2.json"
         ).read_text(encoding="utf-8")
     )["dashboard_funds"]
     Draft202012Validator({"$defs": contract["$defs"], "$ref": "#/$defs/FundsData"}).validate(value)

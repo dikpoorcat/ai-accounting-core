@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,12 +11,12 @@ import { compile } from "json-schema-to-typescript";
 
 const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const generatedDirectory = resolve(frontendRoot, "src/api/generated");
-const schemaPath = resolve(frontendRoot, "../docs/redesign/contracts/dashboard-response-v2.json");
+const contractsDirectory = resolve(frontendRoot, "../docs/design/contracts");
+const schemaPath = join(contractsDirectory, "dashboard-response-v2.json");
 const check = process.argv.slice(2).includes("--check");
 
 // A response contract is browser-visible only after it is intentionally listed here.
 const contracts = [
-  ["workflow", "Workflow"], ["period_readiness", "PeriodReadiness"],
   ["dashboard_context", "DashboardContext"], ["dashboard_brief", "DashboardBrief"],
   ["dashboard_brief_group", "DashboardBriefGroup"],
   ["dashboard_funds", "DashboardFunds"], ["dashboard_employees", "DashboardEmployees"],
@@ -27,7 +27,6 @@ const contracts = [
   ["dashboard_employees_delivery", "DashboardEmployeesDelivery"],
   ["dashboard_assets_delivery", "DashboardAssetsDelivery"],
   ["dashboard_quarterly_report_delivery", "DashboardQuarterlyReportDelivery"],
-  ["dashboard_period_preparation", "DashboardPeriodPreparation"],
   ["dashboard_close_review", "DashboardCloseReview"], ["report_export_status", "ReportExportStatus"],
   ["browser_security_status", "BrowserSecurityStatus"],
   ["report_export_receipt", "ReportExportReceipt"],
@@ -47,6 +46,7 @@ function requireSchemaMap(value) {
   for (const [key] of contracts) {
     assert(value[key] && typeof value[key] === "object" && !Array.isArray(value[key]), `missing response schema: ${key}`);
   }
+  assert.deepEqual(Object.keys(value).sort(), contracts.map(([key]) => key).sort(), "response contracts must match the current browser endpoints");
   return value;
 }
 
@@ -110,7 +110,8 @@ async function generatedType(schema, name, { typeName = `${name}Response`, valid
   return `${banner}\nexport namespace ${name}Contract {\n${indented}\n}\n\nexport type ${responseName} = ${name}Contract.${responseName};\n\nimport type { DashboardResponseValidator } from "./dashboardValidatorTypes";\nexport const ${validatorName}: DashboardResponseValidator<${responseName}>;\n`;
 }
 
-async function documentOutputs(file, definitions, coreNames, directory = resolve(frontendRoot, "../docs/redesign/contracts")) {
+async function documentOutputs(file, definitions, coreNames) {
+  const directory = contractsDirectory;
   const documents = new Map(await Promise.all(["core.schema.json", file].map(async name => [name, JSON.parse(await readFile(join(directory, name), "utf8"))])));
   const source = documents.get(file);
   // Independent read contracts reference named core definitions, never its ApplyRequest root.
@@ -157,7 +158,7 @@ async function buildOutputs(targetDirectory) {
   ], ["Id", "Month", "Digest", "Page"]));
   Object.assign(outputs, await documentOutputs("company-note.schema.json", [
     "CompanyNoteResponse", "CompanyNoteQuery",
-  ], ["Id"], resolve(frontendRoot, "../src/ai_accounting_modular/contracts/_schemas")));
+  ], ["Id"]));
   await Promise.all(Object.entries(outputs).map(([name, content]) => writeFile(join(targetDirectory, name), content, "utf8")));
   return Object.keys(outputs);
 }
@@ -165,7 +166,9 @@ async function buildOutputs(targetDirectory) {
 if (check) {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "dashboard-contracts-"));
   try {
-    for (const name of await buildOutputs(temporaryDirectory)) {
+    const expected = await buildOutputs(temporaryDirectory);
+    assert.deepEqual((await readdir(generatedDirectory)).sort(), [...expected].sort(), "generated contracts contain missing or obsolete files; run npm run contracts:generate");
+    for (const name of expected) {
       const generated = await readFile(join(temporaryDirectory, name));
       const tracked = await readFile(join(generatedDirectory, name));
       assert(generated.equals(tracked), `${name} is stale; run npm run contracts:generate`);
@@ -174,5 +177,8 @@ if (check) {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
 } else {
-  await buildOutputs(generatedDirectory);
+  const expected = new Set(await buildOutputs(generatedDirectory));
+  for (const name of await readdir(generatedDirectory)) {
+    if (!expected.has(name)) await rm(join(generatedDirectory, name));
+  }
 }

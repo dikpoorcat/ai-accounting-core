@@ -63,7 +63,7 @@ test("voucher progress adds business facts without repeating the voucher", async
     });
     await t.test("income and receipt vouchers share exact receivable progress", async () => {
       const data = scenario([obligation({ key: "revenue", name: "primary", direction: "receivable", category_key: "customer_receivables" })]);
-      data.identity.kind = "revenue";
+      data.identity.kind = "operations.service_sale";
       for (const type of ["收入确认", "收入收款"]) {
         const html = await render(data, voucher({ type, business_amount_label: type === "收入确认" ? "含税收入" : "实际收款", business_amount_fen: "600000" }));
         assert.match(html, /原应收[\s\S]*¥8,000\.00/); assert.match(html, /已收[\s\S]*¥6,000\.00/); assert.match(html, /还需收回[\s\S]*¥2,000\.00/);

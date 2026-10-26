@@ -59,12 +59,11 @@ def create_database(metadata: CompanyMetadata):
         for owner in sorted({item["owner"] for item in packaged_schema("company")["objects"]}):
             contract = module_schema(owner)
             connection.execute(
-                "INSERT INTO module_schema VALUES(?,?,?,?,?)",
+                "INSERT INTO module_schema VALUES(?,?,?,?)",
                 (
                     owner,
                     contract.version,
                     contract.contract_digest,
-                    contract.parent_digest,
                     contract.sql_fingerprint,
                 ),
             )

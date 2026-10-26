@@ -17,7 +17,7 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.ledger.public import LedgerQuery, SettlementEventQuery
 from ai_accounting_modular.records.public import open_standard_bundle
 
-EXAMPLE = Path(__file__).resolve().parents[3] / "docs/redesign/examples/core-acceptance.json"
+EXAMPLE = Path(__file__).resolve().parents[3] / "docs/design/examples/core-acceptance.json"
 SPEC = json.loads(EXAMPLE.read_text(encoding="utf-8"))
 COMPANY = SPEC["company"]["company_id"]
 DATABASE = SPEC["company"]["database_id"]

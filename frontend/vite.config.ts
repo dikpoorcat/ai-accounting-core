@@ -32,7 +32,7 @@ function dashboardVersion() {
   return withVersionPrefix(packageMetadata.version);
 }
 
-export default defineConfig(async ({ command, mode }) => {
+export default defineConfig(async ({ command }) => {
   const catalogPath = resolve(repositoryRoot, process.env.FINANCE_MODULAR_CATALOG || "data/accounting/catalog.sqlite3");
   const api = command === "serve" ? await localApiProxy(
     () => readLocalServiceMetadata(repositoryRoot, catalogPath),
@@ -48,9 +48,7 @@ export default defineConfig(async ({ command, mode }) => {
       strictPort: true,
     },
     build: {
-      outDir: mode === "modular"
-        ? "../src/ai_accounting_modular/static/dashboard"
-        : mode === "release" ? "../src/ai_accounting/static/dashboard" : "dist",
+      outDir: "../src/ai_accounting_modular/static/dashboard",
       emptyOutDir: true,
       rollupOptions: {
         input: {

@@ -40,7 +40,6 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
     const useDashboardContext = () => ({ context: environment.dashboardContext, load: environment.refreshContext, refresh: environment.refreshContext });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const fetchEmployeesDashboard = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchCompleteBrief = environment.fetch, fetchDeferredBrief = environment.fetch, fetchDeferredQuarterlyReport = environment.fetch, fetchFundsDashboard = environment.fetch;
-    const fetchPeriodPreparation = () => new Promise(() => {});
     const dashboardErrorMessage = error => error.message; const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = value => BigInt(value ?? 0), formatFen = String, formatPositiveFen = String;
     const rememberFundAccounts = () => {};
@@ -53,7 +52,7 @@ async function harness(name, refreshContext = async () => {}, initialContext = n
   return { ...await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`), route, calls, dashboardContext, unmount: () => unmount.forEach(callback => callback()), replaces };
 }
 function result(name, marker) {
-  if (name === "Reports") return { marker, statements: [] };
+  if (name === "Reports") return { ...structuredClone(contractSamples.quarterly_report.response), marker };
   if (name === "Funds") {
     const collection = () => ({ items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } });
     return { schema_version: 6, snapshot_version: "same", selected_period: { key: "2026-01", label: "一月" }, data: {

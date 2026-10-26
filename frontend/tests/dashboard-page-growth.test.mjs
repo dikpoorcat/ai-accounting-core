@@ -6,13 +6,14 @@ import { compileScript, parse } from "@vue/compiler-sfc";
 import ts from "typescript";
 import * as Vue from "vue";
 import { createServer } from "vite";
+import { rendererNode } from "./helpers/rendererNode.mjs";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const flush = async () => { await Vue.nextTick(); await Vue.nextTick(); };
 let sequence = 0;
 
 function hostRenderer() {
-  const make = (tag, text = "") => ({ tag, text, props: {}, style: {}, children: [], parent: null });
+  const make = rendererNode;
   const root = make("root");
   const renderer = Vue.createRenderer({
     createElement: tag => make(tag), createText: text => make("#text", text), createComment: text => make("#comment", text),

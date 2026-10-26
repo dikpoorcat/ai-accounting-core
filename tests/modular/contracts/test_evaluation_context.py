@@ -27,7 +27,7 @@ from ai_accounting_modular.contracts.public import (
     schema_document,
 )
 
-EXAMPLES = Path(__file__).resolve().parents[3] / "docs/redesign/examples"
+EXAMPLES = Path(__file__).resolve().parents[3] / "docs/design/examples"
 
 
 def outcome():

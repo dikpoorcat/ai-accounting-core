@@ -21,9 +21,9 @@ from ._types import (
 )
 
 
-def repository_factory(*, structure_version=None) -> RepositoryFactory:
+def repository_factory() -> RepositoryFactory:
     return RepositoryFactory(
-        module_schema("files", structure_version=structure_version),
+        module_schema("files"),
         FilesRepository,
         FilesRepository,
     )

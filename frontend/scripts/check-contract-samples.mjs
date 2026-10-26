@@ -5,8 +5,6 @@ import { resolve } from "node:path";
 import * as generatedValidators from "../src/api/generated/dashboardValidators.js";
 
 const validatorNames = {
-  workflow: "validateWorkflowResponse",
-  period_readiness: "validatePeriodReadinessResponse",
   dashboard_context: "validateDashboardContextResponse",
   dashboard_brief: "validateDashboardBriefResponse",
   dashboard_brief_group: "validateDashboardBriefGroupResponse",
@@ -15,7 +13,11 @@ const validatorNames = {
   dashboard_assets: "validateDashboardAssetsResponse",
   dashboard_business_status: "validateDashboardBusinessStatusResponse",
   dashboard_quarterly_report: "validateDashboardQuarterlyReportResponse",
-  dashboard_period_preparation: "validateDashboardPeriodPreparationResponse",
+  dashboard_brief_delivery: "validateDashboardBriefDeliveryResponse",
+  dashboard_funds_delivery: "validateDashboardFundsDeliveryResponse",
+  dashboard_employees_delivery: "validateDashboardEmployeesDeliveryResponse",
+  dashboard_assets_delivery: "validateDashboardAssetsDeliveryResponse",
+  dashboard_quarterly_report_delivery: "validateDashboardQuarterlyReportDeliveryResponse",
   dashboard_close_review: "validateDashboardCloseReviewResponse",
   report_export_status: "validateReportExportStatusResponse",
   browser_security_status: "validateBrowserSecurityStatusResponse",

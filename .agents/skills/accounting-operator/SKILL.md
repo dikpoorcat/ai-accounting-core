@@ -7,7 +7,7 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 # 会计 AI
 
-作为老板的会计和知识外挂，主动查清业务、作专业判断并办理，引导老板补充真正缺少的现实信息。资料够用就继续，不把尚未查询、尚未综合或程序问题交给老板。当前试用环境为`ai-accounting-modular/1`，`ai_accounting` MCP连接`D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`；计算、保存、标准文档和内部接续由程序完成。单独准备环境用`$accounting-startup`，开发和部署另按开发模式处理。
+作为老板的会计和知识外挂，主动查清业务、作专业判断并办理，引导老板补充真正缺少的现实信息。资料够用就继续，不把尚未查询、尚未综合或程序问题交给老板。当前环境为`ai-accounting-modular/1`，`ai_accounting` MCP连接`D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`；计算、保存、标准文档和内部接续由程序完成。单独准备环境用`$accounting-startup`，开发和部署另按开发模式处理。
 
 老板要求“撤回记账”“撤销记账”或“撤消记账”时，读取[撤回记账指令](../accounting-withdraw/SKILL.md)，在会计操作模式内按范围办理：单笔或指定多笔通过 `accounting_apply` 撤回并保留原件；明确整月全部记账才通过 `accounting_cancel_month` 撤销账务并清理本月可退出原件，不自行分领域拼批量；按月选择工资等一类仍是批量撤回，不因提到月份清理原件。
 
@@ -19,7 +19,7 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 打勾和下一步共用内部清单的同一次判断。本阶段仍有真实缺项，继续同阶段可办事项，不擅自跳步；后阶段专属资料不倒挂成前项缺口。查清当前事项所需的跨月、跨领域读取不受显示阶段限制，也不等于另推进一项。老板插办、真实依赖及有据后期安排按指南接续，保留原缺项和返回位置；不逐项批准、不强等每步答复，不新增流程历史。
 
-调用 `accounting_schema` 取得当前支持种类，从 `accounting://guides` 目录按需读取命令及专项说明。通过 `accounting_command(command="accounting_context", payload={})` 取得可选公司，按当前事项选择公司；需要登录时使用原生窗口。旧体系的 `finance_local_*` 协议不能套用于新账。
+调用 `accounting_schema` 取得当前支持种类，从 `accounting://guides` 目录按需读取命令及专项说明。通过 `accounting_command(command="accounting_context", payload={})` 取得可选公司，按当前事项选择公司；需要登录时使用原生窗口。所有输入以当前 `accounting_*` 运行合同为准。
 
 确定业务类型后，调用 `accounting_schema(kinds=[实际kind])`，按需读取 `accounting://guides/business/{kind}` 和 `accounting://contracts`。随后通过 `accounting_command(command="accounting_apply", payload=完整请求)` 办理；其他命令也由同一工具按实际合同调用。说明和合同随当前内核提供，本Skill不另存核算公式或字段目录。
 

@@ -336,7 +336,7 @@ def test_unknown_prior_profit_does_not_hide_known_current_month(store):
 
 def opening(business_id, period, basis):
     examples = json.loads(
-        (Path(__file__).parents[3] / "docs/redesign/examples/core-acceptance.json").read_text(
+        (Path(__file__).parents[3] / "docs/design/examples/core-acceptance.json").read_text(
             encoding="utf-8"
         )
     )

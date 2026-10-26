@@ -9,7 +9,7 @@ import { validateSourceContentQuery } from "../src/api/generated/sourceContentQu
 import { validateSourceTextContent } from "../src/api/generated/sourceTextContent.js";
 import { validateSourceFileReceipt } from "../src/api/generated/sourceFileReceipt.js";
 
-const examples = JSON.parse(readFileSync(new URL("../../docs/redesign/examples/review-materials-cases.json", import.meta.url), "utf8"));
+const examples = JSON.parse(readFileSync(new URL("../../docs/design/examples/review-materials-cases.json", import.meta.url), "utf8"));
 const samples = examples.examples;
 const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false,
   optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });

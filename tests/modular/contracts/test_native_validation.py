@@ -185,7 +185,7 @@ def test_native_compilation_cannot_fetch_network_or_files(reference, monkeypatch
 
 def test_all_fixed_design_examples_match_the_reference_without_schema_rewriting():
     spec = importlib.util.spec_from_file_location(
-        "native_design_oracle", ROOT / "docs/redesign/verify_design.py"
+        "native_design_oracle", ROOT / "tools/check_design.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

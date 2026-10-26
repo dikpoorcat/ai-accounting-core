@@ -14,7 +14,7 @@ from uuid import UUID
 
 from ai_accounting_modular.contracts.public import ContractError, YearMonth, validate_contract
 
-from ._schema import company_schema, install_structure, verify_structure
+from ._schema import install_structure, verify_structure
 from ._types import DatabaseSnapshot
 
 
@@ -219,13 +219,12 @@ def _initialize(path: Path, kind: str, seed) -> None:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
-def verify_database(path: Path | str, *, structure_version: int | None = None) -> DatabaseSnapshot:
-    expected = company_schema(structure_version)
+def verify_database(path: Path | str) -> DatabaseSnapshot:
     path = Path(path).resolve()
     connection = _connect(path, writable=False)
     try:
         connection.execute("BEGIN")
-        verify_structure(connection, "company", expected=expected)
+        verify_structure(connection, "company")
         if (
             connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
             or connection.execute("PRAGMA foreign_key_check").fetchone() is not None
@@ -246,11 +245,9 @@ def verify_database(path: Path | str, *, structure_version: int | None = None) -
         connection.close()
 
 
-def restore_database_copy(
-    source: Path | str, target: Path | str, *, structure_version: int | None = None
-) -> DatabaseSnapshot:
+def restore_database_copy(source: Path | str, target: Path | str) -> DatabaseSnapshot:
     source, target = Path(source).resolve(), Path(target).resolve()
-    verify_database(source, structure_version=structure_version)
+    verify_database(source)
     with _candidate(target) as candidate:
         with (
             closing(_connect(source, writable=False)) as origin,
@@ -258,7 +255,7 @@ def restore_database_copy(
         ):
             origin.execute("BEGIN")
             origin.backup(destination)
-        snapshot = verify_database(candidate.path, structure_version=structure_version)
+        snapshot = verify_database(candidate.path)
     return DatabaseSnapshot(
         target,
         snapshot.company_id,

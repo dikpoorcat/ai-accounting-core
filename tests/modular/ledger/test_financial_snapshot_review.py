@@ -70,7 +70,7 @@ def test_review_R01_full_fixed_numbers_through_real_sale_money_expense_and_incom
     report = book.snapshot("2026-03")
     cases = json.loads(
         (
-            Path(__file__).resolve().parents[3] / "docs/redesign/examples/reporting-cases.json"
+            Path(__file__).resolve().parents[3] / "docs/design/examples/reporting-cases.json"
         ).read_text(encoding="utf-8")
     )
     fixed = cases["cases"][0]["expected_snapshot"]

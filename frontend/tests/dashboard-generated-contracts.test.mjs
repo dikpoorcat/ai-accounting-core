@@ -7,8 +7,6 @@ import * as validators from "../src/api/generated/dashboardValidators.js";
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const schemas = JSON.parse(readFileSync(new URL("../src/api/generated/dashboardResponseSchemas.json", import.meta.url), "utf8"));
 const validatorNames = {
-  workflow: "validateWorkflowResponse",
-  period_readiness: "validatePeriodReadinessResponse",
   dashboard_context: "validateDashboardContextResponse",
   dashboard_brief: "validateDashboardBriefResponse",
   dashboard_brief_group: "validateDashboardBriefGroupResponse",
@@ -17,7 +15,6 @@ const validatorNames = {
   dashboard_assets: "validateDashboardAssetsResponse",
   dashboard_business_status: "validateDashboardBusinessStatusResponse",
   dashboard_quarterly_report: "validateDashboardQuarterlyReportResponse",
-  dashboard_period_preparation: "validateDashboardPeriodPreparationResponse",
 };
 
 function findField(value, predicate) {
@@ -31,7 +28,7 @@ function findField(value, predicate) {
 }
 
 test("generated validators accept all current synthetic backend response branches", () => {
-  for (const name of ["empty_workflow", "open_workflow", "empty_readiness", "open_readiness", "frozen_readiness", "employees_labor_sources"]) assert(samples[name], name);
+  for (const name of ["company_with_period", "brief", "frozen_funds", "employees_labor_sources", "assets", "quarterly_report"]) assert(samples[name], name);
   for (const [name, sample] of Object.entries(samples)) {
     const validate = validators[validatorNames[sample.command]];
     assert(validate, `${name}: missing generated validator`);
@@ -39,55 +36,15 @@ test("generated validators accept all current synthetic backend response branche
   }
 });
 
-test("issue resolutions retain Unicode limits and one typed action in browser validators", () => {
-  const response = structuredClone(samples.open_workflow.response);
-  const issue = { field: "source", message: "需要核对来源", resolution: { candidates: ["😀".repeat(200)] } };
-  response.issues.push(issue);
-  response.fact_issue_refs.push(response.issues.length - 1);
-  assert.equal(validators.validateWorkflowResponse(response), true);
-  issue.resolution.candidates = ["😀".repeat(201)];
-  assert.equal(validators.validateWorkflowResponse(response), false);
-  issue.resolution = { command: "find_facts" };
-  assert.equal(validators.validateWorkflowResponse(response), true);
-  issue.resolution = { command: "find_facts", fact_kind: "payroll" };
-  assert.equal(validators.validateWorkflowResponse(response), false);
-  issue.resolution = { candidates: [] };
-  assert.equal(validators.validateWorkflowResponse(response), false);
-  issue.resolution = { candidates: ["same", "same"] };
-  assert.equal(validators.validateWorkflowResponse(response), false);
-  issue.resolution = { candidates: ["first", "second"] };
-  assert.equal(validators.validateWorkflowResponse(response), true);
-});
-
-test("the explicit generated manifest covers every browser-visible response contract", () => {
+test("the generated manifest contains exactly the current browser response contracts", () => {
   assert.deepEqual(Object.keys(schemas).sort(), [
-    "browser_security_status", "confirm_replay", "confirm_replay_close_range", "dashboard_assets", "dashboard_assets_delivery", "dashboard_brief", "dashboard_brief_delivery",
+    "browser_security_status", "dashboard_assets", "dashboard_assets_delivery", "dashboard_brief", "dashboard_brief_delivery",
     "dashboard_brief_group", "dashboard_business_status", "dashboard_close_review", "dashboard_context",
     "dashboard_employees", "dashboard_employees_delivery", "dashboard_funds", "dashboard_funds_delivery",
-    "dashboard_period_preparation", "dashboard_quarterly_report", "dashboard_quarterly_report_delivery",
-    "delete_work_draft", "export_sources", "inventory_batch", "list_work_drafts", "period_readiness", "prepare_fact_registration", "prepare_replay",
-    "read_work_draft", "replay_classification_prepare", "replay_status", "report_export_receipt", "report_export_status", "resume_replay", "save_work_draft", "tax_filing_data", "workflow",
+    "dashboard_quarterly_report", "dashboard_quarterly_report_delivery", "report_export_receipt", "report_export_status",
   ]);
   const source = readFileSync(new URL("../scripts/generate-dashboard-contracts.mjs", import.meta.url), "utf8");
-  const serviceOnly = new Set([
-    "confirm_replay",
-    "confirm_replay_close_range",
-    "delete_work_draft",
-    "export_sources",
-    "inventory_batch",
-    "list_work_drafts",
-    "prepare_replay",
-    "prepare_fact_registration",
-    "read_work_draft",
-    "replay_classification_prepare",
-    "replay_status",
-    "resume_replay",
-    "save_work_draft",
-    "tax_filing_data",
-  ]);
-  for (const key of Object.keys(schemas)) {
-    if (!serviceOnly.has(key)) assert(source.includes(`["${key}"`), key);
-  }
+  for (const key of Object.keys(schemas)) assert(source.includes(`["${key}"`), key);
 });
 
 test("new page contracts keep detail rows only under collections", () => {
@@ -122,10 +79,9 @@ test("new page contracts keep detail rows only under collections", () => {
 
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
-    workflow: 2, period_readiness: 1,
     dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 10,
     dashboard_employees: 13, dashboard_assets: 10, dashboard_business_status: 10,
-    dashboard_quarterly_report: 5, dashboard_period_preparation: 4,
+    dashboard_quarterly_report: 5,
   };
   for (const [name, sample] of Object.entries(samples)) {
     assert.equal(sample.response.schema_version, versions[sample.command], name);
@@ -174,19 +130,6 @@ test("labor people require exact aggregate money and a nonnegative source count"
     malformed.data.collections.labor_workers.items[0].source_count = value;
     assert.equal(validators.validateDashboardEmployeesResponse(malformed), false, `source_count: ${value}`);
   }
-});
-
-test("workflow references use version 2 and nonnegative integers", () => {
-  const original = samples.open_workflow.response;
-  assert(original.issues.length > 0);
-  for (const value of [-1, "0", true]) {
-    const changed = structuredClone(original);
-    changed.fact_issue_refs = [value];
-    assert.equal(validators.validateWorkflowResponse(changed), false, String(value));
-  }
-  const changed = structuredClone(original);
-  changed.schema_version = 1;
-  assert.equal(validators.validateWorkflowResponse(changed), false);
 });
 
 test("personnel date validators preserve month and day precision and reject malformed dates", () => {

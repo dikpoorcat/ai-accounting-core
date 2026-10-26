@@ -52,7 +52,7 @@ def stored(company):
 def test_fixed_contract_objects_do_not_create_business_or_vouchers(identity_case):
     sample = json.loads(
         (
-            Path(__file__).resolve().parents[3] / "docs/redesign/examples/core-acceptance.json"
+            Path(__file__).resolve().parents[3] / "docs/design/examples/core-acceptance.json"
         ).read_text("utf-8")
     )
     plan = save(identity_case, sample["objects"])

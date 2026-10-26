@@ -38,7 +38,7 @@ from ai_accounting_modular.contracts.public import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-EXAMPLES = ROOT / "docs/redesign/examples"
+EXAMPLES = ROOT / "docs/design/examples"
 
 
 def example(name):

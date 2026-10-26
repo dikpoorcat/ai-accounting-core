@@ -904,9 +904,9 @@ test("personal labor parent details pass displayed facts to avoid repeating exac
       const [labor] = response.data.collections.labor_sources.items;
       const [obligation] = labor.obligations;
       const businessStatus = structuredClone(samples.business_status.response.data);
-      Object.assign(businessStatus.identity, { subject_id: labor.subject_id, kind: "labor_accrual" });
+      Object.assign(businessStatus.identity, { subject_id: labor.subject_id, kind: "labor" });
       businessStatus.latest_source = { deleted: false, period: labor.period };
-      businessStatus.current_business_result = { amount_fen: labor.gross_fen, amount_label: "劳务确认毛额", posting_period: labor.cutoff_period };
+      businessStatus.current_business_result = { amount_fen: labor.gross_fen, amount_label: "应发金额", posting_period: labor.cutoff_period };
       businessStatus.display_profiles = {};
       businessStatus.settlements = { cutoff_period: labor.cutoff_period, status: "established", checking: false, obligations: [{
         key: obligation.key, name: obligation.name, direction: "payable", category_key: "labor_payables", source_period: labor.period,
@@ -929,8 +929,12 @@ test("personal labor parent details pass displayed facts to avoid repeating exac
       assert.match(detail, /代付、抵销等[\s\S]*¥0\.00/);
       assert.match(detail, /月末未付[\s\S]*¥5,000\.00/);
       assert.equal((detail.match(/¥5,000\.00/g) ?? []).length, 3, "the source shows gross, net and unpaid once each; nested progress does not repeat them");
-      assert.doesNotMatch(detail, /劳务确认毛额/);
+      assert.doesNotMatch(detail, /应发金额/);
       assert.match(detail, /查看收付款事项/);
+      labor.obligations[0].key = "another-labor-business:net_pay";
+      const distinct = createSSRApp(component); distinct.use(router);
+      assert.match(await renderToString(distinct), /<h3\b[^>]*>个人应付净额<span\b[^>]*> · ¥5,000\.00/,
+        "an equal amount from a distinct obligation remains visible");
     }, { displayMode, laborDetails: true });
   }
 });

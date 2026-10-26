@@ -801,7 +801,7 @@ def prepare(output):
 安装包合同使用ai_accounting_modular.contracts.public.schema_document("core.schema.json")；
 按需要选择其中的$defs，所引用合同也由schema_document读取，不加载全部业务合同。
 CLI没有contracts子命令；accounting://contracts属于MCP资源，本次用上述公开只读函数取得合同。
-需要报表文件时，公开HTTP合同见docs/redesign/06-dashboard-adapter.md第8节；
+需要报表文件时，公开HTTP合同见docs/design/06-dashboard-adapter.md第8节；
 预览为GET /api/dashboard/quarterly-report?company_id=...&year=...&quarter=...。
 本隔离服务启动后，http-access.json提供base_url与已登录headers，只在请求中使用，不打印连接值。
 命令前缀（PowerShell）：{prefix}

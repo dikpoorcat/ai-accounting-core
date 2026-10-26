@@ -15,7 +15,7 @@ from .test_application import assemble, get, request
 CASES = {
     item["case_id"]: item["when"]
     for item in json.loads(
-        (Path(__file__).parents[3] / "docs/redesign/examples/business-facts-cases.json").read_text(
+        (Path(__file__).parents[3] / "docs/design/examples/business-facts-cases.json").read_text(
             encoding="utf-8"
         )
     )["valid_cases"]

@@ -11,7 +11,6 @@ from ai_accounting_modular.records.public import copy_standard_bundle, open_stan
 from ai_accounting_modular.storage.public import (
     CompanySpec,
     company_metadata,
-    company_structure_contract,
     create_company_database,
     open_database_unit,
     verify_database,
@@ -104,7 +103,7 @@ def _rebuild(application, bundle, root):
     _publish_documents(application, root)
 
 
-def _restore(application, extracted, root, *, structure_version):
+def _restore(application, extracted, root):
     manifest = extracted.manifest
     for item in manifest["files"]:
         copy_file(
@@ -123,10 +122,9 @@ def _restore(application, extracted, root, *, structure_version):
 
     with open_database_unit(
         beneath(root, DATABASE_PATH),
-        repositories=(files_repository(structure_version=structure_version), reading_repository()),
+        repositories=(files_repository(), reading_repository()),
         company_root=root,
         mode="maintenance",
-        structure_version=structure_version,
     ) as unit:
         reset_files(unit)
         reset_reading(unit)
@@ -201,29 +199,13 @@ def run(application, request):
             with source.open("rb") as stream:
                 with opener(stream) as extracted:
                     result["source_digest"] = extracted.sha256
-                    version = _backup_verify.structure_version(extracted.company_root)
-                    upgrade_required = version != company_structure_contract()["version"]
                     if check_only:
-                        _publish(
-                            extracted.company_root,
-                            target,
-                            True,
-                            result,
-                            upgrade_required=upgrade_required,
-                        )
+                        _publish(extracted.company_root, target, True, result)
                     else:
+                        _backup_verify.verify_structure_contract(extracted.company_root)
                         with _stage(target, False) as stage:
-                            metadata = _restore(
-                                application, extracted, stage, structure_version=version
-                            )
-                            _publish(
-                                stage,
-                                target,
-                                False,
-                                result,
-                                metadata,
-                                upgrade_required=upgrade_required,
-                            )
+                            metadata = _restore(application, extracted, stage)
+                            _publish(stage, target, False, result, metadata)
     except (ContractError, OSError) as error:
         _failure(result, error)
     return validate_contract("core.schema.json", "IsolatedTargetResult", result)
@@ -237,19 +219,10 @@ def _finish(application, stage, target, check_only, result):
     _publish(stage, target, check_only, result, metadata)
 
 
-def _publish(stage, target, check_only, result, metadata=None, *, upgrade_required=False):
+def _publish(stage, target, check_only, result, metadata=None):
     result["checks"].append(
         {"code": "complete_target", "state": "pass", "message": "完整资料及正式账务核验通过。"}
     )
-    if upgrade_required:
-        result["checks"].append(
-            {
-                "code": "structure_upgrade_required",
-                "state": "pass",
-                "message": "这是上一结构的备份；恢复保留原结构，"
-                "使用前须明确执行结构升级，再登记公司。",
-            }
-        )
     if check_only:
         result["state"] = "checked"
         return

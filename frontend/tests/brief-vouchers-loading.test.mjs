@@ -7,6 +7,7 @@ import { compileScript, parse } from "@vue/compiler-sfc";
 import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 import { briefCategoryIndex } from "./helpers/briefCategoryIndex.mjs";
+import { rendererNode } from "./helpers/rendererNode.mjs";
 
 let sequence = 0;
 async function harness(contextValue = null) {
@@ -362,7 +363,7 @@ async function mountWorkbench(parent) {
     const BusinessStatusDetails = { render: () => null };\n${source}`;
   const { default: component } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
   delete globalThis[key];
-  const makeNode = (tag, text = "") => ({ tag, text, props: {}, children: [], parent: null });
+  const makeNode = rendererNode;
   const root = makeNode("root");
   const renderer = Vue.createRenderer({
     createElement: tag => makeNode(tag), createText: text => makeNode("#text", text), createComment: () => makeNode("#comment"),

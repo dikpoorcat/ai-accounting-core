@@ -84,6 +84,7 @@ def test_direct_business_needs_no_monthly_models_and_keeps_historical_and_curren
     payload = progress(case, expense["business_id"])
     assert contexts == [case.company]
     data = payload["data"]
+    assert data["identity"]["kind"] == "operations.expense"
     original_due = data["settlements"]["obligations"][0]
     current_due = data["current_followups"]["settlements"]["obligations"][0]
     assert (

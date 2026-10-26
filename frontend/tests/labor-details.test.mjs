@@ -20,9 +20,9 @@ function laborContext() {
 
 function scenario(context = laborContext()) {
   const data = structuredClone(samples.business_status.response.data);
-  Object.assign(data.identity, { subject_id: context.subject_id, kind: "labor_accrual" });
+  Object.assign(data.identity, { subject_id: context.subject_id, kind: context.capitalized ? "labor_project_cost" : "labor" });
   data.latest_source = { deleted: false, period: context.period };
-  data.current_business_result = { amount_fen: context.gross_fen, amount_label: "劳务确认毛额", posting_period: context.cutoff_period };
+  data.current_business_result = { amount_fen: context.gross_fen, amount_label: "应发金额", posting_period: context.cutoff_period };
   data.display_profiles = { employees: [], counterparties: [], assets: [], fund_accounts: [] };
   const [obligation] = context.obligations;
   data.settlements = { cutoff_period: context.cutoff_period, status: "established", checking: false, obligations: [{
@@ -57,14 +57,14 @@ test("personal labor details remove only facts already displayed for the exact s
       const data = scenario();
       const html = await render(data);
       assert.doesNotMatch(html, /¥5,000\.00|¥4,500\.00|¥1,000\.00|¥500\.00|¥3,000\.00/);
-      data.frozen_adoption = { amount_fen: "500000", amount_label: "劳务确认毛额", close_period: "2026-01" };
+      data.frozen_adoption = { amount_fen: "500000", amount_label: "应发金额", close_period: "2026-01" };
       assert.doesNotMatch(await render(data), /¥5,000\.00|¥4,500\.00/);
       assert.match(await render(data, laborContext(), { presentation: "default" }), /¥5,000\.00|¥4,500\.00/);
-      for (const kind of ["labor", "labor_accrual", "labor_project_cost"]) {
+      for (const kind of ["labor", "labor_project_cost"]) {
         const context = laborContext(); context.capitalized = kind === "labor_project_cost";
-        context.obligations[0].key = `${kind}:${context.subject_id}:net`;
+        context.obligations[0].key = `${context.subject_id}:net_pay`;
         const data = scenario(context); data.identity.kind = kind;
-        data.current_business_result.amount_label = context.capitalized ? "资本化劳务确认毛额" : "劳务确认毛额";
+        data.current_business_result.amount_label = "应发金额";
         assert.doesNotMatch(await render(data, context), /补充款项进度|¥5,000\.00|¥4,500\.00|¥1,000\.00|¥500\.00|¥3,000\.00/, `${kind} does not repeat the displayed labor amounts or progress`);
       }
     });
@@ -96,17 +96,17 @@ test("personal labor details remove only facts already displayed for the exact s
     await t.test("different gross amount, source or accounting period and nonlabor results stay visible", async () => {
       for (const mode of ["current", "frozen"]) {
         const data = scenario();
-        if (mode === "frozen") data.frozen_adoption = { amount_fen: "500001", amount_label: "劳务确认毛额", close_period: "2026-01" };
+        if (mode === "frozen") data.frozen_adoption = { amount_fen: "500001", amount_label: "应发金额", close_period: "2026-01" };
         else data.current_business_result.amount_fen = "500001";
         assert.match(await render(data), /¥5,000\.01/, `${mode} different gross amount`);
         const differentPeriod = scenario();
-        if (mode === "frozen") differentPeriod.frozen_adoption = { amount_fen: "500000", amount_label: "劳务确认毛额", close_period: "2026-02" };
+        if (mode === "frozen") differentPeriod.frozen_adoption = { amount_fen: "500000", amount_label: "应发金额", close_period: "2026-02" };
         else differentPeriod.current_business_result.posting_period = "2026-02";
         assert.match(await render(differentPeriod), /¥5,000\.00/, `${mode} different accounting period`);
       }
       const differentSource = scenario(); differentSource.latest_source.period = "2025-12";
       assert.match(await render(differentSource), /¥5,000\.00/, "different source period");
-      const differentKind = scenario(); differentKind.identity.kind = "expense";
+      const differentKind = scenario(); differentKind.identity.kind = "operations.expense";
       assert.match(await render(differentKind), /¥5,000\.00/, "nonlabor gross is not assumed to be the displayed labor amount");
       const differentMeaning = scenario(); differentMeaning.current_business_result.amount_label = "业务确认金额";
       assert.match(await render(differentMeaning), /¥5,000\.00/, "equal amounts with a different accounting meaning remain visible");

@@ -432,7 +432,7 @@ def test_vouchers_are_sealed_and_dirty_check_rejects_incomplete_mutation(store):
 def test_no_voucher_result_is_formally_adopted(store):
     # A genuine zero opening package is a formal result, not a zero journal.
     examples = json.loads(
-        (Path(__file__).parents[3] / "docs/redesign/examples/core-acceptance.json").read_text(
+        (Path(__file__).parents[3] / "docs/design/examples/core-acceptance.json").read_text(
             encoding="utf-8"
         )
     )

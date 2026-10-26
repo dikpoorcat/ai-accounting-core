@@ -20,8 +20,6 @@ from ai_accounting_modular.contracts.public import (
 from ai_accounting_modular.storage.public import (
     company_structure_contract,
     open_database_unit,
-    restore_database_copy,
-    upgrade_company_database,
     verify_database,
 )
 
@@ -127,27 +125,11 @@ def _extract(package, entries, manifest, root):
             _bad("备份文件原字节与清单摘要不一致。")
 
 
-def structure_version(root):
-    """Accept only the exact packaged current or explicitly archived company contract."""
+def verify_structure_contract(root):
+    """Accept only the exact complete company contract shipped with this runtime."""
     saved = canonical_json(loads_json(beneath(root, CONTRACT_PATH).read_bytes()))
-    for version in (None, 2, 1):
-        contract = company_structure_contract(version=version)
-        if saved == canonical_json(contract):
-            return contract["version"]
-    _bad("备份结构合同不属于当前内核或明确封存的上一公司结构。")
-
-
-@contextmanager
-def _current_verification_database(database, version, fingerprint):
-    if version == company_structure_contract()["version"]:
-        yield database
-        return
-    # The restored source stays exact; only a disposable independent copy is upgraded.
-    with TemporaryDirectory(prefix="accounting-backup-upgrade-check-") as temporary:
-        candidate = Path(temporary) / "company.sqlite3"
-        restore_database_copy(database, candidate, structure_version=version)
-        upgrade_company_database(candidate, expected_structure_fingerprint=fingerprint)
-        yield candidate
+    if saved != canonical_json(company_structure_contract()):
+        _bad("备份结构合同与当前内核的完整结构合同不一致。")
 
 
 class BackupVerifier:
@@ -193,13 +175,9 @@ class BackupVerifier:
 
     def verify_extracted(self, root, manifest):
         """Fully verify the actual extracted or copied target against its manifest."""
-        version = structure_version(root)
+        verify_structure_contract(root)
         database = beneath(root, DATABASE_PATH)
-        physical = (
-            verify_database(database)
-            if version == company_structure_contract()["version"]
-            else verify_database(database, structure_version=version)
-        )
+        physical = verify_database(database)
         if (
             physical.company_id,
             physical.database_id,
@@ -212,15 +190,12 @@ class BackupVerifier:
             manifest["structure_fingerprint"],
         ):
             _bad("备份数据库的公司身份、保存版本或结构与清单不一致。")
-        with _current_verification_database(
-            database, version, physical.structure_fingerprint
-        ) as current:
-            with open_database_unit(
-                current, repositories=self._repositories, company_root=root
-            ) as read:
-                if _documents.company_identity(read) != manifest["company_identity"]:
-                    _bad("备份数据库的公司信息或工作末月与清单不一致。")
-                records = self.verify_snapshot(read)
+        with open_database_unit(
+            database, repositories=self._repositories, company_root=root
+        ) as read:
+            if _documents.company_identity(read) != manifest["company_identity"]:
+                _bad("备份数据库的公司信息或工作末月与清单不一致。")
+            records = self.verify_snapshot(read)
         if records.document_set_id != manifest["document_set_id"]:
             _bad("备份标准业务文档集合与数据库或清单不一致。")
         expected = {

@@ -10,9 +10,7 @@
     "contracts:samples": "node scripts/check-contract-samples.mjs",
     "dev": "vite",
     "type-check": "vue-tsc --noEmit",
-    "build": "npm run contracts:check && npm run type-check && vite build",
-    "build:modular": "npm run contracts:check && npm run type-check && vite build --mode modular",
-    "build:release": "npm run contracts:check && npm run type-check && vite build --mode release"
+    "build": "npm run contracts:check && npm run type-check && vite build"
   },
   "dependencies": {
     "markdown-it": "15.0.3",

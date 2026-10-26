@@ -397,9 +397,11 @@ function obligationLabel(name: string) {
 }
 
 function laborAmountAlreadyShown(labor: PersonalLaborItem, obligation: PersonalLaborItem["obligations"][number]) {
-  const amount = obligation.name === "net" ? labor.net_fen : obligation.name === "tax" ? labor.booked_tax_fen : null;
-  return amount !== null && obligation.amount_fen === amount
-    && ["labor", "labor_accrual", "labor_project_cost"].some(kind => obligation.key === `${kind}:${labor.source_id}:${obligation.name}`);
+  const reference = obligation.key.split(":");
+  const amount = obligation.name === "net" && reference[1] === "net_pay" ? labor.net_fen
+    : obligation.name === "tax" && reference[1] === "tax" ? labor.booked_tax_fen : null;
+  return reference.length === 2 && reference[0] === labor.subject_id && labor.source_id === labor.subject_id
+    && amount !== null && obligation.amount_fen === amount;
 }
 
 function precisionLabel(value: string | null) {

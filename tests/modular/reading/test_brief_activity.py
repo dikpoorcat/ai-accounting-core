@@ -105,7 +105,7 @@ def vouchers(case, month="2026-01", **query):
 def validate(name, value):
     definitions = json.loads(
         (
-            Path(__file__).parents[3] / "docs/redesign/contracts/dashboard-response-v2.json"
+            Path(__file__).parents[3] / "docs/design/contracts/dashboard-response-v2.json"
         ).read_text(encoding="utf8")
     )["dashboard_brief"]["$defs"]
     Draft202012Validator({"$defs": definitions, "$ref": "#/$defs/" + name}).validate(value)

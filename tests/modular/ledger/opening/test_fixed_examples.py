@@ -8,7 +8,7 @@ import pytest
 from ._support import assemble, request, result, source
 
 _CASES = json.loads(
-    (Path(__file__).parents[4] / "docs/redesign/examples/business-facts-cases.json").read_text(
+    (Path(__file__).parents[4] / "docs/design/examples/business-facts-cases.json").read_text(
         encoding="utf-8"
     )
 )

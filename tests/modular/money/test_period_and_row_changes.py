@@ -30,7 +30,7 @@ def test_tax_payment_uses_formal_production_time_and_preserves_tax_attribution(
     app, storage, company, money, ledger = system
     ids, _ = seed(system)
     cases = json.loads(
-        (Path(__file__).parents[3] / "docs/redesign/examples/business-facts-cases.json").read_text(
+        (Path(__file__).parents[3] / "docs/design/examples/business-facts-cases.json").read_text(
             encoding="utf-8"
         )
     )

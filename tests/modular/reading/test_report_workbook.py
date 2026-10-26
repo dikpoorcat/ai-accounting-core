@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture
 def plan():
-    value = json.loads((ROOT / "docs/redesign/examples/file-cases.json").read_text("utf-8"))[
+    value = json.loads((ROOT / "docs/design/examples/file-cases.json").read_text("utf-8"))[
         "contract_examples"
     ]["report_export_plan"]
     value["variant"] = "tax_bureau"

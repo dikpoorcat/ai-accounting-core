@@ -132,7 +132,7 @@ def backup_plan(storage, company, *, capture_id=None, label="first"):
 
 def report_plan(company, *, label="first", period="2026-01"):
     examples = json.loads(
-        (ROOT / "docs/redesign/examples/file-cases.json").read_text(encoding="utf-8")
+        (ROOT / "docs/design/examples/file-cases.json").read_text(encoding="utf-8")
     )
     plan = examples["contract_examples"]["report_export_plan"]
     plan.update(company_id=company.company_id, database_id=company.database_id)

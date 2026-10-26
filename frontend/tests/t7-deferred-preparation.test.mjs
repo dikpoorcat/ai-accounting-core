@@ -40,7 +40,7 @@ function report(context = readContext()) {
 class ApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
 
 async function viewHarness(kind) {
-  const calls = { main: [], checks: [], exports: [], context: [], review: [] }, trace = [], unmount = [];
+  const calls = { main: [], exports: [], context: [], review: [] }, trace = [], unmount = [];
   const route = Vue.reactive({ query: { company_id: "a", period: "2026-02", quarter: "2026-Q1" }, hash: "" });
   const capture = (list, args) => new Promise((resolve, reject) => list.push({ args, resolve, reject }));
   const context = Vue.ref(null);
@@ -50,7 +50,6 @@ async function viewHarness(kind) {
     contextState: { context, load: async () => ({ periods: [{ key: "2026-02", year: 2026, month: 2 }], quarters: [{ key: "2026-Q1", year: 2026, quarter: 1 }] }), refresh: () => capture(calls.context, []) },
     fetchDeferredBrief: (...args) => { trace.push("main"); return capture(calls.main, args); },
     fetchDeferredQuarterlyReport: (...args) => { trace.push("main"); return capture(calls.main, args); },
-    fetchPeriodPreparation: (...args) => { trace.push("checks"); return capture(calls.checks, args); },
     requestQuarterlyExport: (...args) => capture(calls.exports, args),
   };
   const script = withoutImports(parse(source(`../src/views/${kind}View.vue`)).descriptor.scriptSetup.content);
@@ -60,7 +59,7 @@ async function viewHarness(kind) {
   const module = await compile(`export function instantiate() {
     const { computed, ref, shallowReactive, shallowRef, watch } = environment.Vue;
     const { appendDashboardCollection, prepareDashboardCollections } = environment;
-    const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, requestQuarterlyExport } = environment;
+    const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, requestQuarterlyExport } = environment;
     const fetchCompleteBrief = fetchDeferredBrief;
     const onMounted = () => {}, onBeforeUnmount = callback => environment.unmount.push(callback);
     const useRoute = () => environment.route, useRouter = () => environment.router, useDashboardContext = () => environment.contextState;
@@ -102,7 +101,6 @@ test("Brief exposes its main data without requesting full preparation", async ()
     const pending = h.loadData("2026-02");
     h.calls.main[0].resolve(brief()); await pending;
     assert(h.data.value);
-    assert.equal(h.calls.checks.length, 0);
     assert.equal(h.loading.value, false);
   } finally { h.close(); }
 });
@@ -197,7 +195,6 @@ test("Reports uses its own readiness without loading company-wide month followup
     h.calls.main[0].resolve(report());
     await pending;
     assert.deepEqual(h.trace, ["main", "paint"]);
-    assert.equal(h.calls.checks.length, 0);
     assert.equal(h.loading.value, false);
     assert.equal(h.reportHeadline.value, "已就绪");
     void h.exportReport();

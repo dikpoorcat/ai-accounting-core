@@ -155,7 +155,7 @@ def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_s
 
 
 def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
-    source = tmp_path / "docs/redesign"
+    source = tmp_path / "docs/design"
     source.mkdir(parents=True)
     for name in (
         "03-contracts.md",
@@ -165,7 +165,7 @@ def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
         "09-runtime-and-ai.md",
         "work-checklist.json",
     ):
-        shutil.copyfile(ROOT / "docs/redesign" / name, source / name)
+        shutil.copyfile(ROOT / "docs/design" / name, source / name)
     file = source / "05-business-rules.md"
     text = file.read_text(encoding="utf-8")
     for changed in (
@@ -175,7 +175,7 @@ def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
         file.write_text(changed, encoding="utf-8")
         with pytest.raises(ValueError, match="heading must exist exactly once"):
             generator().guide_outputs(tmp_path, schema_document("business-facts.schema.json"))
-    shutil.copyfile(ROOT / "docs/redesign/05-business-rules.md", file)
+    shutil.copyfile(ROOT / "docs/design/05-business-rules.md", file)
     work = source / "08-ai-work-and-materials.md"
     text = work.read_text(encoding="utf-8")
     heading = "## 撤回、整月撤销与重新记账"

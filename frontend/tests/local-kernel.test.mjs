@@ -16,19 +16,28 @@ const api = await server.ssrLoadModule("/src/api/localKernel.ts");
 const money = await server.ssrLoadModule("/src/utils/money.ts");
 
 test("later remuneration tax uses the actual registered fact kind and a Chinese label", () => {
-  const facts = JSON.parse(readFileSync(new URL("../../docs/redesign/contracts/business-facts.schema.json", import.meta.url), "utf8"));
+  const facts = JSON.parse(readFileSync(new URL("../../docs/design/contracts/business-facts.schema.json", import.meta.url), "utf8"));
   const kind = facts.$defs.FactPeopleRemunerationTax.properties.kind.const;
   assert(facts.$defs.Fact.oneOf.some(item => item.$ref === "#/$defs/FactPeopleRemunerationTax"));
   assert.equal(api.localBusinessName(kind), "薪酬个人所得税");
 });
 
-test("reserve facts and mixed payroll use the current business labels", () => {
-  assert.equal(api.localBusinessName("managed_reserve_expense"), "备用金支出");
-  assert.equal(api.localBusinessName("managed_reserve_refund"), "备用金退款");
-  assert.equal(api.localBusinessName("payroll_reserve_payment"), "净薪及备用金支出付款");
-  for (const retired of ["managed_reserve_scope", "managed_reserve_bank_expense", "managed_reserve_obligation_settlement", "platform_boundary_disposition"]) {
-    assert.equal(api.localBusinessName(retired), "其他业务");
+test("fallback labels cover exactly the registered current fact kinds", () => {
+  const facts = JSON.parse(readFileSync(new URL("../../docs/design/contracts/business-facts.schema.json", import.meta.url), "utf8"));
+  function kinds(node) {
+    if (node.$ref) {
+      assert(node.$ref.startsWith("#/$defs/"));
+      return kinds(facts.$defs[node.$ref.slice("#/$defs/".length)]);
+    }
+    if (node.oneOf) return node.oneOf.flatMap(kinds);
+    assert.equal(typeof node.properties?.kind?.const, "string");
+    return [node.properties.kind.const];
   }
+  const registered = kinds(facts.$defs.Fact).sort();
+  assert.deepEqual(Object.keys(api.localBusinessNames).sort(), registered);
+  for (const kind of registered) assert.match(api.localBusinessName(kind), /[\u4e00-\u9fff]/);
+  assert.equal(api.localBusinessName("money.reserve_internal"), "备用金内部资金记录");
+  assert.equal(api.localBusinessName("unsupported.kind"), "其他业务");
 });
 
 test("launch ticket is removed before one same-origin exchange and never reused on refresh", async () => {

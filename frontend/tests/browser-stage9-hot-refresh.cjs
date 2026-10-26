@@ -14,7 +14,7 @@ const responseSchemas = JSON.parse(fs.readFileSync(
 const responseVersions = Object.freeze(Object.fromEntries([
   "dashboard_context", "dashboard_brief", "dashboard_funds", "dashboard_employees",
   "dashboard_assets", "dashboard_brief_group", "dashboard_business_status", "dashboard_quarterly_report",
-  "dashboard_period_preparation", "dashboard_close_review", "report_export_status",
+  "dashboard_close_review", "report_export_status",
 ].map(name => {
   const schema = responseSchemas?.[name];
   const branches = schema?.oneOf?.map(branch => schema.$defs?.[branch.$ref?.split("/").at(-1)]) ?? [schema];

@@ -13,7 +13,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-EXAMPLES = Path(__file__).resolve().parents[3] / "docs/redesign/examples"
+EXAMPLES = Path(__file__).resolve().parents[3] / "docs/design/examples"
 
 
 def business_view(count):

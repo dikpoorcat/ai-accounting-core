@@ -2,16 +2,14 @@
   "name": "ai-accounting-core-workspace",
   "private": true,
   "scripts": {
-    "db-contracts:generate": ".\\.tmp-kernel-venv\\Scripts\\python.exe scripts/export_kernel_schema_contracts.py --write",
-    "db-contracts:check": ".\\.tmp-kernel-venv\\Scripts\\python.exe scripts/export_kernel_schema_contracts.py --check",
-    "contracts:generate": "npm run db-contracts:check && .\\.tmp-kernel-venv\\Scripts\\python.exe scripts/export_dashboard_response_schemas.py && npm --prefix frontend run contracts:generate",
-    "contracts:check": "npm run db-contracts:check && .\\.tmp-kernel-venv\\Scripts\\python.exe scripts/export_dashboard_response_schemas.py --check && npm --prefix frontend run contracts:check",
-    "prebuild": "npm run contracts:check",
-    "prebuild:release": "npm run contracts:check",
+    "db-contracts:generate": ".\\.tmp-kernel-venv\\Scripts\\python.exe tools/generate_modular_storage.py",
+    "db-contracts:check": ".\\.tmp-kernel-venv\\Scripts\\python.exe tools/generate_modular_storage.py --check",
+    "contracts:generate": ".\\.tmp-kernel-venv\\Scripts\\python.exe tools/generate_modular_contracts.py && npm --prefix frontend run contracts:generate",
+    "contracts:check": ".\\.tmp-kernel-venv\\Scripts\\python.exe tools/generate_modular_contracts.py --check && npm --prefix frontend run contracts:check",
+    "prebuild": "npm run db-contracts:check && npm run contracts:check",
     "dev": "npm --prefix frontend run dev",
     "test": "npm --prefix frontend test",
     "type-check": "npm --prefix frontend run type-check",
-    "build": "npm --prefix frontend run build",
-    "build:release": "npm --prefix frontend run build:release"
+    "build": "npm --prefix frontend run build"
   }
 }

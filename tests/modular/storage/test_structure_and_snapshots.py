@@ -12,6 +12,7 @@ from ai_accounting_modular.storage.public import (
     OwnerProfile,
     RepositoryFactory,
     Storage,
+    company_structure_contract,
     create_catalog,
     module_schema,
     restore_database_copy,
@@ -27,6 +28,19 @@ def test_structure_contracts_assign_triggers_to_their_table_owner():
     assert not any(item.type == "trigger" for item in files.objects)
 
 
+def test_new_company_contains_one_complete_module_baseline(storage_case):
+    _, company = storage_case
+    owners = sorted({item["owner"] for item in company_structure_contract()["objects"]})
+    with sqlite3.connect(company.database_path) as connection:
+        assert [row[1] for row in connection.execute("PRAGMA table_info(module_schema)")] == [
+            "module_key", "version", "contract_digest", "sql_fingerprint"
+        ]
+        assert connection.execute(
+            "SELECT module_key,version FROM module_schema ORDER BY module_key"
+        ).fetchall() == [(owner, 1) for owner in owners]
+    assert verify_database(company.database_path).head == 0
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -34,6 +48,10 @@ def test_structure_contracts_assign_triggers_to_their_table_owner():
         "UPDATE module_schema SET contract_digest='" + "f" * 64 + "' WHERE module_key='ledger'",
         "UPDATE system_meta SET structure_fingerprint='" + "f" * 64 + "'",
         "CREATE TABLE surprise(value TEXT) STRICT",
+        "ALTER TABLE module_schema ADD COLUMN parent_digest TEXT",
+        "UPDATE module_schema SET version=2 WHERE module_key='files'",
+        "DELETE FROM module_schema WHERE module_key='records'",
+        "UPDATE module_schema SET sql_fingerprint='" + "f" * 64 + "' WHERE module_key='storage'",
     ],
 )
 def test_changed_structure_or_record_is_rejected(storage_case, change):

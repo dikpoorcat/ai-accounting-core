@@ -154,7 +154,7 @@ def detail(reader, scope, query):
                 "company_id": read.company_id,
                 "database_id": read.database_id,
                 "subject_id": query["subject_id"],
-                "kind": selected.kind,
+                "kind": display.business_kind(selected),
             },
             "period": normalized["period_to"],
             "as_of": datetime.now(UTC).date().isoformat(),

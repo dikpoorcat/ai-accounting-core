@@ -195,6 +195,43 @@ def test_complete_backup_is_verified_without_source_catalog_or_material_director
     assert not path.exists()
 
 
+@pytest.mark.parametrize("mode", ["check", "run"])
+@pytest.mark.parametrize("damage", ["version", "parent"])
+def test_restore_refuses_noncurrent_contract_even_with_matching_archive_checksums(
+    captured, tmp_path, mode, damage
+):
+    _, _, entries, _, _ = captured
+    contract = loads_json(entries["contracts/company.json"])
+    if damage == "version":
+        contract["version"] = 2
+    else:
+        contract["parent_fingerprint"] = "a" * 64
+    raw = canonical_json(contract).encode("utf-8")
+    entries["contracts/company.json"] = raw
+    value = manifest(entries)
+    descriptor = next(item for item in value["files"] if item["kind"] == "contract")
+    descriptor.update(sha256=hashlib.sha256(raw).hexdigest(), byte_size=len(raw))
+    save_manifest(entries, value)
+    source = tmp_path / "different-structure.finance-company.zip"
+    source.write_bytes(pack(entries).getvalue())
+    before = source.read_bytes()
+    target = tmp_path / "not-created"
+    from ai_accounting_modular.host.public import create_offline_application
+
+    result = create_offline_application().accounting_isolated(
+        {
+            "action": "restore",
+            "mode": mode,
+            "source_path": str(source),
+            "new_target_directory": str(target),
+        }
+    )
+    assert result["state"] == "failed" and result["error"] == "backup_corrupt", result
+    assert "完整结构合同不一致" in result["message"]
+    assert source.read_bytes() == before
+    assert not target.exists() and not list(tmp_path.glob(".accounting-build-*"))
+
+
 @pytest.mark.parametrize("fault", ["missing", "retargeted", "extra"])
 def test_saved_direct_directory_must_match_facts_before_it_is_restorable(captured, tmp_path, fault):
     kernel, _, entries, _, fact = captured

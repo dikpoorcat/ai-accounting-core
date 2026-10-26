@@ -32,9 +32,8 @@ def _period_amounts(events):
     return total(paid), total(other)
 
 
-def _obligations(source, positions, events, row_id, composition):
+def _obligations(source, positions, events, composition):
     rows = []
-    kind = "labor_project_cost" if source.project_id else "labor"
     for item in positions:
         if item.recovery:
             continue
@@ -50,8 +49,7 @@ def _obligations(source, positions, events, row_id, composition):
         )
         rows.append(
             {
-                "key": f"{kind}:{row_id}:{name}"
-                + (":" + reference["business_id"] if reference["business_id"] != row_id else ""),
+                "key": reference["business_id"] + ":" + reference["slot"],
                 "name": name,
                 "amount_fen": format_fen(values.amount_fen - transferred_tax),
                 "paid_fen": format_fen(values.money_settled_fen),
@@ -146,7 +144,7 @@ def labor_sources(reader, activity, objects, current_relationships, read):
                 "withholding_label": _TAX_LABELS[composition.tax_state],
                 "relationship_confirmed": relation.labor_member is True,
                 "checking": bool(relation.issues),
-                "obligations": _obligations(source, positions[key], events, row_id, composition),
+                "obligations": _obligations(source, positions[key], events, composition),
             }
         )
     return sorted(rows, key=lambda row: (row["period"], row["person_id"], row["source_id"]))

@@ -18,12 +18,6 @@ const cases = [
     company: value => value.read_context.company_id,
   },
   {
-    name: "period preparation", module: "periodPreparation", validator: "dashboardPeriodPreparation",
-    response: () => structuredClone(samples.period_preparation.response),
-    invoke: (api, value, signal) => api.fetchPeriodPreparation(value.read_context, value.period, signal),
-    company: value => value.read_context.company_id,
-  },
-  {
     name: "report export status", module: "reports", validator: "reportExportStatus",
     response: () => ({ schema_version: 1, company_id: "company-a", database_id: "database-a", job_id: "job-a", status: "running", attempts: 1, error_code: null, error_message: null }),
     invoke: (api, value, signal) => api.fetchReportExportStatus(value.company_id, value.job_id, signal),
@@ -110,21 +104,3 @@ for (const item of cases) {
     }
   });
 }
-
-test("period preparation checks month, version, date and database against the captured scope", async () => {
-  const item = cases[1], h = await harness(item), original = item.response();
-  const oldWindow = globalThis.window, oldFetch = globalThis.fetch;
-  globalThis.window = { location: { origin: "http://offline.invalid", search: "?company_id=other-company" } };
-  h.release.resolve();
-  try {
-    for (const [field, value] of [["period", "2099-03"], ["read_version", "changed"], ["as_of", "2099-03-01"], ["database_id", "changed"]]) {
-      const changed = structuredClone(original);
-      if (field === "period") changed.period = value;
-      else changed.read_context[field] = value;
-      globalThis.fetch = async () => new Response(JSON.stringify(changed));
-      await assert.rejects(item.invoke(h.api, original), error => ["DASHBOARD_SCHEMA_MISMATCH", "dashboard_snapshot_changed"].includes(error.code));
-    }
-  } finally {
-    await h.close(); globalThis.window = oldWindow; globalThis.fetch = oldFetch;
-  }
-});

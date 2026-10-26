@@ -18,16 +18,9 @@ build/
 /outputs/
 /.tmp/
 /.tmp-local-distribution/
-/src/ai_accounting/static/dashboard/
 /src/ai_accounting_modular/static/dashboard/
 *.egg-info/
 .codex/tmp/
-docs/private-pilot-empty-db-startup-checklist.md
-docs/formal-empty-db-startup-checklist.md
-docs/private-pilot-replay-ledger.md
-docs/private-pilot-replay-data/
-docs/formal-replay-ledger.md
 /tmp
 frontend/.bank-preview*
-docs/kernel-refactor-stages/09-performance-history.zip
 *.log

@@ -31,7 +31,7 @@ def test_tax_period_query_is_a_documented_public_fact_port():
         "return": tuple[str, ...],
     }
 
-    documents = Path(__file__).resolve().parents[3] / "docs/redesign"
+    documents = Path(__file__).resolve().parents[3] / "docs/design"
     responsibilities = next(
         row
         for row in (documents / "02-architecture.md").read_text(encoding="utf-8").splitlines()

@@ -5,15 +5,15 @@ description: Prepare the installed local SQLite accounting service and native ow
 
 # 记账环境准备
 
-当前正式试用环境是 `ai-accounting-modular/1`，目录库为 `D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`。项目MCP和看板共用该目录；`finance-local` 及其启动脚本属于旧体系，不用于这套账。
+当前环境是 `ai-accounting-modular/1`，目录库为 `D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3`。项目MCP和看板共用该目录。
 
 使用仓库受控运行时准备后台并打开看板：
 
 ```powershell
-& 'D:/GitHub/ai-accounting-core/.tmp-kernel-venv/Scripts/python.exe' -I -B -X utf8 -m ai_accounting_modular.host.runtime.cli --catalog 'D:/GitHub/ai-accounting-core/data/accounting/catalog.sqlite3' serve
+& 'D:/GitHub/ai-accounting-core/tools/start-accounting.ps1'
 ```
 
-`serve` 复用该目录的后台，通过一次性票据打开页面，不自行拼接登录令牌。详细入口见[新体系运行说明](../../../docs/redesign/09-runtime-and-ai.md)。
+`serve` 复用该目录的后台，通过一次性票据打开页面，不自行拼接登录令牌。详细入口见[运行说明](../../../docs/design/09-runtime-and-ai.md)。
 
 通过宿主的 `ai_accounting` 连接调用 `accounting_schema`，以 `accounting_security(operation="session_status", payload={})` 查询负责人会话。需要登录时调用 `accounting_security(operation="request", payload={"kind":"login"})`，再用 `operation="status"` 和原 `request_id` 核对窗口状态。密码及恢复码只由老板在原生窗口输入；已有身份不重新建立，窗口取消后不循环弹窗。
 

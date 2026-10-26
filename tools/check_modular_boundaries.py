@@ -1,4 +1,4 @@
-"""Check the module boundaries already specified in docs/redesign/02-architecture.md."""
+"""Check the module boundaries already specified in docs/design/02-architecture.md."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def table_owners() -> dict[str, str]:
     result = {}
     for filename in ("company.sql", "catalog.sql"):
         owner = "storage"
-        source = (ROOT / "docs/redesign/schema" / filename).read_text(encoding="utf-8")
+        source = (ROOT / "docs/design/schema" / filename).read_text(encoding="utf-8")
         for line in source.splitlines():
             marker = re.match(r"-- owner:\s*(\S+)", line)
             table = re.match(r'CREATE TABLE\s+"?(\w+)"?', line)

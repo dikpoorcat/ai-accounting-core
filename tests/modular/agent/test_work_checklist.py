@@ -11,7 +11,7 @@ from tests.modular.agent.test_guides import ROOT, generator
 
 
 def test_checklist_conditions_and_actions_have_one_source_and_no_company_progress():
-    source = json.loads((ROOT / "docs/redesign/work-checklist.json").read_text(encoding="utf-8"))
+    source = json.loads((ROOT / "docs/design/work-checklist.json").read_text(encoding="utf-8"))
     installed = read_work_checklist()
     assert installed == source
     assert [stage["number"] for stage in installed["stages"]] == list(range(1, 9))

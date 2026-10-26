@@ -43,7 +43,7 @@ jobs:
       - name: Generate CycloneDX SBOM
         run: uv run cyclonedx-py environment --of JSON --output-file sbom.cdx.json
       - name: Generate dependency vulnerability report
-        # DEC-026 A: never ignore or waive a scanner-reported vulnerability.
+        # Keep scanner findings visible in the saved report.
         run: uv run pip-audit --format json --output pip-audit.json
       - name: Upload SBOM and vulnerability report
         if: always()

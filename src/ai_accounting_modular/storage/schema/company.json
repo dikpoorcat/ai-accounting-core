@@ -1,5 +1,5 @@
 {
-  "fingerprint": "bfa9713ff61bedc1c193a297909515bd19169a4a9f9d8eb7f7d3cb5598a3e61d",
+  "fingerprint": "5151f6f9933d06ba20b1e4db82203cee19e06be6b392d1ed9ba6a656cf4c92b1",
   "kind": "company",
   "objects": [
     {
@@ -1020,7 +1020,7 @@
     {
       "name": "module_schema",
       "owner": "storage",
-      "sql": "CREATE TABLE module_schema (\nmodule_key TEXT PRIMARY KEY,\n version INTEGER NOT NULL CHECK(version>=1),\n contract_digest TEXT NOT NULL CHECK(length(contract_digest)=64),\n parent_digest TEXT CHECK(parent_digest IS NULL OR length(parent_digest)=64),\n sql_fingerprint TEXT NOT NULL CHECK(length(sql_fingerprint)=64)\n) STRICT",
+      "sql": "CREATE TABLE module_schema (\nmodule_key TEXT PRIMARY KEY,\n version INTEGER NOT NULL CHECK(version>=1),\n contract_digest TEXT NOT NULL CHECK(length(contract_digest)=64),\n sql_fingerprint TEXT NOT NULL CHECK(length(sql_fingerprint)=64)\n) STRICT",
       "table": "module_schema",
       "type": "table"
     },
@@ -1032,6 +1032,5 @@
       "type": "table"
     }
   ],
-  "parent_fingerprint": "6bb88d19653b79f14793e67b4b7b3def6233047c52498e770fd6461249ea3b92",
   "version": 3
 }
