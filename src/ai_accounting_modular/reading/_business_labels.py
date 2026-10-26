@@ -285,6 +285,17 @@ def business_label(
     return BusinessLabel(*_KINDS.get(kind, ("unknown", "业务用途未明确")))
 
 
+def settlement_title(text, code, direction):
+    if direction == "offset":
+        return "往来抵销 · " + text
+    verb = (
+        ("归还" if direction == "outflow" else "收回")
+        if code == "loan_principal"
+        else ("支付" if direction == "outflow" else "收到")
+    )
+    return text if text.startswith(verb) else verb + text
+
+
 def settlement_label(
     content: AdoptedContent | AdoptedOriginProjection,
     source_labels: Sequence[BusinessLabel],
@@ -305,8 +316,5 @@ def settlement_label(
             "unknown", "付款用途未明确" if direction == "outflow" else "收款用途未明确"
         )
     titles = [item.title if item.code != "unknown" else "其他已登记款项" for item in unique]
-    if len(unique) == 1 and unique[0].code == "loan_principal":
-        verb = "归还" if direction == "outflow" else "收回"
-    return BusinessLabel(
-        unique[0].code if len(unique) == 1 else "mixed_settlement", verb + "、".join(titles)
-    )
+    code = unique[0].code if len(unique) == 1 else "mixed_settlement"
+    return BusinessLabel(code, settlement_title("、".join(titles), code, direction))

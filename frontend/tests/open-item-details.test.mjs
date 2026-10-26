@@ -108,11 +108,11 @@ test("open item details explain the selected obligation and distinguish historic
     await t.test("exact duplicate text is removed while another role and month stay visible", async () => {
       const data = scenario({ source_period: "2026-08" });
       const profile = name => ({ values: { display_name: name } });
-      data.display_profiles = { business: { values: { purpose: "9月工资", note: "另外记录的用途" } }, employees: [profile("张某"), profile("张小某")], counterparties: [profile("张某")], assets: [profile("设备")], fund_accounts: [profile("工资账户")] };
+      data.display_profiles = { business: { values: { purpose: "9月工资", note: "另外记录的用途", note_scope: "selected" } }, employees: [profile("张某"), profile("张小某")], counterparties: [profile("张某")], assets: [profile("设备")], fund_accounts: [profile("工资账户")] };
       const html = await render(data);
       assert.doesNotMatch(html, /用途／备注：9月工资/); assert.match(html, /用途／备注：另外记录的用途/);
       const combined = await render(data, context({ description: "工资应付；另外记录的用途" }));
-      assert.doesNotMatch(combined, /用途／备注：另外记录的用途/);
+      assert.match(combined, /用途／备注：另外记录的用途/);
       assert.match(html, /员工：张小某/); assert.match(html, /相关往来方：张某/);
       assert.match(html, /相关资产：设备/); assert.match(html, /相关账户：工资账户/);
       assert.match(html, /业务所属月份：2026年8月/);
@@ -123,20 +123,20 @@ test("open item details explain the selected obligation and distinguish historic
       const latest = html.match(/<div class="owner-item-latest"[^>]*>[\s\S]*?<\/div><\/div>/)[0];
       assert.match(latest, /AI 会计核对中/); assert.doesNotMatch(latest, /已结清|¥0\.00/);
     });
-    await t.test("contribution progress excludes whole-payroll purposes while ordinary net and bank notes remain", async () => {
-      const basis = "依据模拟核算表工作表第六行及合成工资复核";
+    await t.test("contribution progress follows backend note scope without inventing component purposes", async () => {
       for (const contributionComponent of ["employee_social", "employer_social", "employee_housing", "employer_housing"]) {
         const data = scenario({ name: contributionComponent }, { name: contributionComponent });
-        data.display_profiles = { business: { values: { purpose: basis, note: "整笔工资核算备注" } } };
-        const html = await render(data, context({ contributionComponent }));
-        assert.doesNotMatch(html, /依据模拟核算表|整笔工资核算备注|用途／备注/);
+        data.display_profiles = { business: { values: { purpose: null, note: "本批付款包含多项缴费", note_scope: "whole_business" } } };
+        const html = await render(data);
+        assert.match(html, /整单说明：本批付款包含多项缴费/);
+        assert.doesNotMatch(html, /用途／备注/);
         assert.match(html, /原应付.*¥8,000\.00/);
         assert.match(html, /已付.*¥6,000\.00/);
         assert.match(html, /已结清/);
         assert.match(html, /实际收付款/);
       }
       const ordinary = scenario();
-      ordinary.display_profiles = { business: { values: { purpose: "包含补助的工资用途", note: "银行原始付款备注" } } };
+      ordinary.display_profiles = { business: { values: { purpose: "包含补助的工资用途", note: "银行原始付款备注", note_scope: "selected" } } };
       const html = await render(ordinary);
       assert.match(html, /用途／备注：包含补助的工资用途/);
       assert.match(html, /用途／备注：银行原始付款备注/);

@@ -2,7 +2,7 @@
 
 from ai_accounting_modular.contracts.public import ContractError, format_fen, parse_fen, sum_fen
 
-from ._business_descriptions import merged
+from ._business_descriptions import common_text
 
 FIELDS = (
     "source_amount_fen",
@@ -86,7 +86,7 @@ def group(first, fold):
         "group_key": first["group_key"],
         "category_key": first["category_key"],
         "party": first["party"],
-        "description": merged(fold["descriptions"]),
+        "description": common_text(fold["descriptions"], first["_matter_title"]),
         "member_count": fold["count"],
         **{field: amount(total) for field, total in fold["amounts"].items()},
         "status": _status(fold["states"]["status"]),

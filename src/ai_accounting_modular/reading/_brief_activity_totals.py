@@ -5,7 +5,7 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import content_digest, format_fen, parse_fen
 
 from ._brief_activity_dependencies import corrupt
-from ._business_descriptions import merged
+from ._business_descriptions import common_text
 from ._collections import IndexItem
 from ._funds_items import date_key, key
 
@@ -229,7 +229,7 @@ def group_value(first, fold, order):
         "date_to": max(fold["dates"]) if fold["dates"] else None,
         "has_month_recognition": bool(fold["month"]),
     }
-    value["title"] = merged(fold["descriptions"])
+    value["title"] = common_text(fold["descriptions"], first["title"])
     return IndexItem("activity", value["group_key"], order, value, category=value["group"])
 
 

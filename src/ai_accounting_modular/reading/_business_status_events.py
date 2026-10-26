@@ -10,7 +10,7 @@ from ai_accounting_modular.ledger.public import SettlementEventQuery
 
 from ._brief_activity_sources import identities
 from ._brief_open_sources import batches
-from ._business_descriptions import allows_component
+from ._business_descriptions import description_reference
 from ._business_status_settlements import key
 from ._funds_items import date_key
 
@@ -83,12 +83,13 @@ def capture(reader, selected, settlements, view, read, *, descriptions=None):
             if event.movement is not None
             else None,
         }
+        reference = description_reference(body, meaning.label, component=meaning.component)
         if (
             descriptions is not None
             and selected.range.get("voucher_role") != "reversal"
-            and allows_component(body, component=meaning.component)
+            and reference
         ):
-            value["purpose_label"] = descriptions.text(body.reference) or meaning.description
+            value["purpose_label"] = descriptions.text(reference) or meaning.description
         actual = event.movement.value if event.movement is not None else {}
         party = actual.get("party_id") or quantity.get("party_id")
         missing = (

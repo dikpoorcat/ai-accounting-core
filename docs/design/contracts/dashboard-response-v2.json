@@ -18285,6 +18285,21 @@
             ],
             "title": "Note"
           },
+          "note_scope": {
+            "anyOf": [
+              {
+                "enum": [
+                  "selected",
+                  "whole_business"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Scope"
+          },
           "employment_start": {
             "anyOf": [
               {
@@ -18368,6 +18383,7 @@
           "account_number",
           "purpose",
           "note",
+          "note_scope",
           "employment_start",
           "employment_end",
           "employment_status",

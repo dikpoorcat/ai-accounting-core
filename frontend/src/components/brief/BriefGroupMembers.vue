@@ -81,7 +81,6 @@ function toggle(key: string) {
 function togglePart(key: string) { expandedPart.value = expandedPart.value === key ? "" : key; selected.value = ""; preview.value = ""; }
 function openContext(item: BriefOpenItem) {
   return { obligationKey: item.id, voucherVersionId: item.voucher_version_id ?? "", categoryKey: item.category_key, cutoffPeriod: props.openSummary?.cutoff_period ?? props.period,
-    contributionComponent: item.contribution_component,
     currentCutoffPeriod: props.openSummary?.current_cutoff_period ?? props.period, status: item.status, direction: props.direction ?? "payable",
     party: item.party, description: item.description, sourceAmountFen: item.source_amount_fen, paidFen: item.paid_fen,
     otherSettledFen: item.other_settled_fen, outstandingFen: item.outstanding_fen, currentStatus: item.current_status,

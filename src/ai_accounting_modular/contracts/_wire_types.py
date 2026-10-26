@@ -8375,6 +8375,7 @@ class DashboardBusinessStatus__OwnerProfileValues(TypedDict):
     account_number: str | None
     purpose: str | None
     note: str | None
+    note_scope: Literal['selected', 'whole_business'] | None
     employment_start: str | None
     employment_end: str | None
     employment_status: str | None

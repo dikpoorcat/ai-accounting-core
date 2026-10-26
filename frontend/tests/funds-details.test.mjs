@@ -92,23 +92,30 @@ test("fund movement details add precise progress and context without repeating t
       assert.doesNotMatch(correction, /重新付款|重新收款|已结清/);
     });
     await t.test("full summary and purpose deduplication compare complete texts only", async () => {
-      for (const display_summary of ["9月工资付款", "张某"]) {
-        assert.doesNotMatch(await render(scenario([]), movement({ display_summary })), /事项说明/);
-      }
+      assert.doesNotMatch(await render(scenario([]), movement({ display_summary: "9月工资付款" })), /事项说明/);
+      assert.match(await render(scenario([]), movement({ display_summary: "张某" })), /事项说明：张某/, "a counterparty name is not the same fact as a description");
       assert.match(await render(scenario([]), movement({ display_summary: "工资付款" })), /事项说明：工资付款/);
       const data = scenario([]);
-      data.display_profiles.business.values = { purpose: "9月工资付款", note: "9月工资付款补充" };
+      data.display_profiles.business.values = { purpose: "9月工资付款", note: "9月工资付款补充", note_scope: "selected" };
       let html = await render(data, movement({ display_summary: "包含交通补助的9月工资" }));
       assert.match(html, /事项说明：包含交通补助的9月工资/);
       assert.match(html, /用途／备注：9月工资付款补充/); assert.doesNotMatch(html, /用途／备注：9月工资付款<\/p>/);
-      data.display_profiles.business.values = { purpose: "包含交通补助的9月工资", note: "包含交通补助的9月工资" };
+      data.display_profiles.business.values = { purpose: "包含交通补助的9月工资", note: "包含交通补助的9月工资", note_scope: "selected" };
       html = await render(data, movement({ display_summary: "包含交通补助的9月工资" }));
       assert.doesNotMatch(html, /用途／备注/);
-      data.display_profiles.business.values = { purpose: "原始业务用途", note: "确需补充的备注" };
+      data.display_profiles.business.values = { purpose: "原始业务用途", note: "确需补充的备注", note_scope: "selected" };
       html = await render(data, movement({ display_summary: "工资付款（2026-09）；原始业务用途" }));
       assert.match(html, /事项说明：工资付款（2026-09）；原始业务用途/);
-      assert.doesNotMatch(html, /用途／备注：原始业务用途/);
+      assert.match(html, /用途／备注：原始业务用途/);
       assert.match(html, /用途／备注：确需补充的备注/);
+    });
+    await t.test("bank text and a shared payment note retain their exact words and explicit scopes", async () => {
+      const data = scenario([]);
+      data.display_profiles.business.values = { purpose: "9月工资付款", note: "银行批扣：9月款项", note_scope: "whole_business" };
+      const html = await render(data, movement({ display_summary: "银行批扣：9月款项" }));
+      assert.match(html, /事项说明：银行批扣：9月款项/);
+      assert.match(html, /整单说明：银行批扣：9月款项/);
+      assert.doesNotMatch(html, /用途／备注：9月工资付款/);
     });
     await t.test("account identity excludes only current account and preserves same names across roles", async () => {
       const profile = (entity_id, display_name) => ({ entity_id, values: { display_name } });

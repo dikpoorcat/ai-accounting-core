@@ -118,8 +118,8 @@ def _missing_sources(required, available):
     missing = sorted(set(required) - set(available))
     if missing:
         raise ContractError(
-            "needs_information",
-            "当前资料引用尚未登记。",
+            "invalid_input",
+            "资料引用尚未登记，请先登记已有来源或修正引用。",
             fact_issues=[
                 {
                     "code": "source_not_found",

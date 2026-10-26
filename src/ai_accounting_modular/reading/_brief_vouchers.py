@@ -77,6 +77,7 @@ def descriptor(entry, content, members, *, reverses=None, party_ids=()):
     label, value = business_label(content), amount(content)
     titles = list(dict.fromkeys(item["row"]["description"] for item in members))
     summary = "、".join(titles) or label.title
+    type_title = "、".join(dict.fromkeys(item["row"]["title"] for item in members)) or label.title
     voucher_summary = entry.summary
     if content.target["kind"] == "assets.activation":
         cards = content.target["values"]["assets"]
@@ -106,7 +107,7 @@ def descriptor(entry, content, members, *, reverses=None, party_ids=()):
             "reverses_version_id": reverses,
             "date": rec["date"],
             "recognition": rec,
-            "type": summary,
+            "type": type_title,
             "kind": content.target["kind"],
             "state": "冲正" if entry.role == "reversal" else "已入账",
             "group": group,
@@ -286,8 +287,10 @@ def descriptors_for_references(reader, references, read, *, known_contents=()):
             for part in prepared[identity]
         ]
         if titles:
-            value["template"]["type"] = value["template"]["list_summary"] = "、".join(
-                dict.fromkeys(titles)
+            value["template"]["list_summary"] = "、".join(dict.fromkeys(titles))
+            prefix = descriptions.role_prefix(entry.role)
+            value["template"]["type"] = "、".join(
+                dict.fromkeys(prefix + part.label.title for part in prepared[identity])
             )
         raw.append(value)
     bound = {

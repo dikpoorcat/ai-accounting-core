@@ -118,17 +118,17 @@ test("voucher progress adds business facts without repeating the voucher", async
       assert.equal((empty.match(/暂无/g) ?? []).length, 1);
     });
     await t.test("purpose deduplication uses visible complete voucher texts", async () => {
-      for (const purpose of ["9月工资确认", "9月工资", "工资确认", "税前工资"]) {
+      for (const purpose of ["9月工资确认", "工资确认"]) {
         const data = scenario([]); data.display_profiles.business.values = { purpose };
         assert.doesNotMatch(await render(data), /用途／备注：/);
       }
-      const data = scenario([]); data.display_profiles.business.values = { purpose: "9月工资确认补充", note: "9月工资确认补充" };
+      const data = scenario([]); data.display_profiles.business.values = { purpose: "9月工资确认补充", note: "9月工资确认补充", note_scope: "selected" };
       assert.equal(((await render(data)).match(/用途／备注：9月工资确认补充/g) ?? []).length, 1);
       const combined = await render(data, voucher({ summary: "9月工资确认；9月工资确认补充" }));
-      assert.doesNotMatch(combined, /用途／备注：9月工资确认补充/);
+      assert.match(combined, /用途／备注：9月工资确认补充/);
       for (const asset of [{ asset_id: "asset-a", name: "设备", code: "A" }, { asset_id: "asset-a", name: "", code: "A" }, { asset_id: "asset-a", name: "", code: "" }]) {
         data.display_profiles.business.values = { purpose: asset.name || asset.code || "资产卡片" };
-        assert.doesNotMatch(await render(data, voucher({ asset })), /用途／备注：/);
+        assert.match(await render(data, voucher({ asset })), /用途／备注：/);
       }
     });
     await t.test("assets and people deduplicate only precise identities and preserve roles", async () => {

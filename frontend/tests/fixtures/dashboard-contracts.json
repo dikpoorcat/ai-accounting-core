@@ -2994,7 +2994,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": "selected"
             }
           },
           "counterparties": [
@@ -3011,7 +3012,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]
@@ -7666,7 +7668,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": null
             }
           },
           "employees": [
@@ -7683,7 +7686,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]
@@ -9183,7 +9187,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": null
             }
           },
           "counterparties": [
@@ -9200,7 +9205,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ],
@@ -9218,7 +9224,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": true,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]
@@ -9399,7 +9406,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": null
             }
           },
           "counterparties": [
@@ -9416,7 +9424,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ],
@@ -9434,7 +9443,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": true,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]
@@ -9855,7 +9865,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": null
             }
           },
           "counterparties": [
@@ -9872,7 +9883,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ],
@@ -9890,7 +9902,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": true,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]
@@ -10311,7 +10324,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": null
             }
           },
           "counterparties": [
@@ -10328,7 +10342,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ],
@@ -10346,7 +10361,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": true,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]
@@ -10527,7 +10543,8 @@
               "employment_status": null,
               "employment_state": null,
               "active": null,
-              "category_label": null
+              "category_label": null,
+              "note_scope": null
             }
           },
           "counterparties": [
@@ -10544,7 +10561,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": null,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ],
@@ -10562,7 +10580,8 @@
                 "employment_status": null,
                 "employment_state": null,
                 "active": true,
-                "category_label": null
+                "category_label": null,
+                "note_scope": null
               }
             }
           ]

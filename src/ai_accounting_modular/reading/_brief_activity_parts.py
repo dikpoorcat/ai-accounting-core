@@ -18,6 +18,7 @@ from ._business_labels import (
     origin_fields,
     remuneration_identity,
     settlement_label,
+    settlement_title,
 )
 
 
@@ -222,7 +223,7 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
         )
     elif kind in {"financing.owner_funding", "financing.loan_drawdown"} and slot == "principal":
         label = BusinessLabel("loan_principal", "借款本金")
-    elif kind == "taxes.assessment" and slot == "surtax":
+    elif kind in {"taxes.assessment", "taxes.actual_declaration"} and slot == "surtax":
         label = BusinessLabel("surtax", "增值税附加税费")
     return label, {
         "source": source,
@@ -268,10 +269,7 @@ def parts(content, cache):
         result = []
         for group, actual in grouped.items():
             label, parties = labels[group], group[1]
-            verb = "支付" if direction == "outflow" else "收到"
-            if label.code == "loan_principal":
-                verb = "归还" if direction == "outflow" else "收回"
-            title = verb + label.title
+            title = settlement_title(label.title, label.code, direction)
             result.append(
                 Part(
                     BusinessLabel(label.code, title),
@@ -451,6 +449,7 @@ def rows(event, content, objects, *, prepared, obligations=()):
             "voucher_role": event.role,
             "sign": sign,
             "part": index,
+            "purpose": part.label.code,
             "obligations": list(obligations),
         }
         progress = bool(part.scope["allocations"] or obligations) and not content.target[
@@ -490,7 +489,6 @@ def rows(event, content, objects, *, prepared, obligations=()):
                 },
                 "scope": actual_scope,
                 "batch": part.batch,
-                "purpose": part.label.code,
             }
         )
     if not result:

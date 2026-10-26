@@ -128,9 +128,7 @@ def detail(reader, scope, query):
             raise ContractError("invalid_input", "不能查看建账前缺少逐月正式资料的业务进展。")
         selected = selection.select(reader, normalized, query, read)
         positions = settlements.capture(reader, normalized, selected, read)
-        prose = Descriptions(
-            reader, (body.reference for body in selected.cache.saved.values()), read
-        )
+        prose = Descriptions(reader, display.description_references(selected, positions), read)
         view = query.get("settlement_view", "current")
         actual_events = events.capture(reader, selected, positions, view, read, descriptions=prose)
         closure = reader.ledger.period_closure(normalized["period_to"], read)

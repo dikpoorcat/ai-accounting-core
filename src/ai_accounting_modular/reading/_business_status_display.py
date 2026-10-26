@@ -4,8 +4,13 @@ from ._brief_activity_amounts import amount
 from ._brief_activity_parts import business_parties
 from ._brief_activity_sources import identities
 from ._brief_vouchers import assets
-from ._business_descriptions import allows_component, merged, source_reference
-from ._business_labels import business_fund_accounts, business_label, business_matter
+from ._business_descriptions import description_reference, merged, role_prefix
+from ._business_labels import (
+    business_fund_accounts,
+    business_label,
+    business_matter,
+    settlement_title,
+)
 
 
 def business_kind(selected):
@@ -30,6 +35,7 @@ def profile(identifier, name, obj=None, *, note=None):
             "account_number": data.get("account_number"),
             "purpose": None,
             "note": note,
+            "note_scope": None,
             "employment_start": None,
             "employment_end": None,
             "employment_status": None,
@@ -38,6 +44,62 @@ def profile(identifier, name, obj=None, *, note=None):
             "category_label": None,
         },
     }
+
+
+def description_subjects(selected, settlements):
+    entries = (*selected.range.get("allocations", ()), *selected.range.get("obligations", ()))
+    if not entries:
+        if selected.content is not None and selected.range.get("purpose") not in {
+            None,
+            business_label(selected.content).code,
+        }:
+            return ()
+        return (
+            ()
+            if selected.content is None
+            else ((selected.content, business_label(selected.content), None),)
+        )
+    values = []
+    for entry in entries:
+        source = entry["producer"]
+        key = source["result_id"], (entry["source"]["business_id"], entry["source"]["slot"])
+        body, meaning = settlements.meanings[key]
+        values.append((body, meaning.label, meaning.component))
+    return tuple(values)
+
+
+def whole_note_reference(selected):
+    """A payment's own prose belongs to its whole business, independently of its sources."""
+    content = selected.content
+    if content is None:
+        return None
+    entries = (*selected.range.get("allocations", ()), *selected.range.get("obligations", ()))
+    is_part = selected.range.get("purpose") not in {None, business_label(content).code}
+    if is_part or any(entry["producer"] != content.source for entry in entries):
+        return description_reference(content)
+    return None
+
+
+def description_references(selected, settlements):
+    """Only the selected subjects and their real settlement meanings consume current prose."""
+    if selected.range.get("voucher_role") == "reversal":
+        return ()
+    subjects = description_subjects(selected, settlements)
+    refs = [
+        ref
+        for body, label, component in subjects
+        if (ref := description_reference(body, label, component=component)) is not None
+    ]
+    own = whole_note_reference(selected)
+    if own:
+        refs.append(own)
+    refs.extend(
+        ref
+        for body, meaning in settlements.meanings.values()
+        if (ref := description_reference(body, meaning.label, component=meaning.component))
+        is not None
+    )
+    return tuple(refs)
 
 
 def profiles(reader, selected, settlements, events, read, *, descriptions=None):
@@ -93,42 +155,47 @@ def profiles(reader, selected, settlements, events, read, *, descriptions=None):
             for ident in sorted(ids)
         ]
 
-    title, note = "业务详情", None
+    title, note, note_scope = "业务详情", None, None
+    subjects = description_subjects(selected, settlements)
+    references = [
+        ref
+        for body, label, component in subjects
+        if (ref := description_reference(body, label, component=component)) is not None
+    ]
     if content is not None:
         title = (
             "已撤去业务"
             if content.target["kind"] == "system.withdrawal"
             else business_label(content).title
         )
-        data = content.basis.get("input", {})
-        notes = [
-            data[key] for key in ("note", "memo") if isinstance(data.get(key), str) and data[key]
-        ]
-        note = "；".join(dict.fromkeys(notes)) or None
+        own = whole_note_reference(selected)
+        if descriptions is not None and own:
+            note = descriptions.text(own)
+        if note:
+            whole = selected.detail is None or selected.detail["key"].startswith("voucher:")
+            note_scope = "selected" if whole else "whole_business"
     purpose = None
     if (
         descriptions is not None
         and content is not None
         and selected.range.get("voucher_role") != "reversal"
     ):
-        if selected.detail is None:
-            purpose = descriptions.text(content.reference)
-        else:
-            texts = []
-            scoped_entries = (
-                *selected.range.get("allocations", ()),
-                *selected.range.get("obligations", ()),
-            )
-            for entry in scoped_entries:
-                source = entry["producer"]
-                body = selected.cache.saved[source["result_id"], source["result_generation"]]
-                if allows_component(body, component=entry.get("component")):
-                    texts.append(descriptions.text(source_reference(source)))
-            if not scoped_entries:
-                texts.append(descriptions.text(content.reference))
-            purpose = merged(texts) or None
+        purpose = merged(descriptions.text(reference) for reference in references) or None
+        if purpose:
+            data = content.basis.get("input", {})
+            direction = selected.range.get("direction")
+            if content.target["kind"] == "money.movement":
+                direction = data.get("direction", "outflow")
+            elif content.target["kind"] == "money.transfer" and data["type"] == "offset":
+                direction = "offset"
+            if direction in {"inflow", "outflow", "offset"}:
+                codes = {label.code for _, label, _ in subjects}
+                code = next(iter(codes)) if len(codes) == 1 else "mixed_settlement"
+                purpose = settlement_title(purpose, code, direction)
+            purpose = role_prefix(selected.range.get("voucher_role")) + purpose
     business_profile = profile(selected.business["state"]["business_id"], title, note=note)
     business_profile["values"]["purpose"] = purpose
+    business_profile["values"]["note_scope"] = note_scope
     return {
         "business": business_profile,
         "counterparties": entries(counterparties),

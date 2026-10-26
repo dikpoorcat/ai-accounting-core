@@ -32,9 +32,9 @@ test("activity details only add information to the exact occurrence row", async 
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] });
     await router.push("/?company_id=co&period=2026-09");
     const { default: component } = await server.ssrLoadModule("/src/components/BusinessStatusDetails.vue");
-    async function render(data = scenario(), activityContext = activity()) {
+    async function render(data = scenario(), activityContext = activity(), options = {}) {
       globalThis.activityDetailScenario = data;
-      const app = createSSRApp(component, { subjectId: activityContext.subject_id, period: "2026-09", presentation: "brief", activityContext, expanded: true }); app.use(router);
+      const app = createSSRApp(component, { subjectId: activityContext.subject_id, period: "2026-09", presentation: "brief", activityContext, expanded: true, ...options }); app.use(router);
       return renderToString(app);
     }
     function relatedRows(html) {
@@ -64,8 +64,7 @@ test("activity details only add information to the exact occurrence row", async 
     await t.test("salary, tax and current result never replace the clicked amount", async () => {
       const html = await render();
       const main = html.split("整笔业务的款项进度")[0];
-      assert.match(main, /事项说明：9月工资/);
-      assert.doesNotMatch(main, /本次事项|张某|税前工资|按月确认|owner-activity-summary/);
+      assert.doesNotMatch(main, /事项说明|本次事项|张某|税前工资|按月确认|owner-activity-summary/);
       assert.match(html, /整笔业务的款项进度 · 截至2026年9月末/);
       assert.match(html, /实发工资[\s\S]*还需支付[\s\S]*¥2,000\.00/);
       assert.match(html, /个人所得税[\s\S]*¥123\.45/);
@@ -171,23 +170,61 @@ test("activity details only add information to the exact occurrence row", async 
     });
     await t.test("only exact duplicate purposes and unambiguous row objects disappear", async () => {
       const data = scenario(); const profile = name => ({ values: { display_name: name } });
-      data.display_profiles = { business: { values: { purpose: "9月工资", note: "另外记录的用途" } }, employees: [profile("张某"), profile("张小某")], assets: [profile("设备")], fund_accounts: [profile("工资账户")] };
+      data.display_profiles = { business: { values: { purpose: "9月工资", note: "另外记录的用途", note_scope: "selected" } }, employees: [profile("张某"), profile("张小某")], assets: [profile("设备")], fund_accounts: [profile("工资账户")] };
       const html = await render(data); assert.doesNotMatch(html, /用途／备注：9月工资|员工：张某/);
       assert.match(html, /用途／备注：另外记录的用途|员工：张小某/); assert.match(html, /相关资产：设备/); assert.match(html, /相关账户：工资账户/);
       data.display_profiles.counterparties = [profile("张某")]; const roles = await render(data);
       assert.match(roles, /员工：张某、张小某/); assert.match(roles, /往来方：张某/);
     });
-    await t.test("a full occurrence description moves into details and deduplicates only visible complete texts", async () => {
-      const data = scenario([]); data.display_profiles.business.values = { purpose: "9月工资", note: "9月工资补充用途" };
+    await t.test("details reuse the visible occurrence description and retain different complete texts", async () => {
+      const data = scenario([]); data.display_profiles.business.values = { purpose: "9月工资", note: "9月工资补充用途", note_scope: "selected" };
       const html = await render(data);
-      assert.equal((html.match(/事项说明：9月工资/g) ?? []).length, 1);
+      assert.doesNotMatch(html, /事项说明/);
       assert.doesNotMatch(html, /用途／备注：9月工资<\/p>/); assert.match(html, /用途／备注：9月工资补充用途/);
-      assert.doesNotMatch(await render(data, activity({ description: "工资" })), /事项说明：工资<\/p>/);
       const combined = await render(data, activity({ description: "支付工资（2026-09）；9月工资；9月工资补充用途" }));
-      assert.match(combined, /事项说明：支付工资（2026-09）；9月工资；9月工资补充用途/);
-      assert.doesNotMatch(combined, /用途／备注/);
+      assert.doesNotMatch(combined, /事项说明/);
+      assert.match(combined, /用途／备注：9月工资<\/p>/);
+      assert.match(combined, /用途／备注：9月工资补充用途/);
+      data.display_profiles.business.values.purpose = "工资";
+      assert.doesNotMatch(await render(data, activity({ description: "" })), /用途／备注：工资<\/p>/, "the fallback title is visible when the description is empty");
+      assert.match(await render(data), /用途／备注：工资<\/p>/, "an undisplayed standard title does not erase another purpose");
       data.display_profiles.employees = [{ entity_id: "employee-a", values: { display_name: "张某" } }, { entity_id: "employee-b", values: { display_name: "张某" } }];
       assert.match(await render(data), /员工：张某、张某/);
+    });
+    await t.test("whole-business notes remain labelled even when their text equals the selected purpose", async () => {
+      const data = scenario([]);
+      data.display_profiles.business.values = { purpose: "培训费报销", note: "培训费报销", note_scope: "whole_business" };
+      const html = await render(data, activity({ title: "管理费用报销", description: "培训费报销" }));
+      assert.doesNotMatch(html, /事项说明/);
+      assert.match(html, /整单说明：培训费报销/);
+      assert.doesNotMatch(html, /用途／备注：培训费报销/);
+      const standalone = await render(data, activity(), { presentation: "default" });
+      assert.match(standalone, /整单说明：培训费报销/);
+    });
+    await t.test("an expanded activity member displays its purpose once and keeps separately scoped notes", async () => {
+      const row = activity({ title: "支付管理费用", description: "支付消防安全培训费报销", detail_scope_key: "reimbursement" });
+      const data = scenario([]);
+      data.display_profiles = { business: { values: { purpose: row.description, note: row.description, note_scope: "selected" } } };
+      data.collections.settlement_events = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
+      const { default: members } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
+      const wrapped = { ...members, setup(props, context) {
+        const state = members.setup(props, context);
+        state.data.value = { section: "activity", collections: { members: { items: [row], page: { has_more: false } }, vouchers: { items: [] } } };
+        state.selected.value = row.key; state.openedDetails.value.add(row.key);
+        return state;
+      } };
+      async function renderMember() {
+        globalThis.activityDetailScenario = data;
+        const app = createSSRApp(wrapped, { section: "activity", groupKey: "payment", period: "2026-09", expanded: true }); app.use(router);
+        return renderToString(app);
+      }
+      const selected = await renderMember();
+      assert.equal((selected.match(/支付消防安全培训费报销/g) ?? []).length, 1);
+      assert.doesNotMatch(selected, /事项说明|用途／备注|owner-detail-context/);
+      data.display_profiles.business.values.note_scope = "whole_business";
+      const whole = await renderMember();
+      assert.equal((whole.match(/支付消防安全培训费报销/g) ?? []).length, 2);
+      assert.match(whole, /整单说明：支付消防安全培训费报销/);
     });
     await t.test("later business withdrawal is retained only when it adds to the historical row", async () => {
       const data = scenario(); data.latest_source.deleted = true;

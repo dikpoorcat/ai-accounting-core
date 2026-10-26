@@ -76,6 +76,7 @@ export namespace DashboardBusinessStatusContract {
   export type AccountNumber = string | null;
   export type Purpose = string | null;
   export type Note = string | null;
+  export type NoteScope = ("selected" | "whole_business") | null;
   export type EmploymentStart = string | null;
   export type EmploymentEnd = string | null;
   export type EmploymentStatus = string | null;
@@ -224,6 +225,7 @@ export namespace DashboardBusinessStatusContract {
     account_number: AccountNumber;
     purpose: Purpose;
     note: Note;
+    note_scope: NoteScope;
     employment_start: EmploymentStart;
     employment_end: EmploymentEnd;
     employment_status: EmploymentStatus;

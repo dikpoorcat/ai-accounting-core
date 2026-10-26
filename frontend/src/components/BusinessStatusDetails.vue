@@ -9,14 +9,13 @@ import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
 import { fen, formatFen } from "../utils/money";
 import { appendDashboardCollection } from "../utils/dashboardCollections";
-import type { BriefActivityRow, BriefOpenItem, BriefVoucher } from "../api/brief";
+import type { BriefActivityRow, BriefVoucher } from "../api/brief";
 import type { FundMovement } from "../api/funds";
 import type { PersonalLaborItem } from "../api/employees";
 
 interface BriefStatusContext {
   obligationKey: string; categoryKey: string;
   voucherVersionId?: string;
-  contributionComponent?: BriefOpenItem["contribution_component"];
   cutoffPeriod: string; currentCutoffPeriod: string; status: string;
   direction: "receivable" | "payable"; party: string; description?: string;
   sourceAmountFen?: string | null; paidFen?: string | null;
@@ -42,7 +41,10 @@ let controller: AbortController | null = null, pageController: AbortController |
 const businessName = computed(() => data.value?.display_profiles.business?.values.display_name || (data.value ? localBusinessName(data.value.identity.kind) : props.briefContext?.party || "业务详情"));
 const purposes = computed(() => {
   const values = data.value?.display_profiles.business?.values;
-  return [...new Set([values?.purpose, values?.note].filter((item): item is string => Boolean(item)))];
+  const entries: { text: string; scope: "selected" | "whole_business" }[] = [];
+  if (values?.purpose) entries.push({ text: values.purpose, scope: "selected" });
+  if (values?.note && values.note_scope) entries.push({ text: values.note, scope: values.note_scope });
+  return entries.filter((entry, index) => !entries.slice(0, index).some(previous => previous.scope === entry.scope && previous.text === entry.text));
 });
 const objects = computed(() => {
   const profiles = data.value?.display_profiles;
@@ -61,27 +63,19 @@ const isLabor = computed(() => props.presentation === "labor" && Boolean(props.l
 const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value || isFunds.value || isVoucher.value || isLabor.value);
 const fundsDescription = computed(() => {
   const item = props.fundsContext;
-  return item?.display_summary && ![item.list_summary || item.type, item.party].includes(item.display_summary) ? item.display_summary : "";
-});
-const activityDescription = computed(() => {
-  const item = props.activityContext;
-  return item?.description && ![item.party, item.title].includes(item.description) ? item.description : "";
+  return item?.display_summary && item.display_summary !== (item.list_summary || item.type) ? item.display_summary : "";
 });
 const ownerPurposes = computed(() => {
-  if (isOpenItem.value && props.briefContext?.contributionComponent) return [];
+  let visibleTexts: (string | undefined)[];
   if (isVoucher.value && props.voucherContext) {
     const voucher = props.voucherContext;
-    const visibleTexts = [voucher.summary, voucher.list_summary, voucher.type, voucher.business_amount_label,
-      ...voucher.lines.flatMap(line => [line.party, line.source_label, ...line.parties.map(party => party.name)]),
-      ...[...(voucher.asset ? [voucher.asset] : []), ...voucher.asset_members,
-        ...voucher.lines.flatMap(line => line.asset ? [line.asset] : [])].map(asset => asset.name || asset.code || "资产卡片")];
-    return purposes.value.filter(value => !visibleTexts.some(text => text?.includes(value)));
-  }
-  const context = props.activityContext || props.briefContext;
-  const rowTexts = isFunds.value
-    ? [props.fundsContext?.party, props.fundsContext?.list_summary || props.fundsContext?.type, fundsDescription.value]
-    : [context?.party, isActivity.value ? props.activityContext?.title : context?.description, activityDescription.value];
-  return purposes.value.filter(value => !rowTexts.some(text => text?.includes(value)));
+    visibleTexts = [voucher.summary, voucher.list_summary, voucher.type];
+  } else if (isFunds.value) {
+    visibleTexts = [props.fundsContext?.list_summary || props.fundsContext?.type, fundsDescription.value];
+  } else if (isActivity.value) {
+    visibleTexts = [props.activityContext?.description || props.activityContext?.title];
+  } else visibleTexts = [props.briefContext?.description];
+  return purposes.value.filter(entry => entry.scope === "whole_business" || !visibleTexts.includes(entry.text));
 });
 type Obligation = BusinessStatusData["settlements"]["obligations"][number];
 const sameLaborSource = computed(() => Boolean(isLabor.value && props.laborContext && data.value
@@ -428,7 +422,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <template v-if="isLabor && laborContext">
         <p v-if="data.latest_source.deleted">这笔劳务目前已撤回；列表保留所选月份的金额。</p>
         <p v-if="!sameLaborSource || data.latest_source.period !== laborContext.period">当前业务所属月份：{{ periodText(data.latest_source.period) }}</p>
-        <p v-for="purpose in purposes" :key="purpose">用途／备注：{{ purpose }}</p>
+        <p v-for="purpose in purposes" :key="purpose.scope + purpose.text">{{ purpose.scope === 'whole_business' ? '整单说明' : '用途／备注' }}：{{ purpose.text }}</p>
         <p v-for="group in laborObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         <dl v-if="businessAmount && !laborResultRepeated" class="business-amounts">
           <div><dt>{{ data.detail_scope ? '本次' : data.frozen_adoption ? '关账时' : '当前' }}{{ businessAmount.amount_label }}</dt><dd>{{ ownerMoney(businessAmount.amount_fen) }}</dd></div>
@@ -460,9 +454,8 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <p v-else-if="isActivity && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
         <p v-else-if="isVoucher && data.latest_source.deleted">这笔业务目前已撤回；凭证保留历史记录。</p>
         <p v-if="isFunds && fundsDescription">事项说明：{{ fundsDescription }}</p>
-        <p v-if="isActivity && activityDescription">事项说明：{{ activityDescription }}</p>
         <div v-if="ownerPurposes.length || (isVoucher ? voucherObjects : activityObjects).length" class="owner-detail-context">
-          <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
+          <p v-for="purpose in ownerPurposes" :key="purpose.scope + purpose.text">{{ purpose.scope === 'whole_business' ? '整单说明' : '用途／备注' }}：{{ purpose.text }}</p>
           <p v-for="group in (isVoucher ? voucherObjects : activityObjects)" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         </div>
         <p v-if="isVoucher && data.settlements.checking && !data.settlements.obligations.length" class="checking">AI 会计核对中，所选月末的收付进度暂不能完整确认。</p>
@@ -512,7 +505,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <template v-else-if="isOpenItem && briefContext">
         <div v-if="(selectedObligation?.source_period && selectedObligation.source_period !== period) || ownerPurposes.length || relatedObjects.length" class="owner-item-description">
           <p v-if="selectedObligation?.source_period && selectedObligation.source_period !== period">业务所属月份：{{ periodText(selectedObligation.source_period) }}</p>
-          <p v-for="purpose in ownerPurposes" :key="purpose">用途／备注：{{ purpose }}</p>
+          <p v-for="purpose in ownerPurposes" :key="purpose.scope + purpose.text">{{ purpose.scope === 'whole_business' ? '整单说明' : '用途／备注' }}：{{ purpose.text }}</p>
           <p v-for="group in relatedObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         </div>
         <h4>款项拆解 · 截至{{ periodText(selectedProgress.cutoff) }}末{{ briefContext.selectedPeriodClosed ? '（关账时）' : '' }}</h4>
@@ -532,7 +525,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <template v-else>
       <header><h3>{{ businessName }}</h3><span class="business-state" :class="{ attention: data.settlements.checking, withdrawn: data.latest_source.deleted }">{{ data.latest_source.deleted ? '业务已撤回' : data.settlements.checking ? 'AI 会计核对中' : businessStateLabel(data.review.status) }}</span></header>
       <p v-if="objects.length">业务对象：{{ objects.join('、') }}</p>
-      <p v-for="purpose in purposes" :key="purpose">{{ purpose }}</p>
+      <p v-for="purpose in purposes" :key="purpose.scope + purpose.text">{{ purpose.scope === 'whole_business' ? '整单说明：' : '' }}{{ purpose.text }}</p>
       <dl class="business-amounts">
         <div v-if="data.frozen_adoption"><dt>关账月份</dt><dd>{{ data.frozen_adoption.close_period }}</dd></div>
         <div v-else><dt>业务所属月</dt><dd>{{ data.latest_source.period }}</dd></div>

@@ -60,6 +60,21 @@ def test_description_can_join_creation_and_survives_amount_and_source_correction
     )
 
 
+def test_unregistered_note_source_is_input_error_and_rolls_back_the_business(case):
+    case.seed(expense=False)
+    fact = case.expense()
+    missing = str(uuid4())
+    rejected = case.app.accounting_apply(case.request(fact, notes=[note(fact, missing)]))
+    assert rejected["completion"] == "not_saved", rejected
+    assert rejected["error"] == "invalid_input"
+    assert [issue["code"] for issue in rejected["fact_issues"]] == ["source_not_found"]
+    assert missing in rejected["fact_issues"][0]["message"]
+    assert case.get(fact["business_id"])["missing_business_ids"] == [fact["business_id"]]
+    assert case.context(note_scopes=["business:" + fact["business_id"]], issue_scopes=[])[
+        "notes"
+    ] == []
+
+
 def test_closed_description_only_edit_never_evaluates_or_changes_formal_accounting(
     case, monkeypatch
 ):

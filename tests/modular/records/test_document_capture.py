@@ -65,7 +65,7 @@ def test_capture_rejects_missing_nested_source_even_without_top_level_evidence(r
         records.mark_document_targets(("facts:money:2026-01",), unit)
     with storage.read_unit(company.company_id) as read, pytest.raises(ContractError) as error:
         records.capture_documents(company_identity(company), [fact], [], read)
-    assert error.value.code == "needs_information"
+    assert error.value.code == "invalid_input"
     assert [issue["code"] for issue in error.value.fact_issues] == ["source_not_found"]
     assert missing in error.value.fact_issues[0]["message"]
     assert not (company.company_root / "standard/current.json").exists()

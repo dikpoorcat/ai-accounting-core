@@ -12,7 +12,7 @@ async function renderMembers(server, members, { hasMore = false, expandedPart = 
   const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=a");
   const data = { section: "open_items", group_key: "employee", collections: { members: { items: members, page: { has_more: hasMore } }, vouchers: { items: [] } } };
-  const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; for (const item of members) assert.equal(state.openContext(item).contributionComponent, item.contribution_component); return state; } };
+  const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; return state; } };
   const voucher = (id, number) => ({ voucher_version_id: id, number, date: null, recognition: { label: "2026-07 · 按月确认" }, list_summary: "社保计提", state: "已入账", business_amount_label: "社保金额", business_amount_fen: "52500", business_amount_state: "known", lines: [] });
   const app = createSSRApp(wrapped, { section: "open_items", groupKey: "employee", expanded: true, period: "2026-07", openSummary: { cutoff_period: "2026-07", current_cutoff_period: "2026-09", categories: [] }, direction: "payable", periodClosed: true, voucherIndex: new Map([["exact-88", voucher("exact-88", "88")], ["exact-89", voucher("exact-89", "89")]]) }); app.use(router);
   return renderToString(app);

@@ -78,7 +78,8 @@ def test_missing_description_source_rejects_entire_change_and_stale_plan_is_atom
     scope = "business:" + str(uuid4())
     with pytest.raises(ContractError) as caught:
         save(records_case, note(scope, str(uuid4())), evidence)
-    assert caught.value.code == "needs_information"
+    assert caught.value.code == "invalid_input"
+    assert [issue["code"] for issue in caught.value.fact_issues] == ["source_not_found"]
     with storage.read_unit(company.company_id) as read:
         assert read.head == 0 and records.current_notes(None, read) == ()
         assert records.resolve_sources((evidence["source_id"],), read) == ()

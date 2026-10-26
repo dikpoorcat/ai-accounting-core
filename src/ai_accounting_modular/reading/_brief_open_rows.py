@@ -18,7 +18,7 @@ from ai_accounting_modular.ledger.opening.public import (
 
 from ._brief_open_groups import group_key, status
 from ._brief_open_sources import batches, ref_key
-from ._business_descriptions import allows_component
+from ._business_descriptions import description_reference
 from ._business_labels import (
     BusinessLabel,
     ObligationFields,
@@ -348,11 +348,10 @@ def project(snapshot, company_id, identity, read, *, descriptions=None):
         )
         contribution = meaning.component if meaning.component in _CONTRIBUTIONS else None
         note_scope, description = None, None
-        if descriptions is not None and allows_component(
-            content, category=definition.category, component=meaning.component
-        ):
-            note_scope = descriptions.scope(content.reference)
-            description = descriptions.text(content.reference)
+        prose_reference = description_reference(content, meaning.label, component=meaning.component)
+        if descriptions is not None and prose_reference:
+            note_scope = descriptions.scope(prose_reference)
+            description = descriptions.text(prose_reference)
         rows.append(
             {
                 "id": reference["business_id"] + ":" + reference["slot"],
