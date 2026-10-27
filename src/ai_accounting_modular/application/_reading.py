@@ -3,7 +3,7 @@
 from ai_accounting_modular.reading.public import PeriodRange, ReadingImpact
 
 
-def applied(*, adoption, objects, facts, notes, issues, working_period_changed):
+def applied(*, adoption, objects, facts, notes, issue_periods, working_period_changed):
     return ReadingImpact(
         formal_changes=adoption.formal_changes,
         objects=tuple(sorted((obj["object_id"], obj["kind"]) for obj in objects)),
@@ -14,7 +14,7 @@ def applied(*, adoption, objects, facts, notes, issues, working_period_changed):
             )
         ),
         note_scopes=tuple(sorted(notes)),
-        issue_scopes=tuple(sorted(issues)),
+        issue_periods=issue_periods,
         working_period_changed=working_period_changed,
     )
 

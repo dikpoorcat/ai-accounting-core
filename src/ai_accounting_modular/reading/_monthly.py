@@ -1,5 +1,6 @@
 """Month pages share complete components and one read snapshot for their collections."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import (
@@ -70,7 +71,7 @@ class MonthSnapshot:
     scope_key: str
     scope: dict
     version: str
-    components: dict
+    components: Mapping
     selected_period: dict
     company_id: str
     database_id: str
@@ -114,6 +115,29 @@ def _load(scope_key, component, state, read):
         raise _CorruptComponent(component) from error
 
 
+class _Components(Mapping):
+    """Keep all publication identities while materializing only requested owner summaries."""
+
+    def __init__(self, scope_key, states, read):
+        self._scope_key, self._states, self._read = scope_key, states, read
+        self._values = {}
+
+    def __iter__(self):
+        return iter(self._states)
+
+    def __len__(self):
+        return len(self._states)
+
+    def __contains__(self, component):
+        return component in self._states
+
+    def __getitem__(self, component):
+        state = self._states[component]
+        if component not in self._values:
+            self._values[component] = _load(self._scope_key, component, state, self._read)
+        return self._values[component]
+
+
 def _ready_snapshot(reader, normalized, states, read):
     if any(
         state is None or state["state"] != "ready" or _outdated(name, state)
@@ -121,24 +145,34 @@ def _ready_snapshot(reader, normalized, states, read):
     ):
         return None
     scope_key = key(normalized)
-    values = {name: _load(scope_key, name, state, read) for name, state in states.items()}
+    from ._component_view import ready
+
+    identities = {}
+    for name, state in states.items():
+        if state["format_version"] != version(name):
+            raise _CorruptComponent(name)
+        try:
+            identities[name] = ready(scope_key, name, read).semantic_digest
+        except (ContractError, KeyError, TypeError, ValueError) as error:
+            raise _CorruptComponent(name) from error
     selected = period(normalized["period_to"], reader.ledger.closed_through(read))
-    version = content_digest(
+    snapshot_version = content_digest(
         {
             "company_id": read.company_id,
             "database_id": read.database_id,
             "scope": normalized,
             "period_status": selected["status"],
-            "components": {
-                name: values[name]["_semantic_digest"]
-                if name in {BRIEF_OPEN_ITEMS, BRIEF_ACTIVITY}
-                else state["content_digest"]
-                for name, state in sorted(states.items())
-            },
+            "components": dict(sorted(identities.items())),
         }
     )
     return MonthSnapshot(
-        scope_key, normalized, version, values, selected, read.company_id, read.database_id
+        scope_key,
+        normalized,
+        snapshot_version,
+        _Components(scope_key, states, read),
+        selected,
+        read.company_id,
+        read.database_id,
     )
 
 
@@ -311,7 +345,12 @@ def affected(scope, component, impact, selected):
     if component not in COMPONENTS:
         raise ContractError("storage_corrupt", "月度读取目标包含未装配组件。")
     if component == BRIEF_CONTEXT:
-        return bool("period:" + scope["period_to"] in impact.note_scopes or impact.issue_scopes)
+        return bool(
+            "period:" + scope["period_to"] in impact.note_scopes
+            or any(
+                period is None or period <= scope["period_to"] for period in impact.issue_periods
+            )
+        )
     if component == BRIEF_OPEN_ITEMS and (impact.working_period_changed or impact.closure_ranges):
         return True
     if component == FINANCIAL and any(

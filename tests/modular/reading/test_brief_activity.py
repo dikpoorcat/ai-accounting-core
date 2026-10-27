@@ -7,12 +7,12 @@ from uuid import uuid4
 
 from jsonschema import Draft202012Validator
 
-from ai_accounting_modular.contracts.public import content_digest, loads_json
+from ai_accounting_modular.contracts.public import loads_json
 from ai_accounting_modular.reading import _brief_activity, _brief_groups, _brief_vouchers, _monthly
 from ai_accounting_modular.reading import _brief_activity_index as activity_index
 from ai_accounting_modular.reading._brief_activity_parts import business_parties
 from ai_accounting_modular.reading._brief_activity_sources import Contents
-from ai_accounting_modular.reading._context import period
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.assets.test_application import request as asset_request
 from tests.modular.domains.assets.test_assets import case as asset_case
@@ -56,33 +56,36 @@ from .test_funds import apply, initialize, selection
 
 def capture(case, month="2026-01"):
     scope = selection(case, month)
+    key, component = _monthly.key(scope), "brief_activity"
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        repo = unit.repository("reading")
+        repo.register(key, component, unit.head, _monthly.version(component))
+        repo.activity_mark(key, unit.head, full=True)
+        repo._session.execute(
+            "UPDATE read_scope_head SET wanted_head=?,state='preparing',revision=revision+1 "
+            "WHERE scope_key=? AND component_key=?",
+            (unit.head, key, component),
+        )
     with case.kernel.storage.read_unit(case.company) as read:
+        guard = CaptureGuard.capture(read.repository("reading").state(key, component), read.head)
         model = _brief_activity.prepare(case.kernel.reading, scope, read)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repo = unit.repository("reading")
-        key = _monthly.key(scope)
-        repo.register(key, "brief_activity", unit.head, _monthly.version("brief_activity"))
-        repo.mark(key, "brief_activity", unit.head)
         assert repo.publish(
-            key, "brief_activity", unit.head, _monthly.version("brief_activity"), model
+            key,
+            component,
+            unit.head,
+            _monthly.version(component),
+            model,
+            guard=guard,
+            current_head=unit.head,
         )
     return model
 
 
 def snapshot(case, read, month="2026-01"):
     scope = selection(case, month)
-    saved = loads_json(
-        read.repository("reading").payload(_monthly.key(scope), "brief_activity")["payload_json"]
-    )
-    return _monthly.MonthSnapshot(
-        _monthly.key(scope),
-        scope,
-        content_digest(saved),
-        {"brief_activity": saved},
-        period(month),
-        read.company_id,
-        read.database_id,
-    )
+    return _monthly.ready_snapshot(case.kernel.reading, scope, ("brief_activity",), read)
 
 
 def activity(case, month="2026-01", **query):
@@ -104,9 +107,9 @@ def vouchers(case, month="2026-01", **query):
 
 def validate(name, value):
     definitions = json.loads(
-        (
-            Path(__file__).parents[3] / "docs/design/contracts/dashboard-response-v2.json"
-        ).read_text(encoding="utf8")
+        (Path(__file__).parents[3] / "docs/design/contracts/dashboard-response-v2.json").read_text(
+            encoding="utf8"
+        )
     )["dashboard_brief"]["$defs"]
     Draft202012Validator({"$defs": definitions, "$ref": "#/$defs/" + name}).validate(value)
 
@@ -203,10 +206,8 @@ def test_closed_correction_uses_old_and_new_exact_type_and_date(case):
         assert visible(after) == visible(before)
         # The historical display is unchanged, while its now obsolete subscription
         # to the current result's prose must leave the rebuildable private index.
-        assert loads_json(before.payload_json)["_inputs"]["note_scopes"] == [
-            "business:" + expense["business_id"]
-        ]
-        assert loads_json(after.payload_json)["_inputs"]["note_scopes"] == []
+        assert before.inputs.note_scopes == ("business:" + expense["business_id"],)
+        assert after.inputs.note_scopes == ()
     capture(case, "2026-02")
     groups = activity(case, "2026-02")["items"]
     assert {(item["title"], item["amount_fen"]) for item in groups} == {

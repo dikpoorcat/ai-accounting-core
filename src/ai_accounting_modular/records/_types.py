@@ -110,6 +110,8 @@ class RecordsPlan:
     _notes: tuple[PlannedRecord, ...]
     _issue_scope: PlannedRecord | None
     _prepared_sources: PreparedSources | None = field(default=None, repr=False)
+    # Periods of changed issue bodies; None retains the meaning of unperioded work.
+    issue_periods: tuple[str | None, ...] = ()
 
     @property
     def sources(self) -> tuple[Source, ...]:

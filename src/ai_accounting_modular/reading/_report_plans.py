@@ -11,7 +11,7 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.files.public import ProductionError
 
-from . import _models, _report_workbook
+from . import _descriptor, _models, _report_workbook
 
 _TABLES = {
     "balance_sheet": (53, ("ending", "beginning")),
@@ -188,16 +188,22 @@ def is_current(plan, read, metadata):
     ):
         return False
     try:
+        descriptor = _descriptor.read(
+            state["scope_key"],
+            _models.FINANCIAL,
+            state,
+            read.repository("reading").payload(state["scope_key"], _models.FINANCIAL),
+        )
         return (
             _head(
                 read.company_id,
                 read.database_id,
-                state["content_digest"],
+                descriptor["semantic_digest"],
                 organization(metadata),
                 plan["variant"],
                 plan["template_version"],
             )
             == plan["scope_head"]
         )
-    except ProductionError:
+    except (ProductionError, ContractError):
         return False

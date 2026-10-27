@@ -9,7 +9,6 @@ from ai_accounting_modular.contracts.public import (
     PageQuery,
     UnitOfWork,
     canonical_json,
-    content_digest,
     loads_json,
 )
 from ai_accounting_modular.reading import (
@@ -18,6 +17,7 @@ from ai_accounting_modular.reading import (
 from ai_accounting_modular.reading import (
     _brief_groups,
     _brief_open,
+    _descriptor,
     _item_buckets,
     _monthly,
     _open_store,
@@ -25,7 +25,11 @@ from ai_accounting_modular.reading import (
 from ai_accounting_modular.reading import (
     _brief_open_index as open_items,
 )
-from ai_accounting_modular.reading._collections import CollectionFilter, collection_page
+from ai_accounting_modular.reading._collections import (
+    CollectionFilter,
+    collection_page,
+    prepare_model,
+)
 from ai_accounting_modular.reading._repository import ReadingRepository
 
 from .test_brief_activity import capture as publish_activity
@@ -67,7 +71,9 @@ def test_month_snapshot_lists_and_group_expansion_check_each_header_once_in_one_
     with book.kernel.storage.read_unit(book.company) as read:
         assert not isinstance(read, UnitOfWork)
         saved = snapshot(book, read)
+        assert counts == {activity.COMPONENT: 0, open_items.COMPONENT: 0}
         groups = _brief_groups.activity_page(saved, read, {})["items"]
+        assert counts == {activity.COMPONENT: 1, open_items.COMPONENT: 0}
         _brief_open.page(saved, read, {})
         detail = _brief_groups.build(
             book.kernel.reading, saved, read, {"group_key": groups[0]["group_key"]}
@@ -80,10 +86,9 @@ def test_snapshot_mutations_cannot_change_the_private_directory_or_its_manifest(
     prepared(book)
     with book.kernel.storage.read_unit(book.company) as read:
         saved = snapshot(book, read)
-        original = deepcopy(saved.components)
-        saved.components[activity.COMPONENT]["_buckets"].clear()
-        saved.components[activity.COMPONENT]["_collections"]["activity"]["count"] = 999
-        saved.components[open_items.COMPONENT]["_roots"].clear()
+        original = deepcopy(dict(saved.components))
+        assert all(not name.startswith("_") for value in original.values() for name in value)
+        saved.components[activity.COMPONENT]["activity_count"] = 999
         saved.components[open_items.COMPONENT]["open_items"]["categories"].clear()
         assert snapshot(book, read).components == original
         assert _brief_groups.activity_page(saved, read, {})["page"]["total_count"] == 1
@@ -115,7 +120,7 @@ def test_another_read_rechecks_summary_and_directory_even_if_old_views_are_copie
             saved.scope_key, activity.COMPONENT, "activity", CollectionFilter(), PageQuery(), other
         )
         _brief_groups.activity_page(saved, other, {})
-    assert counts == {activity.COMPONENT: 2, open_items.COMPONENT: 1}
+    assert counts == {activity.COMPONENT: 2, open_items.COMPONENT: 0}
     assert len(physical_checks) == 2
     assert physical_checks[0] is not physical_checks[1]
 
@@ -234,7 +239,9 @@ def test_a_callers_dictionary_is_never_a_proof_for_the_real_header(book, monkeyp
             _brief_groups.activity_page(saved, read, {})
 
 
-def test_normal_view_constructor_itself_checks_actual_hash_and_owner_invariants(book):
+def test_normal_view_constructor_checks_descriptor_then_checks_actual_owner_body_on_use(
+    book, monkeypatch
+):
     from ai_accounting_modular.reading._component_view import _ComponentView
 
     prepared(book)
@@ -248,13 +255,26 @@ def test_normal_view_constructor_itself_checks_actual_hash_and_owner_invariants(
         with pytest.raises(ContractError) as error:
             _ComponentView(scope_key, activity.COMPONENT, read, state, wrong_hash)
         assert error.value.code == "storage_corrupt"
-        value = loads_json(payload["payload_json"])
+        descriptor = _descriptor.read(scope_key, activity.COMPONENT, state, payload)
+        body = repository.component_body(scope_key, activity.COMPONENT, descriptor)
+        value = loads_json(body["payload_json"])
         value["activity_count"] += 1
         value["_semantic_digest"] = activity.semantic(value)
-        payload["payload_json"] = canonical_json(value)
-        state["content_digest"] = content_digest(value)
+        publication = _descriptor.prepare(
+            scope_key,
+            activity.COMPONENT,
+            state["ready_head"],
+            state["format_version"],
+            prepare_model(value),
+        )
+        payload["payload_json"] = publication.descriptor_json
+        state["content_digest"] = publication.descriptor_digest
+        monkeypatch.setattr(
+            repository, "component_body", lambda *_: dict(body, payload_json=canonical_json(value))
+        )
+        view = _ComponentView(scope_key, activity.COMPONENT, read, state, payload)
         with pytest.raises(ContractError) as error:
-            _ComponentView(scope_key, activity.COMPONENT, read, state, payload)
+            view.monthly_summary()
         assert error.value.code == "storage_corrupt"
 
 
@@ -268,7 +288,6 @@ def test_base_reads_never_share_decoded_summary_values(book, monkeypatch, owner)
         directory = owner.base(repository, repository.state(scope_key, owner.COMPONENT))
         expected = deepcopy(directory.payload)
         directory.payload["_roots" if owner is open_items else "_buckets"].clear()
-        directory.payload["_inputs"].clear()
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
         directory = owner.base(repository, repository.state(scope_key, owner.COMPONENT))
@@ -302,7 +321,15 @@ def test_new_transaction_rechecks_the_actual_index(book, owner, collection):
 
 def _damage_index(repository, scope_key, component, collection, identity=None):
     if component == open_items.COMPONENT:
-        payload = loads_json(repository.payload(scope_key, component)["payload_json"])
+        descriptor = _descriptor.read(
+            scope_key,
+            component,
+            repository.state(scope_key, component),
+            repository.payload(scope_key, component),
+        )
+        payload = loads_json(
+            repository.component_body(scope_key, component, descriptor)["payload_json"]
+        )
         node_id = payload["_roots"][collection][0]
         repository._session.execute(
             "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND collection_key=? "

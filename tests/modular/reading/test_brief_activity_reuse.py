@@ -51,12 +51,12 @@ def test_reusable_rows_still_belong_to_the_exact_scope_component_and_head(
     book, monkeypatch, field, value
 ):
     initialize(book)
-    apply(book, book.expense("100"))
+    (first,) = apply(book, book.expense("100"))
     publish_full(book)
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
         base = index.base(repository, state(book))
-        root = base.get(index.ROOTS, base.payload["_inputs"]["business_ids"])
+        root = base.get(index.ROOTS, (first["business_id"],))
         member_id = next(identity for value in root.values() for identity in value["members"])
         fetch = repository.item_get
 

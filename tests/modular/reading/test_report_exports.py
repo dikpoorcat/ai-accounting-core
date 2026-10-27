@@ -16,6 +16,7 @@ from openpyxl import load_workbook
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.host.public import create_kernel
 from ai_accounting_modular.identity.public import IdentityContext
+from ai_accounting_modular.reading import _descriptor, _models
 from ai_accounting_modular.reading.public import PeriodRange, ReadingImpact, create_report_producer
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
 
@@ -446,6 +447,49 @@ def test_damaged_download_can_be_regenerated_by_a_new_explicit_request(report_ca
         case.company.company_id, second.body["job_id"]
     ) as result:
         assert result.stream.read(2) == b"PK"
+
+
+def test_retained_report_uses_its_verified_plan_until_current_publication_is_invalidated(
+    report_case,
+):
+    case = report_case
+    preview = case.preview()
+    job = case.post(case.request(preview)).body["job_id"]
+    done = case.kernel.files.run(case.company.company_id, job)
+    assert done["state"] == "succeeded"
+    raw = Path(done["path"]).read_bytes()
+    scope = _models.normalize(
+        {
+            "company_id": case.company.company_id,
+            "period_from": "2026-01",
+            "period_to": "2026-03",
+            "view": "as_posted",
+        }
+    )
+    with case.kernel.storage.maintenance_unit(case.company.company_id) as unit:
+        repository = unit.repository("reading")
+        removed = repository._session.execute(
+            "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
+            (_models.key(scope), _models.FINANCIAL, _descriptor.BODY_COLLECTION),
+        )
+        assert removed == 1
+    assert case.status(job).body["status"] == "succeeded"
+    with case.kernel.reading.report_download(case.company.company_id, job) as download:
+        assert download.stream.read() == raw
+        assert download.sha256 == sha256(raw).hexdigest() == done["sha256"]
+    # The saved, verified FilePlan is still the actual file's complete basis.
+    # A page does use its separate Reading body and must detect the missing copy.
+    page = case.kernel.reading.reports.page(scope)
+    assert page.state == "failed" and page.reason == "corrupt"
+    with case.kernel.storage.read_unit(case.company.company_id) as read:
+        state = read.repository("reading").state(_models.key(scope), _models.FINANCIAL)
+        assert state["state"] == "failed" and state["error_code"] == "storage_corrupt"
+    status = case.status(job)
+    assert status.status == 409 and status.body["code"] == "preview_expired"
+    with pytest.raises(ContractError) as error:
+        with case.kernel.reading.report_download(case.company.company_id, job):
+            pytest.fail("an invalidated publication must not deliver the retained report")
+    assert error.value.code == "preview_expired"
 
 
 @pytest.mark.parametrize("stage", ["produce", "download"])

@@ -1,6 +1,7 @@
 """Legal object names remain readable through Open's actual grouping and sort keys."""
 
 from copy import deepcopy
+from dataclasses import replace
 from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import loads_json
@@ -72,6 +73,7 @@ def test_nine_legal_long_names_with_two_matters_survive_full_patch_and_pages(cas
         after = _monthly.ready_snapshot(
             case.kernel.reading, snapshot.scope, (_monthly.BRIEF_OPEN_ITEMS,), read
         )
+        after = replace(after, components=dict(after.components))
     actual = groups(after)
     assert [(item["party"], item["description"]) for item in actual] == [
         (item["party"], item["description"]) for item in before

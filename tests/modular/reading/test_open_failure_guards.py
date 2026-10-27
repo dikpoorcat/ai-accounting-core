@@ -18,6 +18,8 @@ from ai_accounting_modular.reading import (
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as working_case
 
+from ._publication import CapturedState, body
+
 
 @pytest.fixture(params=MODES)
 def book(tmp_path, request):
@@ -148,7 +150,7 @@ def test_late_corrupt_page_failure_cannot_fail_a_rebuilt_same_head_ready_model(b
     before = saved(book)
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
-        payload = repository.payload(_monthly.key(scope(book)), index.COMPONENT)
+        payload = body(repository, _monthly.key(scope(book)), index.COMPONENT)
         root = loads_json(payload["payload_json"])["_roots"]["rows"][0]
         assert (
             repository._session.execute(
@@ -188,8 +190,9 @@ def test_full_candidate_cannot_be_published_to_another_same_head_scope(book):
     with book.kernel.storage.read_unit(book.company) as read:
         candidate = _brief_open.prepare(book.kernel.reading, scope(book), read)
         january = read.repository("reading").state(_monthly.key(scope(book)), index.COMPONENT)
-        february = read.repository("reading").state(
-            _monthly.key(scope(book, "2026-02")), index.COMPONENT
+        february = CapturedState(
+            read.repository("reading").state(_monthly.key(scope(book, "2026-02")), index.COMPONENT),
+            read.head,
         )
         assert january["wanted_head"] == february["wanted_head"] == read.head
     assert candidate.scope_key == _monthly.key(scope(book))
@@ -201,5 +204,7 @@ def test_full_candidate_cannot_be_published_to_another_same_head_scope(book):
             february["wanted_head"],
             index.FORMAT_VERSION,
             candidate,
+            guard=february.guard,
+            current_head=unit.head,
         )
     assert saved(book) == before

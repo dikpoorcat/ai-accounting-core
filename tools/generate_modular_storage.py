@@ -46,7 +46,7 @@ def generate(kind: str) -> str:
             )
         ]
     objects.sort(key=lambda item: (item["owner"], item["type"], item["name"]))
-    result = {"kind": kind, "version": 3 if kind == "company" else 1, "objects": objects}
+    result = {"kind": kind, "version": 4 if kind == "company" else 1, "objects": objects}
     result["fingerprint"] = hashlib.sha256(canonical(objects).encode("utf-8")).hexdigest()
     return json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 

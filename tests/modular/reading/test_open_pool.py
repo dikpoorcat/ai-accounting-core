@@ -4,8 +4,8 @@ from uuid import UUID
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
-from ai_accounting_modular.reading import _brief_open_inputs, _monthly, _open_store
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
+from ai_accounting_modular.reading import _brief_open_inputs, _monthly, _open_store, _subscriptions
 from ai_accounting_modular.storage.public import Entry, Tree, TreeStore
 
 from ._support import assemble, expense, uid
@@ -85,8 +85,8 @@ def other_components(repository):
             for row in repository._session.fetchall(
                 "SELECT * FROM "
                 + table
-                + " WHERE component_key<>? ORDER BY scope_key,component_key",
-                (_open_store.COMPONENT,),
+                + " WHERE component_key NOT IN (?,?) ORDER BY scope_key,component_key",
+                (_open_store.COMPONENT, _subscriptions.COMPONENT),
             )
         )
         for table in ("read_scope_head", "read_component", "read_item")
@@ -300,6 +300,7 @@ def test_reset_preserves_formal_and_other_components_and_requeues_all_open_scope
     open_keys = tuple(scope(book, month) for month in ("2026-01", "2026-02", "2026-03"))
     with book.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
+        directory = _subscriptions.Directory(repository)
         for key, state in zip(open_keys, ("ready", "failed", "preparing"), strict=True):
             repository.register(key, _open_store.COMPONENT, unit.head, 8)
             repository._session.execute(
@@ -330,6 +331,17 @@ def test_reset_preserves_formal_and_other_components_and_requeues_all_open_scope
                 "sort_key,payload_json) "
                 "VALUES(?,?,'keep',?,?,'keep','{}')",
                 ("other/" + component, "opaque", component, unit.head),
+            )
+        # A shared directory's physical root must change when Open retires its
+        # dependencies, while the other consumer's own subscription stays valid.
+        other_target, note = open_keys[0], "business:" + cost["business_id"]
+        repository.register(other_target, "funds", unit.head, 1)
+        for key, component in (
+            *((key, _open_store.COMPONENT) for key in open_keys),
+            (other_target, "funds"),
+        ):
+            assert directory.commit(
+                directory.plan(key, component, inputs=ReadInputs(note_scopes=(note,)))
             )
     with book.storage.read_unit(book.company) as read:
         others = other_components(read.repository("reading"))
@@ -367,6 +379,11 @@ def test_reset_preserves_formal_and_other_components_and_requeues_all_open_scope
                 == 1
             )
         assert other_components(repository) == others
+        from ai_accounting_modular.reading.public import ReadingImpact
+
+        assert _subscriptions.Directory(repository).candidates(
+            ReadingImpact(note_scopes=(note,))
+        ) == ((other_target, "funds"),)
         assert book.records.document_status(read) == documents
         assert book.ledger.query_adopted_directory(selected, (), PageQuery(500), read) == adopted
     assert book.app.accounting_get(query) == business

@@ -71,9 +71,6 @@ class ReadInputs:
 
     @classmethod
     def from_wire(cls, value):
-        if isinstance(value, dict) and "note_scopes" not in value:
-            # Older projections could not consume per-business descriptions.
-            value = {**value, "note_scopes": []}
         names = {field.name for field in fields(cls)}
         if not isinstance(value, dict) or set(value) != names:
             raise ValueError("projection read inputs are incomplete")

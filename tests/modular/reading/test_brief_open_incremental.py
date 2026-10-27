@@ -1,6 +1,7 @@
 """Ordinary changes touch their own projection, with a cold-equivalent content version."""
 
 from copy import deepcopy
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -26,6 +27,7 @@ from tests.modular.acceptance.performance.ledger_variant import MODES, install_l
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_read_remuneration import bank_object
 
+from ._publication import CapturedState, assert_subscriptions, body
 from .test_brief_open import apply, members, page, payment, publish
 
 
@@ -41,23 +43,30 @@ def scope(case):
 
 
 def rows_root(repository, key):
-    return loads_json(repository.payload(key, _monthly.BRIEF_OPEN_ITEMS)["payload_json"])["_roots"][
+    return loads_json(body(repository, key, _monthly.BRIEF_OPEN_ITEMS)["payload_json"])["_roots"][
         "rows"
     ][0]
 
 
 def snapshot(case):
     with case.kernel.storage.read_unit(case.company) as read:
-        return _monthly.ready_snapshot(
+        snapshot = _monthly.ready_snapshot(
             case.kernel.reading, scope(case), (_monthly.BRIEF_OPEN_ITEMS,), read
         )
+        return replace(snapshot, components=dict(snapshot.components))
 
 
 def matches_cold(case):
     with case.kernel.storage.read_unit(case.company) as read:
         fresh = _brief_open.prepare(case.kernel.reading, scope(case), read)
-        cached = read.repository("reading").payload(
-            _monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS
+        cached = body(
+            read.repository("reading"), _monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS
+        )
+        assert_subscriptions(
+            read.repository("reading"),
+            _monthly.key(scope(case)),
+            _monthly.BRIEF_OPEN_ITEMS,
+            fresh.model.inputs,
         )
     expected, actual = loads_json(fresh.payload_json), loads_json(cached["payload_json"])
     assert expected["_semantic_digest"] == actual["_semantic_digest"]
@@ -98,10 +107,12 @@ def test_hot_change_reads_only_changed_business_and_matches_a_cold_model(case, m
         )
         return original_items(directory, collection, *args)
 
-    def publish_patch(repository, key, component, wanted, format_version, model):
+    def publish_patch(repository, key, component, wanted, format_version, model, **options):
         assert isinstance(model, _brief_open_index.PreparedOpenPatch)
         published.append(model)
-        return original_publish(repository, key, component, wanted, format_version, model)
+        return original_publish(
+            repository, key, component, wanted, format_version, model, **options
+        )
 
     with monkeypatch.context() as patch:
         patch.setattr(_brief_open_sources, "capture", bounded)
@@ -151,13 +162,13 @@ def test_full_rebuild_changes_storage_epoch_but_keeps_public_content_version(cas
     assert case.kernel.reading.run_pending(case.company)
     before = snapshot(case)
     with case.kernel.storage.read_unit(case.company) as read:
-        previous = read.repository("reading").payload(
-            _monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS
+        previous = body(
+            read.repository("reading"), _monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS
         )
     after = publish(case)
     with case.kernel.storage.read_unit(case.company) as read:
-        current = read.repository("reading").payload(
-            _monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS
+        current = body(
+            read.repository("reading"), _monthly.key(scope(case)), _monthly.BRIEF_OPEN_ITEMS
         )
     assert (
         loads_json(previous["payload_json"])["_item_epoch"]
@@ -174,7 +185,9 @@ def test_stale_patch_cannot_publish_or_clear_a_newer_committed_business(case):
     change(case, first, "90000")
     key = _monthly.key(scope(case))
     with case.kernel.storage.read_unit(case.company) as read:
-        state = read.repository("reading").state(key, _monthly.BRIEF_OPEN_ITEMS)
+        state = CapturedState(
+            read.repository("reading").state(key, _monthly.BRIEF_OPEN_ITEMS), read.head
+        )
         prepared = _brief_open_update.prepare(case.kernel.reading, scope(case), read, state)
     change(case, second, "180000")
     with case.kernel.storage.maintenance_unit(case.company) as unit:
@@ -185,6 +198,8 @@ def test_stale_patch_cannot_publish_or_clear_a_newer_committed_business(case):
             state["wanted_head"],
             _monthly.version(_monthly.BRIEF_OPEN_ITEMS),
             prepared,
+            guard=state.guard,
+            current_head=unit.head,
         )
         full, pending = _brief_open_inputs.pending(repository, key)
         assert not full and pending == {first["business_id"], second["business_id"]}

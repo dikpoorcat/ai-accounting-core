@@ -2892,7 +2892,13 @@ async function run(config) {
         const laborCard = '[aria-label="个人劳务明细记录"] .employee-card';
         specs.push({ key: "employees_labor_sources_first_open", module: employees, root: refreshRoots.employees, counts: [],
           requireNewResponse: true, trigger: `${laborCard}:first-of-type > summary`,
-          prepare: async function () { await openModule(employees); assert(await page.locator(laborCard).count(), "labor: no actual contractor"); return true; },
+          prepare: async function () {
+            await openModule(employees);
+            const navigation = page.locator(".section-nav").getByRole("button", { name: "个人劳务", exact: true });
+            await change(employees, () => navigation.click());
+            assert.equal(await navigation.getAttribute("aria-current"), "location", "labor: actual labor section did not activate");
+            assert(await page.locator(laborCard).count(), "labor: no actual contractor"); return true;
+          },
           perform: async function () {
             this.reads = await detailChange(employees, () => page.locator(laborCard).first().locator(":scope > summary").click(), `${laborCard} .labor-source-record`);
           }, verify: async function () {
@@ -2910,6 +2916,9 @@ async function run(config) {
           requireNewResponse: true, auxiliaryActions: ["business-status"], trigger: `${laborCard} .labor-source-payments > summary`,
           prepare: async function () {
             await openModule(employees);
+            const navigation = page.locator(".section-nav").getByRole("button", { name: "个人劳务", exact: true });
+            await change(employees, () => navigation.click());
+            assert.equal(await navigation.getAttribute("aria-current"), "location", "labor: actual labor section did not activate");
             await detailChange(employees, () => page.locator(laborCard).first().locator(":scope > summary").click(), `${laborCard} .labor-source-record`);
             return true;
           }, perform: async function () {

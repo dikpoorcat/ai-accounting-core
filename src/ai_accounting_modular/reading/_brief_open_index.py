@@ -4,7 +4,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, replace
 
-from ai_accounting_modular.contracts.public import ReadInputs, canonical_json, content_digest
+from ai_accounting_modular.contracts.public import canonical_json, content_digest
 from ai_accounting_modular.storage.public import TreePlan
 
 from . import _brief_open_tree as blocks
@@ -13,9 +13,9 @@ from ._collections import IndexItem, PreparedModel, _index, _read_item, prepare_
 from ._open_store import OpenPool
 
 COMPONENT = "brief_open_items"
-FORMAT_VERSION = 12
+FORMAT_VERSION = 13
 DIRTY = "_open_pending"
-BUSINESSES, OBJECTS, FOLDS, VOUCHERS = blocks.PRIVATE
+BUSINESSES, OBJECTS, FOLDS, VOUCHERS, NOTES, PROVIDER, DESCRIPTIONS = blocks.PRIVATE
 COLLECTIONS, PUBLIC = blocks.COLLECTIONS, blocks.PUBLIC
 corrupt = blocks.corrupt
 
@@ -27,22 +27,18 @@ def item(collection, identity, value):
 def semantic(payload):
     return content_digest(
         {
-            key: value
-            for key, value in payload.items()
-            if key not in {"_item_epoch", "_semantic_digest"}
+            "summary": {key: value for key, value in payload.items() if not key.startswith("_")},
+            "collections": {key: payload["_collections"][key] for key in PUBLIC},
+            "voucher_display": payload["_voucher_display_head"],
         }
     )
 
 
-def cooperation_inputs(payload):
-    try:
-        return ReadInputs.from_wire(payload["_cooperation_inputs"])
-    except (KeyError, TypeError, ValueError):
-        corrupt("待收待付缺少完整的合作位置输入依赖，请重新生成。")
+def public_summary(payload):
+    return {"open_items": deepcopy(payload["open_items"])}
 
 
 def validate(payload):
-    cooperation_inputs(payload)
     epoch = payload["_item_epoch"]
     if type(epoch) is not int or epoch < 0 or payload["_semantic_digest"] != semantic(payload):
         corrupt()
@@ -134,10 +130,14 @@ class Directory(Queries):
     def from_row(cls, repository, state, row):
         from ._component_view import summary
 
-        payload, epoch = summary(state["scope_key"], COMPONENT, state, row)
+        payload, epoch = summary(state["scope_key"], COMPONENT, state, row, repository=repository)
+        return cls.from_summary(repository, state["scope_key"], payload, epoch)
+
+    @classmethod
+    def from_summary(cls, repository, scope_key, payload, epoch):
         result = cls.__new__(cls)
         result.epoch = epoch
-        result._bind(repository, state["scope_key"], payload)
+        result._bind(repository, scope_key, payload)
         return result
 
     def _bind(self, repository, scope_key, payload):
@@ -161,7 +161,12 @@ class Directory(Queries):
     def _entries(self, collection, identities):
         if collection not in COLLECTIONS:
             corrupt("待收待付项目引用了未声明的集合。")
-        keys = tuple(blocks.key(collection, identity) for identity in identities)
+        keys = tuple(
+            blocks.key(collection, *blocks.parts(identity))
+            if collection == DESCRIPTIONS
+            else blocks.key(collection, identity)
+            for identity in identities
+        )
         return self.trees.trees["rows"].get_many(self.roots["rows"], keys)
 
     def _row(self, collection, identity, entry):
@@ -312,6 +317,41 @@ class Directory(Queries):
                     corrupt()
                 result[identity] = value
         return result
+
+    def provider_inputs(self, selected=None):
+        """Read only the provider archive, never enumerate ordinary business inputs."""
+        from ._brief_open_inputs import provider_inputs, provider_items
+
+        if selected is not None:
+            values = self.get(PROVIDER, (entry.item_id for entry in provider_items(selected)))
+            return provider_inputs(values.items())
+
+        first, last = blocks.bounds(PROVIDER)
+        values = self.trees.trees["rows"].entries(self.roots["rows"], first=first, last=last)
+        return provider_inputs((blocks.parts(entry.key)[1], entry.value) for entry in values)
+
+    def surviving_description(self, group, removed):
+        first, last = blocks.bounds(DESCRIPTIONS, group)
+        selected = self.trees.trees["rows"].scan(
+            self.roots["rows"], first=first, last=last, limit=len(removed) + 1
+        )
+        for entry in selected:
+            parts = blocks.parts(entry.key)
+            if len(parts) != 3 or parts[:2] != (DESCRIPTIONS, group):
+                corrupt()
+            if parts[2] not in removed:
+                value = entry.value
+                if (
+                    type(value) is not dict
+                    or set(value) != {"text", "count"}
+                    or type(value["count"]) is not int
+                    or value["count"] < 1
+                    or type(value["text"]) is not str
+                    or content_digest(value["text"]) != parts[2]
+                ):
+                    corrupt()
+                return value["text"]
+        corrupt("待收待付组缺少唯一有效说明。")
 
 
 def patch(summary, entries, deletes, directory, state, *, scope_key):

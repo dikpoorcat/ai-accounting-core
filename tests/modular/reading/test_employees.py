@@ -28,6 +28,8 @@ from tests.modular.domains.people.test_read_remuneration import (
 )
 from tests.modular.domains.people.test_relationships import relationship
 
+from ._support import rebuild_guard
+
 
 def publish(case, month="2026-01", *, owner=None):
     scope = _monthly.normalize(
@@ -45,7 +47,13 @@ def publish(case, month="2026-01", *, owner=None):
         repository.register(_monthly.key(scope), "employees", unit.head, _monthly.FORMAT_VERSION)
         repository.mark(_monthly.key(scope), "employees", unit.head)
         assert repository.publish(
-            _monthly.key(scope), "employees", unit.head, _monthly.FORMAT_VERSION, model
+            _monthly.key(scope),
+            "employees",
+            unit.head,
+            _monthly.FORMAT_VERSION,
+            model,
+            guard=rebuild_guard(repository, _monthly.key(scope), "employees", unit.head),
+            current_head=unit.head,
         )
     return _monthly.MonthSnapshot(
         _monthly.key(scope),

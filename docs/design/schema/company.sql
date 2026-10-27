@@ -6,7 +6,7 @@ CREATE TABLE "system_meta" (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),
  database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),
- schema_version INTEGER NOT NULL CHECK(schema_version=3),
+ schema_version INTEGER NOT NULL CHECK(schema_version=4),
  structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),
  global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)
 ) STRICT;
@@ -672,6 +672,8 @@ scope_key TEXT NOT NULL,
 ) STRICT;
 
 -- owner: reading
+CREATE INDEX read_scope_pending ON read_scope_head(state,scope_key,component_key);
+
 CREATE TABLE read_component (
 scope_key TEXT NOT NULL,
  component_key TEXT NOT NULL,

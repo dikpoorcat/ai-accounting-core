@@ -10,6 +10,8 @@ from ai_accounting_modular.storage.public import block_digest
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as case
 
+from ._publication import body as stored_body
+from ._publication import replace_body
 from .test_brief_open import apply, members, page, publish
 from .test_brief_open_incremental import change, scope, snapshot
 
@@ -71,7 +73,7 @@ def test_real_expense_patch_keeps_all_five_roots_pages_and_amounts(count_case, m
     assert {value["subject_id"] for value in values} == {fact["business_id"] for fact in facts}
     with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")
-        saved = repository.payload(_monthly.key(scope(case)), index.COMPONENT)
+        saved = stored_body(repository, _monthly.key(scope(case)), index.COMPONENT)
         cold = _brief_open.prepare(case.kernel.reading, scope(case), read)
         with monkeypatch.context() as legacy:
             # The optional hook's absence selects the original strict-child summary route.
@@ -100,7 +102,7 @@ def test_a_resealed_saved_count_summary_must_equal_the_actual_node_count(case, r
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
         session = repository._session
-        payload = loads_json(repository.payload(selected, index.COMPONENT)["payload_json"])
+        payload = loads_json(stored_body(repository, selected, index.COMPONENT)["payload_json"])
         identity = payload["_roots"][role][0]
         where = "WHERE scope_key=? AND collection_key=? AND item_id=?"
         node = loads_json(
@@ -139,14 +141,7 @@ def test_a_resealed_saved_count_summary_must_equal_the_actual_node_count(case, r
         assert index.validate(loads_json(resealed.payload_json)) == payload["_item_epoch"]
         # Keep all raw SHA/locator/manifest/state bindings consistent. The sole defect
         # is the count strategy's saved summary, not a missing node or stale digest.
-        session.execute(
-            "UPDATE read_component SET payload_json=? WHERE scope_key=? AND component_key=?",
-            (resealed.payload_json, selected, index.COMPONENT),
-        )
-        session.execute(
-            "UPDATE read_scope_head SET content_digest=? WHERE scope_key=? AND component_key=?",
-            (resealed.content_digest, selected, index.COMPONENT),
-        )
+        replace_body(repository, selected, index.COMPONENT, resealed)
     with case.kernel.storage.read_unit(case.company) as read, pytest.raises(ContractError) as error:
         repository = read.repository("reading")
         index.base(repository, repository.state(selected, index.COMPONENT))

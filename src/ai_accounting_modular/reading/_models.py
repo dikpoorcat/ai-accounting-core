@@ -11,9 +11,10 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from . import _dependencies, _financial_projection, _monthly
+from . import _descriptor, _financial_projection, _monthly
 from ._financial_projection import PreparedFinancial
 from ._financial_store import COMPONENT, FINANCIAL_PROJECTION_FORMAT, cache_corruption, corrupt
+from ._publication_guard import CaptureGuard
 from ._types import ModelDelivery, ReadingImpact
 
 FORMAT_VERSION = 3
@@ -65,8 +66,10 @@ def _delivery(scope, state, row, payload, metadata):
         or state["ready_head"] != state["wanted_head"]
     ):
         raise ContractError("storage_corrupt", "读取组件与已就绪目标不一致。")
-    value = loads_json(payload["payload_json"])
-    if content_digest(value) != state["content_digest"]:
+    descriptor = _descriptor.read(state["scope_key"], FINANCIAL, state, payload)
+    body = row.repository("reading").component_body(state["scope_key"], FINANCIAL, descriptor)
+    value = loads_json(body["payload_json"])
+    if content_digest(value) != descriptor["body_digest"]:
         raise ContractError("storage_corrupt", "读取组件内容摘要不符。")
     snapshot = value["snapshot"] | {"head": row.head}
     validate_contract("reporting.schema.json", "FinancialSnapshot", snapshot)
@@ -76,7 +79,9 @@ def _delivery(scope, state, row, payload, metadata):
     ):
         raise ContractError("storage_corrupt", "读取组件保存了其他范围的报表。")
     organization = {"name": metadata.legal_name, "taxpayer_id": metadata.credit_code}
-    version = content_digest({"component": state["content_digest"], "organization": organization})
+    version = content_digest(
+        {"component": descriptor["semantic_digest"], "organization": organization}
+    )
     return ModelDelivery(
         "ready",
         scope,
@@ -84,7 +89,7 @@ def _delivery(scope, state, row, payload, metadata):
         {
             "snapshot": snapshot,
             "organization": organization,
-            "export": preview(snapshot, state, metadata),
+            "export": preview(snapshot, _descriptor.body_state(state, descriptor), metadata),
         },
     )
 
@@ -193,33 +198,41 @@ def _mark_target(reader, repository, state, selection, impact, unit):
         from . import _brief_activity_update
 
         return _brief_activity_update.mark(repository, state, scope, impact, unit.next_head), None
-    if state["state"] != "ready":
-        # First captures have no sparse inputs yet; keep their wanted point current.
-        if state["state"] == "preparing":
-            repository.mark(state["scope_key"], component, unit.next_head)
-        return False, None
-    raw = repository.input_dependencies(state["scope_key"], component)
-    selected = _dependencies.inputs({"_inputs": loads_json(raw)})
-    affected = _monthly.affected(scope, component, impact, selected)
-    if affected:
-        repository.mark(state["scope_key"], component, unit.next_head)
-    return affected, None
+    repository.mark(state["scope_key"], component, unit.next_head)
+    return True, None
 
 
 def mark_targets(reader, impact, unit):
     if not isinstance(impact, ReadingImpact):
         raise ContractError("invalid_input", "读取通知须提供明确的影响范围。")
-    # Company prose has a direct snapshot reader and no monthly consumers.
-    # Exclude it before touching targets, including unfinished first captures.
-    if "company" in impact.note_scopes:
-        impact = replace(
-            impact, note_scopes=tuple(key for key in impact.note_scopes if key != "company")
-        )
+    # Context reads only issues since company start; company prose has its own
+    # direct reader. Exclude both before locating any monthly consumers.
+    notes = tuple(key for key in impact.note_scopes if key != "company")
+    periods = tuple(
+        period for period in impact.issue_periods if period is None or period >= unit.start_period
+    )
+    if notes != impact.note_scopes or periods != impact.issue_periods:
+        impact = replace(impact, note_scopes=notes, issue_periods=periods)
     if not impact:
         return ()
     repository = unit.repository("reading")
     touched, financial = [], []
-    for state in repository.scopes():
+    from ._subscriptions import Directory
+
+    try:
+        candidates = Directory(repository).candidates(impact)
+    except ContractError as error:
+        if error.code != "storage_corrupt":
+            raise
+        # A broken global route cannot safely leave any old projection ready.
+        # These tables are disposable; formal accounting and files are separate.
+        repository.reset()
+        return ()
+    for scope_key, component in candidates:
+        state = repository.state(scope_key, component)
+        if state is None:
+            repository.reset()
+            return ()
         try:
             selection, version = _selection(state, unit)
             if state["format_version"] != version:
@@ -267,11 +280,8 @@ def run_pending(reader, company_id, limit):
         return tuple(completed)
     with reader.storage.read_unit(company_id) as read:
         pending, damaged = [], []
-        for target in sorted(
-            read.repository("reading").scopes(),
-            key=lambda value: (value["scope_key"], value["component_key"]),
-        ):
-            if target["state"] != "preparing" or target["scope_key"] == producer_key:
+        for target in _pending_targets(read.repository("reading"), limit):
+            if target["scope_key"] == producer_key:
                 continue
             try:
                 selection, _ = _selection(target, read)
@@ -302,7 +312,7 @@ def run_pending(reader, company_id, limit):
             target["component_key"],
             target["wanted_head"],
         )
-        model, failure_guard, state = None, None, target
+        model, failure_guard, state, capture_guard = None, None, target, None
         try:
             selection = loads_json(scope_key)
             scope = selection["scope"]
@@ -313,6 +323,7 @@ def run_pending(reader, company_id, limit):
                 state = read.repository("reading").state(scope_key, component)
                 if state is None or state["wanted_head"] != wanted or state["state"] != "preparing":
                     continue
+                capture_guard = CaptureGuard.capture(state, read.head)
                 if state["format_version"] != format_version:
                     raise ContractError("storage_corrupt", "读取目标的内容格式尚未装配。")
                 if component == FINANCIAL:
@@ -362,12 +373,20 @@ def run_pending(reader, company_id, limit):
                 continue
             with reader.storage.maintenance_unit(company_id) as unit:
                 published = unit.repository("reading").publish(
-                    scope_key, component, wanted, format_version, model
+                    scope_key,
+                    component,
+                    wanted,
+                    format_version,
+                    model,
+                    guard=capture_guard,
+                    current_head=unit.head,
                 )
             if published:
                 completed.append(scope_key)
         except Exception as error:
             with reader.storage.maintenance_unit(company_id) as unit:
+                if capture_guard is None or unit.head != capture_guard.captured_head:
+                    continue
                 if component == FINANCIAL:
                     target_store = _financial_projection.store(unit)
                     if isinstance(model, PreparedFinancial):
@@ -386,3 +405,13 @@ def run_pending(reader, company_id, limit):
                     expected_format=state["format_version"],
                 )
     return tuple(completed)
+
+
+def _pending_targets(repository, batch_size):
+    after = None
+    while True:
+        rows = repository.pending(after=after, limit=batch_size)
+        yield from rows
+        if len(rows) < batch_size:
+            return
+        after = rows[-1]["scope_key"], rows[-1]["component_key"]

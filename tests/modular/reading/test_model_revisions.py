@@ -4,6 +4,7 @@ import pytest
 
 from ai_accounting_modular.reading import _brief_activity_index, _brief_open_index
 from ai_accounting_modular.reading._collections import prepare_model
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 
 from ._support import assemble
 
@@ -28,7 +29,15 @@ def test_revision_cas_distinguishes_same_head_rebuild_and_noops(book):
         repository.mark("synthetic-model", "revision-case", 1)
         repository.mark("synthetic-model", "revision-case", 1)
         assert repository.state("synthetic-model", "revision-case")["revision"] == 1
-        assert repository.publish("synthetic-model", "revision-case", 1, 1, model)
+        assert repository.publish(
+            "synthetic-model",
+            "revision-case",
+            1,
+            1,
+            model,
+            guard=CaptureGuard.capture(repository.state("synthetic-model", "revision-case"), 1),
+            current_head=1,
+        )
     initial = state(book)
     assert initial["revision"] == 2 and initial["state"] == "ready"
     with book.storage.maintenance_unit(book.company) as unit:
@@ -54,7 +63,15 @@ def test_revision_cas_distinguishes_same_head_rebuild_and_noops(book):
         repository.retry("synthetic-model", "revision-case")
         repository.retry("synthetic-model", "revision-case")
         assert repository.state("synthetic-model", "revision-case")["revision"] == 4
-        assert repository.publish("synthetic-model", "revision-case", 1, 1, model)
+        assert repository.publish(
+            "synthetic-model",
+            "revision-case",
+            1,
+            1,
+            model,
+            guard=CaptureGuard.capture(repository.state("synthetic-model", "revision-case"), 1),
+            current_head=1,
+        )
     rebuilt = state(book)
     assert rebuilt["revision"] == 5
     assert {key: value for key, value in rebuilt.items() if key != "revision"} == {

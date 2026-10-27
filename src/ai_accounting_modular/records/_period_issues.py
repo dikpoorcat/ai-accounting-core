@@ -36,9 +36,8 @@ def clear(records, period, command_id, uow):
                 RecordsContext(uow, command_id),
             )
         )
-    changed = []
+    changed = set()
     for plan in plans:
         records.apply_current(plan, uow)
-        if "work" in plan.changed_scopes:
-            changed.append(plan.issue_scope["scope"])
-    return tuple(changed)
+        changed.update(plan.issue_periods)
+    return tuple(sorted(changed, key=lambda value: (value is not None, value)))

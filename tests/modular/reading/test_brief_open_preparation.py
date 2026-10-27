@@ -5,10 +5,11 @@ from dataclasses import replace
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, ReadInputs, loads_json
+from ai_accounting_modular.contracts.public import ContractError, loads_json
 from ai_accounting_modular.reading import _brief_open_index as index
 from ai_accounting_modular.reading import _monthly, _open_store
 from ai_accounting_modular.reading._collections import IndexItem, _read_item, prepare_items
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from tests.modular.application._working_case import case as case
 
 from .test_brief_open_incremental import scope
@@ -40,7 +41,7 @@ def test_root_factory_keeps_strict_index_json_and_duplicate_checks(case, damage)
         selected = [replace(item, value={"nested": [(1,)]})]
     else:
         selected = [item, replace(item, value={"nested": [2]})]
-    summary = {"_inputs": ReadInputs().wire(), "_cooperation_inputs": ReadInputs().wire()}
+    summary = {}
     key = _monthly.key(scope(case))
     with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")
@@ -55,8 +56,6 @@ def test_prepared_full_roots_detach_caller_values_before_real_publication(case, 
     values = entries() if populated else []
     expected = deepcopy(values[0].value) if populated else None
     summary = {
-        "_inputs": ReadInputs().wire(),
-        "_cooperation_inputs": ReadInputs().wire(),
         "open_items": {"cutoff_period": "2026-01", "current_cutoff_period": "2026-01"},
         "title": {"text": "中文汇总"},
     }
@@ -65,6 +64,7 @@ def test_prepared_full_roots_detach_caller_values_before_real_publication(case, 
         repository = unit.repository("reading")
         repository.register(key, index.COMPONENT, unit.head, _monthly.version(index.COMPONENT))
         state = repository.state(key, index.COMPONENT)
+        guard = CaptureGuard.capture(state, unit.head)
         prepared = index.complete(summary, values, unit.head, repository=repository, scope_key=key)
         before = deepcopy(prepared)
         summary["title"]["text"] = "caller changed after preparation"
@@ -72,7 +72,13 @@ def test_prepared_full_roots_detach_caller_values_before_real_publication(case, 
             values[0].value["中文"][3]["text"] = "caller changed after preparation"
         assert prepared == before
         assert repository.publish(
-            key, index.COMPONENT, state["wanted_head"], _monthly.version(index.COMPONENT), prepared
+            key,
+            index.COMPONENT,
+            state["wanted_head"],
+            _monthly.version(index.COMPONENT),
+            prepared,
+            guard=guard,
+            current_head=unit.head,
         )
     with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")

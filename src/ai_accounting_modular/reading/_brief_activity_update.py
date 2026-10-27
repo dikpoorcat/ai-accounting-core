@@ -1,6 +1,7 @@
 """Refresh actual dirty roots and their groups through one atomic derived patch."""
 
 from copy import deepcopy
+from dataclasses import replace
 
 from . import _brief_activity as activity
 from . import _brief_activity_dependencies as dependencies
@@ -22,23 +23,11 @@ def mark(repository, state, scope, impact, head):
         if any(period <= scope["period_to"] for period in change.posted_periods)
         for identity in (change.business_id, *change.resource_business_ids)
     }
-    note_ids = (
-        {
-            value[9:]
-            for value in impact.note_scopes
-            if value in directory.payload["_inputs"]["note_scopes"]
-        }
-        if directory
-        else set()
-    )
-    if directory:
-        selected_notes = set(directory.payload["_inputs"]["note_scopes"])
-        note_ids.update(
-            change.business_id
-            for change in impact.formal_changes
-            if "business:" + change.business_id in selected_notes
-        )
-    changed.update(note_ids)
+    notes = set(impact.note_scopes) | {
+        "business:" + change.business_id for change in impact.formal_changes
+    }
+    note_roots = directory.dependents(index.NOTES, notes) if directory else set()
+    changed.update(note_roots)
     closure = any(value.period_from <= scope["period_to"] for value in impact.closure_ranges)
     roots = directory.dependents(index.BUSINESSES, changed) if directory else set()
     objects = (
@@ -95,7 +84,7 @@ def prepare(reader, scope, read, state):
     deletes.update(("activity_members", identity) for identity in old_members)
     deletes.update(("brief_vouchers", identity) for identity in old_vouchers)
     summary = deepcopy(directory.payload)
-    summary["_inputs"] = dependencies.changes(
+    added, removed = dependencies.changes(
         directory,
         [
             index.root_item(
@@ -111,10 +100,11 @@ def prepare(reader, scope, read, state):
         roots,
         entries,
         deletes,
-    ).wire()
+    )
     groups.replace(
         directory, list(old_members.values()), members, summary["_category_folds"], entries, deletes
     )
     totals.review_adjust(summary["_review_folds"], old_members.values(), -1)
     totals.review_adjust(summary["_review_folds"], members, 1)
-    return index.patch(summary, entries, deletes, directory, state)
+    prepared = index.patch(summary, entries, deletes, directory, state)
+    return replace(prepared, model=replace(prepared.model, input_adds=added, input_removes=removed))

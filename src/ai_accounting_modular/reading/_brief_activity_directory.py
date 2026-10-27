@@ -20,10 +20,16 @@ class Directory:
     def from_row(cls, repository, state, row):
         from ._component_view import summary
 
-        payload, epoch = summary(state["scope_key"], index.COMPONENT, state, row)
+        payload, epoch = summary(
+            state["scope_key"], index.COMPONENT, state, row, repository=repository
+        )
+        return cls.from_summary(repository, state["scope_key"], payload, epoch)
+
+    @classmethod
+    def from_summary(cls, repository, scope_key, payload, epoch):
         directory = cls.__new__(cls)
         directory.epoch = epoch
-        directory._bind(repository, state["scope_key"], payload)
+        directory._bind(repository, scope_key, payload)
         return directory
 
     def _bind(self, repository, scope_key, payload):
@@ -33,12 +39,14 @@ class Directory:
             len(value) for value in self.roots.values()
         ):
             index.corrupt()
+        self.total_counts = {}
         for collection in index.MIRRORS:
             total, _ = repository.item_counts(
                 scope_key, index.COMPONENT, collection, CollectionFilter()
             )
             if total != payload["_collections"][collection]["count"]:
                 index.corrupt()
+            self.total_counts[collection] = total
 
     def load(self, keys):
         missing = set(keys) - self.loaded.keys()
@@ -243,11 +251,7 @@ class Directory:
         )
         for identity, value in values.items():
             for owner in value["roots"]:
-                actual = (
-                    {source["business_id"] for source in roots[owner]["sources"]}
-                    if collection == index.BUSINESSES
-                    else roots[owner]["object_ids"]
-                )
+                actual = dependencies.identifiers(roots[owner], collection)
                 if identity not in actual:
                     index.corrupt()
         return set(roots)

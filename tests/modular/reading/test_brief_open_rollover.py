@@ -31,6 +31,7 @@ from ai_accounting_modular.reading.public import MonthScope
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as working_case
 
+from ._publication import CapturedState, assert_subscriptions, body
 from .test_brief_open import apply, payment, publish
 
 
@@ -71,8 +72,11 @@ def cold_equal(book, month):
     selected = scope(book, month)
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
-        saved = repository.payload(_monthly.key(selected), index.COMPONENT)
+        saved = body(repository, _monthly.key(selected), index.COMPONENT)
         expected = brief.prepare(book.kernel.reading, selected, read)
+        assert_subscriptions(
+            repository, _monthly.key(selected), index.COMPONENT, expected.model.inputs
+        )
         actual, fresh = loads_json(saved["payload_json"]), loads_json(expected.payload_json)
         assert actual["_semantic_digest"] == fresh["_semantic_digest"]
         assert {key: value for key, value in actual.items() if key != "_item_epoch"} == {
@@ -83,9 +87,11 @@ def cold_equal(book, month):
             "SELECT * FROM read_item WHERE scope_key=? AND component_key=?",
             (_monthly.key(selected), index.COMPONENT),
         )
-        assert {(row["collection_key"], row["item_id"]): row["payload_json"] for row in rows} == {
-            (row[0], row[1]): row[-1] for row in expected.rows
-        }
+        assert {
+            (row["collection_key"], row["item_id"]): row["payload_json"]
+            for row in rows
+            if row["collection_key"] != "_component_body"
+        } == {(row[0], row[1]): row[-1] for row in expected.rows}
         for collection in index.PUBLIC:
             known = directory.item_page(collection, CollectionFilter(), None, 500)
             directory.check_many(known)
@@ -134,7 +140,9 @@ def fork_plan(book, month="2026-02"):
     register(book, month)
     selected = scope(book, month)
     with book.kernel.storage.read_unit(book.company) as read:
-        current = read.repository("reading").state(_monthly.key(selected), index.COMPONENT)
+        current = CapturedState(
+            read.repository("reading").state(_monthly.key(selected), index.COMPONENT), read.head
+        )
         model = update.prepare(book.kernel.reading, selected, read, current)
     assert isinstance(model, index.PreparedOpenPatch), "a checked previous month must yield a fork"
     assert model.base_scope == _monthly.key(scope(book, "2026-01"))
@@ -149,6 +157,8 @@ def publish_plan(book, current, model):
             current["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
 
 
@@ -168,7 +178,9 @@ def test_first_new_month_reads_only_new_claims_and_matches_the_actual_public_pag
     assert result.payload["data"]["collections"]["open_items"]["page"]["total_count"] >= 1
 
 
-def test_registered_but_never_published_new_month_can_fork_after_its_full_notice(book, monkeypatch):
+def test_registered_unpublished_month_can_fork_without_a_duplicate_dirty_manifest(
+    book, monkeypatch
+):
     book.seed()
     apply(book, *(book.expense(str(number)) for number in range(1, 8)))
     ready(book, "2026-01")
@@ -193,11 +205,11 @@ def test_registered_but_never_published_new_month_can_fork_after_its_full_notice
         target = repository.state(_monthly.key(scope(book, "2026-02")), index.COMPONENT)
         assert target["ready_head"] == 0 and target["content_digest"] is None
         assert repository.payload(target["scope_key"], index.COMPONENT) is None
-        assert inputs.pending(repository, target["scope_key"])[0] is True
+        assert inputs.pending(repository, target["scope_key"]) == (False, set())
     with monkeypatch.context() as hook:
         seen = captures(hook)
         ready(book, "2026-02")
-    assert seen == [{added["business_id"]}], "an initial full notice must not discard a safe P"
+    assert seen == [{added["business_id"]}], "initial selection must reuse a checked prior month"
     assert cold_equal(book, "2026-02")["payable_fen"] == "100328"
 
 
@@ -254,7 +266,13 @@ def test_missing_unfinished_failed_or_old_horizon_sources_use_a_real_cold_captur
                 (key, index.COMPONENT),
             )
             assert repository.publish(
-                key, index.COMPONENT, unit.head, _monthly.version(index.COMPONENT), stale
+                key,
+                index.COMPONENT,
+                unit.head,
+                _monthly.version(index.COMPONENT),
+                stale,
+                guard=CapturedState(repository.state(key, index.COMPONENT), unit.head).guard,
+                current_head=unit.head,
             )
     # Prepare Q directly so the background worker cannot repair P before selection.
     register(book)
@@ -262,7 +280,9 @@ def test_missing_unfinished_failed_or_old_horizon_sources_use_a_real_cold_captur
         seen = captures(hook)
         with book.kernel.storage.read_unit(book.company) as read:
             selected = scope(book, "2026-02")
-            source = read.repository("reading").state(_monthly.key(selected), index.COMPONENT)
+            source = CapturedState(
+                read.repository("reading").state(_monthly.key(selected), index.COMPONENT), read.head
+            )
             model = update.prepare(book.kernel.reading, selected, read, source)
     assert seen == [None]
     assert not isinstance(model, index.PreparedOpenPatch)
@@ -280,7 +300,7 @@ def test_source_same_head_full_repair_rejects_the_old_fork_without_touching_targ
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
         source = repository.state(model.base_scope, index.COMPONENT)
-        previous = loads_json(repository.payload(model.base_scope, index.COMPONENT)["payload_json"])
+        previous = loads_json(body(repository, model.base_scope, index.COMPONENT)["payload_json"])
         assert previous["_item_epoch"] < source["ready_head"]
     publish(book, "2026-01")
     with book.kernel.storage.maintenance_unit(book.company) as unit:
@@ -291,6 +311,8 @@ def test_source_same_head_full_repair_rejects_the_old_fork_without_touching_targ
             current["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
         assert repository.payload(current["scope_key"], index.COMPONENT) is None
         assert repository.state(current["scope_key"], index.COMPONENT) == current
@@ -309,6 +331,8 @@ def test_a_target_already_ready_at_the_same_wanted_head_rejects_the_old_fork(boo
             current["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
     assert state(book, "2026-02") == before
     cold_equal(book, "2026-02")
@@ -331,6 +355,8 @@ def test_a_late_target_payload_cannot_masquerade_as_an_initial_scope(book):
             current["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
         assert repository.state(current["scope_key"], index.COMPONENT) == current
         assert (
@@ -341,7 +367,7 @@ def test_a_late_target_payload_cannot_masquerade_as_an_initial_scope(book):
 
 def test_a_fork_is_bound_to_its_actual_target_cutoff(book):
     advanced_source(book)
-    _, model = fork_plan(book)
+    current, model = fork_plan(book)
     register(book, "2026-03")
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
@@ -352,6 +378,8 @@ def test_a_fork_is_bound_to_its_actual_target_cutoff(book):
             target["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
         assert repository.state(target["scope_key"], index.COMPONENT) == target
         assert repository.payload(target["scope_key"], index.COMPONENT) is None
@@ -406,6 +434,8 @@ def test_source_changes_with_unchanged_target_head_reject_the_old_fork(book, cha
             current["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
         assert repository.payload(current["scope_key"], index.COMPONENT) is None
         assert repository.state(current["scope_key"], index.COMPONENT) == current
@@ -504,6 +534,10 @@ def test_opening_completeness_is_read_for_q_instead_of_inherited_from_a_checked_
             unit.head,
             _monthly.version(index.COMPONENT),
             incomplete,
+            guard=CapturedState(
+                repository.state(_monthly.key(selected), index.COMPONENT), unit.head
+            ).guard,
+            current_head=unit.head,
         )
     with monkeypatch.context() as hook:
         seen = captures(hook)
@@ -581,12 +615,12 @@ def test_repeated_closed_transfer_corrections_reproject_the_original_and_final_o
     assert cold_equal(book, "2026-02")["payable_fen"] == "300000"
 
 
-def test_later_target_formal_work_rejects_the_prepared_fork_and_keeps_current_work(book):
+def test_later_formal_work_rejects_a_first_fork_even_without_existing_subscriptions(book):
     advanced_source(book)
     current, model = fork_plan(book)
     apply(book, book.expense("7", "2026-02"))
     after = state(book, "2026-02")
-    assert after["wanted_head"] > current["wanted_head"]
+    assert after["wanted_head"] == current["wanted_head"]
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
         assert not repository.publish(
@@ -595,6 +629,8 @@ def test_later_target_formal_work_rejects_the_prepared_fork_and_keeps_current_wo
             current["wanted_head"],
             _monthly.version(index.COMPONENT),
             model,
+            guard=current.guard,
+            current_head=unit.head,
         )
         assert repository.payload(current["scope_key"], index.COMPONENT) is None
         assert repository.state(current["scope_key"], index.COMPONENT) == after
@@ -632,6 +668,8 @@ def test_node_publication_failure_rolls_back_shared_nodes_and_target_header(book
                 current["wanted_head"],
                 _monthly.version(index.COMPONENT),
                 model,
+                guard=current.guard,
+                current_head=unit.head,
             )
     assert published, "the fault must happen after actual shared-node publication"
     with book.kernel.storage.read_unit(book.company) as read:

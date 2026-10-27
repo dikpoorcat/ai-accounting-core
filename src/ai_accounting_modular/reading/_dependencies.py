@@ -3,27 +3,27 @@
 from dataclasses import replace
 
 from ai_accounting_modular.contracts.public import (
-    ContractError,
     ReadInputs,
-    loads_json,
 )
-
-from ._collections import prepare_model
 
 
 def bind(model, inputs):
     if not isinstance(inputs, ReadInputs):
         raise TypeError("a projection must declare its public inputs")
-    payload = loads_json(model.payload_json)
-    payload["_inputs"] = inputs.wire()
-    return replace(prepare_model(payload), rows=model.rows)
+    return replace(model, inputs=inputs)
 
 
-def inputs(payload):
-    try:
-        return ReadInputs.from_wire(payload["_inputs"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise ContractError("storage_corrupt", "读取组件缺少完整的公开输入依赖。") from error
+def difference(before, after):
+    """Return only membership transitions, without carrying unchanged identities."""
+    old, new = before.wire(), after.wire()
+    added, removed = {}, {}
+    for name, value in new.items():
+        if type(value) is bool:
+            added[name], removed[name] = value and not old[name], old[name] and not value
+        else:
+            added[name] = sorted(set(value) - set(old[name]))
+            removed[name] = sorted(set(old[name]) - set(value))
+    return ReadInputs.from_wire(added), ReadInputs.from_wire(removed)
 
 
 def affected(selected, month, impact):

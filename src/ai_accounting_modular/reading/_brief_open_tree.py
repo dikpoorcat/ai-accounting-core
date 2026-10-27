@@ -7,7 +7,16 @@ from ._collections import IndexItem, _bound, _index
 from ._open_store import NAMESPACE
 
 PUBLIC = ("open_items", "open_members")
-PRIVATE = ("_open_businesses", "_open_objects", "_open_folds", "_open_displays")
+DESCRIPTIONS = "_open_group_descriptions"
+PRIVATE = (
+    "_open_businesses",
+    "_open_objects",
+    "_open_folds",
+    "_open_displays",
+    "_open_notes",
+    "_open_provider_inputs",
+    DESCRIPTIONS,
+)
 COLLECTIONS = PUBLIC + PRIVATE
 ROLES = ("rows", *PUBLIC, "filters", "voucher_keys")
 FILTERS = ("object_id", "group_key", "category")
@@ -165,7 +174,24 @@ def prepared(item):
     if not isinstance(item, IndexItem) or item.collection not in COLLECTIONS:
         corrupt("待收待付项目引用了未声明的集合。")
     index = _index(item)
-    identity = key(item.collection, item.item_id)
+    if item.collection == DESCRIPTIONS:
+        fields, value = parts(item.item_id), item.value
+        if (
+            len(fields) != 2
+            or type(value) is not dict
+            or set(value) != {"text", "count"}
+            or type(value["text"]) is not str
+            or not value["text"]
+            or content_digest(value["text"]) != fields[1]
+            or type(value["count"]) is not int
+            or value["count"] < 1
+        ):
+            corrupt("待收待付说明的身份或引用数量不完整。")
+    identity = (
+        key(item.collection, *parts(item.item_id))
+        if item.collection == DESCRIPTIONS
+        else key(item.collection, item.item_id)
+    )
     if item.collection in PRIVATE:
         if item.sort_key != item.item_id or any(
             index[field] is not None for field in FILTERS + ("business_id",)

@@ -22,6 +22,8 @@ from tests.modular.domains.assets.test_assets import case as asset_case
 from tests.modular.domains.assets.test_reading import save
 from tests.modular.domains.assets.test_reading_integration import _asset
 
+from ._support import rebuild_guard
+
 
 def scope(company, month="2026-01"):
     return {"company_id": company, "period_from": month, "period_to": month, "view": "as_posted"}
@@ -41,7 +43,13 @@ def publish(app, company, month="2026-01"):
         repository.register(_monthly.key(normalized), "assets", unit.head, _monthly.FORMAT_VERSION)
         repository.mark(_monthly.key(normalized), "assets", unit.head)
         assert repository.publish(
-            _monthly.key(normalized), "assets", unit.head, _monthly.FORMAT_VERSION, model
+            _monthly.key(normalized),
+            "assets",
+            unit.head,
+            _monthly.FORMAT_VERSION,
+            model,
+            guard=rebuild_guard(repository, _monthly.key(normalized), "assets", unit.head),
+            current_head=unit.head,
         )
     snapshot = _monthly.MonthSnapshot(
         _monthly.key(normalized),

@@ -29,31 +29,66 @@ def pending_plan(case):
         plan = case.kernel.ledger.prepare_financial_projection(
             tuple(requests.values()), (), (), read, base=None, rebuild=True
         )
-        revision = target.state()["revision"]
-    return token, plan, revision
+    return token, plan
 
 
 def test_same_head_new_request_cannot_be_cleared_by_an_old_producer(financial_case):
     case, _ = financial_case
     case.seed()
     page(case)
-    token, plan, revision = pending_plan(case)
+    token, plan = pending_plan(case)
     page(case, "2026-02")
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         target = projection.store(unit)
         assert not target.publish(token, plan, rebuild=True)
         assert len(target.work()["pending"]) == 2
         assert target.header_json is None
-        assert not target.fail(token, "production_failed", expected_revision=revision)
+        assert not target.fail(token, "production_failed")
     drain(case)
     assert page(case).state == page(case, "2026-02").state == "ready"
+
+
+@pytest.mark.parametrize("after_failure", [False, True])
+def test_same_head_requeued_work_rejects_old_success_without_writing(financial_case, after_failure):
+    case, _ = financial_case
+    case.seed()
+    page(case)
+    token, plan = pending_plan(case)
+    with case.kernel.storage.maintenance_unit(case.company) as unit:
+        target = projection.store(unit)
+        if after_failure:
+            assert target.fail(token, "production_failed")
+        target.save_work(target.work(), unit.head, retry=True)
+        current, work = target.state(), target.work()
+        assert current["wanted_head"] == token.wanted
+        assert current["revision"] > token.revision
+        assert work["pending"]
+
+        def rows():
+            return tuple(
+                tuple(tuple(row) for row in target._session.fetchall(sql))
+                for sql in (
+                    "SELECT * FROM read_scope_head ORDER BY scope_key,component_key",
+                    "SELECT * FROM read_component ORDER BY scope_key,component_key",
+                    "SELECT * FROM read_item ORDER BY scope_key,collection_key,item_id",
+                )
+            )
+
+        before = rows()
+        assert not target.publish(token, plan, rebuild=True)
+        assert rows() == before
+        assert target.state() == current and target.work() == work
+        assert target.publish(target.token(), plan, rebuild=True)
+        assert target.state()["state"] == "ready" and target.work()["pending"] == []
+    drain(case)
+    assert page(case).payload["financial"]["expense"]["amount_fen"] == "100000"
 
 
 def test_same_head_rebuild_does_not_let_an_old_plan_replace_the_new_base(financial_case):
     case, _ = financial_case
     case.seed()
     page(case)
-    old, plan, _ = pending_plan(case)
+    old, plan = pending_plan(case)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         assert projection.store(unit).publish(old, plan, rebuild=True)
         selected = projection.request(case.kernel.reading, scope(case), "summary_values", unit)
@@ -100,7 +135,7 @@ def test_rebuild_replaces_all_owner_garbage_only_after_successful_cas(financial_
         )
         selected = projection.request(case.kernel.reading, scope(case), "summary_values", unit)
         projection.queue(case.kernel.reading, selected, unit, retry=True, rebuild=True)
-    token, plan, _ = pending_plan(case)
+    token, plan = pending_plan(case)
     bad = FinancialProjectionPlan(
         plan.header_json, plan.header_digest, (*plan.writes, ("bad", "json", "not-json")), ()
     )
@@ -145,11 +180,11 @@ def test_changed_actual_request_descriptor_rejects_old_consumer(financial_case):
             (
                 raw,
                 projection.key(unit),
-                OWNER_PREFIX + prepared.guard.descriptor_key[0],
-                prepared.guard.descriptor_key[1],
+                OWNER_PREFIX + prepared.model.guard.descriptor_key[0],
+                prepared.model.guard.descriptor_key[1],
             ),
         )
-        assert not target.matches_consumer(prepared.guard, validate=False)
+        assert not target.matches_consumer(prepared.model.guard, validate=False)
     assert not publish(case, prepared)
     assert fact["data"]["amount_fen"] == "100000"
 

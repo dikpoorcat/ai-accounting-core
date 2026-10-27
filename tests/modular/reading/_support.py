@@ -13,8 +13,19 @@ from ai_accounting_modular.ledger.opening import public as opening
 from ai_accounting_modular.ledger.reporting import public as reporting
 from ai_accounting_modular.money import public as money
 from ai_accounting_modular.reading import public as reading
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from ai_accounting_modular.records import public as records
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, Storage, create_catalog
+
+
+def rebuild_guard(repository, scope_key, component, head):
+    """An explicit cold-publication fixture starts a new lifecycle at the same head."""
+    repository._session.execute(
+        "UPDATE read_scope_head SET state='preparing',error_code=NULL,revision=revision+1 "
+        "WHERE scope_key=? AND component_key=? AND state='ready'",
+        (scope_key, component),
+    )
+    return CaptureGuard.capture(repository.state(scope_key, component), head)
 
 
 def uid(value):

@@ -197,6 +197,14 @@ $company.database_id
 
 ## 当前结构基线
 
-目录结构为1，公司结构为3；结构、模块归属和指纹来自随包的当前完整合同。普通打开及备份恢复均核对这一基线，不携带历史结构、父合同、增量DDL或结构升级命令。结构不匹配明确拒绝，不靠改版本号、重建库或忽略指纹继续运行。
+目录结构为1，公司结构为4；结构、模块归属和指纹来自随包的当前完整合同。普通打开及备份恢复均核对这一基线，不携带历史结构、父合同、增量DDL或结构升级命令。结构不匹配明确拒绝，不靠改版本号、重建库或忽略指纹继续运行。
 
 标准业务文档具有独立的事实格式；文档重建使用当前内核重新核算，不能替代数据库结构核验。备份恢复只接受当前完整结构及格式，保持正式账务、必要冻结和原件的一致状态。
+
+结构3到4的开发接续使用`tools/convert_reading_copy.py`，只生成数据库的隔离副本。先用原结构3安装的`storage.public.verify_database()`完整核验源库，并由同版`storage.public.company_structure_contract()`导出完整JSON合同，再显式提供旧库、尚不存在的目标目录和该合同：
+
+```powershell
+& .tmp-kernel-venv/Scripts/python.exe -X utf8 tools/convert_reading_copy.py --source 'D:\合成接续资料\offline-company.sqlite3' --target-directory 'D:\合成接续资料\structure-4-copy' --source-contract 'D:\合成接续资料\company-3-contract.json'
+```
+
+工具只受理已核定的索引和版本约束差异。源库及旁文件在复制期间须稳定，全部SQLite操作在暂存副本中进行；旧完整结构、模块记录、新完整结构及正式表逐行核对成功后才发布新目录。读取派生表清空，身份和业务序号保持。目标只有`company.sqlite3`，不是完整公司资料包，不搬移原件、标准文档或备份，不注册公司、不切换服务。资料根接入和正式切换另行明确安排；不能用当前安装伪造旧合同或只修改库内版本与指纹。

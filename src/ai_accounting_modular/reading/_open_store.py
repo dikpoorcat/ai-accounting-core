@@ -2,7 +2,12 @@
 
 from uuid import UUID, uuid4
 
-from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    ReadInputs,
+    canonical_json,
+    loads_json,
+)
 
 COMPONENT = "brief_open_items"
 NAMESPACE = "_open"
@@ -152,4 +157,11 @@ def reset(repository, head, format_version):
     )
     for row in scopes:
         repository.open_mark(row["scope_key"], head, full=True)
+    from ._subscriptions import Directory
+
+    directory = Directory(repository)
+    for row in scopes:
+        plan = directory.plan(row["scope_key"], COMPONENT, inputs=ReadInputs())
+        if not directory.commit(plan):
+            corrupt()
     _save_control(repository, str(uuid4()), 0)

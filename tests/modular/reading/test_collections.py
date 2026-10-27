@@ -14,6 +14,7 @@ from ai_accounting_modular.contracts.public import (
     loads_json,
 )
 from ai_accounting_modular.identity.public import IdentityContext
+from ai_accounting_modular.reading import _descriptor
 from ai_accounting_modular.reading._collections import (
     CollectionFilter,
     IndexItem,
@@ -23,9 +24,10 @@ from ai_accounting_modular.reading._collections import (
     prepare_items,
     prepare_model,
 )
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from ai_accounting_modular.storage.public import CompanySpec
 
-from ._support import BANK, PARTY, assemble, expense
+from ._support import BANK, PARTY, assemble, expense, rebuild_guard
 
 SCOPE, COMPONENT = "synthetic-month-2026-01", "activity"
 
@@ -36,7 +38,15 @@ def publish(book, items, *, component=COMPONENT, summary=None):
     with book.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
         repository.register(SCOPE, component, unit.head, 1)
-        assert repository.publish(SCOPE, component, unit.head, 1, model)
+        assert repository.publish(
+            SCOPE,
+            component,
+            unit.head,
+            1,
+            model,
+            guard=rebuild_guard(repository, SCOPE, component, unit.head),
+            current_head=unit.head,
+        )
 
 
 def page(book, *, query=None, request=None, component=COMPONENT, company=None):
@@ -233,19 +243,43 @@ def test_prepared_values_are_detached_and_stale_publication_cannot_delete_curren
         repository = unit.repository("reading")
         old_head = unit.head
         repository.register(SCOPE, COMPONENT, old_head, 1)
-        repository.publish(SCOPE, COMPONENT, old_head, 1, model)
+        captured = CaptureGuard.capture(repository.state(SCOPE, COMPONENT), old_head)
+        repository.publish(
+            SCOPE,
+            COMPONENT,
+            old_head,
+            1,
+            model,
+            guard=captured,
+            current_head=old_head,
+        )
     assert page(book).items[0]["amount_fen"] == "9007199254740993"
     book.submit(expense())
     with book.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
         repository.mark(SCOPE, COMPONENT, unit.head)
         assert not repository.publish(
-            SCOPE, COMPONENT, old_head, 1, prepare_model({}, items=prepare_items(()))
+            SCOPE,
+            COMPONENT,
+            old_head,
+            1,
+            prepare_model({}, items=prepare_items(())),
+            guard=captured,
+            current_head=unit.head,
         )
         assert (
-            loads_json(repository.payload(SCOPE, COMPONENT)["payload_json"])["_collections"][
-                "entries"
-            ]["count"]
+            loads_json(
+                repository.component_body(
+                    SCOPE,
+                    COMPONENT,
+                    _descriptor.read(
+                        SCOPE,
+                        COMPONENT,
+                        repository.state(SCOPE, COMPONENT),
+                        repository.payload(SCOPE, COMPONENT),
+                    ),
+                )["payload_json"]
+            )["_collections"]["entries"]["count"]
             == 1
         )
     with pytest.raises(ContractError) as error:
@@ -302,7 +336,13 @@ def test_cursor_binds_company_filter_and_collection_not_global_commit_or_page_si
         repository = unit.repository("reading")
         repository.register(SCOPE, COMPONENT, unit.head, 1)
         repository.publish(
-            SCOPE, COMPONENT, unit.head, 1, prepare_model({}, items=prepare_items(prepared_items))
+            SCOPE,
+            COMPONENT,
+            unit.head,
+            1,
+            prepare_model({}, items=prepare_items(prepared_items)),
+            guard=CaptureGuard.capture(repository.state(SCOPE, COMPONENT), unit.head),
+            current_head=unit.head,
         )
     with pytest.raises(ContractError) as error:
         page(book, company=second.company_id, request=PageQuery(cursor=first.next_cursor))
@@ -324,7 +364,15 @@ def test_caught_python_preparation_failure_cannot_commit_new_rows_under_old_mani
         repository = unit.repository("reading")
         try:
             model = prepare_model({"bad": object()}, items=prepare_items([item(2)]))
-            repository.publish(SCOPE, COMPONENT, unit.head, 1, model)
+            repository.publish(
+                SCOPE,
+                COMPONENT,
+                unit.head,
+                1,
+                model,
+                guard=CaptureGuard.capture(repository.state(SCOPE, COMPONENT), unit.head),
+                current_head=unit.head,
+            )
         except ValueError:
             pass
     assert page(book) == before

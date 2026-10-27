@@ -33,6 +33,7 @@ from tests.modular.domains.financing._cooperation_support import (
 from tests.modular.domains.financing._support import BANK, COUNTERPARTY, payment, six
 from tests.modular.money.test_reconciliation import pair as statement_pair
 
+from ._publication import CapturedState, PreparedSummary, assert_subscriptions, body
 from .test_brief_activity import activity as activity_page
 from .test_brief_activity import capture as publish_full
 from .test_funds import apply, initialize, selection
@@ -75,18 +76,19 @@ def matches_complete(book, month="2026-01"):
         current = repository.state(_monthly.key(scope), index.COMPONENT)
         assert current["state"] == "ready", current
         fresh = activity.prepare(book.kernel.reading, scope, read)
-        saved = loads_json(repository.payload(_monthly.key(scope), index.COMPONENT)["payload_json"])
+        saved = loads_json(body(repository, _monthly.key(scope), index.COMPONENT)["payload_json"])
         assert index.semantic(saved) == index.semantic(loads_json(fresh.payload_json))
         assert index.base(repository, current) is not None
         assert index.pending(repository, _monthly.key(scope)) is None
-        rows = repository.activity_rows(_monthly.key(scope))
+        rows = tuple(
+            row
+            for row in repository.activity_rows(_monthly.key(scope))
+            if row["collection_key"] != "_component_body"
+        )
         actual = {(row["collection_key"], row["item_id"]): row["payload_json"] for row in rows}
         assert actual == {(row[0], row[1]): row[-1] for row in fresh.rows}
-    return {
-        key: value
-        for key, value in loads_json(fresh.payload_json).items()
-        if key not in {"_item_epoch", "_semantic_digest"}
-    }
+        assert_subscriptions(repository, _monthly.key(scope), index.COMPONENT, fresh.inputs)
+    return PreparedSummary(fresh)
 
 
 def watch_contents(book, monkeypatch):
@@ -282,7 +284,9 @@ def test_changed_dependency_is_replaced_and_unused_dependency_does_not_accumulat
     matches_complete(book)
     with book.kernel.storage.read_unit(book.company) as read:
         directory = index.base(read.repository("reading"), state(book))
-        roots = directory.get(index.ROOTS, directory.payload["_inputs"]["business_ids"])
+        roots = directory.get(
+            index.ROOTS, (first["business_id"], second["business_id"], paid["business_id"])
+        )
     dependencies = {source["business_id"] for source in roots[paid["business_id"]]["sources"]}
     assert second["business_id"] in dependencies and first["business_id"] not in dependencies
     saved = book.app.accounting_apply(
@@ -293,7 +297,7 @@ def test_changed_dependency_is_replaced_and_unused_dependency_does_not_accumulat
     assert saved["completion"] == "complete", saved
     assert book.kernel.reading.run_pending(book.company)
     payload = matches_complete(book)
-    assert first["business_id"] not in payload["_inputs"]["business_ids"]
+    assert first["business_id"] not in payload.inputs.business_ids
     assert "支付销售费用" in {row["title"] for row in activity_page(book)["items"]}
 
 
@@ -316,7 +320,7 @@ def test_move_month_and_withdraw_remove_old_display_and_root_dependencies(book):
     assert book.kernel.reading.run_pending(book.company)
     payload = matches_complete(book, "2026-02")
     assert payload["activity_count"] == payload["voucher_count"] == 0
-    assert first["business_id"] not in payload["_inputs"]["business_ids"]
+    assert first["business_id"] not in payload.inputs.business_ids
 
 
 def test_management_rename_uses_full_capture_and_unrelated_object_does_not_invalidate(
@@ -372,7 +376,7 @@ def test_later_changes_survive_rejected_whole_index_publication(book):
     scope = selection(book)
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
-        previous = repository.state(_monthly.key(scope), index.COMPONENT)
+        previous = CapturedState(repository.state(_monthly.key(scope), index.COMPONENT), read.head)
         prepared = update.prepare(book.kernel.reading, scope, read, previous)
     second["data"]["amount_fen"] = "300"
     change(book, second)
@@ -384,6 +388,8 @@ def test_later_changes_survive_rejected_whole_index_publication(book):
             previous["wanted_head"],
             index.FORMAT_VERSION,
             prepared,
+            guard=previous.guard,
+            current_head=unit.head,
         )
         assert set(index.pending(repository, _monthly.key(scope))["business_ids"]) == {
             first["business_id"],
@@ -464,8 +470,8 @@ def test_closed_correction_and_withdrawal_keep_the_frozen_month(book):
     assert book.kernel.reading.run_pending(book.company)
     revised_january = matches_complete(book)
     assert activity_page(book) == january_display
-    assert january["_inputs"]["note_scopes"] == ["business:" + first["business_id"]]
-    assert revised_january["_inputs"]["note_scopes"] == []
+    assert january.inputs.note_scopes == ("business:" + first["business_id"],)
+    assert revised_january.inputs.note_scopes == ()
     february = matches_complete(book, "2026-02")
     assert february["activity_count"] == february["voucher_count"] == 2
     assert {row["title"] for row in activity_page(book, "2026-02")["items"]} == {
@@ -526,8 +532,8 @@ def test_no_voucher_business_legs_remain_incremental_after_closing(book):
     changed = matches_complete(book, "2026-02")
     assert changed["activity_count"] == 2 and changed["voucher_count"] == 0
     revised_january = matches_complete(book)
-    assert revised_january["_inputs"]["note_scopes"] == []
-    assert january["_inputs"]["note_scopes"] == ["business:" + charged["business_id"]]
+    assert revised_january.inputs.note_scopes == ()
+    assert january.inputs.note_scopes == ("business:" + charged["business_id"],)
     for collection in index.PUBLIC:
         assert revised_january["_collections"][collection] == january["_collections"][collection]
     for field in (

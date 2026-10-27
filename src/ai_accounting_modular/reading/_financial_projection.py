@@ -235,14 +235,12 @@ def retry(reader, scope, kind, scope_key, version, unit, *, format_upgrade=False
 
 def produce(reader, company_id):
     token = None
-    revision = None
     try:
         with reader.storage.read_unit(company_id) as read:
             target = store(read)
             state = target.state()
             if state is None or state["state"] != "preparing":
                 return False
-            revision = state["revision"]
             token = target.token()
             if state["format_version"] != FINANCIAL_PROJECTION_FORMAT:
                 corrupt()
@@ -270,7 +268,6 @@ def produce(reader, company_id):
                 store(unit).fail(
                     token,
                     error.code if isinstance(error, ContractError) else "production_failed",
-                    expected_revision=revision,
                 )
         return False
 
@@ -324,5 +321,5 @@ def capture(reader, scope, kind, read):
             or value["head"] != read.head
         ):
             corrupt()
-        model = prepare_model({"snapshot": semantic(value)})
+        model = _dependencies.bind(prepare_model({"snapshot": semantic(value)}), INPUTS)
     return PreparedFinancial(model, key(read), consumer_key(selected.scope), guard)

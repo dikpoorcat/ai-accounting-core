@@ -5,7 +5,7 @@ public methods. It only supplies small opaque plans to isolate Reading races;
 these tests do not qualify the production financial tree or its loader.
 """
 
-from dataclasses import asdict, fields
+from dataclasses import asdict, dataclass, fields
 from uuid import uuid4
 
 import pytest
@@ -19,6 +19,7 @@ from ai_accounting_modular.ledger.public import (
 )
 from ai_accounting_modular.reading import _financial_projection as projection
 from ai_accounting_modular.reading import _monthly
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import Case
@@ -149,15 +150,35 @@ def drain(case):
     pytest.fail("financial boundary work did not settle")
 
 
+@dataclass(frozen=True)
+class CapturedConsumer:
+    model: projection.PreparedFinancial
+    lifecycle: CaptureGuard
+
+
 def captured(case, month="2026-01"):
     reader = case.kernel.reading
+    selected = scope(case, month)
+    with reader.storage.maintenance_unit(case.company) as unit:
+        projection.store(unit).mark_consumer(_monthly.key(selected), unit.head)
     with reader.storage.read_unit(case.company) as read:
-        return projection.capture(reader, scope(case, month), "summary_values", read)
+        lifecycle = CaptureGuard.capture(
+            read.repository("reading").state(_monthly.key(selected), "financial"), read.head
+        )
+        return CapturedConsumer(
+            projection.capture(reader, selected, "summary_values", read), lifecycle
+        )
 
 
 def publish(case, prepared, month="2026-01"):
     selected = scope(case, month)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         return unit.repository("reading").publish(
-            _monthly.key(selected), "financial", unit.head, _monthly.version("financial"), prepared
+            _monthly.key(selected),
+            "financial",
+            prepared.lifecycle.wanted_head,
+            _monthly.version("financial"),
+            prepared.model,
+            guard=prepared.lifecycle,
+            current_head=unit.head,
         )

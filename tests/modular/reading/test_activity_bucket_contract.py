@@ -7,7 +7,6 @@ import pytest
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    canonical_json,
     content_digest,
     loads_json,
 )
@@ -21,6 +20,7 @@ from ai_accounting_modular.reading import _brief_open_update as open_update
 from ai_accounting_modular.reading import _funds_items, _item_buckets, _monthly
 
 from . import _activity_full_oracle as oracle
+from ._publication import CapturedState
 from .test_brief_activity import capture as publish_full
 from .test_brief_activity_incremental import book as book
 from .test_brief_activity_incremental import change, matches_complete, state, watch_contents
@@ -252,36 +252,28 @@ def test_complete_constructs_each_member_sort_key_once_and_preserves_both_orders
     )
 
 
-@pytest.mark.parametrize("damage", ["inputs", "business_reverse"])
+@pytest.mark.parametrize("damage", ["note_reverse", "business_reverse"])
 def test_mark_checks_actual_reverse_and_input_key_proof_before_deciding_not_affected(book, damage):
     first = book.seed()
     publish_full(book)
     scope_key = _monthly.key(selection(book))
     with book.kernel.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
-        if damage == "business_reverse":
-            repository._session.execute(
-                "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
-                "AND collection_key=? AND item_id=?",
-                (
-                    scope_key,
-                    index.COMPONENT,
-                    index.BUCKETS,
-                    _item_buckets.key(index.BUSINESSES, first["business_id"]),
-                ),
-            )
-        else:
-            payload = loads_json(repository.payload(scope_key, index.COMPONENT)["payload_json"])
-            payload["_inputs"]["business_ids"].remove(first["business_id"])
-            payload["_semantic_digest"] = index.semantic(payload)
-            repository._session.execute(
-                "UPDATE read_component SET payload_json=? WHERE scope_key=? AND component_key=?",
-                (canonical_json(payload), scope_key, index.COMPONENT),
-            )
-            repository._session.execute(
-                "UPDATE read_scope_head SET content_digest=? WHERE scope_key=? AND component_key=?",
-                (content_digest(payload), scope_key, index.COMPONENT),
-            )
+        collection, identity = (
+            (index.BUSINESSES, first["business_id"])
+            if damage == "business_reverse"
+            else (index.NOTES, "business:" + first["business_id"])
+        )
+        repository._session.execute(
+            "UPDATE read_item SET payload_json='{}' WHERE scope_key=? AND component_key=? "
+            "AND collection_key=? AND item_id=?",
+            (
+                scope_key,
+                index.COMPONENT,
+                index.BUCKETS,
+                _item_buckets.key(collection, identity),
+            ),
+        )
     first["data"]["amount_fen"] = "8"
     change(book, first)
     assert state(book)["state"] == "failed"
@@ -342,7 +334,7 @@ def test_unread_unrelated_bucket_is_deferred_but_selected_root_and_explicit_retr
 
 def _pending_plan(book):
     with book.kernel.storage.read_unit(book.company) as read:
-        current = state(book)
+        current = CapturedState(state(book), read.head)
         model = update.prepare(book.kernel.reading, selection(book), read, current)
     assert isinstance(model, index.PreparedActivityPatch)
     return current, model
@@ -384,6 +376,8 @@ def test_same_wanted_repair_rejects_a_patch_from_the_old_base_without_deleting_a
             previous["wanted_head"],
             index.FORMAT_VERSION,
             prepared,
+            guard=previous.guard,
+            current_head=unit.head,
         )
     assert _saved_rows(book) == before
     matches_complete(book)
@@ -440,6 +434,8 @@ def test_patch_failure_after_real_deletion_rolls_back_members_buckets_pending_an
                 previous["wanted_head"],
                 index.FORMAT_VERSION,
                 prepared,
+                guard=previous.guard,
+                current_head=unit.head,
             )
     assert deleted
     assert _saved_rows(book) == before
@@ -457,7 +453,7 @@ def test_old_partial_cannot_publish_over_failure_or_same_head_full_retry(book, c
     scope_key = _monthly.key(selection(book))
     with book.kernel.storage.read_unit(book.company) as read:
         repository = read.repository("reading")
-        previous = repository.state(scope_key, component)
+        previous = CapturedState(repository.state(scope_key, component), read.head)
         model = (update if component == index.COMPONENT else open_update).prepare(
             book.kernel.reading, selection(book), read, previous
         )
@@ -496,6 +492,8 @@ def test_old_partial_cannot_publish_over_failure_or_same_head_full_retry(book, c
             previous["wanted_head"],
             _monthly.version(component),
             model,
+            guard=previous.guard,
+            current_head=unit.head,
         )
     assert _saved_rows(book, component) == before
     if phase == "failed":

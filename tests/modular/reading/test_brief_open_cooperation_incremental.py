@@ -28,6 +28,7 @@ from tests.modular.domains.financing._support import BANK, COUNTERPARTY, OWNER
 from tests.modular.domains.people.test_read_remuneration import bank_object
 from tests.modular.reading._support import source
 
+from ._publication import CapturedState, body
 from .test_brief_open import apply, payment, publish
 from .test_brief_open_incremental import matches_cold, scope, snapshot
 from .test_brief_open_settlements import cooperation_due
@@ -79,7 +80,7 @@ def private(case, collection, ids):
     with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")
         key = _monthly.key(scope(case))
-        payload = loads_json(repository.payload(key, index.COMPONENT)["payload_json"])
+        payload = loads_json(body(repository, key, index.COMPONENT)["payload_json"])
         return index.Directory(repository, key, payload).get(collection, ids)
 
 
@@ -268,7 +269,9 @@ def test_cooperation_patch_keeps_a_later_commit_pending(case):
     apply(case, mutations=[{"op": "replace", "expected_seq": 1, "fact": changed}])
     key = _monthly.key(scope(case))
     with case.kernel.storage.read_unit(case.company) as read:
-        state = read.repository("reading").state(key, _monthly.BRIEF_OPEN_ITEMS)
+        state = CapturedState(
+            read.repository("reading").state(key, _monthly.BRIEF_OPEN_ITEMS), read.head
+        )
         prepared = _brief_open_update.prepare(case.kernel.reading, scope(case), read, state)
     revised = deepcopy(claims[0])
     revised["data"]["amount_fen"] = "80"
@@ -280,6 +283,8 @@ def test_cooperation_patch_keeps_a_later_commit_pending(case):
             state["wanted_head"],
             _monthly.version(_monthly.BRIEF_OPEN_ITEMS),
             prepared,
+            guard=state.guard,
+            current_head=unit.head,
         )
     assert case.kernel.reading.run_pending(case.company)
     matches_cold(case)

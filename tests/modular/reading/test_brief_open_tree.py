@@ -7,7 +7,6 @@ import pytest
 from ai_accounting_modular.contracts.public import (
     ContractError,
     PageQuery,
-    ReadInputs,
     loads_json,
 )
 from ai_accounting_modular.reading import _brief_open_index as index
@@ -22,8 +21,11 @@ from ai_accounting_modular.reading._collections import (
     prepare_model,
 )
 from ai_accounting_modular.reading._open_store import NODES, REFS, SCOPE
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from tests.modular.application._working_case import case as case
 
+from ._publication import CapturedState
+from ._publication import body as stored_body
 from ._support import BANK, PARTY
 
 
@@ -35,8 +37,6 @@ def scope(case, month="2026-01"):
 
 def summary(month="2026-01"):
     return {
-        "_inputs": ReadInputs().wire(),
-        "_cooperation_inputs": ReadInputs().wire(),
         "open_items": {"cutoff_period": month, "current_cutoff_period": month},
     }
 
@@ -58,7 +58,16 @@ def publish(case, entries, month="2026-01"):
         model = index.complete(
             summary(month), entries, unit.head, repository=repository, scope_key=selected
         )
-        assert repository.publish(selected, index.COMPONENT, unit.head, index.FORMAT_VERSION, model)
+        guard = CaptureGuard.capture(repository.state(selected, index.COMPONENT), unit.head)
+        assert repository.publish(
+            selected,
+            index.COMPONENT,
+            unit.head,
+            index.FORMAT_VERSION,
+            model,
+            guard=guard,
+            current_head=unit.head,
+        )
     return model
 
 
@@ -75,12 +84,18 @@ def patch(case, entries, deletes, month="2026-01"):
         )
     with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")
-        state = repository.state(selected, index.COMPONENT)
+        state = CapturedState(repository.state(selected, index.COMPONENT), read.head)
         directory = index.base(repository, state)
         model = index.patch(summary(month), entries, deletes, directory, state, scope_key=selected)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         assert unit.repository("reading").publish(
-            selected, index.COMPONENT, state["wanted_head"], index.FORMAT_VERSION, model
+            selected,
+            index.COMPONENT,
+            state["wanted_head"],
+            index.FORMAT_VERSION,
+            model,
+            guard=state.guard,
+            current_head=unit.head,
         )
     return model
 
@@ -99,10 +114,18 @@ def nodes(case):
 def assert_live_graph(case):
     actual = nodes(case)
     with case.kernel.storage.read_unit(case.company) as read:
-        rows = read.repository("reading")._session.fetchall(
-            "SELECT payload_json FROM read_component WHERE component_key=?", (index.COMPONENT,)
-        )
-    pending = [root[0] for row in rows for root in loads_json(row[0])["_roots"].values() if root]
+        repository = read.repository("reading")
+        rows = [
+            stored_body(repository, row["scope_key"], index.COMPONENT)
+            for row in repository.scopes()
+            if row["component_key"] == index.COMPONENT and row["state"] == "ready"
+        ]
+    pending = [
+        root[0]
+        for row in rows
+        for root in loads_json(row["payload_json"])["_roots"].values()
+        if root
+    ]
     visited = set()
     while pending:
         identity = pending.pop()
@@ -135,8 +158,15 @@ def test_all_filters_and_same_sort_pages_match_the_actual_sql_collection_reader(
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         repository = unit.repository("reading")
         repository.register(selected, oracle, unit.head, 1)
+        guard = CaptureGuard.capture(repository.state(selected, oracle), unit.head)
         assert repository.publish(
-            selected, oracle, unit.head, 1, prepare_model({}, items=prepare_items(entries))
+            selected,
+            oracle,
+            unit.head,
+            1,
+            prepare_model({}, items=prepare_items(entries)),
+            guard=guard,
+            current_head=unit.head,
         )
     queries = (
         CollectionFilter(),

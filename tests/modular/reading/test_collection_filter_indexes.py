@@ -14,7 +14,7 @@ from ai_accounting_modular.reading._collections import (
     prepare_model,
 )
 
-from ._support import BANK, PARTY, assemble
+from ._support import BANK, PARTY, assemble, rebuild_guard
 
 SCOPE, COMPONENT = "collection-filter-indexes", "filter-indexes"
 INDEXES = {
@@ -29,7 +29,15 @@ def publish(book, entries):
     with book.storage.maintenance_unit(book.company) as unit:
         repository = unit.repository("reading")
         repository.register(SCOPE, COMPONENT, unit.head, 1)
-        assert repository.publish(SCOPE, COMPONENT, unit.head, 1, model)
+        assert repository.publish(
+            SCOPE,
+            COMPONENT,
+            unit.head,
+            1,
+            model,
+            guard=rebuild_guard(repository, SCOPE, COMPONENT, unit.head),
+            current_head=unit.head,
+        )
 
 
 @pytest.fixture

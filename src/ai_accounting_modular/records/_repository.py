@@ -353,11 +353,18 @@ class RecordsRepository:
         return self._issues(rows), {row["scope_key"]: row["scope_head"] for row in rows}
 
     def replace_issues(self, scope, head, expected_head, command_id, digest, issues):
-        old_issues = self.issues(scope)
-        old_sources = {source_id for issue in old_issues for source_id in issue_source_ids(issue)}
+        old_uses = (
+            "owner_kind='issue' AND owner_key IN "
+            "(SELECT issue_id FROM current_issue WHERE scope_key=?)"
+        )
+        old_sources = {
+            row["source_id"]
+            for row in self._session.fetchall(
+                "SELECT DISTINCT source_id FROM source_use WHERE " + old_uses, (scope,)
+            )
+        }
         new_sources = {source_id for issue in issues for source_id in issue_source_ids(issue)}
-        for issue_id in (item["issue_id"] for item in old_issues):
-            self.replace_uses("issue", issue_id, ())
+        self._session.execute("DELETE FROM source_use WHERE " + old_uses, (scope,))
         self._session.execute("DELETE FROM current_issue WHERE scope_key=?", (scope,))
         for issue in issues:
             self._session.execute(

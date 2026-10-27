@@ -68,6 +68,17 @@ def document_note(current):
     }
 
 
+def issues_current(scope, row, repository):
+    result = {
+        "scope": scope,
+        "head": row["head"] if row else 0,
+        "issues": repository.issues(scope),
+    }
+    if row is not None and row["content_digest"] != content_digest(result["issues"]):
+        raise ContractError("storage_corrupt", "当前待办范围与完整集合的摘要不一致。")
+    return validate_contract("core.schema.json", "IssueScope", result)
+
+
 def _cleared_note(scope, seq):
     return {
         "scope": scope,
@@ -226,7 +237,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
                 changed and old_sources != target["evidence_ids"],
             )
         )
-    issue_plan = None
+    issue_plan, issue_periods = None, ()
     has_scope = change.unresolved_scope is not None or change.expected_scope_head is not None
     if change.unresolved is None:
         if has_scope:
@@ -279,6 +290,20 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
         issue_plan = PlannedRecord(
             scope, content_digest(old) if old else None, canonical_json(target), changed
         )
+        if changed:
+            previous = {
+                issue["issue_id"]: issue
+                for issue in issues_current(scope, old, repository)["issues"]
+            }
+            proposed = {issue["issue_id"]: issue for issue in issues}
+            periods = {
+                issue.get("period")
+                for identity in previous.keys() | proposed.keys()
+                if previous.get(identity) != proposed.get(identity)
+                for issue in (previous.get(identity), proposed.get(identity))
+                if issue is not None
+            }
+            issue_periods = tuple(sorted(periods, key=lambda value: (value is not None, value)))
     available = repository.sources(tuple(required))
     available.update({source["source_id"]: source for source in sources})
     _missing_sources(required, available)
@@ -291,6 +316,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
         tuple(notes),
         issue_plan,
         prepared,
+        issue_periods=issue_periods,
     )
 
 

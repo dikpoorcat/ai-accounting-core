@@ -33,7 +33,7 @@ def review(case, month="2026-01", **query):
 
 def snapshot(case):
     with case.kernel.storage.read_unit(case.company) as read:
-        return _monthly.ready_snapshot(
+        saved = _monthly.ready_snapshot(
             case.kernel.reading,
             _monthly.normalize(
                 {
@@ -46,6 +46,7 @@ def snapshot(case):
             _brief.COMPONENTS,
             read,
         )
+        return replace(saved, components=dict(saved.components))
 
 
 def test_complete_review_is_same_brief_version_not_first_20_and_never_checks_or_writes_accounting(

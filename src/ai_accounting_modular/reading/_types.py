@@ -72,7 +72,7 @@ class ReadingImpact:
     """Changed public inputs; Ledger alone determines their real posting scope."""
 
     note_scopes: tuple[str, ...] = ()
-    issue_scopes: tuple[str, ...] = ()
+    issue_periods: tuple[str | None, ...] = ()
     formal_changes: tuple[FormalChange, ...] = ()
     objects: tuple[tuple[str, str], ...] = ()
     facts: tuple[tuple[str, str, str | None], ...] = ()
@@ -83,9 +83,12 @@ class ReadingImpact:
         for value in self.closure_ranges:
             if not isinstance(value, PeriodRange):
                 raise ContractError("invalid_input", "读取影响须使用明确月份范围。")
-        for scope in self.note_scopes + self.issue_scopes:
+        for scope in self.note_scopes:
             if not isinstance(scope, str) or not 1 <= len(scope) <= 200:
-                raise ContractError("invalid_input", "读取影响的说明或待办范围无效。")
+                raise ContractError("invalid_input", "读取影响的说明范围无效。")
+        for period in self.issue_periods:
+            if period is not None:
+                validate_contract("core.schema.json", "Month", period)
         if any(not isinstance(value, FormalChange) for value in self.formal_changes):
             raise TypeError("formal reading changes must come from Ledger adoption")
         for object_id, kind in self.objects:
@@ -105,7 +108,7 @@ class ReadingImpact:
             or self.objects
             or self.facts
             or self.note_scopes
-            or self.issue_scopes
+            or self.issue_periods
             or self.closure_ranges
             or self.working_period_changed
         )

@@ -172,7 +172,9 @@ def test_note_only_incremental_update_and_clear_preserve_other_roots(case, monke
     with case.kernel.storage.read_unit(case.company) as read:
         repo = read.repository("reading")
         scope = selection(case)
-        saved = loads_json(repo.payload(_monthly.key(scope), "brief_activity")["payload_json"])
+        saved = _brief_activity_index.base(
+            repo, repo.state(_monthly.key(scope), "brief_activity")
+        ).payload
         fresh = loads_json(_brief_activity.prepare(case.kernel.reading, scope, read).payload_json)
         assert _brief_activity_index.semantic(saved) == _brief_activity_index.semantic(fresh)
     note(case, first["business_id"], "", seq=1)

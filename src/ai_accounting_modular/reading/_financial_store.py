@@ -40,6 +40,7 @@ class ProducerToken:
     ready: int
     base_digest: str | None
     work_digest: str | None
+    revision: int
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ class FinancialStore:
             state["ready_head"],
             state["content_digest"],
             digest(canonical_json(rows[0])) if rows else None,
+            state["revision"],
         )
 
     def save_work(self, work, head, *, retry=False):
@@ -233,7 +235,7 @@ class FinancialStore:
         )
         return True
 
-    def fail(self, token, code, *, expected_revision):
+    def fail(self, token, code):
         if not self._matches(token):
             return False
         return self.repository.fail(
@@ -241,7 +243,7 @@ class FinancialStore:
             COMPONENT,
             token.wanted,
             code,
-            expected_revision=expected_revision,
+            expected_revision=token.revision,
         )
 
     def consumer_token(self, descriptor_key):

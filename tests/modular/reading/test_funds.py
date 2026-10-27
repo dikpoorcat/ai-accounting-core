@@ -8,9 +8,10 @@ from uuid import uuid4
 import pytest
 from jsonschema import Draft202012Validator
 
-from ai_accounting_modular.contracts.public import ContractError, content_digest, loads_json
+from ai_accounting_modular.contracts.public import ContractError, content_digest
 from ai_accounting_modular.money.public import stable_occurrence_id
 from ai_accounting_modular.reading import _funds, _monthly
+from ai_accounting_modular.reading._component_view import ready as component_view
 from ai_accounting_modular.reading._context import period
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.financing._support import (
@@ -24,6 +25,8 @@ from tests.modular.domains.financing._support import (
     six,
 )
 from tests.modular.reading._support import source
+
+from ._support import rebuild_guard
 
 
 def selection(case, month="2026-01"):
@@ -72,16 +75,22 @@ def capture(case, month="2026-01"):
         scope_key = _monthly.key(scope)
         repo.register(scope_key, "funds", unit.head, _monthly.version("funds"))
         repo.mark(scope_key, "funds", unit.head)
-        assert repo.publish(scope_key, "funds", unit.head, _monthly.version("funds"), model)
+        assert repo.publish(
+            scope_key,
+            "funds",
+            unit.head,
+            _monthly.version("funds"),
+            model,
+            guard=rebuild_guard(repo, scope_key, "funds", unit.head),
+            current_head=unit.head,
+        )
     return model
 
 
 def page(case, month="2026-01", **query):
     scope = selection(case, month)
     with case.kernel.storage.read_unit(case.company) as read:
-        saved = loads_json(
-            read.repository("reading").payload(_monthly.key(scope), "funds")["payload_json"]
-        )
+        saved = component_view(_monthly.key(scope), "funds", read).monthly_summary()
         snapshot = _monthly.MonthSnapshot(
             _monthly.key(scope),
             scope,
@@ -96,9 +105,9 @@ def page(case, month="2026-01", **query):
 
 def check_data(value):
     contract = json.loads(
-        (
-            Path(__file__).parents[3] / "docs/design/contracts/dashboard-response-v2.json"
-        ).read_text(encoding="utf-8")
+        (Path(__file__).parents[3] / "docs/design/contracts/dashboard-response-v2.json").read_text(
+            encoding="utf-8"
+        )
     )["dashboard_funds"]
     Draft202012Validator({"$defs": contract["$defs"], "$ref": "#/$defs/FundsData"}).validate(value)
 

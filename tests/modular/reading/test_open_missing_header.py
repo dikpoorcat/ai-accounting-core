@@ -17,6 +17,7 @@ from ai_accounting_modular.reading import (
 )
 from ai_accounting_modular.storage.public import TreeStore, block_digest
 
+from ._publication import body
 from .test_open_failure_guards import book as book
 from .test_open_failure_guards import page, saved, scope
 
@@ -53,12 +54,14 @@ def assert_live_pool(book):
             if row["collection_key"] == _open_store.REFS
         }
         headers = repository._session.fetchall(
-            "SELECT payload_json FROM read_component WHERE component_key=?", (index.COMPONENT,)
+            "SELECT scope_key FROM read_component WHERE component_key=?", (index.COMPONENT,)
         )
         roots = [
             root[0]
             for header in headers
-            for root in loads_json(header["payload_json"])["_roots"].values()
+            for root in loads_json(
+                body(repository, header["scope_key"], index.COMPONENT)["payload_json"]
+            )["_roots"].values()
             if root is not None
         ]
         expected, seen, pending = Counter(roots), set(), list(roots)

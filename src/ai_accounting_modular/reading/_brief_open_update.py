@@ -2,10 +2,12 @@
 
 from collections import Counter, defaultdict
 from copy import deepcopy
+from dataclasses import replace
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadInputs,
+    content_digest,
 )
 
 from . import _brief_open as brief
@@ -16,6 +18,7 @@ from . import _brief_open_inputs as inputs
 from . import _brief_open_rollover as rollover
 from . import _brief_open_sources as sources
 from . import _brief_open_totals as totals
+from . import _brief_open_tree as blocks
 from . import _dependencies, _monthly
 from ._brief_open_index import base
 from ._collections import CollectionFilter
@@ -31,7 +34,12 @@ def mark(repository, state, scope, impact, head):
             repository.open_mark(key, head, full=True)
             repository.open_advance_failed(key, head)
             return False
-        selected = _dependencies.inputs(payload) if payload is not None else ReadInputs()
+        provider = (
+            inputs.matching_provider(directory, scope["period_to"], impact)
+            if directory is not None
+            else ReadInputs()
+        )
+        selected = inputs.ORDINARY.merge(inputs.static(provider))
         exact = inputs.affected(directory, scope["period_to"], impact) if directory else True
         affected = exact or _monthly.affected(scope, index.COMPONENT, impact, selected)
         if affected:
@@ -41,7 +49,7 @@ def mark(repository, state, scope, impact, head):
                 impact,
                 head,
                 selected,
-                index.cooperation_inputs(payload) if payload is not None else ReadInputs(),
+                provider,
                 directory,
                 full=payload is None,
             )
@@ -69,13 +77,58 @@ def _references(directory, collection, before, after, entries, deletes):
     changes.subtract(before)
     changes = {identity: amount for identity, amount in changes.items() if amount}
     current = directory.get(collection, changes)
+    added, removed = set(), set()
     for identity, delta in changes.items():
-        count = current.get(identity, {}).get("count", 0) + delta
+        old_count = current.get(identity, {}).get("count", 0)
+        count = old_count + delta
         if count < 0 or (delta < 0 and identity not in current):
             index.corrupt()
         deletes.add((collection, identity))
         if count:
             entries.append(index.item(collection, identity, {"count": count}))
+        if not old_count and count:
+            added.add(identity)
+        elif old_count and not count:
+            removed.add(identity)
+    return tuple(sorted(added)), tuple(sorted(removed))
+
+
+def _descriptions(directory, group, previous, proposed, fold, entries, deletes):
+    changes = Counter(totals.text(value) for value in proposed)
+    changes.subtract(totals.text(value) for value in previous)
+    changes = {text: count for text, count in changes.items() if count}
+    if not changes:
+        return
+    identities = {text: blocks.key(group, content_digest(text)) for text in changes}
+    current = directory.get(index.DESCRIPTIONS, identities.values())
+    survivors = set()
+    for text, delta in changes.items():
+        identity = identities[text]
+        saved = current.get(identity)
+        before = 0 if saved is None else saved.get("count")
+        if type(before) is not int or before < 0 or (saved is not None and before == 0):
+            index.corrupt()
+        if saved is not None and (set(saved) != {"text", "count"} or saved["text"] != text):
+            index.corrupt()
+        after = before + delta
+        if after < 0:
+            index.corrupt()
+        deletes.add((index.DESCRIPTIONS, identity))
+        fold["description_count"] += (after > 0) - (before > 0)
+        if after:
+            entries.append(index.item(index.DESCRIPTIONS, identity, {"text": text, "count": after}))
+            survivors.add(text)
+    distinct = fold["description_count"]
+    if type(distinct) is not int or not 0 <= distinct <= fold["count"]:
+        index.corrupt()
+    if distinct == 1:
+        fold["description"] = (
+            next(iter(survivors))
+            if survivors
+            else directory.surviving_description(group, {content_digest(text) for text in changes})
+        )
+    else:
+        fold["description"] = None
 
 
 def _groups(directory, old, new_entries, category_folds, entries, deletes):
@@ -98,6 +151,15 @@ def _groups(directory, old, new_entries, category_folds, entries, deletes):
             totals.adjust(fold, value, -1)
         for entry in proposed[identity]:
             totals.adjust(fold, entry.value, 1)
+        _descriptions(
+            directory,
+            identity,
+            previous[identity],
+            [entry.value for entry in proposed[identity]],
+            fold,
+            entries,
+            deletes,
+        )
         deletes.update(((index.FOLDS, identity), ("open_items", identity)))
         if not fold["count"]:
             continue
@@ -197,7 +259,8 @@ def prepare_from_base(
     reader, scope, read, state, payload, directory, dirty, *, current_cutoff, complete
 ):
     extra, cooperation_inputs = cooperation.capture(reader, scope, read, current_cutoff)
-    dirty.update(inputs.business_ids(index.cooperation_inputs(payload)))
+    previous_provider = directory.provider_inputs()
+    dirty.update(inputs.business_ids(previous_provider))
     dirty.update(inputs.business_ids(cooperation_inputs))
     dirty.add("@fixed")
     old_records = directory.get(index.BUSINESSES, dirty)
@@ -234,11 +297,19 @@ def prepare_from_base(
     deletes.update((index.BUSINESSES, identity) for identity in old_records)
     category_folds = deepcopy(payload["_category_folds"])
     _groups(directory, old_members, member_entries, category_folds, entries, deletes)
-    _references(
+    added_objects, removed_objects = _references(
         directory,
         index.OBJECTS,
         inputs.object_counts(old_records),
         inputs.object_counts(records),
+        entries,
+        deletes,
+    )
+    added_notes, removed_notes = _references(
+        directory,
+        index.NOTES,
+        inputs.note_counts(old_records),
+        inputs.note_counts(records),
         entries,
         deletes,
     )
@@ -256,13 +327,21 @@ def prepare_from_base(
         if name not in {"_item_epoch", "_semantic_digest", "_collections"}
     }
     summary["_category_folds"] = category_folds
-    summary["_cooperation_inputs"] = cooperation_inputs.wire()
-    scopes = set(_dependencies.inputs(payload).note_scopes)
-    scopes.difference_update(value.get("_note_scope") for value in old_members.values())
-    scopes.update(member["_note_scope"] for member in members if member.get("_note_scope"))
-    summary["_inputs"] = inputs.static(
-        inputs.ORDINARY.merge(cooperation_inputs, ReadInputs(note_scopes=tuple(sorted(scopes))))
-    ).wire()
+    deletes.update(
+        (index.PROVIDER, item.item_id) for item in inputs.provider_items(previous_provider)
+    )
+    entries.extend(inputs.provider_items(cooperation_inputs))
+    added, removed = inputs.business_changes(old_records, records)
+    provider_added, provider_removed = _dependencies.difference(
+        inputs.ORDINARY.merge(inputs.static(previous_provider)),
+        inputs.ORDINARY.merge(inputs.static(cooperation_inputs)),
+    )
+    added = added.merge(
+        provider_added, ReadInputs(object_ids=added_objects, note_scopes=added_notes)
+    )
+    removed = removed.merge(
+        provider_removed, ReadInputs(object_ids=removed_objects, note_scopes=removed_notes)
+    )
     summary["open_items"] = totals.summary(
         category_folds,
         groups.CATEGORIES,
@@ -270,4 +349,7 @@ def prepare_from_base(
         captured.current_cutoff,
         captured.complete,
     )
-    return index.patch(summary, entries, deletes, directory, state, scope_key=_monthly.key(scope))
+    prepared = index.patch(
+        summary, entries, deletes, directory, state, scope_key=_monthly.key(scope)
+    )
+    return replace(prepared, model=replace(prepared.model, input_adds=added, input_removes=removed))

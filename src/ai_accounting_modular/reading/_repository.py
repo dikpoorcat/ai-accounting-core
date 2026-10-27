@@ -1,14 +1,15 @@
 """Only derived reading tables are visible to this repository."""
 
-from ai_accounting_modular.contracts.public import canonical_json, loads_json
+from ai_accounting_modular.contracts.public import ContractError, canonical_json, loads_json
 
 from . import _brief_activity_index as activity_index
 from . import _brief_open_index as open_index
 from . import _brief_open_rollover as open_rollover
-from . import _open_store
+from . import _descriptor, _open_store
 from ._collections import PreparedModel
 from ._financial_projection import PreparedFinancial
 from ._financial_store import FinancialStore
+from ._publication_guard import CaptureGuard
 
 
 class ReadingRepository:
@@ -40,6 +41,34 @@ class ReadingRepository:
     def scopes(self):
         return tuple(dict(row) for row in self._session.fetchall("SELECT * FROM read_scope_head"))
 
+    def pending(self, *, after=None, limit=100):
+        where, args = "state='preparing'", ()
+        if after is not None:
+            where += " AND (scope_key,component_key)>(?,?)"
+            args = tuple(after)
+        return tuple(
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT * FROM read_scope_head WHERE "
+                + where
+                + " ORDER BY scope_key,component_key LIMIT ?",
+                (*args, limit),
+            )
+        )
+
+    def previous_ready(self, scope_key, component):
+        before = scope_key
+        while True:
+            rows = self._session.fetchall(
+                "SELECT * FROM read_scope_head WHERE state='ready' AND scope_key<? "
+                "AND component_key=? ORDER BY scope_key DESC LIMIT 50",
+                (before, component),
+            )
+            yield from (dict(row) for row in rows)
+            if len(rows) < 50:
+                return
+            before = rows[-1]["scope_key"]
+
     def mark(self, scope_key, component, head):
         self._session.execute(
             "UPDATE read_scope_head SET wanted_head=?,state='preparing',error_code=NULL,"
@@ -55,16 +84,26 @@ class ReadingRepository:
         )
         return dict(row) if row else None
 
-    def input_dependencies(self, scope_key, component):
-        """Read only the declared sparse inputs; never load collection items."""
+    def component_body(self, scope_key, component, descriptor):
         row = self._session.fetchone(
-            "SELECT json_extract(payload_json,'$._inputs') FROM read_component "
-            "WHERE scope_key=? AND component_key=?",
-            (scope_key, component),
+            "SELECT * FROM read_item WHERE scope_key=? AND collection_key=? AND item_id=?",
+            (scope_key, _descriptor.BODY_COLLECTION, component),
         )
-        return row[0] if row else None
+        return _descriptor.body(scope_key, component, descriptor, row)
 
-    def publish(self, scope_key, component, wanted_head, format_version, model):
+    def publish(
+        self, scope_key, component, wanted_head, format_version, model, *, guard, current_head
+    ):
+        if not isinstance(guard, CaptureGuard):
+            raise TypeError("publication requires the captured lifecycle")
+        state = self.state(scope_key, component)
+        if not guard.matches(state) or (
+            guard.scope_key,
+            guard.component,
+            guard.wanted_head,
+            guard.format_version,
+        ) != (scope_key, component, wanted_head, format_version):
+            return False
         financial = model if isinstance(model, PreparedFinancial) else None
         if financial is not None:
             if (
@@ -89,22 +128,12 @@ class ReadingRepository:
             model = model.model
         if not isinstance(model, PreparedModel):
             raise TypeError("model must be prepared before publication")
-        state = self.state(scope_key, component)
-        if state is None or (state["wanted_head"], state["format_version"]) != (
-            wanted_head,
-            format_version,
-        ):
-            return False
         if open_model is not None and (
-            component != open_index.COMPONENT
-            or open_model.scope_key != scope_key
-            or state["state"] != "preparing"
+            component != open_index.COMPONENT or open_model.scope_key != scope_key
         ):
             return False
         fork = isinstance(patch, open_index.PreparedOpenPatch) and patch.base_scope != scope_key
         if patch is not None:
-            if state["state"] != "preparing":
-                return False
             if component != (activity_index.COMPONENT if activity_patch else open_index.COMPONENT):
                 return False
             if activity_patch and patch.scope_key != scope_key:
@@ -146,6 +175,34 @@ class ReadingRepository:
                 return False
         if fork and not open_rollover.matches(self, patch, scope_key, payload):
             return False
+        publication = _descriptor.prepare(
+            scope_key, component, wanted_head, format_version, model, payload=payload
+        )
+        subscriptions, subscription_plan = None, None
+        try:
+            selection = loads_json(scope_key)
+        except ContractError:
+            selection = None
+        if isinstance(selection, dict) and selection.get("page") in {"monthly", "quarterly_report"}:
+            from ._subscriptions import Directory
+
+            subscriptions = Directory(self)
+            known = subscriptions.known(scope_key, component)
+            subscription_plan = subscriptions.plan(
+                scope_key,
+                component,
+                inputs=model.inputs,
+                adds=model.input_adds,
+                removes=model.input_removes,
+                base_target=(patch.base_scope, component) if fork else None,
+            )
+            if (
+                not known
+                or subscription_plan.expanded
+                or guard.content_digest is None
+                or guard.ready_head == guard.wanted_head
+            ) and current_head != guard.captured_head:
+                return False
         rows = tuple((scope_key, *row, component, epoch) for row in model.rows)
         if open_model is not None:
             if rows:
@@ -178,16 +235,34 @@ class ReadingRepository:
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 rows,
             )
+        if subscription_plan is not None and not subscriptions.commit(subscription_plan):
+            raise ContractError("storage_corrupt", "同一发布事务中的读取订阅发生变化。")
+        self._session.execute(
+            "INSERT INTO read_item(scope_key,collection_key,item_id,component_key,head,sort_key,"
+            "payload_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(scope_key,collection_key,item_id) "
+            "DO UPDATE SET component_key=excluded.component_key,head=excluded.head,"
+            "sort_key=excluded.sort_key,payload_json=excluded.payload_json,"
+            "business_id=NULL,object_id=NULL,group_key=NULL,category=NULL",
+            (
+                scope_key,
+                _descriptor.BODY_COLLECTION,
+                component,
+                component,
+                wanted_head,
+                component,
+                publication.body_json,
+            ),
+        )
         self._session.execute(
             "INSERT INTO read_component VALUES(?,?,?,?) ON CONFLICT(scope_key,component_key) "
             "DO UPDATE SET head=excluded.head,payload_json=excluded.payload_json",
-            (scope_key, component, wanted_head, model.payload_json),
+            (scope_key, component, wanted_head, publication.descriptor_json),
         )
         self._session.execute(
             "UPDATE read_scope_head SET ready_head=?,content_digest=?,"
             "state='ready',error_code=NULL,revision=revision+1 "
             "WHERE scope_key=? AND component_key=?",
-            (wanted_head, model.content_digest, scope_key, component),
+            (wanted_head, publication.descriptor_digest, scope_key, component),
         )
         return True
 
@@ -247,11 +322,7 @@ class ReadingRepository:
     def activity_mark(self, scope_key, head, business_ids=(), *, full=False):
         from ._collections import IndexItem, prepare_items
 
-        if full:
-            self._session.execute(
-                "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
-                (scope_key, activity_index.COMPONENT, activity_index.DIRTY),
-            )
+        old = self.activity_pending_rows(scope_key)
         previous = None if full else activity_index.pending(self, scope_key)
         full = full or bool(previous and previous["full"])
         values = (
@@ -263,6 +334,8 @@ class ReadingRepository:
             activity_index.DIRTY, "current", "current", {"full": full, "business_ids": values}
         )
         rows = prepare_items((item,)).rows
+        if len(old) == 1 and old[0]["payload_json"] == rows[0][-1] and old[0]["head"] == head:
+            return
         self._session.executemany(
             "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
             "object_id,group_key,category,payload_json,component_key,head) "
@@ -270,6 +343,7 @@ class ReadingRepository:
             "DO UPDATE SET payload_json=excluded.payload_json,head=excluded.head",
             ((scope_key, *row, activity_index.COMPONENT, head) for row in rows),
         )
+        self._work_changed(scope_key, activity_index.COMPONENT)
 
     def activity_advance_failed(self, scope_key, head):
         self._session.execute(
@@ -281,11 +355,9 @@ class ReadingRepository:
     def open_mark(self, scope_key, head, business_ids=(), *, full=False):
         from ._collections import prepare_items
 
-        if full:
-            self._session.execute(
-                "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
-                (scope_key, open_index.COMPONENT, open_index.DIRTY),
-            )
+        previous = self.open_pending_rows(scope_key)
+        full = full or any(row["item_id"] == "*" for row in previous)
+        old = {row["item_id"]: row for row in previous}
         values = (
             [open_index.item(open_index.DIRTY, "*", {"full": True})]
             if full
@@ -295,12 +367,38 @@ class ReadingRepository:
             ]
         )
         rows = prepare_items(values).rows
+        if (
+            full
+            and len(previous) == 1
+            and (previous[0]["payload_json"], previous[0]["head"]) == (rows[0][-1], head)
+        ):
+            return
+        if full:
+            self._session.execute(
+                "DELETE FROM read_item WHERE scope_key=? AND component_key=? AND collection_key=?",
+                (scope_key, open_index.COMPONENT, open_index.DIRTY),
+            )
+        if not full:
+            rows = tuple(
+                row
+                for row in rows
+                if row[1] not in old
+                or (old[row[1]]["payload_json"], old[row[1]]["head"]) != (row[-1], head)
+            )
         self._session.executemany(
             "INSERT INTO read_item(scope_key,collection_key,item_id,sort_key,business_id,"
             "object_id,group_key,category,payload_json,component_key,head) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scope_key,collection_key,item_id) "
             "DO UPDATE SET payload_json=excluded.payload_json,head=excluded.head",
             ((scope_key, *row, open_index.COMPONENT, head) for row in rows),
+        )
+        if rows:
+            self._work_changed(scope_key, open_index.COMPONENT)
+
+    def _work_changed(self, scope_key, component):
+        self._session.execute(
+            "UPDATE read_scope_head SET revision=revision+1 WHERE scope_key=? AND component_key=?",
+            (scope_key, component),
         )
 
     def open_advance_failed(self, scope_key, head):
@@ -324,11 +422,18 @@ class ReadingRepository:
                 args.append(canonical_json(list(query.categories)))
         return where, tuple(args)
 
-    def item_counts(self, scope_key, component, collection, query):
+    def item_counts(self, scope_key, component, collection, query, *, total=None):
         values = []
         previous = None
         for selected in (None, query):
             where, args = self._item_scope(scope_key, component, collection, selected)
+            if total is not None and (
+                selected is None
+                or (where, args) == self._item_scope(scope_key, component, collection)
+            ):
+                values.append(total)
+                previous = where, args
+                continue
             if (where, args) == previous:
                 values.append(values[0])
                 continue

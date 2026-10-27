@@ -13,6 +13,7 @@ from . import _brief_activity_dependencies as dependencies
 from . import _brief_activity_totals as totals
 from . import _item_buckets as buckets
 from ._brief_activity_dependencies import BUSINESSES as BUSINESSES
+from ._brief_activity_dependencies import NOTES as NOTES
 from ._brief_activity_dependencies import OBJECTS as OBJECTS
 from ._brief_activity_dependencies import ROOTS as ROOTS
 from ._brief_activity_dependencies import corrupt as corrupt
@@ -20,24 +21,36 @@ from ._brief_activity_dependencies import root_item as root_item
 from ._collections import PreparedModel, _decode, prepare_model, prepare_rows
 
 COMPONENT = "brief_activity"
-FORMAT_VERSION = 13
+FORMAT_VERSION = 14
 NAMESPACE = "ai-accounting-reading-activity-bucket/1"
 DIRTY = "activity_pending"
 BUCKETS = "_activity_buckets"
 PUBLIC = ("activity", "activity_members", "brief_vouchers")
 MIRRORS = (*PUBLIC, totals.CANDIDATES)
-KEYS = (BUSINESSES, OBJECTS)
-COLLECTIONS = (*MIRRORS, ROOTS, BUSINESSES, OBJECTS, totals.FOLDS)
+KEYS = (BUSINESSES, OBJECTS, NOTES)
+COLLECTIONS = (*MIRRORS, ROOTS, *KEYS, totals.FOLDS)
 
 
 def semantic(payload):
     return content_digest(
         {
-            key: value
-            for key, value in payload.items()
-            if key not in {"_item_epoch", "_semantic_digest"}
+            "summary": {key: value for key, value in payload.items() if not key.startswith("_")},
+            "collections": {key: payload["_collections"][key] for key in PUBLIC},
         }
     )
+
+
+def public_summary(payload):
+    return {
+        key: deepcopy(payload[key])
+        for key in (
+            "activity_count",
+            "group_count",
+            "voucher_count",
+            "activity_groups",
+            "review_businesses",
+        )
+    }
 
 
 def validate(payload, scope_key):
@@ -56,7 +69,6 @@ def _validate(payload, scope_key):
     buckets.validate(payload["_buckets"], COLLECTIONS, KEYS, MIRRORS)
     if buckets.manifest(payload["_buckets"]) != payload["_collections"]:
         corrupt()
-    dependencies.validate_inputs(payload, payload["_buckets"])
     categories, reviews = totals.summaries(payload["_category_folds"], payload["_review_folds"])
     manifests = payload["_collections"]
     if any(
@@ -182,11 +194,10 @@ def complete(members, vouchers, roots, scope_key, epoch):
         rows.append(row)
     summary = {
         "_scope": scope_key,
-        "_inputs": selected.wire(),
         "_category_folds": categories,
         "_review_folds": reviews,
     }
-    return seal(_summary(summary, directories), rows, epoch)
+    return replace(seal(_summary(summary, directories), rows, epoch), inputs=selected)
 
 
 @dataclass(frozen=True)

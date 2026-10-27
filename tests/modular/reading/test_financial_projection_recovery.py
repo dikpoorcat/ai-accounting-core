@@ -355,7 +355,7 @@ def insert_bad_targets(case, unit):
     return rows
 
 
-def test_bad_scope_header_and_sparse_inputs_are_isolated_during_a_real_apply(financial_case):
+def test_bad_pending_scopes_and_published_headers_are_isolated_from_a_real_apply(financial_case):
     case, _ = financial_case
     case.seed()
     reader = case.kernel.reading
@@ -375,10 +375,18 @@ def test_bad_scope_header_and_sparse_inputs_are_isolated_during_a_real_apply(fin
     assert case.get(fact["business_id"])["businesses"][0]["fact"] == fact
     with case.kernel.storage.read_unit(case.company) as read:
         repository = read.repository("reading")
-        assert all(repository.state(key, "funds")["error_code"] == "storage_corrupt" for key in bad)
+        # These malformed scopes were never registered subscriptions. A business
+        # notification must not discover them by scanning unrelated targets.
+        assert all(repository.state(key, "funds")["state"] == "preparing" for key in bad)
     assert page(case).state == "failed" and page(case).reason == "corrupt"
     assert reader.page("funds", MonthScope(case.company, "2026-01"), {}).state == "failed"
     assert reader.page("brief", MonthScope(case.company, "2026-01"), {}).state == "failed"
+    before = formal_documents(case)
+    drain(case)
+    assert formal_documents(case) == before
+    with case.kernel.storage.read_unit(case.company) as read:
+        repository = read.repository("reading")
+        assert all(repository.state(key, "funds")["error_code"] == "storage_corrupt" for key in bad)
 
 
 def test_bad_target_does_not_abort_the_worker_before_independent_work(financial_case):

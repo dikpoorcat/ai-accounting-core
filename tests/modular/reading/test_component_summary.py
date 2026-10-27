@@ -6,7 +6,6 @@ import pytest
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
-    ReadInputs,
     canonical_json,
     content_digest,
     loads_json,
@@ -20,7 +19,7 @@ from ai_accounting_modular.reading import _component_view as views
 def packet():
     model = owner.seal(
         owner._summary(
-            {"_inputs": ReadInputs().wire(), "_cooperation_inputs": ReadInputs().wire()},
+            {"open_items": {"categories": []}},
             dict.fromkeys(blocks.ROLES),
         ),
         (),
@@ -70,21 +69,22 @@ def replace_raw(packet, value):
 def test_each_parse_is_fresh_and_noncanonical_whitespace_uses_canonical_digest(packet, monkeypatch):
     calls = count_checks(monkeypatch)
     first, epoch = read(packet)
-    first["_inputs"].clear()
+    first["open_items"]["categories"].append("caller mutation")
     second, _ = read(packet)
-    assert second["_inputs"] == ReadInputs().wire()
+    assert second["open_items"]["categories"] == []
+    assert "_inputs" not in second and "_cooperation_inputs" not in second
     assert epoch == 7 and len(calls) == 2
     packet[1]["payload_json"] = "\n " + packet[1]["payload_json"]
     assert read(packet) == (second, epoch)
     assert len(calls) == 3
 
 
-@pytest.mark.parametrize("field", ["_inputs", "_cooperation_inputs"])
-def test_both_declared_input_sets_are_checked_on_every_read(packet, field):
+@pytest.mark.parametrize("field,value", [("_roots", {}), ("_item_epoch", True)])
+def test_owner_roots_and_epoch_are_checked_on_every_body_read(packet, field, value):
     read(packet)
-    value = loads_json(packet[1]["payload_json"])
-    del value[field]
-    replace_raw(packet, value)
+    payload = loads_json(packet[1]["payload_json"])
+    payload[field] = value
+    replace_raw(packet, payload)
     with pytest.raises(ContractError) as error:
         read(packet)
     assert error.value.code == "storage_corrupt"

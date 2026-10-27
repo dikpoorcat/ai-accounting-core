@@ -18,6 +18,7 @@ from ai_accounting_modular.reading._collections import (
 )
 from ai_accounting_modular.reading._funds_items import key
 from ai_accounting_modular.reading._open_store import NODES
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from ai_accounting_modular.storage.public import Entry, Tree
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as case
@@ -132,7 +133,13 @@ def forge(case, defect):
             selected,
         )
         assert repository.publish(
-            selected, index.COMPONENT, unit.head, index.FORMAT_VERSION, candidate
+            selected,
+            index.COMPONENT,
+            unit.head,
+            index.FORMAT_VERSION,
+            candidate,
+            guard=CaptureGuard.capture(repository.state(selected, index.COMPONENT), unit.head),
+            current_head=unit.head,
         )
     assert_live_pool(case)
 

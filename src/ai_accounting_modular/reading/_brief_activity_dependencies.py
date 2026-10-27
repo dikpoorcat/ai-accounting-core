@@ -5,16 +5,15 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import (
     ContractError,
     ReadInputs,
-    content_digest,
     validate_contract,
 )
 
-from . import _item_buckets as buckets
 from ._collections import IndexItem
 
 ROOTS = "activity_roots"
 BUSINESSES = "_activity_businesses"
 OBJECTS = "_activity_objects"
+NOTES = "_activity_notes"
 
 
 def corrupt():
@@ -124,14 +123,16 @@ def owned(item, roots):
 def memberships(roots, collection):
     grouped = defaultdict(set)
     for item in roots:
-        values = (
-            {source["business_id"] for source in item.value["sources"]}
-            if collection == BUSINESSES
-            else item.value["object_ids"]
-        )
+        values = identifiers(item.value, collection)
         for identity in values:
             grouped[identity].add(item.item_id)
     return grouped
+
+
+def identifiers(value, collection):
+    if collection == BUSINESSES:
+        return {source["business_id"] for source in value["sources"]}
+    return value["note_scopes" if collection == NOTES else "object_ids"]
 
 
 def inputs(business_ids, object_ids, note_scopes=()):
@@ -145,7 +146,7 @@ def inputs(business_ids, object_ids, note_scopes=()):
 
 def complete(roots):
     entries, keys = [], {}
-    for collection in (BUSINESSES, OBJECTS):
+    for collection in (BUSINESSES, OBJECTS, NOTES):
         values = memberships(roots, collection)
         keys[collection] = set(values)
         entries.extend(
@@ -155,39 +156,14 @@ def complete(roots):
     return entries, inputs(
         keys[BUSINESSES],
         keys[OBJECTS],
-        {scope for item in roots for scope in item.value["note_scopes"]},
+        keys[NOTES],
     )
 
 
-def validate_inputs(payload, directories):
-    from ._dependencies import inputs as declared_inputs
-
-    selected = declared_inputs(payload)
-    if selected != inputs(selected.business_ids, selected.object_ids, selected.note_scopes):
-        corrupt()
-    if not set(selected.note_scopes) <= {"business:" + ident for ident in selected.business_ids}:
-        corrupt()
-    for collection, identities in (
-        (BUSINESSES, selected.business_ids),
-        (OBJECTS, selected.object_ids),
-    ):
-        grouped = defaultdict(list)
-        for identity in identities:
-            grouped[buckets.key(collection, identity).rsplit(":", 1)[1]].append(identity)
-        expected = directories[collection]
-        if grouped.keys() != expected.keys() or any(
-            expected[key]["count"] != len(values)
-            or expected[key]["keys_digest"] != content_digest(sorted(values))
-            for key, values in grouped.items()
-        ):
-            corrupt()
-    return selected
-
-
 def changes(directory, before, after, entries, deletes):
-    selected = validate_inputs(directory.payload, directory.roots)
-    keys = {BUSINESSES: set(selected.business_ids), OBJECTS: set(selected.object_ids)}
-    for collection in (BUSINESSES, OBJECTS):
+    """Maintain local owners and report only zero-to-one/one-to-zero subscriptions."""
+    added, removed = {}, {}
+    for collection in (BUSINESSES, OBJECTS, NOTES):
         previous, proposed = memberships(before, collection), memberships(after, collection)
         changed = {
             identity
@@ -196,25 +172,30 @@ def changes(directory, before, after, entries, deletes):
         }
         directory.dependents(collection, changed)
         current = directory.get(collection, changed)
+        added[collection], removed[collection] = set(), set()
         for identity in changed:
             owners = set(current.get(identity, {}).get("roots", ()))
             if not previous[identity] <= owners:
                 corrupt()
+            existed = bool(owners)
             owners.difference_update(previous[identity])
             owners.update(proposed[identity])
             deletes.add((collection, identity))
             if owners:
                 entries.append(IndexItem(collection, identity, identity, {"roots": sorted(owners)}))
-                keys[collection].add(identity)
-            else:
-                keys[collection].discard(identity)
-    scopes = set(selected.note_scopes)
-    # Scope membership follows business dependencies; surviving owners still subscribe.
-    for item in before:
-        scopes.difference_update(item.value["note_scopes"])
-    scopes.update(scope for item in after for scope in item.value["note_scopes"])
-    candidates = {scope for item in before for scope in item.value["note_scopes"]} - scopes
-    owners = directory.dependents(BUSINESSES, {scope[9:] for scope in candidates})
-    survivors = directory.get(ROOTS, owners - {item.item_id for item in before})
-    scopes.update(scope for value in survivors.values() for scope in value["note_scopes"])
-    return inputs(keys[BUSINESSES], keys[OBJECTS], scopes)
+            if not existed and owners:
+                added[collection].add(identity)
+            elif existed and not owners:
+                removed[collection].add(identity)
+    return (
+        ReadInputs(
+            business_ids=tuple(sorted(added[BUSINESSES])),
+            object_ids=tuple(sorted(added[OBJECTS])),
+            note_scopes=tuple(sorted(added[NOTES])),
+        ),
+        ReadInputs(
+            business_ids=tuple(sorted(removed[BUSINESSES])),
+            object_ids=tuple(sorted(removed[OBJECTS])),
+            note_scopes=tuple(sorted(removed[NOTES])),
+        ),
+    )

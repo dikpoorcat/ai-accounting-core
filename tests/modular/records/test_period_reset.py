@@ -156,9 +156,8 @@ def test_clear_only_removes_target_month_issues_and_preserves_all_notes(records_
         ) == {target["source_id"], preserved["source_id"], noted["source_id"]}
     with storage.write_unit(company.company_id) as unit:
         assert records.clear_period_issues("2026-01", str(uuid4()), unit) == (
-            "company",
-            "custom:review",
-            jan,
+            None,
+            "2026-01",
         )
     with storage.read_unit(company.company_id) as read:
         after = {value["scope"]: value for value in records.current_notes(None, read)}

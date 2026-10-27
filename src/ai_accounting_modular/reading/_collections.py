@@ -7,6 +7,7 @@ from hashlib import sha256
 from ai_accounting_modular.contracts.public import (
     ContractError,
     PageQuery,
+    ReadInputs,
     ReadPage,
     canonical_json,
     content_digest,
@@ -49,6 +50,9 @@ class PreparedModel:
     payload_json: str
     content_digest: str
     rows: tuple[tuple, ...]
+    inputs: ReadInputs | None = None
+    input_adds: ReadInputs = ReadInputs()
+    input_removes: ReadInputs = ReadInputs()
 
 
 def prepare_model(summary, *, items=None):
@@ -230,11 +234,12 @@ def _decode(row):
 class _StoredCollections:
     """Bind the ordinary SQL collection reader to its existing scope and owner."""
 
-    def __init__(self, repository, scope_key, component):
+    def __init__(self, repository, scope_key, component, view):
         self.repository, self.scope_key, self.component = repository, scope_key, component
+        self.view = view
 
     def item_counts(self, collection, query):
-        return self.repository.item_counts(self.scope_key, self.component, collection, query)
+        return self.view.item_counts(collection, query)
 
     def item_get(self, collection, item_ids):
         return self.repository.item_get(self.scope_key, self.component, collection, item_ids)
@@ -253,7 +258,7 @@ def _ready_collection(scope_key, component, collection, read):
     items = (
         view.directory
         if component == "brief_open_items"
-        else _StoredCollections(repository, scope_key, component)
+        else _StoredCollections(repository, scope_key, component, view)
     )
     return items, view.state, view.manifest(collection), view.directory
 

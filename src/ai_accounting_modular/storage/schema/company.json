@@ -1,5 +1,5 @@
 {
-  "fingerprint": "5151f6f9933d06ba20b1e4db82203cee19e06be6b392d1ed9ba6a656cf4c92b1",
+  "fingerprint": "e030254dc0bc191993520b988f68cbc4033701d0dec154dc9a6044a6f93321b1",
   "kind": "company",
   "objects": [
     {
@@ -899,6 +899,13 @@
       "type": "index"
     },
     {
+      "name": "read_scope_pending",
+      "owner": "reading",
+      "sql": "CREATE INDEX read_scope_pending ON read_scope_head(state,scope_key,component_key)",
+      "table": "read_scope_head",
+      "type": "index"
+    },
+    {
       "name": "read_component",
       "owner": "reading",
       "sql": "CREATE TABLE read_component (\nscope_key TEXT NOT NULL,\n component_key TEXT NOT NULL,\n head INTEGER NOT NULL CHECK(head>=0),\n payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),\n PRIMARY KEY(scope_key,component_key),\n FOREIGN KEY(scope_key,component_key) REFERENCES read_scope_head(scope_key,component_key)\n) STRICT",
@@ -1027,10 +1034,10 @@
     {
       "name": "system_meta",
       "owner": "storage",
-      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=3),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
+      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=4),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
       "table": "system_meta",
       "type": "table"
     }
   ],
-  "version": 3
+  "version": 4
 }

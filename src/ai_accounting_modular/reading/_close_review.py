@@ -105,7 +105,10 @@ def detail(reader, scope, query):
                 reason="本月核对内容已经变化，请刷新简报后查看。",
             )
             return response
-        owner_review = review(snapshot)
+        try:
+            owner_review = review(snapshot)
+        except _monthly._CorruptComponent:
+            return response
         if owner_review is None:
             response.update(reason="本月仍有核对必需的金额未知，请会计AI继续核查。")
             return response

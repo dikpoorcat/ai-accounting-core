@@ -1,10 +1,11 @@
 """Whole-scope open-balance summaries stay separate from their member pages."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from ai_accounting_modular.contracts.public import content_digest
 
 from . import _brief_open_totals as totals
+from . import _brief_open_tree as blocks
 from ._collections import IndexItem
 from ._funds_items import key, name_key
 
@@ -54,6 +55,16 @@ def prepare(member_entries, cutoff_period, current_cutoff, *, complete):
         fold = folds[identity] = totals.empty()
         for member in members:
             totals.adjust(fold, member.value, 1)
+        descriptions = Counter(totals.text(member.value) for member in members)
+        fold.update(
+            description_count=len(descriptions),
+            description=next(iter(descriptions)) if len(descriptions) == 1 else None,
+        )
+        for text, count in descriptions.items():
+            item_id = blocks.key(identity, content_digest(text))
+            entries.append(
+                IndexItem(blocks.DESCRIPTIONS, item_id, item_id, {"text": text, "count": count})
+            )
         first = min(members, key=lambda item: (item.sort_key, item.item_id))
         fold["first"] = {
             "id": first.item_id,

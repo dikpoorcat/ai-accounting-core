@@ -6,6 +6,7 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.reading import _financial_projection, _monthly
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from tests.modular.application._working_case import case as case
 
 
@@ -144,7 +145,13 @@ def test_concurrent_current_publication_is_not_reset_by_an_obsolete_read(case, m
                 repository = unit.repository("reading")
                 repository.retry(key, component, format_version=_monthly.version(component))
                 assert repository.publish(
-                    key, component, unit.head, _monthly.version(component), model
+                    key,
+                    component,
+                    unit.head,
+                    _monthly.version(component),
+                    model,
+                    guard=CaptureGuard.capture(repository.state(key, component), unit.head),
+                    current_head=unit.head,
                 )
                 published.append(repository.state(key, component))
         with maintenance(company) as unit:

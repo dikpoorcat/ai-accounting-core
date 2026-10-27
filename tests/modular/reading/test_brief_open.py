@@ -1,6 +1,7 @@
 """Complete formal open balances stay separate from current progress and member pages."""
 
 from copy import deepcopy
+from dataclasses import replace
 from hashlib import sha256
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 from ai_accounting_modular.reading import _brief_open, _monthly
+from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_read_remuneration import bank_object
 
@@ -38,13 +40,21 @@ def publish(case, month="2026-01"):
             (unit.head, key, component),
         )
     with case.kernel.storage.read_unit(case.company) as read:
+        guard = CaptureGuard.capture(read.repository("reading").state(key, component), read.head)
         model = _brief_open.prepare(case.kernel.reading, scope, read)
     with case.kernel.storage.maintenance_unit(case.company) as unit:
         assert unit.repository("reading").publish(
-            key, component, unit.head, _monthly.version(component), model
+            key,
+            component,
+            unit.head,
+            _monthly.version(component),
+            model,
+            guard=guard,
+            current_head=unit.head,
         )
     with case.kernel.storage.read_unit(case.company) as read:
-        return _monthly.ready_snapshot(case.kernel.reading, scope, (component,), read)
+        snapshot = _monthly.ready_snapshot(case.kernel.reading, scope, (component,), read)
+        return replace(snapshot, components=dict(snapshot.components))
 
 
 def page(case, snapshot, **query):

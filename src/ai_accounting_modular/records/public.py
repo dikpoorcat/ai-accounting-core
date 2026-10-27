@@ -19,7 +19,6 @@ from ai_accounting_modular.contracts.public import (
     SourcesResult,
     UnitOfWork,
     canonical_json,
-    content_digest,
     loads_json,
     validate_contract,
     validate_contract_items,
@@ -174,8 +173,10 @@ class Records:
                 protected_paths=protected_paths,
             )
 
-    def clear_period_issues(self, period: str, command_id: str, uow: UnitOfWork) -> tuple[str, ...]:
-        """Clear this month's issues across scopes; preserve notes and other months' issues."""
+    def clear_period_issues(
+        self, period: str, command_id: str, uow: UnitOfWork
+    ) -> tuple[str | None, ...]:
+        """Clear selected issues; return actual changed periods, retaining None for no period."""
         return _period_issues.clear(self, period, command_id, uow)
 
     def discard_sources(
@@ -240,6 +241,7 @@ class Records:
             )
 
     def plan_change(self, change: RecordsChange, context: RecordsContext) -> RecordsPlan:
+        """Plan current records and the actual periods whose issue bodies change."""
         return _changes.plan_change(change, context, self._root(context.read_context))
 
     @contextmanager
@@ -361,14 +363,7 @@ class Records:
     def current_issues(self, scope: str, read_context: ReadContext) -> dict:
         repository = read_context.repository("records")
         row = repository.issue_scope(scope)
-        result = {
-            "scope": scope,
-            "head": row["head"] if row else 0,
-            "issues": repository.issues(scope),
-        }
-        if row is not None and row["content_digest"] != content_digest(result["issues"]):
-            raise ContractError("storage_corrupt", "当前待办范围与完整集合的摘要不一致。")
-        return validate_contract("core.schema.json", "IssueScope", result)
+        return _changes.issues_current(scope, row, repository)
 
     def period_notes(
         self, period_from, period_to, read_context: ReadContext, *, limit=500, cursor=None

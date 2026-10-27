@@ -15,7 +15,7 @@ from ._types import ModuleSchema, SchemaObject
 
 COMPANY_FORMAT = "ai-accounting-modular/1"
 CATALOG_FORMAT = "ai-accounting-modular-catalog/1"
-COMPANY_VERSION = 3
+COMPANY_VERSION = 4
 
 
 def canonical(value: object) -> str:

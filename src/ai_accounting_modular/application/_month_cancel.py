@@ -154,7 +154,9 @@ def run(application, request):
                     ),
                     unit,
                 )
-            scopes = application.records.clear_period_issues(period, request["command_id"], unit)
+            issue_periods = application.records.clear_period_issues(
+                period, request["command_id"], unit
+            )
             _waiting_note(application, period, request["command_id"], unit)
             paths = _task_paths(application, sources, unit)
             wanted, retained = result["source_ids"], []
@@ -170,7 +172,7 @@ def run(application, request):
                 discarded.extend(prepared.discarded_source_ids)
                 retained.extend(prepared.retained_source_ids)
             application._notify_reading(
-                ReadingImpact(note_scopes=("period:" + period,), issue_scopes=scopes), unit
+                ReadingImpact(note_scopes=("period:" + period,), issue_periods=issue_periods), unit
             )
             result["head"] = unit.next_head
         result.update(

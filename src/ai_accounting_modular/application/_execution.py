@@ -270,7 +270,7 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
                 for note in context_plan.notes
                 if before_notes.get(note["scope"]) != note["seq"]
             },
-            issues=(submission.unresolved_scope,) if "work" in context_plan.changed_scopes else (),
+            issue_periods=context_plan.issue_periods,
             working_period_changed=context.evaluation_period_to != previous_period_to,
         )
         if application._notify_reading(impact, unit):

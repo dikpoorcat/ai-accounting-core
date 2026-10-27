@@ -38,8 +38,9 @@ def _ready(repository, state):
 
 
 def select(repository, scope, current_cutoff, start_period):
-    candidates = []
-    for state in repository.scopes():
+    from . import _monthly
+
+    for state in repository.previous_ready(_monthly.key(scope), index.COMPONENT):
         if not _ready(repository, state):
             continue
         try:
@@ -49,20 +50,14 @@ def select(repository, scope, current_cutoff, start_period):
                 and previous["company_id"] == scope["company_id"]
                 and start_period <= previous["period_to"] < scope["period_to"]
             ):
-                candidates.append((previous["period_to"], state))
-        except (ContractError, KeyError, TypeError, ValueError):
-            continue
-    for month, state in sorted(candidates, key=lambda value: value[0], reverse=True):
-        try:
-            directory = index.base(repository, state)
-            payload = directory.payload if directory is not None else None
-            if (
-                payload is None
-                or payload["open_items"]["cutoff_period"] != month
-                or payload["open_items"]["current_cutoff_period"] != current_cutoff
-            ):
-                continue
-            return state, payload, directory
+                directory = index.base(repository, state)
+                payload = directory.payload if directory is not None else None
+                if (
+                    payload is not None
+                    and payload["open_items"]["cutoff_period"] == previous["period_to"]
+                    and payload["open_items"]["current_cutoff_period"] == current_cutoff
+                ):
+                    return state, payload, directory
         except (ContractError, KeyError, TypeError, ValueError):
             continue
     return None

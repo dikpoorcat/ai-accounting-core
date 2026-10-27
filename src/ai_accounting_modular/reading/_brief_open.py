@@ -1,8 +1,9 @@
 """Publish complete open-balance groups, hydrating only a visible member page."""
 
 from collections import Counter
+from dataclasses import replace
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery, ReadInputs
+from ai_accounting_modular.contracts.public import ContractError, PageQuery
 
 from . import _brief_open_cooperation as cooperation
 from . import _brief_open_displays as displays
@@ -16,6 +17,7 @@ from . import _brief_vouchers, _monthly
 from ._business_descriptions import Descriptions, description_reference
 from ._business_labels import business_label
 from ._collections import CollectionFilter, IndexItem, wire_page
+from ._dependencies import bind
 from ._funds_items import key
 
 _COMPONENT = "brief_open_items"
@@ -72,29 +74,30 @@ def prepare(reader, scope, read):
         index.item(index.OBJECTS, identity, {"count": count})
         for identity, count in inputs.object_counts(records).items()
     )
+    entries.extend(
+        index.item(index.NOTES, identity, {"count": count})
+        for identity, count in inputs.note_counts(records).items()
+    )
+    entries.extend(inputs.provider_items(cooperation_inputs))
     entries.extend(index.item(index.FOLDS, identity, value) for identity, value in folds.items())
     entries.extend(
         index.item(index.VOUCHERS, identity, {"count": count})
         for identity, count in inputs.voucher_counts(records).items()
     )
-    prose_inputs = ReadInputs(
-        note_scopes=tuple(
-            sorted({member["_note_scope"] for member in members if member.get("_note_scope")})
-        )
+    selected_inputs = inputs.ORDINARY.merge(
+        inputs.selected(records), inputs.static(cooperation_inputs)
     )
-    selected_inputs = inputs.static(inputs.ORDINARY.merge(cooperation_inputs, prose_inputs))
-    return index.complete(
+    prepared = index.complete(
         {
             "open_items": summary,
             "_category_folds": categories,
-            "_inputs": selected_inputs.wire(),
-            "_cooperation_inputs": cooperation_inputs.wire(),
         },
         entries,
         read.head,
         repository=read.repository("reading"),
         scope_key=_monthly.key(scope),
     )
+    return replace(prepared, model=bind(prepared.model, selected_inputs))
 
 
 def project(reader, captured, company_id, read):
