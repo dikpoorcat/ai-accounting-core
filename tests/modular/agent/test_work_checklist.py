@@ -19,20 +19,42 @@ def test_checklist_conditions_and_actions_have_one_source_and_no_company_progres
     identities = set()
     for stage in installed["stages"]:
         assert stage["completion"] in guide
-        for check in stage["checks"]:
-            assert check["id"] not in identities
-            identities.add(check["id"])
-            assert check["condition"] in guide
-            assert check["if_unmet"] in guide
-            assert all(item in guide for item in check["evidence"])
-            for action in check.get("actions", ()):
-                assert f"{action['command']}(action={action['action']})" in guide
+    checks = installed["common_checks"] + [
+        check for stage in installed["stages"] for check in stage["checks"]
+    ]
+    for check in checks:
+        assert check["id"] not in identities
+        identities.add(check["id"])
+        assert check["condition"] in guide
+        assert check["if_unmet"] in guide
+        assert all(item in guide for item in check["evidence"])
+        for action in check.get("actions", ()):
+            assert f"{action['command']}(action={action['action']})" in guide
     assert "<!-- generated-work-checklist -->" not in guide
     assert "[内部核对规则](accounting://guides/work/checklist)" in guide
     # This payload is static rules, never a shadow workflow or an AI decision log.
-    assert set(installed) == {"format", "stages"}
+    assert set(installed) == {"format", "common_checks", "stages"}
     installed["stages"][0]["checks"].clear()
+    installed["common_checks"].clear()
     assert read_work_checklist() == source
+
+
+def test_payment_result_check_is_shared_before_the_stages_without_per_payment_actions():
+    rules = read_work_checklist()
+    (check,) = rules["common_checks"]
+    guide = read_guide("work")
+    assert check["id"] == "common.payment_results"
+    assert guide.count(f"`{check['id']}`") == 1
+    assert guide.index(check["condition"]) < guide.index("1. **流水与基础资料**")
+    assert "actions" not in check
+    assert "本步骤、本批次" in check["condition"]
+    assert "新办、变更或接续尚未核对" in check["condition"]
+    assert "仅计提不索取未来付款资料" in check["condition"]
+    assert "仅生成代发表不视为已实际付款，仍按文件自身条件检查" in check["condition"]
+    assert "不逐笔另起查询" in "；".join(check["evidence"])
+    assert "只重核新增、变更或依据失效部分" in check["if_unmet"]
+    assert "原行对方" in rules["stages"][0]["checks"][1]["condition"]
+    assert "不汇集前面应已处理的遗漏" in rules["stages"][4]["completion"]
 
 
 def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition():
@@ -67,7 +89,21 @@ def test_payment_actions_match_the_public_contract_and_instructions_point_to_rul
     assert "缺少成果时执行所列接口动作" in INSTRUCTIONS
 
 
-@pytest.mark.parametrize("problem", ["order", "duplicate", "no_evidence", "action"])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "order",
+        "duplicate",
+        "no_evidence",
+        "action",
+        "missing_common",
+        "empty_common",
+        "common_duplicate",
+        "common_scope",
+        "common_no_evidence",
+        "common_state",
+    ],
+)
 def test_broken_checklist_cannot_silently_ship(tmp_path, problem):
     module = generator()
     source = deepcopy(read_work_checklist())
@@ -77,8 +113,20 @@ def test_broken_checklist_cannot_silently_ship(tmp_path, problem):
         source["stages"][0]["checks"][1]["id"] = source["stages"][0]["checks"][0]["id"]
     elif problem == "no_evidence":
         source["stages"][0]["checks"][0]["evidence"] = []
-    else:
+    elif problem == "action":
         source["stages"][3]["checks"][2]["actions"][0]["command"] = ""
+    elif problem == "missing_common":
+        del source["common_checks"]
+    elif problem == "empty_common":
+        source["common_checks"] = []
+    elif problem == "common_duplicate":
+        source["common_checks"].append(deepcopy(source["common_checks"][0]))
+    elif problem == "common_scope":
+        source["common_checks"][0]["id"] = "accounting.payment_results"
+    elif problem == "common_no_evidence":
+        source["common_checks"][0]["evidence"] = []
+    else:
+        source["common_checks"][0]["completed"] = True
     path = tmp_path / "work-checklist.json"
     path.write_text(json.dumps(source, ensure_ascii=False), encoding="utf-8")
     with pytest.raises(ValueError):

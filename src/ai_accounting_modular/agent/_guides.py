@@ -26,8 +26,11 @@ def _book():
         checklist = value["checklist"]
         if (
             not isinstance(checklist, dict)
-            or set(checklist) != {"format", "stages"}
+            or set(checklist) != {"format", "common_checks", "stages"}
             or checklist["format"] != "ai-accounting-work-checklist/1"
+            or not isinstance(checklist["common_checks"], list)
+            or not checklist["common_checks"]
+            or any(not isinstance(item, dict) for item in checklist["common_checks"])
             or not isinstance(checklist["stages"], list)
             or any(not isinstance(item, dict) for item in checklist["stages"])
             or [item.get("number") for item in checklist["stages"]] != list(range(1, 9))

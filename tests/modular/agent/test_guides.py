@@ -242,6 +242,9 @@ assert '同时决定图标与接续位置' in read_guide('work')
 assert 'SourceDiscardResult' in read_guide('commands')
 assert 'call accounting-sources' in read_guide('runtime')
 assert read_work_checklist()['stages'][3]['checks'][2]['id'] == 'payment_export.file'
+check = read_work_checklist()['common_checks'][0]
+assert check['id'] == 'common.payment_results'
+assert check['condition'] in read_guide('work')
 print(json.dumps(guide_index(), ensure_ascii=False))
 """
     process = subprocess.run(

@@ -171,15 +171,50 @@ def fact_kinds(document):
     return kinds
 
 
+def checklist_checks(checks, prefix, identities):
+    if not isinstance(checks, list) or not checks:
+        raise ValueError("Work checklist must have checks")
+    for check in checks:
+        if (
+            not isinstance(check, dict)
+            or set(check) - {"id", "condition", "evidence", "if_unmet", "actions"}
+            or not {"id", "condition", "evidence", "if_unmet"}.issubset(check)
+        ):
+            raise ValueError("Invalid work checklist check")
+        for key in ("id", "condition", "if_unmet"):
+            if not isinstance(check[key], str) or not check[key].strip():
+                raise ValueError("Work checklist check text is required")
+        if not check["id"].startswith(prefix + ".") or check["id"] in identities:
+            raise ValueError("Work checklist check must have a unique scope identity")
+        identities.add(check["id"])
+        if (
+            not isinstance(check["evidence"], list)
+            or not check["evidence"]
+            or any(not isinstance(item, str) or not item.strip() for item in check["evidence"])
+        ):
+            raise ValueError("Work checklist check evidence is required")
+        for action in check.get("actions", ()):
+            if (
+                not isinstance(action, dict)
+                or set(action) != {"command", "action", "when"}
+                or any(not isinstance(item, str) or not item.strip() for item in action.values())
+            ):
+                raise ValueError("Invalid work checklist action")
+
+
 def work_checklist(source):
     """Load the one editable acceptance list; never persist an AI's stage decisions."""
     value = json.loads(source.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
-    if set(value) != {"format", "stages"} or value["format"] != "ai-accounting-work-checklist/1":
+    if (
+        set(value) != {"format", "common_checks", "stages"}
+        or value["format"] != "ai-accounting-work-checklist/1"
+    ):
         raise ValueError("Invalid work checklist format")
     stages = value["stages"]
     if not isinstance(stages, list) or len(stages) != 8:
         raise ValueError("Work checklist must describe eight stages")
-    identities = set()
+    identities = {"common"}
+    checklist_checks(value["common_checks"], "common", identities)
     for number, stage in enumerate(stages, 1):
         if set(stage) != {"number", "id", "title", "completion", "checks"}:
             raise ValueError("Invalid work checklist stage")
@@ -191,53 +226,33 @@ def work_checklist(source):
         if stage["id"] in identities:
             raise ValueError("Duplicate work checklist identity")
         identities.add(stage["id"])
-        if not isinstance(stage["checks"], list) or not stage["checks"]:
-            raise ValueError("Work checklist stage must have checks")
-        for check in stage["checks"]:
-            if set(check) - {"id", "condition", "evidence", "if_unmet", "actions"} or not {
-                "id",
-                "condition",
-                "evidence",
-                "if_unmet",
-            }.issubset(check):
-                raise ValueError("Invalid work checklist check")
-            for key in ("id", "condition", "if_unmet"):
-                if not isinstance(check[key], str) or not check[key].strip():
-                    raise ValueError("Work checklist check text is required")
-            if not check["id"].startswith(stage["id"] + ".") or check["id"] in identities:
-                raise ValueError("Work checklist check must have a unique stage identity")
-            identities.add(check["id"])
-            if (
-                not isinstance(check["evidence"], list)
-                or not check["evidence"]
-                or any(not isinstance(item, str) or not item.strip() for item in check["evidence"])
-            ):
-                raise ValueError("Work checklist check evidence is required")
-            for action in check.get("actions", ()):
-                if set(action) != {"command", "action", "when"} or any(
-                    not isinstance(item, str) or not item.strip() for item in action.values()
-                ):
-                    raise ValueError("Invalid work checklist action")
+        checklist_checks(stage["checks"], stage["id"], identities)
     return value
+
+
+def render_check(check, indent=""):
+    lines = [
+        f"{indent}- `{check['id']}`：{check['condition']}",
+        f"{indent}  核对依据：{'；'.join(check['evidence'])}。",
+        f"{indent}  未满足时：{check['if_unmet']}",
+    ]
+    lines.extend(
+        f"{indent}  调用 `{action['command']}(action={action['action']})`：{action['when']}"
+        for action in check.get("actions", ())
+    )
+    return lines
 
 
 def render_work_checklist(value):
     """The human work guide and packaged machine list share these exact conditions."""
-    lines = []
+    lines = ["**当前步骤打勾前，按实际办理范围采用共同核对项。**", ""]
+    for check in value["common_checks"]:
+        lines.extend(render_check(check))
+    lines.append("")
     for stage in value["stages"]:
         lines.append(f"{stage['number']}. **{stage['title']}**：{stage['completion']}")
         for check in stage["checks"]:
-            lines.extend(
-                (
-                    f"   - `{check['id']}`：{check['condition']}",
-                    f"     核对依据：{'；'.join(check['evidence'])}。",
-                    f"     未满足时：{check['if_unmet']}",
-                )
-            )
-            for action in check.get("actions", ()):
-                lines.append(
-                    f"     调用 `{action['command']}(action={action['action']})`：{action['when']}"
-                )
+            lines.extend(render_check(check, "   "))
         lines.append("")
     return "\n".join(lines).strip()
 
