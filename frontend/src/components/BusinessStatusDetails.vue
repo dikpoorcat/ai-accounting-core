@@ -451,7 +451,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
       <template v-else-if="isActivity || isFunds || isVoucher">
         <dl v-if="isActivity && data.detail_scope" class="business-amounts"><div><dt>本次{{ data.detail_scope.amount_label }}</dt><dd>{{ ownerMoney(data.detail_scope.amount_fen) }}</dd></div></dl>
         <p v-if="isFunds && data.latest_source.deleted">这笔业务目前已撤回；原行保留资金变动记录。</p>
-        <p v-else-if="isActivity && data.latest_source.deleted && !activityContext?.state.includes('撤回')">这笔业务目前已撤回；原行保留本次发生记录。</p>
+        <p v-else-if="isActivity && data.latest_source.deleted">这笔业务目前已撤回；原行保留本次发生记录。</p>
         <p v-else-if="isVoucher && data.latest_source.deleted">这笔业务目前已撤回；凭证保留历史记录。</p>
         <p v-if="isFunds && fundsDescription">事项说明：{{ fundsDescription }}</p>
         <div v-if="ownerPurposes.length || (isVoucher ? voucherObjects : activityObjects).length" class="owner-detail-context">

@@ -147,6 +147,7 @@ def test_mixed_payment_is_two_real_parts_and_one_exact_voucher(case, monkeypatch
     assert groups["page"]["total_count"] == 4
     for item in groups["items"]:
         validate("BriefActivityDisplayGroup", item)
+        assert item["state"] == "已入账"
     paid_groups = [item for item in groups["items"] if item["group"] == "cash"]
     assert {(item["title"], item["amount_fen"]) for item in paid_groups} == {
         ("支付货币基金申购", "300"),
@@ -209,11 +210,30 @@ def test_closed_correction_uses_old_and_new_exact_type_and_date(case):
         assert before.inputs.note_scopes == ("business:" + expense["business_id"],)
         assert after.inputs.note_scopes == ()
     capture(case, "2026-02")
-    groups = activity(case, "2026-02")["items"]
-    assert {(item["title"], item["amount_fen"]) for item in groups} == {
-        ("冲正原业务 · 管理费用", "-100"),
-        ("更正原业务 · 销售费用", "80"),
+    page = activity(case, "2026-02")
+    groups = page["items"]
+    assert page["page"]["total_count"] == 2
+    assert {(item["title"], item["amount_fen"], item["state"]) for item in groups} == {
+        ("冲正原业务 · 管理费用", "-100", "更正前"),
+        ("更正原业务 · 销售费用", "80", "更正后"),
     }
+    assert len({item["group_key"] for item in groups}) == 2
+    for item in groups:
+        assert item["key"] == item["group_key"]
+        assert item["member_count"] == item["voucher_count"] == 1
+        detail = group(case, item["key"], "2026-02")
+        member = detail["members"]["items"][0]
+        assert member["group_key"] == item["group_key"]
+        assert (member["state"], member["amount_fen"]) == (item["state"], item["amount_fen"])
+        assert activity(case, "2026-02", activity_key=member["key"])["items"] == [item]
+        with case.kernel.storage.read_unit(case.company) as read:
+            focused = _brief_groups.member_scope(
+                snapshot(case, read, "2026-02"), read, member["key"]
+            )
+        assert focused["row"] == member
+        voucher = detail["vouchers"]["items"][0]
+        assert voucher["voucher_version_id"] == member["voucher_version_id"]
+        assert voucher["state"] == ("冲正" if item["state"] == "更正前" else "已入账")
     actual = vouchers(case, "2026-02")["items"]
     assert len(actual) == 2
     assert all(
@@ -461,7 +481,10 @@ def test_evidence_only_formal_adoption_is_quiet_but_equal_reclassification_is_vi
     assert result["completion"] == "complete", result
     capture(case, "2026-02")
     changed = activity(case, "2026-02")["items"]
-    assert sorted(item["amount_fen"] for item in changed) == ["-100000", "100000"]
+    assert {(item["state"], item["amount_fen"]) for item in changed} == {
+        ("更正前", "-100000"),
+        ("更正后", "100000"),
+    }
     assert all(item["group"] == "correction" for item in changed)
 
 
@@ -890,7 +913,14 @@ def test_zero_company_real_project_amount_correction_is_visible_without_fictitio
     changed = activity(case, "2026-02")["items"]
     assert len(changed) == 2 and {item["kind"] for item in changed} == {"operations.expense"}
     assert {item["amount_fen"] for item in changed} == {"0"}
+    assert {item["state"] for item in changed} == {"更正前", "更正后"}
     assert all(item["voucher_count"] == 0 for item in changed)
+    for item in changed:
+        detail = group(case, item["key"], "2026-02")
+        assert detail["vouchers"]["items"] == []
+        member = detail["members"]["items"][0]
+        assert (member["state"], member["amount_fen"]) == (item["state"], "0")
+        assert activity(case, "2026-02", activity_key=member["key"])["items"] == [item]
     assert vouchers(case, "2026-02")["items"] == []
 
 

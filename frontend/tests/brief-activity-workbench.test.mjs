@@ -145,13 +145,21 @@ test("voucher workbench preserves precise focus, complete paging, and integer am
       assert.equal(state.visibleVouchers.value.length, 5);
       app.unmount();
     });
-    await t.test("business rows keep their own exact occurrence amounts and neutral corrections", async () => {
-      const items = ["0", null, "-800000", "600000", "9007199254740993"].map((amount_fen, index) => ({ ...activity(index + 1), subject_id: "same-business", amount_fen, state: index === 2 ? "更正原业务" : "已入账" }));
-      const app = createSSRApp(component, { ...baseProps(), groups: [{ key: "funds", label: "收付款", event_count: 5, group_count: 5, type_counts: [{ label: "实际收付款", count: 5 }] }], items }); app.use(await router());
-      const html = await renderToString(app);
-      for (const amount of ["¥0.00", "待核对", "−¥8,000.00", "¥6,000.00", "¥90,071,992,547,409.93"]) assert(html.includes(amount));
-      assert.match(html, /class="state business-list-state correction"[^>]*>更正原业务/);
-      assert.doesNotMatch(html, /owner-activity-summary/);
+    await t.test("business rows keep exact occurrence amounts and shared correction labels", async () => {
+      const amounts = ["0", null, "-800000", "600000", "9007199254740993", "12345"];
+      const cases = [
+        { group: "funds", label: "收付款", states: amounts.map(() => "已入账"), correction: false },
+        { group: "correction", label: "更正", states: ["更正前", "更正后", "更正前", "更正后", "更正原业务", "业务调整"], correction: true },
+      ];
+      for (const { group, label, states, correction } of cases) {
+        const items = amounts.map((amount_fen, index) => ({ ...activity(index + 1), group, subject_id: "same-business", amount_fen, state: states[index] }));
+        const app = createSSRApp(component, { ...baseProps(), groups: [{ key: group, label, event_count: items.length, group_count: items.length, type_counts: [{ label: "实际收付款", count: items.length }] }], items }); app.use(await router());
+        const html = await renderToString(app);
+        for (const amount of ["¥0.00", "待核对", "−¥8,000.00", "¥6,000.00", "¥90,071,992,547,409.93", "¥123.45"]) assert(html.includes(amount));
+        const rendered = [...html.matchAll(/class="(state|activity-correction-state) business-list-state"[^>]*data-state="([^"]+)"[^>]*>(.*?)<\/span>/g)].map(match => ({ state: match[3], correction: match[1] === "activity-correction-state", label: match[2] }));
+        assert.deepEqual(rendered, states.map(state => ({ state, correction, label: state })), "correction labels retain their exact wording and category, including neutral fallback states");
+        assert.doesNotMatch(html, /owner-activity-summary/);
+      }
     });
     await t.test("business objects preserve backend descriptions without treating an empty name as inapplicable", async () => {
       const parties = ["", "多人银行批次", "公司内部账户", "无需往来对象"];

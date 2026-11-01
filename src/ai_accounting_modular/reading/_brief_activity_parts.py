@@ -423,6 +423,9 @@ def _event_details(content):
 def rows(event, content, objects, *, prepared, obligations=()):
     result, correction = [], event.role in {"reversal", "replacement", "reclassification"}
     sign, token = (-1 if event.role == "reversal" else 1), event.voucher_token
+    state = {"reversal": "更正前", "replacement": "更正后"}.get(
+        event.role, "更正原业务" if correction else "已入账"
+    )
     for index, part in enumerate(prepared):
         ident = content_digest(
             {"voucher": token, "source": content.source, "role": event.role, "part": index}
@@ -483,7 +486,7 @@ def rows(event, content, objects, *, prepared, obligations=()):
                     "description": title,
                     "amount_fen": signed(part.amount_fen, sign),
                     "amount_label": part.amount_label,
-                    "state": "更正原业务" if correction else "已入账",
+                    "state": state,
                     "party": party,
                     "group": group,
                 },

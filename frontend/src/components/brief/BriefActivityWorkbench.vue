@@ -359,7 +359,7 @@ watch(() => props.focusedActivity, async item => {
             <small class="event-date business-list-date">{{ groupDate(item) }}</small>
             <div class="event-copy business-list-object"><strong>{{ item.party || '对象名称未提供' }}</strong></div>
             <span class="event-matter business-list-matter">{{ item.title }}<small>{{ item.member_count }} 笔记录</small></span>
-            <span :class="['state', 'business-list-state', { correction: item.state === '更正原业务' || item.state.includes('冲正') || item.state.includes('撤回') }]">{{ item.state }}</span>
+            <span :class="[item.group === 'correction' ? 'activity-correction-state' : 'state', 'business-list-state']" :data-state="item.state">{{ item.state }}</span>
             <span class="event-money business-list-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen == null ? '待核对' : formatFen(item.amount_fen) }}</b></span>
             <span class="event-voucher-link business-list-voucher">{{ item.voucher_count }} 张</span>
             <svg class="row-chevron business-list-arrow" :class="{ expanded: expandedBusinessKey === item.group_key }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
@@ -446,7 +446,7 @@ watch(() => props.focusedActivity, async item => {
 .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 14px; padding: 0 2px; }
 h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
 .section-heading > span { color: var(--muted); font-size: 13px; }
-.workbench { --business-list-columns: 98px minmax(0, 1fr) minmax(0, .9fr) 68px 130px 64px 12px; display: grid; min-width: 0; grid-template-columns: 280px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.workbench { --business-list-columns: 98px minmax(0, 1fr) minmax(0, .9fr) 76px 130px 64px 12px; display: grid; min-width: 0; grid-template-columns: 280px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .index { display: grid; min-width: 0; align-content: start; gap: 3px; padding: 12px 10px; border-right: 1px solid var(--line); border-radius: 14px 0 0 14px; }
 .category-heading { display: flex; min-height: 30px; align-items: center; padding: 0 12px 7px; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
 .index button { position: relative; display: grid; width: 100%; min-width: 0; min-height: 46px; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 10px; align-items: center; padding: 11px 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }

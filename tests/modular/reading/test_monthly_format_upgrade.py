@@ -5,7 +5,14 @@ from contextlib import contextmanager
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
-from ai_accounting_modular.reading import _financial_projection, _monthly
+from ai_accounting_modular.reading import (
+    _brief_activity,
+    _brief_activity_index,
+    _brief_groups,
+    _brief_vouchers,
+    _financial_projection,
+    _monthly,
+)
 from ai_accounting_modular.reading._publication_guard import CaptureGuard
 from tests.modular.application._working_case import case as case
 
@@ -37,10 +44,10 @@ def ready(case, component, **fields):
     return result
 
 
-def state(case, component):
+def state(case, component, **fields):
     with case.kernel.storage.read_unit(case.company) as read:
         return read.repository("reading").state(
-            _monthly.key(_monthly.normalize(scope(case))), component
+            _monthly.key(_monthly.normalize(scope(case, **fields))), component
         )
 
 
@@ -124,6 +131,86 @@ def test_old_expected_snapshot_is_rejected_while_the_requested_upgrade_is_queued
     assert state(case, component)["state"] == "preparing"
     assert case.kernel.reading.run_pending(case.company)
     assert delivery(case, component).state == "ready"
+
+
+def test_correction_labels_upgrade_rejects_old_snapshot_and_cursor(case, monkeypatch):
+    fact = case.seed()
+    assert case.close(case.check())["state"] == "closed"
+    fact["data"].update(amount_fen="80000", expense_class="sales")
+    changed = case.app.accounting_apply(
+        case.request(
+            mutations=[{"op": "replace", "expected_seq": 1, "fact": fact}],
+            correction_period="2026-02",
+        )
+    )
+    assert changed["completion"] == "complete", changed
+    component = _monthly.BRIEF_ACTIVITY
+    period = {"period_from": "2026-02", "period_to": "2026-02"}
+
+    def activity_delivery(query=None, **fields):
+        return _monthly.deliver(
+            case.kernel.reading,
+            scope(case, **period, **fields),
+            (component,),
+            lambda snapshot, read: {
+                "activity": _brief_groups.activity_page(snapshot, read, query or {}),
+                "vouchers": _brief_vouchers.page(case.kernel.reading, snapshot, read, {}),
+            },
+        )
+
+    current_format, generate_rows = _brief_activity_index.FORMAT_VERSION, _brief_activity.rows
+
+    def legacy_rows(*args, **kwargs):
+        members = generate_rows(*args, **kwargs)
+        for member in members:
+            if member["row"]["group"] == "correction":
+                member["row"]["state"] = "更正原业务"
+        return members
+
+    # Publish a valid prior-format cache, including its original labels and digests.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(_brief_activity_index, "FORMAT_VERSION", current_format - 1)
+        legacy.setattr(_brief_activity, "rows", legacy_rows)
+        assert activity_delivery().state == "preparing"
+        assert case.kernel.reading.run_pending(case.company)
+        previous = activity_delivery({"limit": 1})
+        old = activity_delivery().payload
+    assert previous.state == "ready"
+    cursor = previous.payload["activity"]["page"]["next_cursor"]
+    assert cursor is not None
+    assert {row["state"] for row in old["activity"]["items"]} == {"更正原业务"}
+    facts = case.get(fact["business_id"])
+    with case.kernel.storage.read_unit(case.company) as read:
+        formal_head = read.head
+
+    assert activity_delivery().state == "preparing"
+    assert state(case, component, **period)["format_version"] == current_format
+    assert case.kernel.reading.run_pending(case.company)
+    rebuilt = activity_delivery()
+    assert rebuilt.state == "ready" and rebuilt.version != previous.version
+    new = rebuilt.payload
+    assert {row["state"] for row in new["activity"]["items"]} == {"更正前", "更正后"}
+    for item in (old, new):
+        assert item["activity"]["page"]["total_count"] == 2
+        assert item["vouchers"]["page"]["total_count"] == 2
+    assert [
+        {key: value for key, value in row.items() if key != "state"}
+        for row in new["activity"]["items"]
+    ] == [
+        {key: value for key, value in row.items() if key != "state"}
+        for row in old["activity"]["items"]
+    ]
+    assert new["vouchers"]["items"] == old["vouchers"]["items"]
+    for query, fields in (
+        ({}, {"expected_head": previous.version}),
+        ({"limit": 1, "cursor": cursor}, {}),
+    ):
+        with pytest.raises(ContractError) as error:
+            activity_delivery(query, **fields)
+        assert error.value.code == "snapshot_changed"
+    assert case.get(fact["business_id"]) == facts
+    with case.kernel.storage.read_unit(case.company) as read:
+        assert read.head == formal_head
 
 
 def test_concurrent_current_publication_is_not_reset_by_an_obsolete_read(case, monkeypatch):

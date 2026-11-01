@@ -164,9 +164,13 @@ def test_current_root_ignores_retained_older_generation_in_shared_body_cache(boo
     monkeypatch.setattr(book.kernel.ledger, "get_adopted_contents", exact)
     scope = selection(book, "2026-03")
     with book.kernel.storage.read_unit(book.company) as read:
-        selected = activity.capture(
+        march_members, _, selected = activity.capture(
             book.kernel.reading, scope, read, business_ids=(interest["business_id"],)
-        )[2]
+        )
+        assert {(item["row"]["state"], item["row"]["amount_fen"]) for item in march_members} == {
+            ("更正前", "-3000"),
+            ("更正后", "2900"),
+        }
         direct = list(decoded)
         decoded.clear()
         load = activity.Contents.load
@@ -474,13 +478,27 @@ def test_closed_correction_and_withdrawal_keep_the_frozen_month(book):
     assert revised_january.inputs.note_scopes == ()
     february = matches_complete(book, "2026-02")
     assert february["activity_count"] == february["voucher_count"] == 2
-    assert {row["title"] for row in activity_page(book, "2026-02")["items"]} == {
-        "冲正原业务 · 管理费用",
-        "更正原业务 · 销售费用",
+    first_correction = activity_page(book, "2026-02")["items"]
+    assert {(row["title"], row["state"], row["amount_fen"]) for row in first_correction} == {
+        ("冲正原业务 · 管理费用", "更正前", "-100000"),
+        ("更正原业务 · 销售费用", "更正后", "80000"),
+    }
+    first["data"]["amount_fen"] = "70000"
+    change(book, first, seq=2, correction_period="2026-02")
+    assert book.kernel.reading.run_pending(book.company)
+    replaced = matches_complete(book, "2026-02")
+    assert replaced["activity_count"] == replaced["voucher_count"] == replaced["group_count"] == 2
+    repeated_correction = activity_page(book, "2026-02")["items"]
+    assert {row["group_key"] for row in repeated_correction} == {
+        row["group_key"] for row in first_correction
+    }
+    assert {(row["state"], row["amount_fen"]) for row in repeated_correction} == {
+        ("更正前", "-100000"),
+        ("更正后", "70000"),
     }
     withdrawn = book.app.accounting_apply(
         book.request(
-            mutations=[{"op": "withdraw", "expected_seq": 2, "business_id": first["business_id"]}],
+            mutations=[{"op": "withdraw", "expected_seq": 3, "business_id": first["business_id"]}],
             correction_period="2026-02",
             explanation="已核实该笔费用没有对应现实业务，撤去误记。",
         )
@@ -489,6 +507,12 @@ def test_closed_correction_and_withdrawal_keep_the_frozen_month(book):
     assert book.kernel.reading.run_pending(book.company)
     assert matches_complete(book) == revised_january
     assert matches_complete(book, "2026-02")["activity_count"] == 1
+    remaining = activity_page(book, "2026-02")["items"]
+    assert len(remaining) == 1
+    assert (remaining[0]["state"], remaining[0]["amount_fen"]) == ("更正前", "-100000")
+    assert remaining[0]["group_key"] == next(
+        row["group_key"] for row in first_correction if row["state"] == "更正前"
+    )
 
 
 def test_no_voucher_business_legs_remain_incremental_after_closing(book):
@@ -526,11 +550,20 @@ def test_no_voucher_business_legs_remain_incremental_after_closing(book):
     assert book.kernel.reading.run_pending(book.company)
     changed = matches_complete(book, "2026-02")
     assert changed["activity_count"] == 2 and changed["voucher_count"] == 0
+    first_correction = activity_page(book, "2026-02")["items"]
+    assert {(row["state"], row["amount_fen"]) for row in first_correction} == {
+        ("更正前", "0"),
+        ("更正后", "0"),
+    }
     charged["data"]["project_total_fen"] = "4"
     change(book, charged, seq=3, correction_period="2026-02")
     assert book.kernel.reading.run_pending(book.company)
     changed = matches_complete(book, "2026-02")
     assert changed["activity_count"] == 2 and changed["voucher_count"] == 0
+    repeated_correction = activity_page(book, "2026-02")["items"]
+    assert {(row["state"], row["group_key"]) for row in repeated_correction} == {
+        (row["state"], row["group_key"]) for row in first_correction
+    }
     revised_january = matches_complete(book)
     assert revised_january.inputs.note_scopes == ()
     assert january.inputs.note_scopes == ("business:" + charged["business_id"],)

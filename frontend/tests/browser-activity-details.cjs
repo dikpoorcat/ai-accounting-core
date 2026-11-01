@@ -125,10 +125,10 @@ async function run(config) {
     assert.equal(await panel.locator("ul > li").last().evaluate(element => getComputedStyle(element).borderBottomWidth), "0px");
     phase = "synthetic cached expansion"; await mockRow.focus(); await mockRow.press("Space"); const cachedCount = count(); await mockRow.press("Enter"); await panel.waitFor(); await frames(); assert.equal(count(), cachedCount);
     phase = "synthetic correction"; const other = page.locator(".activity-section .event-row").nth(1); await other.focus(); await other.press("Enter"); await other.locator(".business-detail-panel:not(.owner-activity-summary)").waitFor();
-    assert.equal((await other.locator(".event-money b").textContent()).trim(), "−¥8,000.00"); assert((await other.locator(".state").first().textContent()).includes("更正原业务"));
+    assert.equal((await other.locator(".event-money b").textContent()).trim(), "−¥8,000.00"); assert((await other.locator(".activity-correction-state").first().textContent()).includes("更正原业务"));
     for (const theme of ["light", "dark"]) {
       await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
-      assert(await other.locator(".state.correction").first().evaluate(element => {
+      assert(await other.locator(".activity-correction-state").first().evaluate(element => {
         const probe = document.createElement("span"); probe.style.color = "var(--muted)"; element.append(probe);
         const ok = getComputedStyle(element).color === getComputedStyle(probe).color; probe.remove(); return ok;
       }));

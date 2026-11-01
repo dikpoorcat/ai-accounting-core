@@ -226,11 +226,13 @@ test("activity details only add information to the exact occurrence row", async 
       assert.equal((whole.match(/支付消防安全培训费报销/g) ?? []).length, 2);
       assert.match(whole, /整单说明：支付消防安全培训费报销/);
     });
-    await t.test("later business withdrawal is retained only when it adds to the historical row", async () => {
-      const data = scenario(); data.latest_source.deleted = true;
-      const html = await render(data); assert.match(html, /这笔业务目前已撤回；原行保留本次发生记录/);
-      const alreadyWithdrawn = await render(data, activity({ state: "业务已撤回" }));
-      assert.doesNotMatch(alreadyWithdrawn, /这笔业务目前已撤回/);
+    await t.test("current withdrawal follows the formal state independently of occurrence labels", async () => {
+      for (const state of ["已入账", "更正前", "更正后", "更正原业务"]) {
+        const data = scenario(), row = activity({ state });
+        assert.doesNotMatch(await render(data, row), /这笔业务目前已撤回/);
+        data.latest_source.deleted = true;
+        assert.match(await render(data, row), /这笔业务目前已撤回；原行保留本次发生记录/);
+      }
     });
     await t.test("receivables and deposits use explicit collection direction", async () => {
       for (const category_key of ["customer_receivables", "refundable_deposit_receivables"]) {

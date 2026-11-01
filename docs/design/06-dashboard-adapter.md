@@ -136,7 +136,7 @@ HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.pu
 | 简报 position | 当月收入、费用、账面盈亏和完整性；发生额不等于收付款额。 | ledger共享利润取数及正式期间结果。 |
 | 简报 funds_overview、financial_position、long_term_assets | 月末资金、对外收付、内部划转；资产负债权益、银行与长期资产、构成、平衡状态及长期资产项数。资产负债构成浮窗为原有业务内容。 | ledger共享财务快照、money资金结果、assets正式资产卡片。 |
 | 简报 workforce_cost | 员工和个人劳务成本、工资奖金、公司社保公积金、资本化劳务；个人代扣不重复计公司成本。 | people正式薪酬及ledger共享成本。 |
-| 简报 activity_groups、collections.activity、activity_count/group_count/voucher_count | 按正式对象、业务类型及已有合同或项目关系归组，具体用途在成员保留；混合收付按实际业务分项，收入与代收分开；活动分项、业务组和完整凭证分别计数。 | ledger正式凭证和义务、各领域业务标签、money精确收付关系。 |
+| 简报 activity_groups、collections.activity、activity_count/group_count/voucher_count | 按正式对象、业务类型及已有合同或项目关系归组，具体用途在成员保留；混合收付按实际业务分项，收入与代收分开；活动分项、业务组和完整凭证分别计数。状态按本次正式更正角色显示：冲正原记录为“更正前”，替换记录为“更正后”，普通记录沿用“已入账”；文案不替代正式业务状态，业务进展的当前撤回提示依据正式撤回标记。冲正金额保留本月有符号影响，前后记录不强制成对，历史月份不改标。 | ledger正式凭证和义务、各领域业务标签、money精确收付关系。 |
 | 简报 open_items、collections.open_items | 截至所选月末的完整应收、应付和分类；不同对象应收应付不抵消，期初及跨月余额不遗漏。社保公积金按人员、工资月、个人／单位分项。投资产生的正式往来按相同账务含义接入，不另做项目资金管理表。 | ledger义务、清偿及正式账面余额，people身份和薪酬关系。 |
 | 简报 management_commentary_details、risks、owner_tasks | 当前有效经营说明、实际风险及老板确需补资料、决定或外部办理的事项。AI内部核对不生成老板任务。 | records当前说明及未解决事项、领域状态；只读月度核对另按第7节处理。 |
 | 简报 focused_*、collections.vouchers | 精确原凭证和业务定位、完整分录、对象、资产链接；独立凭证清单与业务配对凭证分开。 | ledger公开凭证查询、对象及assets公开身份。 |

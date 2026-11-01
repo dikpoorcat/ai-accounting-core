@@ -134,7 +134,7 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
     </div>
     <ul>
       <li v-for="item in activityMembers" :key="item.key" :class="{ highlighted: item.key === focusedActivity?.key }">
-        <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description || item.title }}<small v-if="item.party" class="member-purpose">{{ item.party }}</small></span><span class="member-state">{{ item.state }}</span><b>{{ amount(item.amount_fen) }}</b>
+        <div class="member-row"><small>{{ item.date || item.recognition.label }}</small><span>{{ item.description || item.title }}<small v-if="item.party" class="member-purpose">{{ item.party }}</small></span><span class="member-state" :class="{ 'activity-correction-state': item.group === 'correction' }" :data-state="item.state">{{ item.state }}</span><b>{{ amount(item.amount_fen) }}</b>
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.key" @preview="value => preview = value ? item.key : preview === item.key ? '' : preview" @open="$emit('requestVoucher', $event)" />
           <button v-if="item.subject_id && item.detail_scope_key" type="button" :aria-expanded="selected === item.key" @click="toggle(item.key)">业务进展</button>
         </div>
@@ -157,7 +157,7 @@ ul { margin:0; padding:0; list-style:none; }
 li + li { border-top:1px solid var(--line); }
 .member-row { display:grid; grid-template-columns:100px minmax(0,1fr) auto 120px auto auto; align-items:center; gap:12px; padding:10px 0; font-size:12px; }
 .member-row > b { text-align:right; }
-small, .member-state { color:var(--muted); }
+small, .member-state:not(.activity-correction-state) { color:var(--muted); }
 .member-purpose { display:block; margin-top:3px; font-size:11px; overflow-wrap:anywhere; }
 button { border:0; background:transparent; color:var(--accent); font:inherit; padding:6px; cursor:pointer; }
 .contribution-summary { margin-bottom:12px; font-size:12px; }
