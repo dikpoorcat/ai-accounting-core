@@ -72,7 +72,12 @@ def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition()
     assert "公司说明" in checks["payment_export.scope"]["if_unmet"]
     assert "文件不代表实际付款" in stages["payment_export"]["completion"]
     assert "经status核对为succeeded" in file["condition"]
-    assert "task.path的绝对文件路径" in checks["payment_export.delivery"]["condition"]
+    delivery = checks["payment_export.delivery"]
+    assert "copied或reused" in delivery["condition"]
+    assert "实际桌面绝对路径" in delivery["condition"]
+    assert "内部task.path的链接不证明桌面交付" in delivery["condition"]
+    assert delivery["actions"][0]["action"] == "save"
+    assert "destination固定为desktop" in delivery["if_unmet"]
 
 
 def test_unfinished_steps_and_contribution_feedback_share_the_installed_rules():
@@ -100,12 +105,16 @@ def test_payment_actions_match_the_public_contract_and_instructions_point_to_rul
     branches = schema_document("payment-export.schema.json")["$defs"]["PaymentExportRequest"][
         "oneOf"
     ]
-    supported = {item["properties"]["action"]["const"] for item in branches}
+    supported = set()
+    for branch in branches:
+        if "$ref" in branch:
+            branch = schema_document("core.schema.json")["$defs"][branch["$ref"].rsplit("/", 1)[-1]]
+        supported.add(branch["properties"]["action"]["const"])
     payment = read_work_checklist()["stages"][3]
     declared = {
         action["action"] for check in payment["checks"] for action in check.get("actions", ())
     }
-    assert declared == supported == {"inspect", "generate", "status"}
+    assert declared == supported == {"inspect", "generate", "status", "save"}
     assert "打勾前逐项核对工作指南中的内部条件" in INSTRUCTIONS
     assert "缺少成果时执行所列接口动作" in INSTRUCTIONS
 

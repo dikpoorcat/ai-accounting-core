@@ -19,7 +19,6 @@ from ._types import (
     MonthScope,
     PeriodRange,
     ReadingImpact,
-    ReportDownload,
     SourceDownload,
 )
 
@@ -30,7 +29,6 @@ __all__ = [
     "PeriodRange",
     "ReadingImpact",
     "SourceDownload",
-    "ReportDownload",
     "ReportExports",
     "Reading",
     "create_reading",

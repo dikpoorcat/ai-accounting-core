@@ -2,6 +2,8 @@
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 
+from . import _export_delivery
+
 
 def run(application, request):
     validate_contract("core.schema.json", "ReportExportRequest", request)
@@ -13,14 +15,7 @@ def run(application, request):
         result = reports.generate_current(company, year, quarter)
         result = {"company_id": company, "year": year, "quarter": quarter, **result}
     else:
-        if application.save_report is None:
-            raise ContractError("unsupported", "当前实例未装配本机桌面交付。")
-        with reports.download(request["company_id"], request["task_id"]) as download:
-            saved = application.save_report(download)
-            result = {
-                **saved,
-                "company_id": download.company_id,
-                "database_id": download.database_id,
-                "task_id": download.task_id,
-            }
+        result = _export_delivery.save(
+            application, reports.download(request["company_id"], request["task_id"])
+        )
     return validate_contract("core.schema.json", "ReportExportResult", result)

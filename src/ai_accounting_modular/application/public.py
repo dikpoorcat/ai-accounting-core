@@ -26,7 +26,8 @@ from ai_accounting_modular.contracts.public import (
     schema_document,
     validate_contract,
 )
-from ai_accounting_modular.reading.public import ReadingImpact, ReportDownload, ReportExports
+from ai_accounting_modular.files.public import VerifiedDownload
+from ai_accounting_modular.reading.public import ReadingImpact, ReportExports
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
 from . import (
@@ -87,7 +88,7 @@ class Application:
         repositories=(),
         payments=None,
         reports: ReportExports | None = None,
-        save_report: Callable[[ReportDownload], dict] | None = None,
+        save_export: Callable[[VerifiedDownload], dict] | None = None,
     ):
         self.storage, self.identity, self.ledger, self.records = storage, identity, ledger, records
         self.registry = DomainRegistry(domains)
@@ -97,7 +98,7 @@ class Application:
         self.backup_verifier = backup_verifier
         self.repositories = tuple(repositories)
         self.payments = payments
-        self.reports, self.save_report = reports, save_report
+        self.reports, self.save_export = reports, save_export
 
     def _notify_reading(self, impact, unit):
         return (
@@ -365,7 +366,7 @@ def create_application(
     repositories=(),
     payments=None,
     reports: ReportExports | None = None,
-    save_report: Callable[[ReportDownload], dict] | None = None,
+    save_export: Callable[[VerifiedDownload], dict] | None = None,
 ):
     return Application(
         storage,
@@ -380,5 +381,5 @@ def create_application(
         repositories,
         payments,
         reports,
-        save_report,
+        save_export,
     )

@@ -89,7 +89,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `accounting_get` | company_id、1–500 business_ids；可选 result_id+generation、include=facts/results/sources | 当前事实、序号、结果槽及其必要来源；成对指定 result_id/generation 精确查询正式保留结果，开放旧代已替换则 conflict。不得声称能读取已经删除的开放期旧正文。 |
 | `accounting_review` | ReviewRequest：company_id、cutoff_period、action=find/inspect、明确范围及要读的collection；limit/cursor/expected_version按需提供 | ReviewResult：当前范围共同basis_version、完整数量及本页义务/清偿/资金/原行/确定关联，精确正式引用和必要来源。余额只由ledger提供，工资当前可付额仍由people提供；详见下节。 |
 | `accounting_remuneration` | company_id、period、1–500个明确报酬business_ids；view可选current/as_posted，缺省current | 仅查指定报酬截至该月的完整组成、原工资及后续税目标精确来源、正式未付额和当前可付额；不加载整月人员或其他历史工资。正式撤去结果返回withdrawn；不存在、错误类型、该月尚无结果或开放误记已撤去且不保留正式结果时明确报错，不静默漏人或伪装有效零工资。当前身份仍可用accounting_get查阅。 |
-| `accounting_payment_export` | PaymentExportRequest：company_id、period、action=inspect/generate/status；可选business_ids；生成时采用template_source_id及可选template_layout，request_id可省略 | PaymentExportResult：当前检查及真实文件任务。读取候选不要求模板；generate形成或复用持久任务，status核对当前范围与实际文件。成功位置在task.path。付款金额由领域提供，不接受AI金额或账号覆盖，不新增实际付款；不同公司各自模板及验收见[付款文件设计](12-work-checks-and-payments.md)。 |
+| `accounting_payment_export` | PaymentExportRequest：inspect/generate/status指定company_id、period及可选business_ids；生成时采用template_source_id及可选template_layout，request_id可省略；save指定company_id、task_id、destination=desktop | PaymentExportResult：检查和生成返回当前检查及真实文件任务；status核对当前范围与实际文件，成功位置task.path是内部任务文件；save只交付指定任务的已核快照，返回copied/reused、公司/数据库/任务身份、桌面绝对路径path、摘要sha256和大小byte_size。付款金额由领域提供，不接受AI金额或账号覆盖，不新增实际付款；不同公司各自模板及验收见[付款文件设计](12-work-checks-and-payments.md)。 |
 | `accounting_find` | BusinessQuery：company_id、family、period_from/to、可选 object_id/status/kind、limit=1–500、cursor | BusinessFindResult：当前明确身份、kind/period/seq/state、摘要标签、完整数量和同范围 cursor；不作姓名模糊自动绑定。撤去身份只按最后归属月、种类及身份检索，不保存旧正文或旧对象关系。object_id只匹配当前有效关系，与status=withdrawn同时提供时明确拒绝。 |
 | `accounting_sources` | SourcesRequest：import/get/find/inspect/discard；company_id；来源描述或来源 ID；有界分页；discard 必须明确1–500个不重复source_ids | SourcesCommandResult：import/get/find/inspect返回SourcesResult，discard返回SourceDiscardResult。真实原件/老板有效补充的当前索引与定位；import核对公司根、文件类型/大小/摘要，discard只退出无当前或正式采用引用的指定无用来源，不任意读删主机文件。 |
 | `accounting_cancel_month` | MonthCancelRequest：company_id、period、action=inspect/cancel；cancel 另带 command_id 和 inspect 返回的整数 expected_head | MonthCancelResult：程序撤销指定开放月全部所属业务，清理该月说明、待办及可退出原件；返回实际业务和来源范围、保护保留项、文档及文件清理状态。闭期拒绝，不让 AI 分领域拼撤回。 |
@@ -102,9 +102,9 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `accounting_report` | ReportRequest：company_id、year、quarter、可选 expected_head | FinancialSnapshot：共享三表及所得税取数依据。 |
 | `accounting_report_export` | ReportExportRequest：generate 指定 company_id、year、quarter；save 指定 company_id、task_id、destination=desktop | ReportExportResult：生成当前报表或复用现有任务，返回准备状态、缺项或精确任务；保存只交付该任务的已核快照，返回 copied/reused、公司/数据库/任务身份、绝对路径、摘要和大小。 |
 
-程序导出与网页共用 `ReportExports(storage, ledger, files)` 的读取、计划接纳及已核下载。`generate` 表示取得或生成该季度的当前报表，内部取得预览并在接纳时复核；不接收请求编号、预览摘要或epochs，不承诺永久请求幂等。尚未收到任务编号时可再次生成当前报表，期间结果变化可以取得新结果；已经收到任务编号后用 `accounting_jobs` 查询，不反复生成充当轮询。失败后明确再次生成可接续原有准备重试，普通读取和任务查询不自动重试。网页原有严格预览协议保持。
+`accounting_report_export` 与网页共用 `ReportExports(storage, ledger, files)` 的读取、计划接纳及已核下载。`generate` 表示取得或生成该季度的当前报表，内部取得预览并在接纳时复核；不接收请求编号、预览摘要或epochs，不承诺永久请求幂等。尚未收到任务编号时可再次生成当前报表，期间结果变化可以取得新结果；已经收到任务编号后用 `accounting_jobs` 查询，不反复生成充当轮询。失败后明确再次生成可接续原有准备重试，普通读取和任务查询不自动重试。网页原有严格预览协议保持。
 
-`save` 必须经已核下载取得独立字节及同计划绑定的公司、数据库、任务和文件名，不根据 Jobs 的成功或路径直接复制，不暗换失效任务。host 按需定位真实桌面，校验流后原子发布独立副本，同内容复用、不同内容另名保留；写入失败不改变源任务状态。桌面副本不参与内部任务清理；不接受任意源路径、目标目录或文件名。生成成功、桌面交付成功和老板实际报送分别判断。
+`accounting_report_export` 与 `accounting_payment_export` 的 `save` 共用桌面交付能力及保存回执。保存必须经各自已核下载取得独立字节及同计划绑定的公司、数据库、任务和文件名，不根据任务成功或内部路径直接复制，不暗换失效任务。host 按需定位真实桌面，校验流后原子发布独立副本，同内容复用、不同内容另名保留；写入失败不改变源任务状态。桌面副本不参与内部任务清理；不接受任意源路径、目标目录或文件名。生成成功、桌面交付成功和老板实际付款或报送分别判断。
 
 ### 事项核查：accounting_review
 

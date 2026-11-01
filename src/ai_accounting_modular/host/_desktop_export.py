@@ -1,4 +1,4 @@
-"""Save verified report bytes to this Windows user's actual desktop.
+"""Save verified export bytes to this Windows user's actual desktop.
 
 The desktop copy is user-owned. It is neither a file-task output nor a tracked
 backup, and an existing file is never replaced. Path checks follow the local
@@ -27,7 +27,7 @@ _MAX_NAMES = 100
 def desktop_directory() -> Path:
     """Resolve the current redirected Desktop without creating it or guessing."""
     if sys.platform != "win32":
-        raise ContractError("unsupported", "当前桌面报表交付仅支持 Windows。")
+        raise ContractError("unsupported", "当前桌面文件交付仅支持 Windows。")
     identifier = (ctypes.c_ubyte * 16).from_buffer_copy(
         UUID("b4bfcc3a-db2c-424c-b029-7fe99a87c641").bytes_le
     )
@@ -78,25 +78,18 @@ def _directory(path, expected=None):
 def _name(download):
     value = download.file_name
     if not isinstance(value, str) or not value or "\x00" in value:
-        raise ContractError("report_delivery_invalid", "报表交付文件名无效。")
+        raise ContractError("export_delivery_invalid", "交付文件名无效。")
     parts = PureWindowsPath(value)
     if parts.drive or parts.root or len(parts.parts) != 1 or "/" in value or "\\" in value:
-        raise ContractError("unsafe_path", "报表交付只能提供文件名，不能提供保存路径。")
+        raise ContractError("unsafe_path", "文件交付只能提供文件名，不能提供保存路径。")
     value = re.sub(r'[<>:"|?*\x00-\x1f]', "_", value).strip(" .")
     parts = PureWindowsPath(value)
     try:
         encoded_size = len(value.encode("utf-16-le"))
     except UnicodeError as error:
-        raise ContractError(
-            "report_delivery_invalid", "报表文件名包含无效的 Windows 字符。"
-        ) from error
-    if (
-        not value
-        or parts.suffix.lower() != ".xlsx"
-        or encoded_size > 400
-        or parts.is_reserved()
-    ):
-        raise ContractError("report_delivery_invalid", "报表文件名须为长度适当的 Excel 文件名。")
+        raise ContractError("export_delivery_invalid", "文件名包含无效的 Windows 字符。") from error
+    if not value or parts.suffix.lower() != ".xlsx" or encoded_size > 400 or parts.is_reserved():
+        raise ContractError("export_delivery_invalid", "文件名须为长度适当的 Excel 文件名。")
     validate_contract("core.schema.json", "Id", download.task_id)
     if (
         not isinstance(download.sha256, str)
@@ -104,7 +97,7 @@ def _name(download):
         or type(download.byte_size) is not int
         or download.byte_size < 0
     ):
-        raise ContractError("report_delivery_invalid", "报表交付缺少准确的文件摘要或字节数。")
+        raise ContractError("export_delivery_invalid", "文件交付缺少准确的文件摘要或字节数。")
     return value
 
 
@@ -149,19 +142,19 @@ def _copy(download, output):
             chunk = download.stream.read(_CHUNK)
         except (AttributeError, TypeError, ValueError) as error:
             raise ContractError(
-                "report_delivery_invalid", "报表交付流已经关闭或无法读取。"
+                "export_delivery_invalid", "文件交付流已经关闭或无法读取。"
             ) from error
         if not isinstance(chunk, bytes):
-            raise ContractError("report_delivery_invalid", "报表交付流必须提供准确的二进制内容。")
+            raise ContractError("export_delivery_invalid", "文件交付流必须提供准确的二进制内容。")
         if not chunk:
             break
         size += len(chunk)
         if size > download.byte_size:
-            raise ContractError("report_delivery_invalid", "报表交付字节数与核验结果不符。")
+            raise ContractError("export_delivery_invalid", "文件交付字节数与核验结果不符。")
         digest.update(chunk)
         output.write(chunk)
     if (size, digest.hexdigest()) != (download.byte_size, download.sha256):
-        raise ContractError("report_delivery_invalid", "报表交付内容与已核验摘要或字节数不符。")
+        raise ContractError("export_delivery_invalid", "文件交付内容与已核验摘要或字节数不符。")
     output.flush()
     os.fsync(output.fileno())
 
@@ -174,17 +167,17 @@ def _candidates(root, name, task_id):
         yield root / f"{stem} ({suffix}).xlsx"
 
 
-def save_report(download, *, desktop_resolver=None):
-    """Copy one exact report; retries reuse equal bytes and preserve other files."""
+def save_export(download, *, desktop_resolver=None):
+    """Copy one exact export; retries reuse equal bytes and preserve other files."""
     if sys.platform != "win32":
-        raise ContractError("unsupported", "当前桌面报表交付仅支持 Windows。")
+        raise ContractError("unsupported", "当前桌面文件交付仅支持 Windows。")
     name = _name(download)
     temporary = temporary_identity = None
     root = root_identity = None
     try:
         root, root_identity = _directory((desktop_resolver or desktop_directory)())
         with tempfile.NamedTemporaryFile(
-            prefix=".finance-report-", suffix=".tmp", dir=root, delete=False
+            prefix=".finance-export-", suffix=".tmp", dir=root, delete=False
         ) as output:
             temporary = Path(output.name)
             temporary_identity = _identity(os.fstat(output.fileno()))
@@ -214,12 +207,10 @@ def save_report(download, *, desktop_resolver=None):
                 "sha256": download.sha256,
                 "byte_size": download.byte_size,
             }
-        raise ContractError(
-            "desktop_export_conflict", "桌面报表文件名已被占用，请整理同名文件后重试。"
-        )
+        raise ContractError("desktop_export_conflict", "桌面文件名已被占用，请整理同名文件后重试。")
     except OSError as error:
         raise ContractError(
-            "desktop_export_unavailable", "报表未能完整保存到桌面，请检查桌面目录或稍后重试。"
+            "desktop_export_unavailable", "文件未能完整保存到桌面，请检查桌面目录或稍后重试。"
         ) from error
     finally:
         if temporary is not None:

@@ -654,7 +654,9 @@ type PaymentExportInspection = PaymentExportPaymentExportInspection
 
 type PaymentExportPlan = PaymentExportPaymentExportPlan
 
-class PaymentExportResult(TypedDict):
+type PaymentExportResult = PaymentExportStatus | ExportSaved
+
+class PaymentExportStatus(TypedDict):
     state: Literal['inspected', 'needs_information', 'no_payments', 'not_generated', 'pending', 'running', 'succeeded', 'failed', 'expired']
     inspection: PaymentExportInspection
     task: NotRequired[TaskReceipt]
@@ -681,7 +683,13 @@ class MonthCancelResult(TypedDict):
     documents: Literal['ready', 'pending']
     file_cleanup: MonthCancelResultFileCleanup
 
-type ReportExportRequest = ReportExportRequestVariant1 | ReportExportRequestVariant2
+type ReportExportRequest = ReportExportRequestVariant1 | ExportSaveRequest
+
+class ExportSaveRequest(TypedDict):
+    action: Literal['save']
+    company_id: Id
+    task_id: Id
+    destination: Literal['desktop']
 
 class ReportExportPreparation(TypedDict):
     company_id: Id
@@ -699,7 +707,7 @@ class ReportExportTask(TypedDict):
     state: Literal['pending', 'running', 'succeeded', 'failed', 'expired']
     task: TaskReceipt
 
-class ReportExportSaved(TypedDict):
+class ExportSaved(TypedDict):
     company_id: Id
     database_id: Id
     task_id: Id
@@ -708,7 +716,7 @@ class ReportExportSaved(TypedDict):
     sha256: Digest
     byte_size: int
 
-type ReportExportResult = ReportExportPreparation | ReportExportTask | ReportExportSaved
+type ReportExportResult = ReportExportPreparation | ReportExportTask | ExportSaved
 
 type ReviewRequest = AccountingReviewReviewRequest
 
@@ -804,7 +812,7 @@ class PaymentExportPaymentExportPlan(TypedDict):
     kind: Literal['payment_export']
     plan_version: Literal[1]
 
-type PaymentExportPaymentExportRequest = PaymentExportPaymentExportRequestVariant1 | PaymentExportPaymentExportRequestVariant2 | PaymentExportPaymentExportRequestVariant3
+type PaymentExportPaymentExportRequest = ExportSaveRequest | PaymentExportPaymentExportRequestVariant2 | PaymentExportPaymentExportRequestVariant3 | PaymentExportPaymentExportRequestVariant4
 
 type SourceLocation = SourceLocator
 
@@ -8937,12 +8945,6 @@ class ReportExportRequestVariant1(TypedDict):
     year: int
     quarter: int
 
-class ReportExportRequestVariant2(TypedDict):
-    action: Literal['save']
-    company_id: Id
-    task_id: Id
-    destination: Literal['desktop']
-
 class PaymentExportLayoutColumns(TypedDict):
     payee_name: int
     payee_account: int
@@ -8958,7 +8960,7 @@ class PaymentExportScopeVariant2(TypedDict):
     selection: Literal['selected']
     business_ids: list[Id]
 
-class PaymentExportPaymentExportRequestVariant1(TypedDict):
+class PaymentExportPaymentExportRequestVariant2(TypedDict):
     company_id: Id
     period: Month
     business_ids: NotRequired[list[Id]]
@@ -8966,7 +8968,7 @@ class PaymentExportPaymentExportRequestVariant1(TypedDict):
     template_layout: NotRequired[PaymentExportLayout]
     action: Literal['inspect']
 
-class PaymentExportPaymentExportRequestVariant2(TypedDict):
+class PaymentExportPaymentExportRequestVariant3(TypedDict):
     company_id: Id
     period: Month
     business_ids: NotRequired[list[Id]]
@@ -8975,7 +8977,7 @@ class PaymentExportPaymentExportRequestVariant2(TypedDict):
     request_id: NotRequired[Id]
     action: Literal['generate']
 
-class PaymentExportPaymentExportRequestVariant3(TypedDict):
+class PaymentExportPaymentExportRequestVariant4(TypedDict):
     company_id: Id
     period: Month
     business_ids: NotRequired[list[Id]]
@@ -10518,13 +10520,15 @@ __all__ = [
     'PaymentExportInspection',
     'PaymentExportPlan',
     'PaymentExportResult',
+    'PaymentExportStatus',
     'ServiceRevenueWorkDefaults',
     'MonthCancelRequest',
     'MonthCancelResult',
     'ReportExportRequest',
+    'ExportSaveRequest',
     'ReportExportPreparation',
     'ReportExportTask',
-    'ReportExportSaved',
+    'ExportSaved',
     'ReportExportResult',
     'ReviewRequest',
     'ReviewResult',

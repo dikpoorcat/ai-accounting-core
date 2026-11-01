@@ -6080,6 +6080,12 @@
       "$ref": "payment-export.schema.json#/$defs/PaymentExportPlan"
     },
     "PaymentExportResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/PaymentExportStatus" },
+        { "$ref": "#/$defs/ExportSaved" }
+      ]
+    },
+    "PaymentExportStatus": {
       "type": "object",
       "properties": {
         "state": {
@@ -6369,18 +6375,19 @@
           "required": ["action", "company_id", "year", "quarter"],
           "additionalProperties": false
         },
-        {
-          "type": "object",
-          "properties": {
-            "action": { "const": "save" },
-            "company_id": { "$ref": "#/$defs/Id" },
-            "task_id": { "$ref": "#/$defs/Id" },
-            "destination": { "const": "desktop" }
-          },
-          "required": ["action", "company_id", "task_id", "destination"],
-          "additionalProperties": false
-        }
+        { "$ref": "#/$defs/ExportSaveRequest" }
       ]
+    },
+    "ExportSaveRequest": {
+      "type": "object",
+      "properties": {
+        "action": { "const": "save" },
+        "company_id": { "$ref": "#/$defs/Id" },
+        "task_id": { "$ref": "#/$defs/Id" },
+        "destination": { "const": "desktop" }
+      },
+      "required": ["action", "company_id", "task_id", "destination"],
+      "additionalProperties": false
     },
     "ReportExportPreparation": {
       "type": "object",
@@ -6418,7 +6425,7 @@
       "required": ["company_id", "year", "quarter", "state", "task"],
       "additionalProperties": false
     },
-    "ReportExportSaved": {
+    "ExportSaved": {
       "type": "object",
       "properties": {
         "company_id": { "$ref": "#/$defs/Id" },
@@ -6436,7 +6443,7 @@
       "oneOf": [
         { "$ref": "#/$defs/ReportExportPreparation" },
         { "$ref": "#/$defs/ReportExportTask" },
-        { "$ref": "#/$defs/ReportExportSaved" }
+        { "$ref": "#/$defs/ExportSaved" }
       ]
     },
     "ReviewRequest": {

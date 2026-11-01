@@ -42,7 +42,7 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
         assert checklist.mime_type == "application/json"
         stages = json.loads(checklist.content)["stages"]
         assert len(stages) == 8 and stages[3]["id"] == "payment_export"
-        assert "task.path的绝对文件路径" in stages[3]["checks"][3]["condition"]
+        assert "实际桌面绝对路径" in stages[3]["checks"][3]["condition"]
         for uri in (
             "accounting://guides/unknown",
             "accounting://guides/business/operations.unknown",

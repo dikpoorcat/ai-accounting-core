@@ -127,14 +127,3 @@ class ModelDelivery:
 class SourceDownload:
     receipt: Mapping
     stream: object
-
-
-@dataclass(frozen=True)
-class ReportDownload:
-    stream: object
-    file_name: str
-    sha256: str
-    byte_size: int
-    company_id: str
-    database_id: str
-    task_id: str

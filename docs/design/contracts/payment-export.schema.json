@@ -407,6 +407,7 @@
     },
     "PaymentExportRequest": {
       "oneOf": [
+        { "$ref": "core.schema.json#/$defs/ExportSaveRequest" },
         {
           "type": "object",
           "properties": {

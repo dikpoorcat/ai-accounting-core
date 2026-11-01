@@ -27,11 +27,11 @@ def desktop(tmp_path, monkeypatch):
     return redirected
 
 
-def report(raw=b"verified report bytes", **changes):
+def report(raw=b"verified export bytes", **changes):
     return SimpleNamespace(
         **{
             "stream": io.BytesIO(raw),
-            "file_name": "合成公司_913100000000000001_2026年第3季度财务报表.xlsx",
+            "file_name": "合成公司_913100000000000001_2026年第3季度财务文件.xlsx",
             "sha256": sha256(raw).hexdigest(),
             "byte_size": len(raw),
             "company_id": str(uuid4()),
@@ -98,7 +98,7 @@ def test_known_folder_failure_frees_returned_memory_and_never_guesses(tmp_path, 
 
 def test_copy_and_retry_use_redirected_desktop_exact_bytes_and_leave_stream_open(desktop):
     first = report()
-    copied = export.save_report(first)
+    copied = export.save_export(first)
     assert copied == {
         "state": "copied",
         "path": str(desktop / first.file_name),
@@ -107,7 +107,7 @@ def test_copy_and_retry_use_redirected_desktop_exact_bytes_and_leave_stream_open
     }
     assert Path(copied["path"]).read_bytes() == first.stream.getvalue()
     assert not first.stream.closed
-    reused = export.save_report(report(task_id=first.task_id))
+    reused = export.save_export(report(task_id=first.task_id))
     assert reused == copied | {"state": "reused"}
     assert list(desktop.iterdir()) == [desktop / first.file_name]
 
@@ -118,12 +118,12 @@ def test_changed_original_and_another_existing_copy_are_preserved_under_new_name
     original.write_bytes(b"owner's edited report")
     occupied = desktop / f"{original.stem} ({value.task_id}).xlsx"
     occupied.write_bytes(b"another user's file")
-    result = export.save_report(value)
+    result = export.save_export(value)
     assert result["state"] == "copied"
     assert Path(result["path"]).name == f"{original.stem} ({value.task_id}-2).xlsx"
     assert original.read_bytes() == b"owner's edited report"
     assert occupied.read_bytes() == b"another user's file"
-    repeated = export.save_report(report(task_id=value.task_id))
+    repeated = export.save_export(report(task_id=value.task_id))
     assert repeated == result | {"state": "reused"}
 
 
@@ -139,7 +139,7 @@ def test_same_content_concurrent_calls_publish_once_and_reuse_winner(desktop, mo
     monkeypatch.setattr(export, "_copy", together)
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(
-            executor.map(lambda _: export.save_report(report(task_id=identity)), range(2))
+            executor.map(lambda _: export.save_export(report(task_id=identity)), range(2))
         )
     assert {item["state"] for item in results} == {"copied", "reused"}
     assert results[0]["path"] == results[1]["path"]
@@ -148,11 +148,11 @@ def test_same_content_concurrent_calls_publish_once_and_reuse_winner(desktop, mo
 
 @pytest.mark.parametrize("wrong", [{"byte_size": 1}, {"byte_size": 100}, {"sha256": "0" * 64}])
 def test_bad_verified_stream_removes_only_its_temporary_file(desktop, wrong):
-    unrelated = desktop / ".finance-report-unrelated.tmp"
+    unrelated = desktop / ".finance-export-unrelated.tmp"
     unrelated.write_bytes(b"not owned by this request")
     with pytest.raises(ContractError) as failed:
-        export.save_report(report(**wrong))
-    assert failed.value.code == "report_delivery_invalid"
+        export.save_export(report(**wrong))
+    assert failed.value.code == "export_delivery_invalid"
     assert list(desktop.iterdir()) == [unrelated]
     assert unrelated.read_bytes() == b"not owned by this request"
 
@@ -166,7 +166,7 @@ def test_disk_failure_keeps_original_and_cleans_this_attempt(desktop, monkeypatc
 
     monkeypatch.setattr(export.os, "rename", unavailable)
     with pytest.raises(ContractError) as failed:
-        export.save_report(report())
+        export.save_export(report())
     assert failed.value.code == "desktop_export_unavailable"
     assert list(desktop.iterdir()) == [existing]
 
@@ -181,7 +181,7 @@ def test_final_file_is_checked_again_without_deleting_changed_user_content(deskt
     monkeypatch.setattr(export.os, "rename", changed_after_publish)
     value = report()
     with pytest.raises(ContractError) as failed:
-        export.save_report(value)
+        export.save_export(value)
     assert failed.value.code == "desktop_file_invalid"
     assert (desktop / value.file_name).read_bytes() == b"changed immediately after publication"
     assert not list(desktop.glob("*.tmp"))
@@ -198,7 +198,7 @@ def test_changed_desktop_is_rejected_before_publication(desktop, tmp_path, monke
 
     monkeypatch.setattr(export, "_candidates", move_before_publication)
     with pytest.raises(ContractError) as failed:
-        export.save_report(report())
+        export.save_export(report())
     assert failed.value.code == "desktop_changed"
     assert not list(desktop.iterdir())
     assert not list(moved.glob("*.xlsx"))
@@ -208,8 +208,8 @@ def test_closed_stream_fails_explicitly_and_cleans_its_temporary(desktop):
     value = report()
     value.stream.close()
     with pytest.raises(ContractError) as failed:
-        export.save_report(value)
-    assert failed.value.code == "report_delivery_invalid"
+        export.save_export(value)
+    assert failed.value.code == "export_delivery_invalid"
     assert not list(desktop.iterdir())
 
 
@@ -228,7 +228,7 @@ def test_existing_directory_or_link_is_preserved_and_cannot_be_reused(desktop, t
             destination.symlink_to(external)
         except OSError as error:
             pytest.skip(f"symbolic links unavailable: {error}")
-    copied = export.save_report(value)
+    copied = export.save_export(value)
     assert copied["state"] == "copied"
     assert Path(copied["path"]) != destination
     assert external.read_bytes() == value.stream.getvalue()
@@ -243,7 +243,7 @@ def test_redirected_desktop_cannot_itself_be_a_directory_link(tmp_path):
     except OSError as error:
         pytest.skip(f"symbolic links unavailable: {error}")
     with pytest.raises(ContractError) as failed:
-        export.save_report(report(), desktop_resolver=lambda: alias)
+        export.save_export(report(), desktop_resolver=lambda: alias)
     assert failed.value.code == "unsafe_path"
     assert not list(actual.iterdir())
 
@@ -262,14 +262,14 @@ def test_cloud_directory_tag_is_not_a_name_surrogate():
 @pytest.mark.parametrize("name", ["../escape.xlsx", r"..\escape.xlsx", "C:escape.xlsx", "/x.xlsx"])
 def test_download_name_cannot_supply_any_save_path(desktop, name):
     with pytest.raises(ContractError) as failed:
-        export.save_report(report(file_name=name))
+        export.save_export(report(file_name=name))
     assert failed.value.code == "unsafe_path"
     assert not list(desktop.iterdir())
 
 
 def test_illegal_basename_characters_are_replaced(desktop):
     value = report(file_name='合成<公司>"?*_2026年第3季度.xlsx')
-    result = export.save_report(value)
+    result = export.save_export(value)
     assert Path(result["path"]).name == "合成_公司_____2026年第3季度.xlsx"
 
 
@@ -281,21 +281,21 @@ def test_illegal_basename_characters_are_replaced(desktop):
         "COM1.xlsx",
         "COM².xlsx",
         "LPT³.xlsx",
-        "CON.技术公司_913100000000000001_2026年第3季度财务报表.xlsx",
+        "CON.技术公司_913100000000000001_2026年第3季度财务文件.xlsx",
         " . .NUL.xlsx",
     ],
 )
 def test_windows_reserved_names_are_rejected_after_sanitizing(desktop, name):
     with pytest.raises(ContractError) as failed:
-        export.save_report(report(file_name=name))
-    assert failed.value.code == "report_delivery_invalid"
+        export.save_export(report(file_name=name))
+    assert failed.value.code == "export_delivery_invalid"
     assert not list(desktop.iterdir())
 
 
 @pytest.mark.parametrize("company", ["CON", "_CON.技术公司", "_COM².技术公司"])
 def test_nonreserved_company_report_names_remain_usable(desktop, company):
-    value = report(file_name=f"{company}_913100000000000001_2026年第3季度财务报表.xlsx")
-    saved = export.save_report(value)
+    value = report(file_name=f"{company}_913100000000000001_2026年第3季度财务文件.xlsx")
+    saved = export.save_export(value)
     assert Path(saved["path"]).name == value.file_name
     assert Path(saved["path"]).read_bytes() == value.stream.getvalue()
 
@@ -303,5 +303,5 @@ def test_nonreserved_company_report_names_remain_usable(desktop, company):
 def test_other_platform_is_explicitly_unsupported_without_directory_discovery(monkeypatch):
     monkeypatch.setattr(export.sys, "platform", "linux")
     with pytest.raises(ContractError) as failed:
-        export.save_report(report(), desktop_resolver=lambda: pytest.fail("must not discover"))
+        export.save_export(report(), desktop_resolver=lambda: pytest.fail("must not discover"))
     assert failed.value.code == "unsupported"

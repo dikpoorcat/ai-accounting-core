@@ -7,7 +7,6 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 from ai_accounting_modular.storage.public import company_metadata
 
 from . import _financial_projection, _models, _report_plans
-from ._types import ReportDownload
 
 
 class ReportExports:
@@ -163,15 +162,7 @@ class ReportExports:
         self._receipt(company_id, job_id, check_current=False)
         try:
             with self._files().verified_download(company_id, job_id) as verified:
-                yield ReportDownload(
-                    verified.stream,
-                    verified.file_name,
-                    verified.sha256,
-                    verified.byte_size,
-                    verified.company_id,
-                    verified.database_id,
-                    verified.task_id,
-                )
+                yield verified
         except ContractError as error:
             codes = {
                 "not_found": "unknown_report_job",

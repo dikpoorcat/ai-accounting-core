@@ -122,7 +122,7 @@
       "number": 4,
       "id": "payment_export",
       "title": "银行代发表",
-      "completion": "本次工资、奖金、劳务、报销等所需核算与标准文档已完成；默认需要的代发表已由程序生成、核验并实际交付，或已核实本次无待付金额、老板明确本次或长期不用。经老板同意先行办理时，第3项仍保持真实未完成状态，采用暂计需如实说明。文件不代表实际付款，不需要文件也不能漏掉必要核算。",
+      "completion": "本次工资、奖金、劳务、报销等所需核算与标准文档已完成；默认需要的代发表已由程序生成、核验、保存到桌面并实际交付，或已核实本次无待付金额、老板明确本次或长期不用。经老板同意先行办理时，第3项仍保持真实未完成状态，采用暂计需如实说明。文件不代表实际付款，不需要文件也不能漏掉必要核算。",
       "checks": [
         {
           "id": "payment_export.accounting",
@@ -173,12 +173,19 @@
         },
         {
           "id": "payment_export.delivery",
-          "condition": "本轮回复或可核实的已有交付中，已经用task.path的绝对文件路径向老板提供本次有效文件的可点击链接。",
+          "condition": "本次有效代发表已通过accounting_payment_export(action=save,destination=desktop)返回copied或reused，并在本轮回复或可核实的已有交付中，用保存回执path的实际桌面绝对路径向老板提供可点击文件链接；内部task.path的链接不证明桌面交付。",
           "evidence": [
-            "程序返回的已核验文件定位",
-            "实际发给老板的对应文件链接或定位"
+            "保存回执的copied或reused、path、sha256、byte_size及公司、数据库和任务身份",
+            "实际发给老板的对应桌面文件链接"
           ],
-          "if_unmet": "先实际交付当前有效文件，再将本项标为完成；只说已生成、可导出或会补上均不算交付。"
+          "if_unmet": "先实际交付当前有效文件，再将本项标为完成；status成功后以公司和精确task_id调用save，destination固定为desktop，确认copied或reused及实际桌面路径后提供链接。保存失败先排查并接续同一任务，失效时照实处理，不暗换其他任务，也不另用复制脚本；只说已生成、可导出或提供内部任务链接均不算桌面交付。",
+          "actions": [
+            {
+              "command": "accounting_payment_export",
+              "action": "save",
+              "when": "同一范围经status核对为succeeded后，保存该精确任务到真实桌面并交付保存回执path的文件链接。"
+            }
+          ]
         }
       ]
     },

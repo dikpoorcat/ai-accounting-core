@@ -1,5 +1,6 @@
 """The public command delivers current bank files without posting a payment."""
 
+import sys
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +10,7 @@ from openpyxl import load_workbook
 
 from ai_accounting_modular.agent.public import create_agent
 from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.host import _desktop_export
 from ai_accounting_modular.storage.public import CompanySpec
 from tests.modular.application._working_case import Case
 from tests.modular.application._working_case import case as case
@@ -48,9 +50,10 @@ def prepare(case, *, shifted=False):
 
 
 def command(case, action, **fields):
+    scope = {} if action == "save" else {"period": "2026-01"}
     return create_agent(case.app).dispatch(
         "accounting_payment_export",
-        {"company_id": case.company, "period": "2026-01", "action": action, **fields},
+        {"company_id": case.company, **scope, "action": action, **fields},
     )
 
 
@@ -197,3 +200,150 @@ def test_two_companies_keep_their_own_template_and_recipient_data(case, tmp_path
     assert first["inspection"]["template"]["source_id"] == first_template
     assert other["inspection"]["template"]["source_id"] == second_template
     assert first["task"]["path"] != other["task"]["path"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop delivery")
+def test_desktop_delivery_reuses_bytes_preserves_edits_and_survives_task_cleanup(
+    case, tmp_path, monkeypatch
+):
+    desktop = tmp_path / "redirected-desktop"
+    desktop.mkdir()
+    monkeypatch.setattr(_desktop_export, "desktop_directory", lambda: desktop)
+    wage, source = prepare(case)
+    before = case.get(wage["business_id"])["businesses"]
+    queued = command(case, "generate", template_source_id=source)
+    case.kernel.files.run_pending(case.company)
+    ready = command(case, "status")["task"]
+    with case.kernel.storage.read_unit(case.company) as read:
+        database_id = read.database_id
+    source_path = Path(ready["path"])
+    raw = source_path.read_bytes()
+    request = {"task_id": queued["task"]["task_id"], "destination": "desktop"}
+
+    saved = command(case, "save", **request)
+    output = Path(saved["path"])
+    assert output.parent == desktop
+    assert saved == {
+        "state": "copied",
+        "path": str(output),
+        "sha256": sha256(raw).hexdigest(),
+        "byte_size": len(raw),
+        "company_id": case.company,
+        "database_id": database_id,
+        "task_id": ready["task_id"],
+    }
+    assert output.read_bytes() == raw
+    assert command(case, "save", **request) == saved | {"state": "reused"}
+    output.write_bytes(b"owner's edited workbook")
+    separate = command(case, "save", **request)
+    copy = Path(separate["path"])
+    assert separate["state"] == "copied" and copy != output
+    assert copy.read_bytes() == raw
+    assert output.read_bytes() == b"owner's edited workbook"
+    assert case.get(wage["business_id"])["businesses"] == before
+
+    add(case, expense(case))
+    replacement = command(case, "generate", template_source_id=source)
+    assert replacement["task"]["task_id"] != ready["task_id"]
+    case.kernel.files.cleanup(case.company)
+    assert not source_path.exists()
+    assert copy.read_bytes() == raw
+    assert output.read_bytes() == b"owner's edited workbook"
+
+
+@pytest.mark.parametrize(
+    "condition,error_code",
+    [
+        ("pending", "file_not_ready"),
+        ("expired", "plan_expired"),
+        ("corrupt", "file_invalid"),
+        ("missing", "file_invalid"),
+    ],
+)
+def test_saving_unusable_payment_task_never_invokes_the_desktop_writer(case, condition, error_code):
+    _, source = prepare(case)
+    queued = command(case, "generate", template_source_id=source)
+    task_id = queued["task"]["task_id"]
+    if condition != "pending":
+        case.kernel.files.run_pending(case.company)
+        path = Path(command(case, "status")["task"]["path"])
+        if condition == "expired":
+            add(case, expense(case))
+        elif condition == "corrupt":
+            path.write_bytes(b"changed after verification")
+        else:
+            path.unlink()
+
+    def unexpected_write(_):
+        pytest.fail("不可用的代发表任务不能写入桌面")
+
+    case.app.save_export = unexpected_write
+    with pytest.raises(ContractError) as failed:
+        command(case, "save", task_id=task_id, destination="desktop")
+    assert failed.value.code == error_code
+
+
+def test_saving_nonpayment_or_foreign_task_never_invokes_the_desktop_writer(case, tmp_path):
+    from tests.modular.application.test_report_export import prepared
+
+    _, source = prepare(case)
+    payment_id = command(case, "generate", template_source_id=source)["task"]["task_id"]
+    report = prepared(case)
+    assert "task" in report, report
+    task_id = report["task"]["task_id"]
+    second = str(uuid4())
+    case.kernel.storage.create_company(
+        CompanySpec(
+            second,
+            str(uuid4()),
+            "913100000000000002",
+            "另一家合成公司",
+            "2026-01",
+            tmp_path / "another-company",
+        )
+    )
+
+    def unexpected_write(_):
+        pytest.fail("非本公司代发表任务不能写入桌面")
+
+    case.app.save_export = unexpected_write
+    for company_id, selected in (
+        (case.company, task_id),
+        (second, payment_id),
+        (case.company, str(uuid4())),
+    ):
+        with pytest.raises(ContractError):
+            command(case, "save", company_id=company_id, task_id=selected, destination="desktop")
+
+
+def test_failed_payment_desktop_write_keeps_the_successful_source_task(case):
+    _, source = prepare(case)
+    queued = command(case, "generate", template_source_id=source)
+    task_id = queued["task"]["task_id"]
+    case.kernel.files.run_pending(case.company)
+    before = command(case, "status")["task"]
+
+    def unavailable(_):
+        raise ContractError("desktop_write_failed", "合成桌面写入失败。")
+
+    case.app.save_export = unavailable
+    with pytest.raises(ContractError) as failed:
+        command(case, "save", task_id=task_id, destination="desktop")
+    assert failed.value.code == "desktop_write_failed"
+    assert command(case, "status")["task"] == before
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"period": "2026-01"},
+        {"destination": "C:/arbitrary"},
+        {"path": "C:/arbitrary.xlsx"},
+        {"business_ids": [str(uuid4())]},
+        {"template_source_id": str(uuid4())},
+    ],
+)
+def test_desktop_save_accepts_only_one_task_and_the_fixed_destination(case, fields):
+    with pytest.raises(ContractError) as failed:
+        command(case, "save", **({"task_id": str(uuid4()), "destination": "desktop"} | fields))
+    assert failed.value.code == "invalid_input"

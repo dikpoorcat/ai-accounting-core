@@ -8,7 +8,7 @@
 
 ## 开始工作时取得什么
 
-开始或接续记账先读 `accounting://guides/work`，其他说明从 `accounting://guides` 按需选择。用 `accounting_schema` 取得本实例支持范围，再按所选 kind 读取 `accounting://guides/business/{kind}` 及其输入 Schema。这些说明由本节及03／05／05b唯一正文生成，随包提供；不是另一份业务规则，也不要求一次加载全部 Schema 或架构文档。安装与实际工具调用见[运行说明](09-runtime-and-ai.md)。
+开始或接续记账先读 `accounting://guides/work`，其他说明从 `accounting://guides` 按需选择。用 `accounting_schema` 取得本实例支持范围，再按所选 kind 读取 `accounting://guides/business/{kind}` 及其输入 Schema。这些说明由本节、03／05／05b／09正文及[内部核对规则](work-checklist.json)统一生成，随包提供；不是另一份业务规则，也不要求一次加载全部 Schema 或架构文档。安装与实际工具调用见[运行说明](09-runtime-and-ai.md)。
 
 AI 读取当前公司、可办理期间、公司现实说明、已有对象和当前待办，先确定工作月份和当前事项。老板已明确月份时沿用该范围；尚未明确时根据已有账务和待办定位，仍无法确定再问。公司现实说明保存经营方式、常见业务、资料位置及办理习惯等仍有效信息，替换时保留当前正确正文。不能让老板每月重复解释相同情况，也不能用说明文字代替正式核算事实。
 
@@ -47,7 +47,7 @@ AI 对老板说明当前具体工作、资料从哪里取得，以及自己和�
 
 报表导出通过 `accounting_command(command="accounting_report_export", payload={action:"generate",company_id,year,quarter})` 办理，不依赖浏览器点击。程序复用同范围、同内容的现有文件任务；准备中按状态等待，必要缺项先核查已有事实，准备失败说明真实原因，明确再次生成接续现有重试。收到 `task.task_id` 后用 `accounting_jobs` 查询同一任务，不能反复生成当轮询；尚未收到任务编号时再次生成表示取得当前报表，不承诺找回跨版本旧任务。
 
-任务成功后调用同一命令的 `action="save"`，提供公司、精确 `task_id` 和 `destination="desktop"`，由程序验证并保存到真实桌面。只在返回 `copied` 或 `reused` 及实际路径后称已交付；失效、缺失或损坏时照实处理，不自动换任务，不重复打开Excel解析。桌面同名不同内容另名保留；已有副本不会随内部任务清理删除。网页保留人工查看和下载，两种入口共用报表金额和模板。
+代发表通过 `accounting_payment_export` 的 `generate` 生成，按原公司、period及business_ids范围用 `status` 核验当前任务与实际文件，不反复生成充当轮询。财报和代发表任务成功后，都调用各自命令的 `action="save"`，提供公司、精确 `task_id` 和 `destination="desktop"`，由程序验证并保存到真实桌面。只在返回 `copied` 或 `reused` 及实际桌面路径 `path` 后，用该路径提供可点击文件链接，才称已交付；内部 `task.path` 不代表桌面交付。保存失败接续同一任务，失效、缺失或损坏时照实处理，不自动换任务，不另用复制脚本、浏览器点击或重复打开Excel解析。桌面同名不同内容另名保留；已有副本不会随内部任务清理删除。财报网页保留人工查看和下载，两种入口共用报表金额和模板。
 
 ## 给老板看的办理清单
 

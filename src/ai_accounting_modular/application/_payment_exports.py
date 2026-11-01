@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 
+from . import _export_delivery
+
 
 def _without_action(request):
     return {key: value for key, value in request.items() if key not in {"action", "request_id"}}
@@ -21,6 +23,14 @@ def run(application, request):
     if application.payments is None or application.files is None:
         raise ContractError("unsupported", "当前实例未装配银行代发表办理。")
     action, company = request["action"], request["company_id"]
+    if action == "save":
+        task_id = request["task_id"]
+        if application.files.get(company, task_id)["kind"] != "payment_export":
+            raise ContractError("not_found", "当前公司没有这个银行代发表任务。")
+        result = _export_delivery.save(
+            application, application.files.verified_download(company, task_id)
+        )
+        return validate_contract("core.schema.json", "PaymentExportResult", result)
     selected = _without_action(request)
     if action == "status":
         return _status(application, selected)

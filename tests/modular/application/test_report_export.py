@@ -1,5 +1,6 @@
 """The public export use case rejects invented inputs and preserves exact tasks."""
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -61,7 +62,7 @@ def test_saving_an_unknown_task_never_invokes_the_desktop_writer(case):
     def unexpected_write(_):
         pytest.fail("未知报表任务不能调用桌面写入")
 
-    case.app.save_report = unexpected_write
+    case.app.save_export = unexpected_write
     with pytest.raises(ContractError) as failed:
         case.app.accounting_report_export(
             {
@@ -85,7 +86,7 @@ def test_failed_desktop_write_preserves_the_successful_source_task(case):
     def full_desktop(_):
         raise ContractError("desktop_write_failed", "桌面空间不足。")
 
-    case.app.save_report = full_desktop
+    case.app.save_export = full_desktop
     with pytest.raises(ContractError) as failed:
         case.app.accounting_report_export(
             {
@@ -97,3 +98,31 @@ def test_failed_desktop_write_preserves_the_successful_source_task(case):
         )
     assert failed.value.code == "desktop_write_failed"
     assert case.app.accounting_jobs({"company_id": case.company, "task_id": task_id}) == before
+
+
+@pytest.mark.parametrize("command", ["accounting_report_export", "accounting_payment_export"])
+def test_missing_desktop_capability_leaves_source_task_unexamined(case, command):
+    if command == "accounting_payment_export":
+        from .test_payment_export import command as payment_command
+        from .test_payment_export import prepare
+
+        _, source = prepare(case)
+        queued = payment_command(case, "generate", template_source_id=source)
+    else:
+        case.seed(expense=False)
+        queued = prepared(case)
+    task_id = queued["task"]["task_id"]
+    case.kernel.files.run_pending(case.company)
+    task = {"company_id": case.company, "task_id": task_id}
+    before = case.app.accounting_jobs(task)
+    assert before["state"] == "succeeded"
+    Path(before["path"]).write_bytes(b"damaged source must not be examined without a writer")
+    case.app.save_export = None
+
+    with pytest.raises(ContractError) as failed:
+        create_agent(case.app).dispatch(
+            command, {**task, "action": "save", "destination": "desktop"}
+        )
+
+    assert failed.value.code == "unsupported"
+    assert case.app.accounting_jobs(task) == before
