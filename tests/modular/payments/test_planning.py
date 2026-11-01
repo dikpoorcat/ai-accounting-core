@@ -132,7 +132,7 @@ def test_inspect_discovers_month_scope_without_demanding_template_or_premature_a
     assert result["candidates"][0]["business_id"] == wage["business_id"]
     assert {item["code"] for item in result["issues"]} == {
         "payment_account_missing",
-        "payment_template_missing",
+        "payment_template_not_selected",
         "payment_payable_composition_unconfirmed",
     }
     assert result["available"] is False and result["rows"] == []
@@ -142,6 +142,32 @@ def test_inspect_discovers_month_scope_without_demanding_template_or_premature_a
         len([item for item in rechecked["issues"] if item["code"] == "payment_account_missing"])
         == 1
     )
+
+
+@pytest.mark.parametrize("template_count", [1, 2])
+def test_registered_template_requires_selection_not_another_owner_submission(case, template_count):
+    case.seed(expense=False)
+    wage = unpaid_wage()
+    add(case, no_contributions(), wage)
+    confirm_zero_tax(case, wage)
+    payee(case)
+    template_ids = [register_template(case)]
+    if template_count == 2:
+        template_ids.append(register_template(case, template(shifted=True)))
+    module = owner(case)
+    with case.kernel.storage.read_unit(case.company) as read:
+        before = read.head
+    unselected = inspect(module, case)
+    assert [item["code"] for item in unselected["issues"]] == ["payment_template_not_selected"]
+    assert unselected["issues"][0]["field"] == "/template_source_id"
+    assert "当前请求未指定模板" in unselected["issues"][0]["message"]
+    assert "已登记模板来源" in unselected["issues"][0]["message"]
+    for template_id in template_ids:
+        selected = inspect(module, case, template_source_id=template_id)
+        assert selected["available"] is True and selected["issues"] == []
+        assert selected["template"]["source_id"] == template_id
+    with case.kernel.storage.read_unit(case.company) as read:
+        assert read.head == before
 
 
 def test_later_tax_partial_payment_and_reimbursements_use_public_current_payable_once(case):

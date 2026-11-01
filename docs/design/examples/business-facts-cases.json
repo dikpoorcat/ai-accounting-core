@@ -938,7 +938,7 @@
       "case_id": "B17A",
       "kind": "people.remuneration",
       "given": [
-        "独立样本：同员工B16完整实缴及参与事实明确；不加载其他工资或B15政策"
+        "独立样本：同员工B16完整实际申报金额及参与事实明确；不加载其他工资或B15政策"
       ],
       "when": {
         "business_id": "d6fc9a8b-b21c-59ae-9783-d146ae845d27",

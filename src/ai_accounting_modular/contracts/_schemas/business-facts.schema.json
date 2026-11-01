@@ -922,7 +922,8 @@
           "enum": [
             "declared",
             "not_declared"
-          ]
+          ],
+          "description": "实际申报结果中的项目状态；not_declared只用于有来源明确本项未申报且实际金额为零，不用于等待申报、失败或尚未取得反馈。"
         },
         "employee_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -982,7 +983,8 @@
       "required": [
         "employee_id",
         "items"
-      ]
+      ],
+      "description": "本员工同月已取得的实际申报或核定金额，不证明已经缴款；保存后须由相关工资显式引用才参与核算。"
     },
     "PooledTaxSource": {
       "type": "object",
@@ -6401,7 +6403,8 @@
           "enum": [
             "declared",
             "not_declared"
-          ]
+          ],
+          "description": "实际申报结果中的项目状态；not_declared只用于有来源明确本项未申报且实际金额为零，不用于等待申报、失败或尚未取得反馈。"
         },
         "employee_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -6426,7 +6429,8 @@
           "minItems": 1,
           "maxItems": 100
         }
-      }
+      },
+      "description": "本员工同月已取得的实际申报或核定金额，不证明已经缴款；保存后须由相关工资显式引用才参与核算。"
     },
     "PartialPooledTaxSource": {
       "type": "object",
@@ -14494,7 +14498,8 @@
           "enum": [
             "declared",
             "not_declared"
-          ]
+          ],
+          "description": "实际申报结果中的项目状态；not_declared只用于有来源明确本项未申报且实际金额为零，不用于等待申报、失败或尚未取得反馈。"
         },
         "employee_fen": {
           "$ref": "core.schema.json#/$defs/NonNegativeFen"
@@ -14554,7 +14559,8 @@
       "required": [
         "employee_id",
         "items"
-      ]
+      ],
+      "description": "本员工同月已取得的实际申报或核定金额，不证明已经缴款；保存后须由相关工资显式引用才参与核算。"
     },
     "AccountingPooledTaxSource": {
       "type": "object",

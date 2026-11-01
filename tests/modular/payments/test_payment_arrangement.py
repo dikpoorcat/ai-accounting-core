@@ -189,3 +189,99 @@ def test_generated_arranged_labor_file_stays_unpaid_and_only_relevant_changes_ex
         assert updated["total_fen"] == "317750"
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("actual_already_saved", [False, True])
+def test_adopting_contribution_feedback_replaces_estimates_and_expires_file_without_payment(
+    case, actual_already_saved
+):
+    case.seed(expense=False)
+    wage, employment, policy, actual = (
+        business_case(name) for name in ("B17", "B14", "B15", "B16")
+    )
+    wage["data"].pop("contribution_actual_id")
+    wage["data"].pop("tax_basis")
+    wage["data"]["contribution_basis"] = "policy_until_actual"
+    wage["data"]["disbursement_basis"] = confirmation(case, wage)
+    bank = bank_object()
+    add(case, employment, policy, wage, objects=[bank])
+    payee(case)
+    module = owner(case)
+    plan = make_plan(module, case, register_template(case))
+    original = case.get(wage["business_id"])["businesses"][0]
+    assert plan["total_fen"] == "850000"
+    assert position(module, case, wage)["payment_composition_state"] == "confirmed"
+    service = create_files(
+        case.kernel.storage, {"payment_export": create_payment_export_producer(module)}
+    )
+    try:
+        task = service.ensure_current(plan, plan["scope_head"], str(uuid4()))
+        service.run(case.company, task["task_id"])
+        assert (
+            service.get(case.company, task["task_id"], check_current=True)["state"] == "succeeded"
+        )
+        with service.verified_download(case.company, task["task_id"]) as download:
+            workbook = load_workbook(BytesIO(download.stream.read()))
+            assert workbook.active["C2"].value == "8500.00"
+            workbook.close()
+
+        actual["data"]["items"][0].update(employee_fen="80000", employer_fen="180000")
+        actual["data"]["items"][1].update(employee_fen="40000", employer_fen="40000")
+        if actual_already_saved:
+            add(case, actual)
+            assert position(module, case, wage)["payable_fen"] == "850000"
+            assert current(module, case, plan), "unadopted feedback is not a payroll change"
+
+        adopted_wage = deepcopy(wage)
+        adopted_wage["data"].pop("contribution_policy_id")
+        adopted_wage["data"].update(
+            contribution_basis="actual_required", contribution_actual_id=actual["business_id"]
+        )
+        mutations = [{"op": "replace", "expected_seq": 1, "fact": adopted_wage}]
+        if not actual_already_saved:
+            mutations.append({"op": "create", "expected_seq": 0, "fact": actual})
+        saved = case.app.accounting_apply(case.request(mutations=mutations))
+        assert saved["completion"] == "complete", saved
+        result = case.get(wage["business_id"])["businesses"][0]
+        values = result["results"][0]["target"]["values"]
+        assert values["net_fen"] == "880000" and values["cost_fen"] == "1220000"
+        assert result["state"]["results"][0]["voucher_id"] == original["state"]["results"][0][
+            "voucher_id"
+        ]
+        assert any(
+            source["business_id"] == actual["business_id"]
+            for source in result["results"][0]["basis"]["source_results"]
+        )
+        assert service.get(case.company, task["task_id"], check_current=True)["state"] == "expired"
+        revised = make_plan(module, case, plan["template"]["source_id"])
+        assert revised["total_fen"] == "880000"
+
+        # An already adopted assessment updates payroll through its existing dependency.
+        actual["data"]["items"][0]["employee_fen"] = "90000"
+        correct(case, actual)
+        assert position(module, case, wage)["payable_fen"] == "870000"
+        assert not current(module, case, revised)
+        final = make_plan(module, case, plan["template"]["source_id"])
+        replacement = service.ensure_current(final, final["scope_head"], str(uuid4()))
+        service.run(case.company, replacement["task_id"])
+        with service.verified_download(case.company, replacement["task_id"]) as download:
+            workbook = load_workbook(BytesIO(download.stream.read()))
+            assert workbook.active["C2"].value == "8700.00"
+            workbook.close()
+        assert position(module, case, wage)["remaining_fen"] == "870000"
+        movements = case.app.accounting_review(
+            {
+                "company_id": case.company,
+                "action": "find",
+                "cutoff_period": "2026-01",
+                "collection": "movements",
+                "criteria": {
+                    "account_id": bank["object_id"],
+                    "period_from": "2026-01",
+                    "period_to": "2026-01",
+                },
+            }
+        )
+        assert movements["items"] == []
+    finally:
+        service.close()

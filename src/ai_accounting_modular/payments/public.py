@@ -47,9 +47,10 @@ class Payments:
         if "template_source_id" not in request:
             issues.append(
                 _candidates.issue(
-                    "payment_template_missing",
+                    "payment_template_not_selected",
                     "/template_source_id",
-                    "需要代发时，请先提供这家公司使用的银行模板；不需要代发可跳过。",
+                    "当前请求未指定模板，请先复用公司已有安排和已登记模板来源；"
+                    "本次需要文件且确认尚无模板时，才请老板提供。",
                 )
             )
         else:

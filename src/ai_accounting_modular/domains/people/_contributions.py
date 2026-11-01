@@ -205,7 +205,7 @@ def _actual_items(fact, context, plan):
     )
     actual_data = result.basis["input"]
     if actual_data["employee_id"] != data["person_id"] or result.basis["period"] != fact["period"]:
-        reject("实缴资料必须属于同员工同工资月。")
+        reject("实际申报或核定资料必须属于同员工同工资月。")
     check_actual({"data": actual_data})
     use_result(plan, result)
     return {_key(item): item for item in _ordered(actual_data["items"])}
@@ -261,7 +261,7 @@ def wage_contributions(fact, context, plan, gross, tax):
         and (parse_fen(item["employee_fen"]) or parse_fen(item["employer_fen"]))
         for item in actual_items.values()
     ):
-        reject("未参与类别不能采用非零个人或单位实缴额。")
+        reject("未参与类别不能采用非零个人或单位实际申报额。")
     if not participating:
         _adopt_employment(plan, employment_result, set())
         return ContributionAmounts()
@@ -284,13 +284,13 @@ def wage_contributions(fact, context, plan, gross, tax):
     rules = policy_data["items"] if policy_data is not None else []
     policy_keys = {_key(item) for item in rules}
     if policy_data is not None and set(actual_items) - policy_keys:
-        reject("实缴项目与所引用政策的项目不对应。")
+        reject("实际申报项目与所引用政策的项目不对应。")
     for kind in participating:
         if not any(item["base_kind"] == kind for item in (*rules, *actual_items.values())):
             missing(
                 fact,
                 "/data/contribution_actual_id",
-                "参与类别缺少完整实缴项目或有效政策，不能把缺项当零。",
+                "参与类别缺少完整实际申报项目或有效政策，不能把缺项当零。",
             )
 
     lines, applied_rules, estimated_kinds = [], [], set()
@@ -313,7 +313,7 @@ def wage_contributions(fact, context, plan, gross, tax):
                 missing(
                     fact,
                     "/data/contribution_actual_id",
-                    "要求实际缴费额的参与项目仍缺实际申报或明确未申报资料。",
+                    "要求实际金额的参与项目仍缺实际申报或核定依据；等待反馈不能填成零额。",
                 )
             if not _policy_covers_month(policy_data["policy"], fact["period"]):
                 missing(

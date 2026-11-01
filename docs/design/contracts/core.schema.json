@@ -5561,7 +5561,7 @@
         },
         "work_defaults": {
           "type": "object",
-          "description": "内核提供的日常工作默认。老板已明确的实际安排或公司说明优先，不重复询问是否接受默认；不解析说明生成正式核算事实。",
+          "description": "内核提供的日常工作默认。老板已明确的实际安排或公司说明优先；首次建立代发安排按专项规则确认，已有安排不逐月重复询问。不解析说明生成正式核算事实。",
           "properties": {
             "payroll": {
               "$ref": "#/$defs/PayrollWorkDefaults"
@@ -5571,12 +5571,16 @@
             },
             "income_tax": {
               "$ref": "#/$defs/IncomeTaxWorkDefaults"
+            },
+            "payment_export": {
+              "$ref": "#/$defs/PaymentExportWorkDefaults"
             }
           },
           "required": [
             "payroll",
             "service_revenue",
-            "income_tax"
+            "income_tax",
+            "payment_export"
           ],
           "additionalProperties": false
         }
@@ -5812,6 +5816,19 @@
         "planned_payment_period"
       ],
       "additionalProperties": false
+    },
+    "PaymentExportWorkDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "默认办理银行代发表，老板明确不用时按其真实范围采用。首次建立公司安排才确认一次；已明确需要、已提供用途明确的模板或已有有效代发安排时直接复用。此默认不证明已付款，也不替代本次金额、付款组成和模板来源。",
+      "properties": {
+        "file_requirement": {
+          "const": "required_unless_declined"
+        }
+      },
+      "required": [
+        "file_requirement"
+      ]
     },
     "IncomeTaxWorkDefaults": {
       "type": "object",

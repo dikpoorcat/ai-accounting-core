@@ -139,17 +139,18 @@ def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_s
     assert "性质完全未知" in stages["1"] and "渠道或流水有缺口" in stages["1"]
     assert "第3项" in stages["2"] and "第4项" in stages["2"]
     assert "计提不必等待后来扣税、申报和付款" in stages["2"]
-    assert "允许政策估算时不强求" in stages["3"]
-    assert "不需代发表也不能漏掉必要核算" in stages["4"]
-    assert "文档已完成" in stages["4"] and "文件不代表银行已付" in stages["4"]
+    assert "实际申报或核定反馈" in stages["3"] and "均不算本项完成" in stages["3"]
+    assert "不需要文件也不能漏掉必要核算" in stages["4"]
+    assert "文档已完成" in stages["4"] and "文件不代表实际付款" in stages["4"]
     assert "文件已生成" in stages["6"] and "不能称为已报送" in stages["6"]
     assert "后月份付款不强行登记在本期" in stages["7"]
     assert "程序已实际关账" in stages["8"] and "检查通过不等于已经关账" in stages["8"]
     assert "同时决定图标与接续位置" in checklist
-    assert "同阶段条件满足的独立事项" in checklist and "不据此跳步" in checklist
+    assert "同阶段条件满足的独立事项" in checklist and "由老板决定顺序" in checklist
     assert "原项保持未完成" in checklist and "先保全归期" in checklist
     assert "后期办理安排" in checklist and "原项保持🔄" in checklist
-    assert "现实资料缺口也不能改称后期待办绕过" in checklist
+    assert "现实资料缺口不能改称后期待办绕过" in checklist
+    assert "未答复或选择等待时不提前推进" in checklist
     assert "保留其他仍未解决的事项" in work
     assert "工资一人的核算资料不足，不阻止无关的银行对账" not in work
 

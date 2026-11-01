@@ -25,6 +25,7 @@ def test_context_exposes_work_defaults_without_creating_any_business(case):
             "collection_method": "actual_profit",
             "basis": "project_default",
         },
+        "payment_export": {"file_requirement": "required_unless_declined"},
     }
     assert context["notes"] == []
     assert context["open_periods"] == ["2026-01"]
@@ -36,7 +37,7 @@ def test_owner_work_arrangement_stays_available_and_is_not_parsed_into_formal_fa
     case.seed(expense=False)
     text = (
         "本公司工资按当月发放；设计服务按季度结算，客户和生效范围见已保存合同，"
-        "具体收付款仍以流水为准。"
+        "具体收付款仍以流水为准；本公司长期不需要银行代发表。"
     )
     saved = case.app.accounting_apply(case.request(notes=[note("company", text, case.source_id)]))
     assert saved["completion"] == "complete", saved
@@ -45,4 +46,7 @@ def test_owner_work_arrangement_stays_available_and_is_not_parsed_into_formal_fa
     assert context["work_defaults"]["payroll"]["planned_payment_period"] == "following_month"
     revenue = context["work_defaults"]["service_revenue"]
     assert revenue["planned_receipt_period"] == "following_month"
+    assert context["work_defaults"]["payment_export"] == {
+        "file_requirement": "required_unless_declined"
+    }
     assert context["closed_periods"] == []

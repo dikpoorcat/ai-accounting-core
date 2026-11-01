@@ -109,6 +109,7 @@ def context(application, request, read_context=None):
                     "collection_method": "actual_profit",
                     "basis": "project_default",
                 },
+                "payment_export": {"file_requirement": "required_unless_declined"},
             },
             "document_state": status["state"],
             "document_set_id": status["set_id"],

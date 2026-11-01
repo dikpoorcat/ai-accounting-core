@@ -595,6 +595,9 @@ class PayrollWorkDefaults(TypedDict):
     accrual_period: Literal['service_month']
     planned_payment_period: Literal['following_month']
 
+class PaymentExportWorkDefaults(TypedDict):
+    file_requirement: Literal['required_unless_declined']
+
 class IncomeTaxWorkDefaults(TypedDict):
     method: Literal['computed_provision']
     collection_method: Literal['actual_profit']
@@ -8901,6 +8904,7 @@ class CompanyContextWorkDefaults(TypedDict):
     payroll: PayrollWorkDefaults
     service_revenue: ServiceRevenueWorkDefaults
     income_tax: IncomeTaxWorkDefaults
+    payment_export: PaymentExportWorkDefaults
 
 class EmptyContextAvailableCompaniesItem(TypedDict):
     company_id: Id
@@ -10502,6 +10506,7 @@ __all__ = [
     'CashflowWeight',
     'SourceId',
     'PayrollWorkDefaults',
+    'PaymentExportWorkDefaults',
     'IncomeTaxWorkDefaults',
     'RemunerationRequest',
     'RemunerationAmountValues',

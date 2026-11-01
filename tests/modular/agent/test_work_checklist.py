@@ -41,7 +41,7 @@ def test_checklist_conditions_and_actions_have_one_source_and_no_company_progres
 
 def test_payment_result_check_is_shared_before_the_stages_without_per_payment_actions():
     rules = read_work_checklist()
-    (check,) = rules["common_checks"]
+    check = next(item for item in rules["common_checks"] if item["id"] == "common.payment_results")
     guide = read_guide("work")
     assert check["id"] == "common.payment_results"
     assert guide.count(f"`{check['id']}`") == 1
@@ -68,11 +68,32 @@ def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition()
     assert "先实际交付当前有效文件" in checks["payment_export.delivery"]["if_unmet"]
     assert "不是无需代发的依据" in checks["payment_export.scope"]["condition"]
     assert "首次" in checks["payment_export.scope"]["if_unmet"]
-    assert "不需要就不生成" in checks["payment_export.scope"]["if_unmet"]
-    assert "现有公司说明" in checks["payment_export.scope"]["if_unmet"]
-    assert "文件不代表银行已付" in stages["payment_export"]["completion"]
+    assert "没有待付金额不生成空表" in checks["payment_export.scope"]["if_unmet"]
+    assert "公司说明" in checks["payment_export.scope"]["if_unmet"]
+    assert "文件不代表实际付款" in stages["payment_export"]["completion"]
     assert "经status核对为succeeded" in file["condition"]
     assert "task.path的绝对文件路径" in checks["payment_export.delivery"]["condition"]
+
+
+def test_unfinished_steps_and_contribution_feedback_share_the_installed_rules():
+    rules = read_work_checklist()
+    shared = next(item for item in rules["common_checks"] if item["id"] == "common.unfinished_work")
+    guide = read_guide("work")
+    assert guide.count(f"`{shared['id']}`") == 1
+    assert shared["condition"] in guide and shared["if_unmet"] in guide
+    assert "未答复或选择等待时不提前推进" in shared["condition"]
+    assert "每次更新步骤清单都提醒未完成事项" in shared["if_unmet"]
+    stages = {item["id"]: item for item in rules["stages"]}
+    contribution = {item["id"]: item for item in stages["contributions"]["checks"]}
+    assert "均不算本项完成" in stages["contributions"]["completion"]
+    assert "not_declared零额事实" in contribution["contributions.result"]["if_unmet"]
+    assert "contribution_actual_id" in contribution["contributions.adoption"]["condition"]
+    assert "已有引用则复用依赖重算" in contribution["contributions.adoption"]["if_unmet"]
+    payment = next(
+        item for item in stages["payment_export"]["checks"] if item["id"] == "payment_export.scope"
+    )
+    assert "work_defaults.payment_export" in payment["condition"]
+    assert "本月例外只保存本月" in payment["if_unmet"]
 
 
 def test_payment_actions_match_the_public_contract_and_instructions_point_to_rules():
