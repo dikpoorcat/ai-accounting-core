@@ -26,7 +26,11 @@ def run(application, request):
                 resuming=bool(request.get("expected_version") or request.get("cursor")),
             )
         )
-        version = captured.version(read)
+        movements = captured.selections.get("movements")
+        channels = application.money.own_funds_channels(
+            tuple(item.result_reference for item in movements.items) if movements else (), read
+        )
+        version = captured.version(read, channels)
         collection = request["collection"]
         query = PageQuery(request.get("limit", 20), _review_wire.continuation(request, version))
         selection = captured.selections.get(
@@ -37,7 +41,9 @@ def run(application, request):
         ports = {
             "obligations": application.ledger.review_obligation_page,
             "settlements": application.ledger.review_settlement_page,
-            "movements": application.money.review_movement_page,
+            "movements": lambda selected, page, context: application.money.review_movement_page(
+                selected, page, context, channels=channels
+            ),
             "statement_rows": application.money.review_row_page,
             "links": application.money.review_row_link_page,
         }

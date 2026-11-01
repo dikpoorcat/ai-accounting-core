@@ -1,10 +1,12 @@
 """Original bank text and whole, formally matched payment groups."""
 
 from ai_accounting_modular.contracts.public import format_fen, parse_fen
+from ai_accounting_modular.money.public import counterparty_meaning
 
 from ._business_labels import origin_fields
 from ._collections import IndexItem
-from ._funds_items import date_key, party_name
+from ._counterparty_display import label as counterparty_label
+from ._funds_items import date_key
 
 
 def batches(activity, sources, objects):
@@ -39,16 +41,22 @@ def batches(activity, sources, objects):
             if not parts:
                 items.append(
                     {
-                        "party": party_name(actual.get("party_id"), objects) or "交易方未提供",
+                        "party": counterparty_label(
+                            view["counterparty"], objects, direction=actual["direction"]
+                        ),
                         "amount_fen": actual["amount_fen"],
                     }
                 )
                 continue
             items.extend(
                 {
-                    "party": party_name(part.party_id, objects)
-                    or party_name(actual.get("party_id"), objects)
-                    or "交易方未提供",
+                    "party": counterparty_label(
+                        counterparty_meaning(
+                            party_ids=(part.party_id or actual.get("party_id"),)
+                        ),
+                        objects,
+                        direction=actual["direction"],
+                    ),
                     "amount_fen": format_fen(part.amount_fen),
                 }
                 for part in parts

@@ -49,6 +49,11 @@ def test_payment_result_check_is_shared_before_the_stages_without_per_payment_ac
     assert "actions" not in check
     assert "本步骤、本批次" in check["condition"]
     assert "新办、变更或接续尚未核对" in check["condition"]
+    assert all(state in check["condition"] for state in ("known", "not_applicable", "missing"))
+    assert "对象为空不证明不适用" in check["condition"]
+    assert "own_funds_channel" in check["if_unmet"]
+    assert "不能把managed_reserve一律视为不适用" in check["if_unmet"]
+    assert "counterparty" in INSTRUCTIONS
     assert "仅计提不索取未来付款资料" in check["condition"]
     assert "仅生成代发表不视为已实际付款，仍按文件自身条件检查" in check["condition"]
     assert "不逐笔另起查询" in "；".join(check["evidence"])

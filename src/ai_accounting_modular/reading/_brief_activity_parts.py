@@ -9,6 +9,7 @@ from ai_accounting_modular.contracts.public import (
     format_fen,
     parse_fen,
 )
+from ai_accounting_modular.money.public import counterparty_meaning
 
 from ._brief_activity_amounts import amount, recognition, signed
 from ._business_labels import (
@@ -20,6 +21,7 @@ from ._business_labels import (
     settlement_label,
     settlement_title,
 )
+from ._counterparty_display import label as counterparty_label
 
 
 @dataclass(frozen=True)
@@ -420,7 +422,7 @@ def _event_details(content):
     return details
 
 
-def rows(event, content, objects, *, prepared, obligations=()):
+def rows(event, content, objects, *, prepared, obligations=(), own_funds_channel=None):
     result, correction = [], event.role in {"reversal", "replacement", "reclassification"}
     sign, token = (-1 if event.role == "reversal" else 1), event.voucher_token
     state = {"reversal": "更正前", "replacement": "更正后"}.get(
@@ -460,17 +462,15 @@ def rows(event, content, objects, *, prepared, obligations=()):
         ].startswith(("investment.cooperation_", "opening.", "reports."))
         if part.batch:
             party = "银行批量付款"
-        elif part.parties:
-            party = "、".join(
-                objects[ident]["name"] if ident in objects else "对象名称未提供"
-                for ident in part.parties
+        elif part.parties or part.phase in {"outflow", "inflow", "internal_transfer"}:
+            meaning = counterparty_meaning(
+                party_ids=part.parties,
+                internal_transfer=part.phase == "internal_transfer",
+                own_funds_channel=own_funds_channel if event.role != "reversal" else None,
             )
+            party = counterparty_label(meaning, objects, direction=part.phase)
         else:
-            party = {
-                "outflow": "收款方未提供",
-                "inflow": "付款方未提供",
-                "internal_transfer": "公司内部账户划转",
-            }.get(part.phase, "—")
+            party = "—"
         result.append(
             {
                 "row": {

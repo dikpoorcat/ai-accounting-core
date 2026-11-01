@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
 
 from . import _funds_progress
 from ._collections import IndexItem
+from ._counterparty_display import label as counterparty_label
 from ._funds_accounts import amount
 
 EVENTS = {
@@ -59,10 +60,6 @@ def identities(reader, activity, read):
     return found
 
 
-def party_name(party_id, objects):
-    return objects[party_id]["name"] if party_id is not None else ""
-
-
 def movements(activity, accounts, objects, sources, presence):
     result = []
     for view in activity.movements:
@@ -71,20 +68,7 @@ def movements(activity, accounts, objects, sources, presence):
         account = accounts[actual["funds_account_id"]]
         internal = "transfer_group_id" in actual
         label, summary, full_summary = sources.titles(view)
-        parties = list(
-            dict.fromkeys(
-                party_name(part.party_id, objects) for part in view["allocations"] if part.party_id
-            )
-        )
-        party = party_name(actual.get("party_id"), objects) or "、".join(parties)
-        if not party:
-            party = (
-                "公司内部账户划转"
-                if internal
-                else "收款方未提供"
-                if actual["direction"] == "outflow"
-                else "付款方未提供"
-            )
+        party = counterparty_label(view["counterparty"], objects, direction=actual["direction"])
         value = {
             "id": actual["movement_id"],
             "subject_id": ""

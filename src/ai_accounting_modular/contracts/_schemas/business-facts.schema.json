@@ -1979,6 +1979,9 @@
           "minItems": 0,
           "maxItems": 10000,
           "uniqueItems": true
+        },
+        "own_funds_channel": {
+          "$ref": "core.schema.json#/$defs/OwnFundsChannel"
         }
       },
       "required": [
@@ -1986,6 +1989,16 @@
         "funds_account_id",
         "direction",
         "amount_fen"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "counterparty_id",
+              "own_funds_channel"
+            ]
+          }
+        }
       ]
     },
     "PayrollReserveMovement": {
@@ -7128,8 +7141,21 @@
           "minItems": 0,
           "maxItems": 10000,
           "uniqueItems": true
+        },
+        "own_funds_channel": {
+          "$ref": "#/$defs/PartialOwnFundsChannel"
         }
-      }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "counterparty_id",
+              "own_funds_channel"
+            ]
+          }
+        }
+      ]
     },
     "PartialPayrollReserveMovement": {
       "type": "object",
@@ -25776,6 +25802,20 @@
       "required": [
         "type"
       ]
+    },
+    "PartialOwnFundsChannel": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "source": {
+          "$ref": "#/$defs/PartialSourceLocator"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

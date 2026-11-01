@@ -14,6 +14,7 @@ from ai_accounting_modular.ledger.public import (
 )
 
 from ._common import amount, fail, total
+from ._counterparties import counterparty_meaning
 from ._queries import page_values, scope_selection, version
 from ._read_statements import KINDS as STATEMENT_KINDS
 from ._read_statements import original_rows
@@ -129,35 +130,68 @@ def query_movements(owner, scope, query, page, read):
         for key, item in values
         if query.account_id is None or item.value["funds_account_id"] == query.account_id
     ]
+    channels = owner.own_funds_channels([_result_reference(item) for _, item in filtered], read)
     identity = version(
         scope,
         read,
         "movements",
-        {"query": query, "total_count": len(values), "movements": filtered},
+        {
+            "query": query,
+            "total_count": len(values),
+            "movements": filtered,
+            "own_funds_channels": sorted((key, channel) for key, channel in channels.items()),
+        },
     )
     found = page_values(identity, values, page, filtered=filtered)
     return ReadPage(
         found.version,
         found.total_count,
         found.filtered_count,
-        movement_views(owner, found.items, scope, read),
+        movement_views(owner, found.items, scope, read, channels=channels),
         found.next_cursor,
     )
 
 
-def movement_views(owner, definitions, scope, read):
+def _result_reference(definition):
+    source = definition.source
+    return {
+        "business_id": source["business_id"],
+        "result_id": source["result_id"],
+        "result_slot": source["result_slot"],
+        "generation": source["result_generation"],
+    }
+
+
+def movement_views(owner, definitions, scope, read, *, channels=None):
     allocations = {}
     for start in range(0, len(definitions), 500):
         allocations.update(_parts(owner, definitions[start : start + 500], scope, read))
-    return tuple(
-        {
-            "reference": item.reference,
-            "source": item.source,
-            "movement": item.value,
-            "allocations": allocations.get(item.value["movement_id"], ()),
-        }
-        for item in definitions
-    )
+    if channels is None:
+        channels = owner.own_funds_channels([_result_reference(item) for item in definitions], read)
+    values = []
+    for item in definitions:
+        parts = allocations.get(item.value["movement_id"], ())
+        parties = (
+            (item.value["party_id"],)
+            if item.value.get("party_id") is not None
+            else tuple(part.party_id for part in parts)
+        )
+        values.append(
+            {
+                "reference": item.reference,
+                "source": item.source,
+                "movement": item.value,
+                "allocations": parts,
+                "counterparty": counterparty_meaning(
+                    party_ids=parties,
+                    internal_transfer="transfer_group_id" in item.value,
+                    own_funds_channel=channels.get(
+                        (item.source["result_id"], item.source["result_generation"])
+                    ),
+                ),
+            }
+        )
+    return tuple(values)
 
 
 def _accounts(owner, read):
@@ -262,7 +296,8 @@ def account_activity(owner, scope, read):
         )
     outgoing = [item for item in definitions if item.value["direction"] == "outflow"]
     incoming = [item for item in definitions if item.value["direction"] == "inflow"]
-    movements = movement_views(owner, definitions, scope, read)
+    channels = owner.own_funds_channels([_result_reference(item) for item in definitions], read)
+    movements = movement_views(owner, definitions, scope, read, channels=channels)
     identity = version(
         scope,
         read,
@@ -302,7 +337,14 @@ def account_activity(owner, scope, read):
             business_result_kinds=STATEMENT_KINDS,
             business_ids=tuple(sorted({item.reference["business_id"] for item in definitions})),
             current_fact_ids=tuple(
-                sorted({item.reference["business_id"] for item in statements.values()})
+                sorted(
+                    {item.reference["business_id"] for item in statements.values()}
+                    | {
+                        item.reference["business_id"]
+                        for item in definitions
+                        if (item.source["result_id"], item.source["result_generation"]) in channels
+                    }
+                )
             ),
             object_ids=tuple(sorted(accounts)),
             object_kinds=_ACCOUNT_KINDS,

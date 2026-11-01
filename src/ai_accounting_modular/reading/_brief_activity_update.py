@@ -23,6 +23,9 @@ def mark(repository, state, scope, impact, head):
         if any(period <= scope["period_to"] for period in change.posted_periods)
         for identity in (change.business_id, *change.resource_business_ids)
     }
+    if directory is not None and impact.facts:
+        fact_roots = directory.get(index.ROOTS, {identity for identity, _, _ in impact.facts})
+        changed.update(identity for identity, root in fact_roots.items() if root["current_fact"])
     notes = set(impact.note_scopes) | {
         "business:" + change.business_id for change in impact.formal_changes
     }
@@ -94,6 +97,7 @@ def prepare(reader, scope, read, state):
                 members=value["members"],
                 vouchers=value["vouchers"],
                 note_scopes=value["note_scopes"],
+                current_fact=value["current_fact"],
             )
             for value in old_roots.values()
         ],

@@ -60,7 +60,7 @@ class ReviewScope:
     direct_movements: set = field(default_factory=set)
     direct_businesses: set = field(default_factory=set)
 
-    def version(self, read):
+    def version(self, read, channels):
         return content_digest(
             {
                 "company_id": read.company_id,
@@ -68,6 +68,10 @@ class ReviewScope:
                 "scope": self.scope,
                 "subject": self.subject_basis,
                 "selections": {key: value.version for key, value in self.selections.items()},
+                "own_funds_channels": [
+                    {"result_id": result_id, "generation": generation, "channel": channel}
+                    for (result_id, generation), channel in sorted(channels.items())
+                ],
             }
         )
 

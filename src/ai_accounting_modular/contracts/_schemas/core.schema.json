@@ -6451,6 +6451,98 @@
     },
     "ReviewResult": {
       "$ref": "accounting-review.schema.json#/$defs/ReviewResult"
+    },
+    "OwnFundsChannel": {
+      "type": "object",
+      "description": "有来源确认的本公司自有资金渠道，按既有管理范围不纳入账户余额，不表示外部人员或机构。",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceLocator"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "CounterpartyMeaning": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "known"
+            },
+            "party_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Id"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "state",
+            "party_ids"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "not_applicable"
+            },
+            "reason": {
+              "const": "internal_transfer"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "not_applicable"
+            },
+            "reason": {
+              "const": "own_funds_channel"
+            },
+            "own_funds_channel": {
+              "$ref": "#/$defs/OwnFundsChannel"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "own_funds_channel"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "missing"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

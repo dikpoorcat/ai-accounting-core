@@ -215,6 +215,18 @@ def capture(reader, scope, read, *, business_ids=()):
         for identity, body in bodies.items()
         if body.target["kind"] in EVENT_KINDS
     }
+    channel_refs = [
+        body.reference
+        for body in bodies.values()
+        if body.target["kind"] == "money.movement"
+        and body.basis["input"]["type"] == "managed_reserve"
+    ]
+    channels = reader.money.own_funds_channels(channel_refs, read)
+    current_fact_businesses = {
+        ref["business_id"]
+        for ref in channel_refs
+        if (ref["result_id"], ref["generation"]) in channels
+    }
     events = _events(directory, unjournaled, chosen, cache, prepared)
     prose = descriptions.Descriptions(
         reader,
@@ -248,6 +260,9 @@ def capture(reader, scope, read, *, business_ids=()):
             objects,
             prepared=prepared[body.reference["result_id"], body.reference["generation"]],
             obligations=obligations.get(body.source["result_id"], ()),
+            own_funds_channel=channels.get(
+                (body.reference["result_id"], body.reference["generation"])
+            ),
         )
         for member, part in zip(
             actual, prepared[body.reference["result_id"], body.reference["generation"]], strict=True
@@ -318,6 +333,7 @@ def capture(reader, scope, read, *, business_ids=()):
                 members=member_ids[business_id],
                 vouchers=voucher_ids[business_id],
                 note_scopes=note_scopes[business_id],
+                current_fact=business_id in current_fact_businesses,
             )
         )
     return members, vouchers, roots

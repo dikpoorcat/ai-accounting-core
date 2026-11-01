@@ -5,7 +5,7 @@ from ai_accounting_modular.contracts.public import ReadPage
 from ._read_activity import movement_views
 
 
-def page(owner, selection, query, read):
+def page(owner, selection, query, read, *, channels=None):
     found = owner._ledger.review_movement_page(selection, query, read)
     scope = {
         "company_id": read.company_id,
@@ -17,6 +17,6 @@ def page(owner, selection, query, read):
         found.version,
         found.total_count,
         found.filtered_count,
-        movement_views(owner, found.items, scope, read),
+        movement_views(owner, found.items, scope, read, channels=channels),
         found.next_cursor,
     )

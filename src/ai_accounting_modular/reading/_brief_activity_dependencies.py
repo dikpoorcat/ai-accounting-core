@@ -38,7 +38,10 @@ def root(value):
         "members",
         "vouchers",
         "note_scopes",
+        "current_fact",
     }:
+        corrupt()
+    if type(value["current_fact"]) is not bool:
         corrupt()
     validate_contract("core.schema.json", "Id", value["business_id"])
     for field in ("object_ids", "members", "vouchers", "note_scopes"):
@@ -59,7 +62,9 @@ def root(value):
     return value
 
 
-def root_item(business_id, sources, object_ids, *, members=(), vouchers=(), note_scopes=()):
+def root_item(
+    business_id, sources, object_ids, *, members=(), vouchers=(), note_scopes=(), current_fact=False
+):
     unique = {}
     for source in sources:
         identity = source["result_id"], source["result_generation"]
@@ -74,6 +79,7 @@ def root_item(business_id, sources, object_ids, *, members=(), vouchers=(), note
             "members": sorted(set(members)),
             "vouchers": sorted(set(vouchers)),
             "note_scopes": sorted(set(note_scopes)),
+            "current_fact": current_fact,
         }
     )
     return IndexItem(ROOTS, business_id, business_id, value, business_id=business_id)
@@ -135,12 +141,13 @@ def identifiers(value, collection):
     return value["note_scopes" if collection == NOTES else "object_ids"]
 
 
-def inputs(business_ids, object_ids, note_scopes=()):
+def inputs(business_ids, object_ids, note_scopes=(), current_fact_ids=()):
     return ReadInputs(
         posted_results=True,
         business_ids=tuple(sorted(business_ids)),
         object_ids=tuple(sorted(object_ids)),
         note_scopes=tuple(sorted(note_scopes)),
+        current_fact_ids=tuple(sorted(current_fact_ids)),
     )
 
 
@@ -157,6 +164,7 @@ def complete(roots):
         keys[BUSINESSES],
         keys[OBJECTS],
         keys[NOTES],
+        (item.item_id for item in roots if item.value["current_fact"]),
     )
 
 
@@ -187,15 +195,19 @@ def changes(directory, before, after, entries, deletes):
                 added[collection].add(identity)
             elif existed and not owners:
                 removed[collection].add(identity)
+    old_facts = {item.item_id for item in before if item.value["current_fact"]}
+    new_facts = {item.item_id for item in after if item.value["current_fact"]}
     return (
         ReadInputs(
             business_ids=tuple(sorted(added[BUSINESSES])),
             object_ids=tuple(sorted(added[OBJECTS])),
             note_scopes=tuple(sorted(added[NOTES])),
+            current_fact_ids=tuple(sorted(new_facts - old_facts)),
         ),
         ReadInputs(
             business_ids=tuple(sorted(removed[BUSINESSES])),
             object_ids=tuple(sorted(removed[OBJECTS])),
             note_scopes=tuple(sorted(removed[NOTES])),
+            current_fact_ids=tuple(sorted(old_facts - new_facts)),
         ),
     )

@@ -734,6 +734,9 @@
         },
         "origin": {
           "$ref": "core.schema.json#/$defs/ResultRef"
+        },
+        "counterparty": {
+          "$ref": "core.schema.json#/$defs/CounterpartyMeaning"
         }
       },
       "required": [
@@ -742,7 +745,8 @@
         "source",
         "movement",
         "allocations",
-        "origin"
+        "origin",
+        "counterparty"
       ],
       "additionalProperties": false
     },

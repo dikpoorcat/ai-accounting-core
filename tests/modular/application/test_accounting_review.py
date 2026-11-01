@@ -566,3 +566,96 @@ def test_candidate_other_payment_does_not_become_direct_via_combined_payment(cas
         combined["business_id"]: "direct",
         separate["business_id"]: "candidate",
     }
+
+
+def test_channel_changes_cover_the_whole_review_scope_without_invalidating_other_accounts(case):
+    case.seed(expense=False)
+    bank, other_bank = bank_account(str(uuid4())), bank_account(str(uuid4()))
+    reserves = [
+        {
+            "business_id": str(uuid4()),
+            "kind": "money.movement",
+            "period": "2026-01",
+            "effective_on": day,
+            "evidence_ids": [case.source_id],
+            "data": {
+                "type": "managed_reserve",
+                "funds_account_id": account,
+                "direction": "inflow",
+                "amount_fen": "10000",
+            },
+        }
+        for account, day in (
+            (bank["object_id"], "2026-01-10"),
+            (bank["object_id"], "2026-01-11"),
+            (other_bank["object_id"], "2026-01-12"),
+        )
+    ]
+    save(case, *reserves, objects=[bank, other_bank])
+    first = movements(case, bank["object_id"], limit=1)
+    unrelated = movements(case, other_bank["object_id"])
+    related = {
+        "movements": {
+            "account_id": bank["object_id"],
+            "period_from": "2026-01",
+            "period_to": "2026-03",
+        }
+    }
+    inspection = inspect(case, reserves[0]["business_id"], related_scope=related)
+    assert first["items"][0]["counterparty"] == {"state": "missing"}
+    assert first["page"]["has_more"]
+
+    changed = deepcopy(reserves[1])
+    changed["data"]["own_funds_channel"] = {
+        "name": "合成自有渠道",
+        "source": {"source_id": case.source_id},
+    }
+    command = case.request()
+    command["mutations"] = [{"op": "replace", "expected_seq": 1, "fact": changed}]
+    saved = case.app.accounting_apply(command)
+    assert saved["completion"] == "complete" and saved["accounting"] == "unchanged", saved
+    with pytest.raises(ContractError, match="核查依据已变化") as stale:
+        movements(case, bank["object_id"], expected_version=first["basis_version"])
+    assert stale.value.code == "snapshot_changed"
+    with pytest.raises(ContractError) as stale_page:
+        movements(case, bank["object_id"], cursor=first["page"]["next_cursor"])
+    assert stale_page.value.code == "snapshot_changed"
+    with pytest.raises(ContractError) as stale_collection:
+        inspect(
+            case,
+            reserves[0]["business_id"],
+            "settlements",
+            related_scope=related,
+            expected_version=inspection["basis_version"],
+        )
+    assert stale_collection.value.code == "snapshot_changed"
+    assert (
+        movements(case, other_bank["object_id"], expected_version=unrelated["basis_version"])[
+            "basis_version"
+        ]
+        == unrelated["basis_version"]
+    )
+
+    fresh = movements(case, bank["object_id"], limit=1)
+    next_page = movements(case, bank["object_id"], cursor=fresh["page"]["next_cursor"])
+    assert next_page["items"][0]["counterparty"] == {
+        "state": "not_applicable",
+        "reason": "own_funds_channel",
+        "own_funds_channel": changed["data"]["own_funds_channel"],
+    }
+    assert next_page["sources"][0]["source_id"] == case.source_id
+    note = case.request(
+        notes=[
+            {
+                "scope": "business:" + changed["business_id"],
+                "expected_seq": 0,
+                "text": "合成备用金退回用途说明",
+                "evidence_ids": [case.source_id],
+            }
+        ]
+    )
+    assert case.app.accounting_apply(note)["completion"] == "complete"
+    assert (
+        movements(case, bank["object_id"], expected_version=fresh["basis_version"])["basis_version"]
+        == fresh["basis_version"]
+    )

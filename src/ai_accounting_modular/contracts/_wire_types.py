@@ -722,6 +722,12 @@ type ReviewRequest = AccountingReviewReviewRequest
 
 type ReviewResult = AccountingReviewReviewResult
 
+class OwnFundsChannel(TypedDict):
+    name: str
+    source: SourceLocator
+
+type CounterpartyMeaning = CounterpartyMeaningVariant1 | CounterpartyMeaningVariant2 | CounterpartyMeaningVariant3 | CounterpartyMeaningVariant4
+
 type NoteFormat = Literal['plain_text', 'markdown']
 
 class CompanyNoteQuery(TypedDict):
@@ -1184,6 +1190,7 @@ class ReserveMovement(TypedDict):
     amount_fen: PositiveFen
     counterparty_id: NotRequired[Id]
     platform_row_ids: NotRequired[list[Id]]
+    own_funds_channel: NotRequired[OwnFundsChannel]
 
 class PayrollReserveMovement(TypedDict):
     type: Literal['payroll_reserve']
@@ -2269,6 +2276,7 @@ class PartialReserveMovement(TypedDict):
     amount_fen: NotRequired[PositiveFen]
     counterparty_id: NotRequired[Id]
     platform_row_ids: NotRequired[list[Id]]
+    own_funds_channel: NotRequired[PartialOwnFundsChannel]
 
 class PartialPayrollReserveMovement(TypedDict):
     type: NotRequired[Literal['payroll_reserve']]
@@ -5436,6 +5444,10 @@ class PartialOwnerRecognitionTaxPoint(TypedDict):
 class AccountingOwnerRecognitionTaxPoint(TypedDict):
     type: Literal['owner_recognition_default']
 
+class PartialOwnFundsChannel(TypedDict):
+    name: NotRequired[str]
+    source: NotRequired[PartialSourceLocator]
+
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
 
 class KnownAmount(TypedDict):
@@ -5762,6 +5774,7 @@ class ReviewMovementItem(TypedDict):
     movement: FundMovement
     allocations: list[ReviewAllocation]
     origin: ResultRef
+    counterparty: CounterpartyMeaning
 
 class ReviewRowItem(TypedDict):
     relationship: Literal['direct', 'candidate']
@@ -8945,6 +8958,22 @@ class ReportExportRequestVariant1(TypedDict):
     year: int
     quarter: int
 
+class CounterpartyMeaningVariant1(TypedDict):
+    state: Literal['known']
+    party_ids: list[Id]
+
+class CounterpartyMeaningVariant2(TypedDict):
+    state: Literal['not_applicable']
+    reason: Literal['internal_transfer']
+
+class CounterpartyMeaningVariant3(TypedDict):
+    state: Literal['not_applicable']
+    reason: Literal['own_funds_channel']
+    own_funds_channel: OwnFundsChannel
+
+class CounterpartyMeaningVariant4(TypedDict):
+    state: Literal['missing']
+
 class PaymentExportLayoutColumns(TypedDict):
     payee_name: int
     payee_account: int
@@ -10532,6 +10561,8 @@ __all__ = [
     'ReportExportResult',
     'ReviewRequest',
     'ReviewResult',
+    'OwnFundsChannel',
+    'CounterpartyMeaning',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',
@@ -11217,6 +11248,7 @@ __all__ = [
     'OwnerRecognitionTaxPoint',
     'PartialOwnerRecognitionTaxPoint',
     'AccountingOwnerRecognitionTaxPoint',
+    'PartialOwnFundsChannel',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

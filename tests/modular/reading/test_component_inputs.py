@@ -63,6 +63,7 @@ def root(identity, *, note=True):
             "sources": [{"business_id": "source"}],
             "object_ids": ["person"],
             "note_scopes": ["business:source"] if note else [],
+            "current_fact": False,
         },
     )
 

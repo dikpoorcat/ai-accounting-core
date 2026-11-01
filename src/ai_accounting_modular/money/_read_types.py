@@ -6,6 +6,7 @@ from typing import Literal, TypedDict
 from ai_accounting_modular.contracts.public import (
     BusinessRef,
     ContractError,
+    CounterpartyMeaning,
     FundMovement,
     ReadInputs,
     ResultRef,
@@ -50,6 +51,7 @@ class MovementView(TypedDict):
     source: ResultSourceRef
     movement: FundMovement
     allocations: tuple[SettlementPart, ...]
+    counterparty: CounterpartyMeaning
 
 
 @dataclass(frozen=True)

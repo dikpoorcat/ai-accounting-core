@@ -7,11 +7,13 @@ from ai_accounting_modular.contracts.public import (
     format_fen,
 )
 from ai_accounting_modular.ledger.public import SettlementEventQuery
+from ai_accounting_modular.money.public import counterparty_meaning
 
 from ._brief_activity_sources import identities
 from ._brief_open_sources import batches
 from ._business_descriptions import description_reference
 from ._business_status_settlements import key
+from ._counterparty_display import label as counterparty_label
 from ._funds_items import date_key
 
 
@@ -92,25 +94,14 @@ def capture(reader, selected, settlements, view, read, *, descriptions=None):
             value["purpose_label"] = descriptions.text(reference) or meaning.description
         actual = event.movement.value if event.movement is not None else {}
         party = actual.get("party_id") or quantity.get("party_id")
-        missing = (
-            "收款方未提供"
-            if actual.get("direction") == "outflow"
-            else "付款方未提供"
-            if actual.get("direction") == "inflow"
-            else "对象未提供"
-        )
-        picked.append((value, party, missing))
+        picked.append((value, party, actual.get("direction")))
     objects = identities(
         reader.identity, [party for _, party, _ in picked if party is not None], read
     )
     rows = []
-    for row, party, missing in picked:
-        row["party"] = (
-            objects[party]["name"]
-            if party in objects
-            else "对象名称未提供"
-            if party is not None
-            else missing
+    for row, party, direction in picked:
+        row["party"] = counterparty_label(
+            counterparty_meaning(party_ids=(party,)), objects, direction=direction
         )
         rows.append(row)
     rows.sort(key=lambda row: date_key(row["posting_period"], row["actual_on"], "", row["id"]))

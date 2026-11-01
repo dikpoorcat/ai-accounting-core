@@ -66,6 +66,43 @@ class MoneyRepository:
             )
         )
 
+    def own_funds_channels(self, ids):
+        """Read only the requested current management facts, without whole fact bodies."""
+        rows = self._session.fetchall(
+            "SELECT business_id, schema_key, json_extract(data_json,'$.business_id') AS fact_id, "
+            "json_extract(data_json,'$.kind') AS kind, "
+            "json_extract(data_json,'$.data.type') AS movement_type, "
+            "json_type(data_json,'$.data.counterparty_id') AS party_type, "
+            "json_type(data_json,'$.data.own_funds_channel') AS channel_type, "
+            "json_extract(data_json,'$.data.own_funds_channel') AS channel_json "
+            "FROM money_fact WHERE business_id IN (SELECT value FROM json_each(?)) "
+            "AND (json_extract(data_json,'$.data.type')='managed_reserve' "
+            "OR json_type(data_json,'$.data.own_funds_channel') IS NOT NULL)",
+            (canonical_json(list(ids)),),
+        )
+        result = {}
+        for row in rows:
+            try:
+                if (
+                    row["fact_id"] != row["business_id"]
+                    or row["kind"] != "money.movement"
+                    or row["schema_key"] != "money.movement"
+                    or row["movement_type"] != "managed_reserve"
+                ):
+                    raise ValueError("invalid own funds channel identity")
+                channel = None
+                if row["channel_type"] is not None:
+                    if row["party_type"] is not None:
+                        raise ValueError("own funds channel conflicts with counterparty")
+                    channel = loads_json(row["channel_json"])
+                    validate_contract("core.schema.json", "OwnFundsChannel", channel)
+                result[row["business_id"]] = channel
+            except (ContractError, ValueError, TypeError) as error:
+                raise ContractError(
+                    "storage_corrupt", "当前自有资金渠道事实不完整或与实际对象冲突。"
+                ) from error
+        return result
+
     def query(self, query):
         clauses = ["json_extract(data_json,'$.period')>=?", "json_extract(data_json,'$.period')<=?"]
         args = [query["period_from"], query["period_to"]]

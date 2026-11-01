@@ -126,7 +126,7 @@ def source_locations(fact):
 def accounting_input(fact):
     """The same accounting projection is checked at adoption and period review."""
     data = deepcopy(fact["data"])
-    for field in ("return_source", "boundary_source"):
+    for field in ("return_source", "boundary_source", "own_funds_channel"):
         data.pop(field, None)
     for row in data.get("rows", ()):
         for field in ("source", "reference", "counterparty_text", "memo"):

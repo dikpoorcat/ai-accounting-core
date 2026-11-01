@@ -22,6 +22,8 @@ from ._common import (
     occurrence_id,
     require_object,
 )
+from ._counterparties import counterparty_meaning as counterparty_meaning
+from ._counterparties import own_funds_channels as _own_funds_channels
 from ._payments import (
     check_payroll_unpaid,
     managed_reserve,
@@ -140,6 +142,12 @@ class Money:
 
     def __init__(self, *, ledger=None, identity=None):
         self._ledger, self._identity = ledger, identity
+
+    def own_funds_channels(self, references, read_context: ReadContext):
+        """Exact current reserve (result_id, generation) -> channel or None if not supplied."""
+        if self._ledger is None:
+            fail("自有资金渠道读取未装配正式账务端口。", "unsupported_business")
+        return _own_funds_channels(self, references, read_context)
 
     def actual_settled_fen(
         self, source: BusinessRef, cutoff: ResourceCutoff, context: EvaluationContext
@@ -486,10 +494,12 @@ class Money:
             fail("真实资金核查未装配正式账务读取端口。", "unsupported_business")
         return self._ledger.merge_review_movements(selections, read_context)
 
-    def review_movement_page(self, selection, page: PageQuery, read_context: ReadContext):
+    def review_movement_page(
+        self, selection, page: PageQuery, read_context: ReadContext, *, channels=None
+    ):
         if self._ledger is None:
             fail("真实资金核查未装配正式账务读取端口。", "unsupported_business")
-        return _review_movement_page(self, selection, page, read_context)
+        return _review_movement_page(self, selection, page, read_context, channels=channels)
 
     def capture_review_rows(
         self, query: ReviewRowQuery, read_context: ReadContext

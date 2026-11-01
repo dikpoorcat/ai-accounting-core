@@ -82,6 +82,15 @@ def test_shipped_material_guidance_separates_owner_facts_from_dialogue_and_clean
     assert "call accounting-sources" in read_guide("runtime")
 
 
+def test_managed_reserve_guide_preserves_self_owned_channel_as_sourced_management_fact():
+    guide = read_guide("business", kind="money.movement")
+    assert "own_funds_channel={name,source}" in guide
+    assert "两者互斥" in guide and "source采用SourceLocator" in guide
+    assert "不为补充渠道额外追加evidence_ids" in guide
+    assert "不进入冻结核算输入、正式资金或凭证辅助对象" in guide
+    assert "补充、修改和清空沿无核算影响更正办理" in guide
+
+
 def test_installed_work_guide_includes_month_cancel_and_local_withdrawal_distinction():
     work = read_guide("work")
     operations = generator().markdown_section(work, "## 撤回、整月撤销与重新记账")
