@@ -156,7 +156,7 @@ def check_contracts():
     assert set(dashboard) == expected, "看板合同与当前公开范围不一致"
     frozen = json.dumps(dashboard, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(frozen.encode("utf-8")).hexdigest() == (
-        "85735fb59bb91331566b71347dcf1c3d4c2c9ed2877e685d8a684e8199ce0999"
+        "dfbb3f8040a766a82a010531d29c37cdb79e60d0f3e2500f6a3175793ff99fa1"
     ), "当前看板合同被修改"
 
 

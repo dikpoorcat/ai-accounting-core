@@ -9,16 +9,18 @@ export type FundsDashboardResponse = DashboardFundsResponse;
 export type FundsData = DashboardFundsContract.FundsData;
 export type FundAccount = DashboardFundsContract.FundAccount;
 export type FundMovement = DashboardFundsContract.FundMovement;
+export type InvestmentFilter = "all" | "financial" | "cooperation";
 
 export interface FundsQuery {
   limit?: number;
-  section?: "accounts" | "movements" | "statements" | "investment_products" | "investment_events";
+  section?: "accounts" | "movements" | "statements" | "investment_products";
   cursor?: string;
   expected_version?: string;
   movement_account_selection?: "all" | "first";
   movement_account_type?: FundAccount["type"];
   movement_account_id?: string;
   statement_account_id?: string;
+  investment_filter?: InvestmentFilter;
 }
 
 function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolean {
@@ -39,6 +41,8 @@ function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolea
   const movementType = url.searchParams.get("movement_account_type");
   const movementAccount = url.searchParams.get("movement_account_id");
   const statementAccount = url.searchParams.get("statement_account_id");
+  const investmentFilter = url.searchParams.get("investment_filter") ?? "all";
+  const products = data.collections.investment_products;
   const selected = data.selected_movement_account;
   if (url.searchParams.get("movement_account_selection") === "first") {
     const first = data.collections.accounts?.items[0];
@@ -48,7 +52,9 @@ function fundsMatchesRequest(url: URL, response: DashboardFundsResponse): boolea
   } else if (selected !== null) return false;
   return (!selected || !movements || movements.items.every((item: DashboardFundsContract.FundMovement) => item.account_type === selected.type && item.account_id === selected.account_id))
     && (url.searchParams.get("movement_account_selection") !== "first" || selected !== null || !movements || movements.items.length === 0)
-    && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount));
+    && (!statementAccount || !statements || statements.items.every((item: DashboardFundsContract.BankStatementRow) => item.account_id === statementAccount))
+    && (!products || products.items.every((item: DashboardFundsContract.InvestmentProduct) => investmentFilter === "all"
+      || (investmentFilter === "cooperation" ? item.product_type === "cooperation" : item.product_type !== "cooperation")));
 }
 
 function inspectDelivery(delivery: DashboardFundsDeliveryResponse): DashboardDeliveryAttempt<DashboardFundsResponse> {

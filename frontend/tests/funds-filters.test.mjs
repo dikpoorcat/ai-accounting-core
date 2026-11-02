@@ -64,7 +64,7 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
     const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = BigInt; const formatFen = String; const formatPositiveFen = String;
   `;
-  const exported = "\nexport { loadFunds, loadMore, refresh, funds, snapshotVersion, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, visibleMovements, visibleBankRows, loading, pageStates, requestError, accountOptions, responsePeriod, selectMovementAccount, selectDetailView, updateNotice };";
+  const exported = "\nexport { loadFunds, loadMore, refresh, funds, hasInvestments, snapshotVersion, selectedPeriod, selectedAccount, selectedBankAccount, selectedInvestmentFilter, selectedDetailView, visibleMovements, visibleBankRows, loading, pageStates, requestError, accountOptions, responsePeriod, selectMovementAccount, selectDetailView, updateNotice };";
   const { outputText } = ts.transpileModule(imports + source + exported, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
@@ -84,11 +84,11 @@ function data(account = "bank-a", next = "next") {
     movements: [{ id: `${account}-first`, account_type: "bank", account_id: account }],
     movement_page: { ...page }, movement_count: 4,
     bank_statement: { rows: [{ id: "old-statement" }], page: { ...page }, transaction_count: 4 },
-    investments: { products: [], events: [{ id: "old-investment" }], page: { ...page }, event_count: 2 },
+    investments: { closing_cost_fen: "0" },
   };
   value.collections = {
     movements: { items: value.movements, page }, statements: { items: value.bank_statement.rows, page },
-    investment_events: { items: value.investments.events, page }, accounts: { items: value.accounts, page: { ...page, returned_count: 2, has_more: false, next_cursor: null } },
+    accounts: { items: value.accounts, page: { ...page, returned_count: 2, has_more: false, next_cursor: null } },
     investment_products: { items: [], page: { ...page, returned_count: 0, total_count: 0, filtered_count: 0, has_more: false, next_cursor: null } },
   };
   return value;
@@ -118,8 +118,92 @@ test("fund book and bank continuations preserve 20 then 500 then the ordered tai
 });
 
 function response(value, snapshot = "version") {
-  return { schema_version: 10, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
+  return { schema_version: 12, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
 }
+
+test("investment type filters replace only their collection and reject late prior filters", async () => {
+  const calls = [];
+  const view = await fundsView((period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
+  const initialData = data();
+  initialData.collections.investment_products = { items: [{ fund_id: "financial-a", product_type: "money_fund" }],
+    page: { total_count: 42, filtered_count: 42, returned_count: 1, has_more: true, next_cursor: "all-next" } };
+  const initial = view.loadFunds("2026-09"); calls[0].resolve(response(initialData)); await initial;
+  const movements = view.funds.value.collections.movements, accounts = view.funds.value.collections.accounts;
+  view.selectedInvestmentFilter.value = "cooperation"; await Vue.nextTick();
+  assert.equal(calls[1].query.section, "investment_products");
+  assert.equal(calls[1].query.investment_filter, "cooperation");
+  assert.equal(calls[1].query.expected_version, "version");
+  assert.equal(calls[1].query.cursor, undefined);
+  assert.equal(view.funds.value.collections.movements, movements);
+  assert.equal(view.funds.value.collections.accounts, accounts);
+  assert.deepEqual(view.funds.value.collections.investment_products.items, []);
+  view.selectedInvestmentFilter.value = "financial"; await Vue.nextTick();
+  assert.equal(calls[1].signal.aborted, true);
+  const filtered = data(); filtered.collections.investment_products = { items: [{ fund_id: "financial-b", product_type: "bond" }],
+    page: { total_count: 42, filtered_count: 21, returned_count: 1, has_more: true, next_cursor: "financial-next" } };
+  calls[2].resolve(response(filtered)); await Vue.nextTick(); await Vue.nextTick();
+  const old = data(); old.collections.investment_products = { items: [{ fund_id: "late-project", product_type: "cooperation" }],
+    page: { total_count: 42, filtered_count: 21, returned_count: 1, has_more: false, next_cursor: null } };
+  calls[1].resolve(response(old)); await Vue.nextTick(); await Vue.nextTick();
+  assert.deepEqual(view.funds.value.collections.investment_products.items.map(item => item.fund_id), ["financial-b"]);
+  const next = view.loadMore("investment_products");
+  assert.equal(calls[3].query.investment_filter, "financial");
+  assert.equal(calls[3].query.cursor, "financial-next");
+  const tail = data(); tail.collections.investment_products = { items: [{ fund_id: "financial-c", product_type: "bank_wealth" }],
+    page: { total_count: 42, filtered_count: 21, returned_count: 1, has_more: false, next_cursor: null } };
+  calls[3].resolve(response(tail)); await next;
+  assert.deepEqual(view.funds.value.collections.investment_products.items.map(item => item.fund_id), ["financial-b", "financial-c"]);
+  assert.equal(view.funds.value.collections.movements, movements);
+});
+
+test("investment filtering with no money account does not send the first-account-only selector", async () => {
+  const calls = [], empty = data();
+  empty.selected_movement_account = null; empty.collections.accounts.items = []; empty.collections.movements.items = [];
+  const view = await fundsView(async (_period, _signal, query) => { calls.push(query); return response(empty); });
+  await view.loadFunds("2026-09");
+  assert.equal(calls[0].movement_account_selection, "first");
+  view.selectedInvestmentFilter.value = "cooperation"; await Vue.nextTick(); await Vue.nextTick();
+  assert.equal(calls[1].section, "investment_products");
+  assert.equal(calls[1].investment_filter, "cooperation");
+  assert.equal(calls[1].movement_account_selection, undefined);
+});
+
+for (const total of [1, 0]) test(`refresh preserves an empty investment filter after two records shrink to ${total} and clearing restores all remaining records`, async () => {
+  const calls = [], financial = { fund_id: "financial-a", product_type: "money_fund" }, cooperation = { fund_id: "project-a", product_type: "cooperation" };
+  const view = await fundsView((_period, signal, query) => new Promise((resolve, reject) => calls.push({ signal, query, resolve, reject })));
+  const result = (items, total, version) => {
+    const value = data();
+    value.collections.investment_products = { items, page: { total_count: total, filtered_count: items.length, returned_count: items.length, has_more: false, next_cursor: null } };
+    return response(value, version);
+  };
+  const first = view.loadFunds("2026-09"); calls[0].resolve(result([financial, cooperation], 2, "v1")); await first;
+  view.selectedInvestmentFilter.value = "financial"; await Vue.nextTick();
+  calls[1].resolve(result([financial], 2, "v1")); await Vue.nextTick(); await Vue.nextTick();
+  const refreshed = view.loadFunds("2026-09");
+  assert.equal(calls[2].query.investment_filter, "financial");
+  calls[2].resolve(result([], total, "v2")); await refreshed;
+  assert.equal(view.selectedInvestmentFilter.value, "financial");
+  assert.equal(view.hasInvestments.value, true, "the active filter remains accessible even when the whole collection becomes empty");
+  assert.equal(view.funds.value.collections.investment_products.page.total_count, total);
+  assert.deepEqual(view.funds.value.collections.investment_products.items, []);
+  const accounts = view.funds.value.collections.accounts, movements = view.funds.value.collections.movements;
+  view.selectedInvestmentFilter.value = "all"; await Vue.nextTick();
+  assert.equal(calls[3].query.section, "investment_products");
+  assert.equal(calls[3].query.investment_filter, undefined);
+  assert.equal(calls[3].query.expected_version, "v2");
+  assert.equal(calls[3].query.cursor, undefined);
+  calls[3].reject(new Error("暂不可用")); await Vue.nextTick(); await Vue.nextTick();
+  assert.match(view.pageStates.value.investment_products.error, /暂不可用/);
+  const retry = view.loadMore("investment_products");
+  assert.equal(calls[4].query.section, "investment_products");
+  assert.equal(calls[4].query.cursor, undefined);
+  calls[4].resolve(result(total ? [cooperation] : [], total, "v2")); await retry;
+  assert.deepEqual(view.funds.value.collections.investment_products.items.map(item => item.fund_id), total ? ["project-a"] : []);
+  assert.equal(view.hasInvestments.value, Boolean(total), "clearing the last filter restores normal empty-module visibility");
+  assert.equal(view.pageStates.value.investment_products.error, "");
+  assert.equal(view.funds.value.collections.accounts, accounts);
+  assert.equal(view.funds.value.collections.movements, movements);
+});
 
 test("account selectors request complete-month server filters before displaying returned rows", async () => {
   const calls = [];
@@ -280,7 +364,7 @@ test("independent continuations merge into the latest snapshot and failures stay
 });
 
 test("all fund collection kinds append to their reactive array and retain the other collections", async () => {
-  for (const [kind, section] of [["book", "movements"], ["bank", "statements"], ["accounts", "accounts"], ["investment", "investment_events"], ["investment_products", "investment_products"]]) {
+  for (const [kind, section] of [["book", "movements"], ["bank", "statements"], ["accounts", "accounts"], ["investment_products", "investment_products"]]) {
     const calls = [];
     const view = await fundsView((period, signal, query) => new Promise(resolve => calls.push({ signal, query, resolve })));
     view.funds.value = data(); view.snapshotVersion.value = "version";
@@ -374,7 +458,7 @@ test("account filtering replaces only its bounded first page and rejects late pr
   const first = view.loadFunds("2026-09"); calls[0].resolve(response(data())); await first;
   const accounts = view.funds.value.collections.accounts;
   const statements = view.funds.value.collections.statements;
-  const investment = view.funds.value.collections.investment_events;
+  const investments = view.funds.value.collections.investment_products;
   view.selectMovementAccount("bank:bank-b"); await Vue.nextTick();
   assert.equal(view.loading.value, false);
   assert.equal(view.pageStates.value.book.loading, true);
@@ -383,7 +467,7 @@ test("account filtering replaces only its bounded first page and rejects late pr
   assert.equal(calls[1].query.cursor, undefined);
   assert.equal(view.funds.value.collections.accounts, accounts);
   assert.equal(view.funds.value.collections.statements, statements);
-  assert.equal(view.funds.value.collections.investment_events, investment);
+  assert.equal(view.funds.value.collections.investment_products, investments);
   view.selectMovementAccount("bank:bank-a"); await Vue.nextTick();
   assert.equal(calls[1].signal.aborted, true);
   calls[1].resolve(response(data("bank-b"))); await Vue.nextTick();

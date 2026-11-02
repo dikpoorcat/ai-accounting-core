@@ -79,7 +79,7 @@ test("new page contracts keep detail rows only under collections", () => {
 
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
-    dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 10,
+    dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 12,
     dashboard_employees: 13, dashboard_assets: 10, dashboard_business_status: 10,
     dashboard_quarterly_report: 5,
   };
@@ -107,6 +107,36 @@ test("generated money validation accepts canonical int64 strings and rejects num
     const field = findField(changed, (key, current) => key.endsWith("_fen") && typeof current === "string");
     assert(field); field.owner[field.key] = value;
     assert.equal(validators.validateDashboardFundsResponse(changed), false, String(value));
+  }
+});
+
+test("investment responses and delivery envelopes require exact identity and category-specific amounts", () => {
+  const shared = { fund_id: "synthetic-product", investment_id: "synthetic-holding", name: "合成投资", closing_cost_fen: "0", actual_loss_fen: "0" };
+  const financialFields = ["recognized_income_fen", "accrued_income_fen", "pending_receipts_fen", "actual_payments_fen", "actual_receipts_fen", "activity_only"];
+  const cooperationFields = ["cooperation_equity_fen", "cooperation_held_fen", "cooperation_operator_due_fen", "cooperation_company_due_fen"];
+  const financial = { ...shared, product_type: "bank_wealth", category_label: "银行理财", activity_only: false,
+    recognized_income_fen: "0", accrued_income_fen: "0", pending_receipts_fen: "0", actual_payments_fen: "0", actual_receipts_fen: "0" };
+  const cooperation = { ...shared, product_type: "cooperation", category_label: "合作项目", closing_cost_fen: null,
+    cooperation_equity_fen: "0", cooperation_held_fen: "0", cooperation_operator_due_fen: "0", cooperation_company_due_fen: "0" };
+  function response(product) {
+    const value = structuredClone(samples.cash_funds.response);
+    value.data.collections.investment_products = { items: [product], page: { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null } };
+    return value;
+  }
+  function delivery(response) {
+    return { schema_version: 6, state: "ready", company_id: response.read_context.company_id,
+      period: response.selected_period.key, model_version: response.snapshot_version, response };
+  }
+  for (const [product, fields] of [[financial, financialFields], [cooperation, cooperationFields]]) {
+    const valid = response(product);
+    assert.equal(validators.validateDashboardFundsResponse(valid), true, JSON.stringify(validators.validateDashboardFundsResponse.errors));
+    assert.equal(validators.validateDashboardFundsDeliveryResponse(delivery(valid)), true, JSON.stringify(validators.validateDashboardFundsDeliveryResponse.errors));
+    for (const field of ["investment_id", "product_type", "category_label", ...fields]) {
+      const malformed = structuredClone(valid);
+      delete malformed.data.collections.investment_products.items[0][field];
+      assert.equal(validators.validateDashboardFundsResponse(malformed), false, `${product.product_type}: missing ${field}`);
+      assert.equal(validators.validateDashboardFundsDeliveryResponse(delivery(malformed)), false, `${product.product_type} delivery: missing ${field}`);
+    }
   }
 });
 

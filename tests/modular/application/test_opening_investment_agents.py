@@ -79,3 +79,42 @@ def test_opening_income_agent_uses_its_frozen_identity_and_rejects_other_claims(
             read,
         )
         assert actual.actual_receipts_fen == 7
+        assert actual.actual_payments_fen == 0
+        matched = [item for item in actual.products if item.terms_id == terms["business_id"]]
+        assert len(matched) == 1
+        product = matched[0]
+        assert product.actual_receipts_fen == 7
+        assert product.actual_payments_fen == 0
+        assert (
+            sum(
+                item.actual_receipts_fen
+                for item in actual.products
+                if item.terms_id != terms["business_id"]
+            )
+            == 0
+        )
+        (receipt,) = [
+            item
+            for item in actual.events
+            if item.business_id == received["business_id"] and item.settlement_fen is not None
+        ]
+        assert receipt.terms_id == terms["business_id"]
+        assert receipt.fund_id == product.fund_id
+        (body,) = case.app.ledger.get_adopted_contents((receipt.adopted,), read)
+        assert receipt.source == body.source
+        (proof,) = [
+            item
+            for item in body.basis["adopted_quantities"]
+            if item["type"] == "investment_settlement_authorization"
+        ]
+        assert proof["obligation_source"] == received["data"]["allocations"][0]["source"]
+        assert proof["authorization"]["terms_id"] == terms["business_id"]
+        assert proof["authorization"]["principal_party_id"] == PARTY
+        assert proof["authorization"]["agent_id"] == PERSON
+        assert proof["source"]["business_id"] == terms["business_id"]
+        assert proof["source"]["result_slot"] == "authorization:opening_agent"
+        assert proof["source"] in body.basis["source_results"]
+        (grant_entry,) = case.app.ledger.get_adopted_sources((proof["source"],), read)
+        (grant,) = case.app.ledger.get_adopted_contents((grant_entry.reference,), read)
+        assert grant.source == proof["source"]
+        assert grant.target["values"]["authorization"] == proof["authorization"]

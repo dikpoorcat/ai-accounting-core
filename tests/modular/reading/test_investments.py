@@ -1,17 +1,19 @@
 """The existing funds page consumes distinct holdings and formal cash purposes."""
 
 from copy import deepcopy
+from types import SimpleNamespace
 from uuid import uuid4
 
+from ai_accounting_modular.reading import _funds_items
 from tests.modular.domains.financing._cooperation_support import (
     PROJECT,
     contract,
     funding,
 )
 from tests.modular.domains.financing._investment_support import acquire, dispose, terms
-from tests.modular.domains.financing._support import COUNTERPARTY, PRODUCT, fact, payment
+from tests.modular.domains.financing._support import COUNTERPARTY, PRODUCT, fact, payment, six
 
-from .test_funds import apply, capture, check_data, initialize, page
+from .test_funds import apply, capture, check_data, initialize, investment_activity, page
 from .test_funds import case as case
 from .test_funds import funding as owner_funding
 
@@ -105,13 +107,58 @@ def test_six_categories_and_distinct_zero_cost_holding_reach_real_funds_contract
     money_funds = [item for item in products if item["fund_id"] == PRODUCT]
     assert len(money_funds) == 2
     assert len({item["investment_id"] for item in money_funds}) == 2
-    assert any(
-        item["closing_cost_fen"] == "0" and "1" in item["quantity_label"] for item in money_funds
+    assert any(item["closing_cost_fen"] == "0" for item in money_funds)
+    formal = investment_activity(case)
+    zero_cost = next(
+        item
+        for item in formal.products
+        if item.closing_cost["amount_fen"] == "0" and item.quantity == "1"
     )
-    assert response["investments"]["closing_cost_fen"] == "60000"
+    assert any(item["investment_id"] == zero_cost.terms_id for item in money_funds)
+    assert response["investments"] == {"closing_cost_fen": "60000"}
+    allowed = {
+        "fund_id",
+        "investment_id",
+        "name",
+        "product_type",
+        "category_label",
+        "closing_cost_fen",
+        "pending_receipts_fen",
+        "actual_loss_fen",
+        "activity_only",
+        "cooperation_equity_fen",
+        "cooperation_held_fen",
+        "cooperation_operator_due_fen",
+        "cooperation_company_due_fen",
+        "recognized_income_fen",
+        "accrued_income_fen",
+        "actual_payments_fen",
+        "actual_receipts_fen",
+        "quantity_label",
+        "holding_label",
+        "market_value_fen",
+        "market_as_of",
+    }
+    assert all(set(item) <= allowed for item in products)
+    assert "investment_events" not in response["collections"]
     cooperation = next(item for item in products if item["product_type"] == "cooperation")
     assert cooperation["cooperation_equity_fen"] == "100"
     assert cooperation["closing_cost_fen"] is None
+    assert (
+        not {
+            "recognized_income_fen",
+            "accrued_income_fen",
+            "actual_payments_fen",
+            "actual_receipts_fen",
+            "quantity_label",
+            "holding_label",
+            "market_value_fen",
+            "market_as_of",
+        }
+        & cooperation.keys()
+    )
+    assert any(item.get("quantity_label") == "持有 1 份" for item in money_funds)
+    assert all("recognized_income_fen" in item for item in products if item is not cooperation)
 
 
 def test_independent_dividend_cash_is_not_labelled_as_disposal(case):
@@ -138,11 +185,16 @@ def test_independent_dividend_cash_is_not_labelled_as_disposal(case):
     capture(case)
     response = page(case)["data"]
     check_data(response)
-    events = response["collections"]["investment_events"]["items"]
-    received_row = next(item for item in events if item["settlement_fen"] == "100")
-    assert received_row["type"] == "投资收益到账"
-    assert response["investments"]["actual_receipts_fen"] == "100"
-    assert response["collections"]["investment_products"]["items"][0]["accrued_income_fen"] == "0"
+    formal = investment_activity(case)
+    received_row = next(item for item in formal.events if item.settlement_fen == 100)
+    assert received_row.kind == "income_receipt"
+    assert formal.actual_receipts_fen == 100
+    assert formal.products[0].accrued_income_fen == 0
+    (product,) = response["collections"]["investment_products"]["items"]
+    assert product["pending_receipts_fen"] == product["accrued_income_fen"] == "0"
+    assert product["actual_receipts_fen"] == product["recognized_income_fen"] == "100"
+    assert product["actual_payments_fen"] == "0"
+    assert "investment_events" not in response["collections"]
 
 
 def test_market_reference_is_separate_from_receivables_and_formal_cost(case):
@@ -170,13 +222,13 @@ def test_market_reference_is_separate_from_receivables_and_formal_cost(case):
     assert product["market_value_fen"] == "12345"
     assert product["market_as_of"] == "2026-01-08"
     assert product["accrued_income_fen"] == "0"
-    event = next(
-        item
-        for item in response["collections"]["investment_events"]["items"]
-        if item["type"] == "投资市场估值更新"
-    )
-    assert event["net_proceeds_fen"] is None
-    assert event["settlement_fen"] is None
+    formal = investment_activity(case)
+    assert formal.products[0].market_value_fen == 12345
+    assert formal.products[0].market_as_of == "2026-01-08"
+    assert formal.products[0].accrued_income_fen == 0
+    event = next(item for item in formal.events if item.kind == "market_estimate")
+    assert event.net_proceeds_fen is None
+    assert event.settlement_fen is None
 
 
 def test_last_cross_month_receipt_retains_fully_exited_holding(case, monkeypatch):
@@ -205,12 +257,16 @@ def test_last_cross_month_receipt_retains_fully_exited_holding(case, monkeypatch
     response = page(case, "2026-02")["data"]
     check_data(response)
     (product,) = response["collections"]["investment_products"]["items"]
-    (event,) = response["collections"]["investment_events"]["items"]
-    assert product["investment_id"] == event["investment_id"] == agreement["business_id"]
+    assert product["investment_id"] == agreement["business_id"]
     assert product["closing_cost_fen"] == product["pending_receipts_fen"] == "0"
-    assert event["type"] == "投资退出到账"
-    assert response["investments"]["actual_receipts_fen"] == "10200"
+    assert product["actual_receipts_fen"] == "10200"
+    assert product["actual_payments_fen"] == "0"
     assert seen == [("position:2026-02",)]
+    formal = investment_activity(case, "2026-02")
+    (event,) = formal.events
+    assert event.terms_id == agreement["business_id"]
+    assert event.kind == "disposal_receipt"
+    assert formal.actual_receipts_fen == 10200
 
 
 def test_actual_loss_is_separate_from_5111_income(case):
@@ -235,18 +291,16 @@ def test_actual_loss_is_separate_from_5111_income(case):
     capture(case)
     response = page(case)["data"]
     check_data(response)
-    assert response["investments"]["investment_income_fen"] == "0"
-    assert response["investments"]["actual_loss_fen"] == "80"
+    formal = investment_activity(case)
+    assert formal.investment_income_fen == 0
+    assert formal.actual_loss_fen == 80
     (product,) = response["collections"]["investment_products"]["items"]
     assert product["recognized_income_fen"] == "0"
     assert product["actual_loss_fen"] == "80"
-    event = next(
-        item
-        for item in response["collections"]["investment_events"]["items"]
-        if item["type"] == "投资实际损失"
-    )
-    assert event["actual_loss_fen"] == "80"
-    assert event["investment_income_fen"] == "0"
+    assert formal.products[0].investment_income_fen == 0
+    event = next(item for item in formal.events if item.kind == "loss")
+    assert event.actual_loss_fen == 80
+    assert event.gain_loss_fen == 0
 
 
 def test_frozen_income_withdrawal_reverses_only_the_later_month(case):
@@ -269,6 +323,7 @@ def test_frozen_income_withdrawal_reverses_only_the_later_month(case):
         unit.repository("ledger").freeze_heads("2026-01")
     capture(case)
     original = page(case)["data"]
+    assert investment_activity(case).investment_income_fen == 100
     outcome = case.app.accounting_apply(
         case.request(
             correction_period="2026-02",
@@ -285,9 +340,107 @@ def test_frozen_income_withdrawal_reverses_only_the_later_month(case):
     assert outcome["completion"] == "complete", outcome.get("message", outcome)
     capture(case)
     assert page(case)["data"] == original
+    assert investment_activity(case).investment_income_fen == 100
     capture(case, "2026-02")
     response = page(case, "2026-02")["data"]
     check_data(response)
-    assert response["investments"]["investment_income_fen"] == "-100"
-    assert response["investments"]["recognized_income_fen"] == "-100"
-    assert response["investments"]["vat_adjustment_fen"] == "0"
+    formal = investment_activity(case, "2026-02")
+    assert formal.investment_income_fen == -100
+    assert formal.recognized_income_fen == -100
+    assert formal.vat_adjustment_fen == 0
+    assert set(response["investments"]) == {"closing_cost_fen"}
+    assert (
+        response["collections"]["investment_products"]["items"][0]["recognized_income_fen"]
+        == "-100"
+    )
+
+
+def test_cash_totals_keep_two_same_product_terms_and_legacy_holding_separate(case):
+    initialize(case)
+    first, second = terms(), terms(measurement="other_financial_cost")
+    first_buy, second_buy = acquire(first, "1000", "10"), acquire(second, "2000", "20")
+    first_income = fact(
+        "investment.income",
+        {
+            "terms_id": first["business_id"],
+            "counterparty_id": COUNTERPARTY,
+            "income_character": "fund_distribution",
+            "amount_fen": "100",
+        },
+        actual="2026-01-06",
+    )
+    second_income = fact(
+        "investment.income",
+        {
+            "terms_id": second["business_id"],
+            "counterparty_id": COUNTERPARTY,
+            "income_character": "fund_distribution",
+            "amount_fen": "200",
+        },
+        actual="2026-01-06",
+    )
+    *_, legacy_buy, legacy_exit = six()
+    legacy_buy["data"]["purchase_price_fen"] = "3000"
+    legacy_exit["data"]["costs"][0]["amount_fen"] = "1000"
+    legacy_exit["data"]["net_proceeds_fen"] = "1100"
+    facts = [
+        owner_funding("10000", "2026-01-01"),
+        first,
+        second,
+        first_buy,
+        second_buy,
+        first_income,
+        second_income,
+        legacy_buy,
+        legacy_exit,
+    ]
+    facts.extend(
+        payment(item, value, slot="primary", party=COUNTERPARTY)
+        for item, value in (
+            (first_buy, 200),
+            (second_buy, 300),
+            (legacy_buy, 400),
+        )
+    )
+    facts.extend(
+        payment(item, value, slot=slot, party=COUNTERPARTY, direction="inflow")
+        for item, value, slot in (
+            (first_income, 40, "income"),
+            (second_income, 70, "income"),
+            (legacy_exit, 110, "primary"),
+        )
+    )
+    for value in facts:
+        _sources(value, case.source_id)
+    apply(case, *facts)
+    capture(case)
+    data = page(case)["data"]
+    check_data(data)
+    products = {
+        item["investment_id"]: item for item in data["collections"]["investment_products"]["items"]
+    }
+    assert len(products) == 3
+    for identifier, paid, received, pending, income in (
+        (first["business_id"], "200", "40", "60", "100"),
+        (second["business_id"], "300", "70", "130", "200"),
+        (PRODUCT, "400", "110", "990", "100"),
+    ):
+        item = products[identifier]
+        assert item["fund_id"] == PRODUCT
+        assert (
+            item["actual_payments_fen"],
+            item["actual_receipts_fen"],
+            item["pending_receipts_fen"],
+            item["recognized_income_fen"],
+        ) == (paid, received, pending, income)
+    formal = investment_activity(case)
+    positions = {item.terms_id or item.fund_id: item for item in formal.products}
+    for identifier, item in products.items():
+        assert item["actual_payments_fen"] == str(positions[identifier].actual_payments_fen)
+        assert item["actual_receipts_fen"] == str(positions[identifier].actual_receipts_fen)
+    # Projection receives formal position amounts without an events interface.
+    result = SimpleNamespace(
+        closing_cost=formal.closing_cost, products=formal.products, cooperation_positions=()
+    )
+    _, rows = _funds_items.investment(result, {})
+    assert {item.item_id: item.value for item in rows} == products

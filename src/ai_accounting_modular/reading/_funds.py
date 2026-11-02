@@ -14,7 +14,7 @@ from ._collections import CollectionFilter, IndexItem, prepare_items, prepare_mo
 from ._dependencies import bind
 
 COMPONENT = "funds"
-COLLECTIONS = ("accounts", "movements", "statements", "investment_products", "investment_events")
+COLLECTIONS = ("accounts", "movements", "statements", "investment_products")
 
 
 def prepare(reader, scope, read):
@@ -129,6 +129,14 @@ def build(snapshot, read, query):
             )
         elif name == "statements" and statement_id is not None:
             selection = CollectionFilter(object_id=statement_id)
+        elif name == "investment_products":
+            investment_filter = query.get("investment_filter", "all")
+            if investment_filter == "financial":
+                selection = CollectionFilter(
+                    categories=("money_fund", "bank_wealth", "other_fund", "bond", "equity")
+                )
+            elif investment_filter == "cooperation":
+                selection = CollectionFilter(categories=("cooperation",))
         result[name] = wire_page(
             _monthly.collection(
                 snapshot,

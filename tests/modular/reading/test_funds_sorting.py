@@ -13,7 +13,7 @@ from .test_funds_integrity import original_row, pair
 
 
 @pytest.mark.parametrize("names", [('"甲银行', "'甲银行"), ("a", "a!")])
-def test_all_five_collections_keep_real_name_order_and_first_account(case, names):
+def test_all_four_collections_keep_real_name_order_and_first_account(case, names):
     initialize(case)
     supplied, facts, accounts = [], [], []
     template = next(obj for obj in objects() if obj["object_id"] == BANK)
@@ -66,4 +66,16 @@ def test_all_five_collections_keep_real_name_order_and_first_account(case, names
     assert [item["party"] for item in full["movements"]["items"]] == list(names)
     assert [item["party"] for item in full["statements"]["items"]] == list(names)
     assert [item["name"] for item in full["investment_products"]["items"]] == list(names)
-    assert [item["name"] for item in full["investment_events"]["items"]] == list(names)
+    assert "investment_events" not in full
+    for investment_filter in ("financial", "cooperation"):
+        filtered = page(case, investment_filter=investment_filter)["data"]["collections"]
+        for name in ("accounts", "movements", "statements"):
+            assert filtered[name] == full[name]
+        products = filtered["investment_products"]
+        assert products["page"]["total_count"] == 2
+        if investment_filter == "financial":
+            assert products["page"]["filtered_count"] == 2
+            assert [item["name"] for item in products["items"]] == list(names)
+        else:
+            assert products["page"]["filtered_count"] == 0
+            assert products["items"] == []

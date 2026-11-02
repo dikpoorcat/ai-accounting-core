@@ -131,6 +131,71 @@ def test_same_product_different_holdings_are_separate(tmp_path):
     assert {row.holding_arrangement for row in rows} == {"current", "noncurrent"}
 
 
+def test_actual_cash_stays_with_each_terms_holding_and_legacy_position(tmp_path):
+    app, company = assemble(tmp_path)
+    first, second = terms(), terms(measurement="other_financial_cost")
+    acquired_first, acquired_second = acquire(first, "100"), acquire(second, "200")
+    owner, *_, legacy_purchase, legacy_redemption = six()
+    legacy_purchase["data"]["purchase_price_fen"] = "300"
+    legacy_redemption["data"]["costs"][0]["amount_fen"] = "300"
+    legacy_redemption["data"]["net_proceeds_fen"] = "330"
+    sold = dispose(first, "1", "40")
+    income = fact(
+        "investment.income",
+        {
+            "terms_id": second["business_id"],
+            "counterparty_id": COUNTERPARTY,
+            "income_character": "fund_distribution",
+            "amount_fen": "7",
+        },
+        actual="2026-01-04",
+    )
+    payments = [
+        payment(item, value, slot="primary", party=COUNTERPARTY, day="2026-01-03")
+        for item, value in ((acquired_first, 100), (acquired_second, 200), (legacy_purchase, 300))
+    ]
+    receipts = [
+        payment(item, value, slot=slot, party=COUNTERPARTY, direction="inflow", day="2026-01-05")
+        for item, value, slot in (
+            (sold, 40, "primary"),
+            (income, 7, "income"),
+            (legacy_redemption, 330, "primary"),
+        )
+    ]
+    apply_facts(
+        app,
+        company,
+        first,
+        second,
+        acquired_first,
+        acquired_second,
+        legacy_purchase,
+        legacy_redemption,
+        sold,
+        income,
+        owner,
+        *payments,
+        *receipts,
+        initial=True,
+    )
+    actual = activity(app, company)
+    assert len(actual.products) == 3
+    assert {row.fund_id for row in actual.products} == {PRODUCT}
+    assert {
+        row.terms_id: (row.actual_payments_fen, row.actual_receipts_fen) for row in actual.products
+    } == {
+        first["business_id"]: (100, 40),
+        second["business_id"]: (200, 7),
+        None: (300, 330),
+    }
+    assert (
+        sum(row.actual_payments_fen for row in actual.products) == actual.actual_payments_fen == 600
+    )
+    assert (
+        sum(row.actual_receipts_fen for row in actual.products) == actual.actual_receipts_fen == 377
+    )
+
+
 def test_holding_change_preserves_earlier_classification(tmp_path):
     app, company = assemble(tmp_path)
     agreement = terms(measurement="other_financial_cost")
@@ -378,12 +443,15 @@ def test_issuer_maturity_income_and_existing_right_are_not_duplicated(tmp_path):
         apply_facts(app, company, paid, received, six()[0])
         view = activity(app, company)
         assert view.actual_receipts_fen == 11200
+        (product,) = [item for item in view.products if item.terms_id == agreement["business_id"]]
+        assert product.actual_payments_fen == 11000
+        assert product.actual_receipts_fen == 11200
         assert {item.kind for item in view.events if item.settlement_fen is not None} == {
             "acquisition_payment",
             "disposal_receipt",
             "income_receipt",
         }
-        assert view.products[0].pending_receipts_fen == 0
+        assert product.pending_receipts_fen == 0
         with app.storage.read_unit(company) as read:
             snapshot = app.ledger.financial_snapshot(
                 {

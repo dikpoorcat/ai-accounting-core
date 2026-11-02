@@ -14,7 +14,7 @@ from tests.modular.application._working_case import case as case
 from tests.modular.domains.financing._support import BANK, COUNTERPARTY, fact, payment, six
 from tests.modular.money.test_payroll import inputs as payroll_inputs
 
-from .test_funds import apply, capture, funding, initialize, page
+from .test_funds import apply, capture, funding, initialize, investment_activity, page
 from .test_funds_integrity import original_row, pair
 
 
@@ -154,7 +154,8 @@ def test_mixed_payment_keeps_both_actual_purposes_in_its_display_summary(case):
     assert actual.startswith("支付")
     assert set(actual.removeprefix("支付").split("、")) == {"货币基金申购", "管理费用"}
     data = page(case)["data"]
-    assert data["outflow_fen"] == "1000" and data["investments"]["actual_payments_fen"] == "300"
+    assert data["outflow_fen"] == "1000"
+    assert investment_activity(case).actual_payments_fen == 300
 
 
 def test_normal_wage_labor_social_and_housing_payments_keep_their_individual_purpose(case):

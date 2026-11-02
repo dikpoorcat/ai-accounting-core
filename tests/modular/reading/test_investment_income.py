@@ -1,4 +1,4 @@
-"""The funds page shares formal PL20 amounts while company taxes remain unallocated."""
+"""Professional investment income stays complete while funds expose only owner positions."""
 
 from copy import deepcopy
 from uuid import uuid4
@@ -16,7 +16,7 @@ from tests.modular.domains.taxes.test_investment_tax_application import (
     quarter_return,
 )
 
-from .test_funds import apply, capture, check_data, initialize, page, selection
+from .test_funds import apply, capture, check_data, initialize, investment_activity, page, selection
 from .test_funds import case as case
 from .test_investments import _sources
 
@@ -41,27 +41,29 @@ def data(case, month):
     return response
 
 
-def test_funds_income_uses_5111_after_formal_vat_and_refreshes_new_tax_source(case):
+def test_professional_income_uses_5111_and_lean_funds_refresh_new_tax_source(case):
     values = tax_setup(case, defer_tax=True)
     before = data(case, "2026-07")
-    assert before["investments"]["investment_income_fen"] == "102000"
+    assert investment_activity(case, "2026-07").investment_income_fen == 102000
+    assert set(before["investments"]) == {"closing_cost_fen"}
     apply(case, values[-1])
     with case.kernel.storage.read_unit(case.company) as read:
         saved = read.repository("reading").state(_monthly.key(selection(case, "2026-07")), "funds")
     assert saved["state"] == "preparing"
     response = data(case, "2026-07")
-    summary = response["investments"]
-    assert summary["recognized_income_fen"] == "102000"
-    assert summary["vat_adjustment_fen"] == "-2000"
-    assert summary["investment_income_fen"] == "100000"
+    formal = investment_activity(case, "2026-07")
+    assert formal.recognized_income_fen == 102000
+    assert formal.vat_adjustment_fen == -2000
+    assert formal.investment_income_fen == 100000
     (product,) = response["collections"]["investment_products"]["items"]
     assert product["recognized_income_fen"] == "102000"
-    rows = response["collections"]["investment_events"]["items"]
-    tax = [row for row in rows if row["attribution"] == "company_pool"]
+    assert formal.products[0].investment_income_fen == 102000
+    assert "investment_events" not in response["collections"]
+    tax = [row for row in formal.income_adjustments if row.attribution == "company_pool"]
     assert len(tax) == 1
-    assert tax[0]["investment_income_fen"] == "-2000"
-    assert tax[0]["type"] == "金融转让增值税调整"
-    assert tax[0]["fund_id"] is tax[0]["investment_id"] is None
+    assert tax[0].amount_fen == -2000
+    assert tax[0].component == "transfer_vat"
+    assert tax[0].product_id is tax[0].terms_id is None
     with case.kernel.storage.read_unit(case.company) as read:
         scope = {
             "company_id": case.company,
@@ -76,7 +78,7 @@ def test_funds_income_uses_5111_after_formal_vat_and_refreshes_new_tax_source(ca
     )
 
 
-def test_company_tax_expiry_without_positions_or_trades_is_visible(case):
+def test_company_tax_expiry_preserves_income_without_dashboard_positions(case):
     agreement, _, sold, policy, surtax, _ = tax_setup(case, quarterly=True)
     assessment = quarter_return(policy, surtax, "2026-07", "2026-09")
     received = payment(
@@ -96,12 +98,15 @@ def test_company_tax_expiry_without_positions_or_trades_is_visible(case):
     apply(case, later)
     response = data(case, "2026-12")
     assert response["collections"]["investment_products"]["items"] == []
-    (tax,) = response["collections"]["investment_events"]["items"]
-    assert tax["attribution"] == "company_pool"
-    assert tax["name"] == "公司统一税费调整"
-    assert tax["investment_income_fen"] == "-10000"
-    assert response["investments"]["investment_income_fen"] == "-10000"
-    assert response["investments"]["recognized_income_fen"] == "0"
+    assert "investment_events" not in response["collections"]
+    assert response["investments"] == {"closing_cost_fen": "0"}
+    formal = investment_activity(case, "2026-12")
+    (tax,) = formal.income_adjustments
+    assert tax.attribution == "company_pool"
+    assert tax.product_id is tax.terms_id is None
+    assert tax.amount_fen == -10000
+    assert formal.investment_income_fen == -10000
+    assert formal.recognized_income_fen == 0
 
 
 def test_cross_period_transfer_credit_stays_in_company_pool(case):
@@ -110,16 +115,13 @@ def test_cross_period_transfer_credit_stays_in_company_pool(case):
     for value in values:
         _sources(value, case.source_id)
     apply(case, *values)
-    response = data(case, "2026-08")
-    assert response["investments"]["recognized_income_fen"] == "-1010000"
-    assert response["investments"]["vat_adjustment_fen"] == "10000"
-    assert response["investments"]["investment_income_fen"] == "-1000000"
-    (tax,) = [
-        row
-        for row in response["collections"]["investment_events"]["items"]
-        if row["attribution"] == "company_pool"
-    ]
-    assert tax["fund_id"] is None
+    data(case, "2026-08")
+    formal = investment_activity(case, "2026-08")
+    assert formal.recognized_income_fen == -1010000
+    assert formal.vat_adjustment_fen == 10000
+    assert formal.investment_income_fen == -1000000
+    (tax,) = [row for row in formal.income_adjustments if row.attribution == "company_pool"]
+    assert tax.product_id is None
 
 
 def test_tax_only_interest_adjustment_retains_original_product_without_stock_or_receivable(case):
@@ -176,14 +178,17 @@ def test_tax_only_interest_adjustment_retains_original_product_without_stock_or_
     (product_row,) = response["collections"]["investment_products"]["items"]
     assert product_row["fund_id"] == product
     assert product_row["recognized_income_fen"] == "0"
+    assert product_row["actual_payments_fen"] == product_row["actual_receipts_fen"] == "0"
     assert product_row["closing_cost_fen"] is None
     assert product_row["activity_only"] is True
     assert product_row["pending_receipts_fen"] == "0"
-    (tax,) = response["collections"]["investment_events"]["items"]
-    assert tax["attribution"] == "event"
-    assert tax["fund_id"] == product
-    assert tax["investment_id"] == agreement["business_id"]
-    assert response["investments"]["investment_income_fen"] == "100"
+    formal = investment_activity(case, "2026-09")
+    assert formal.products[0].investment_income_fen == 0
+    (tax,) = formal.income_adjustments
+    assert tax.attribution == "event"
+    assert tax.product_id == product
+    assert tax.terms_id == agreement["business_id"]
+    assert formal.investment_income_fen == 100
 
 
 @pytest.mark.parametrize("frozen", [False, True])
@@ -203,13 +208,10 @@ def test_missing_tax_explanation_is_only_compatible_with_old_frozen_result(
     with case.kernel.storage.write_unit(case.company) as unit:
         unit.repository("ledger").freeze_heads("2026-07")
     original = data(case, "2026-07")
-    assert original["investments"]["investment_income_fen"] == "100000"
-    (tax,) = [
-        row
-        for row in original["collections"]["investment_events"]["items"]
-        if row["attribution"] == "company_pool"
-    ]
-    assert tax["type"] == "投资增值税调整"
+    formal = investment_activity(case, "2026-07")
+    assert formal.investment_income_fen == 100000
+    (tax,) = [row for row in formal.income_adjustments if row.attribution == "company_pool"]
+    assert tax.component == "investment_vat"
     changed = deepcopy(values[2])
     changed["evidence_ids"] = [case.source_id]
     changed["data"]["gross_proceeds_fen"] = "1303000"
@@ -221,7 +223,9 @@ def test_missing_tax_explanation_is_only_compatible_with_old_frozen_result(
     )
     assert outcome["completion"] == "complete", outcome
     assert data(case, "2026-07") == original
-    correction = data(case, "2026-08")
-    assert correction["investments"]["recognized_income_fen"] == "101000"
-    assert correction["investments"]["vat_adjustment_fen"] == "-1000"
-    assert correction["investments"]["investment_income_fen"] == "100000"
+    assert investment_activity(case, "2026-07").investment_income_fen == 100000
+    data(case, "2026-08")
+    correction = investment_activity(case, "2026-08")
+    assert correction.recognized_income_fen == 101000
+    assert correction.vat_adjustment_fen == -1000
+    assert correction.investment_income_fen == 100000

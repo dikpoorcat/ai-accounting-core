@@ -45,7 +45,7 @@ const modules = [
 ];
 const defaultCollections = {
   brief: ["activity", "open_items"],
-  funds: ["accounts", "movements", "statements", "investment_products", "investment_events"],
+  funds: ["accounts", "movements", "statements", "investment_products"],
   employees: ["employees", "labor_workers"],
   assets: ["assets", "projects"],
 };
@@ -391,7 +391,7 @@ function retainedItemIdentity(pathname, section, item, payload) {
   else if (section === "vouchers") identity = item.voucher_version_id;
   else identity = { employees: item.employee_id, assets: item.asset_id, projects: item.source_id,
     labor_workers: item.person_id, labor_sources: item.source_id, accounts: item.account_id && `${item.type}:${item.account_id}`,
-    movements: item.id, statements: item.id, investment_products: item.fund_id, investment_events: item.id,
+    movements: item.id, statements: item.id, investment_products: item.investment_id || item.fund_id,
     settlement_events: item.id }[section];
   assert(typeof identity === "string" && identity.length, `${pathname}:${section}: missing actual collection identity`);
   return identity;
@@ -1835,7 +1835,7 @@ async function run(config) {
     } else if (module.key === "funds") {
       if (!retainedRefreshOnly) {
         assert.equal(await page.locator(".account-grid .account-card").count(), data.collections.accounts.items.length, "funds: default accounts incomplete");
-        assert.equal(await page.locator(".investment-summary-table tbody tr").count(), data.collections.investment_products.items.length, "funds: default investments incomplete");
+        assert.equal(await page.locator(".investment-grid > .investment-card").count(), data.collections.investment_products.items.length, "funds: default investments incomplete");
       }
       const selected = data.selected_movement_account;
       const current = page.locator(".fund-account-index button[aria-current=true]");
@@ -2316,7 +2316,7 @@ async function run(config) {
           if (category) await check("open_items", "#open-items .open-event-row", item => item.category_key === category.key);
           else assert.equal(await page.locator("#open-items .open-event-row").count(), 0, "brief: rows without selected open category");
         } else if (module.key === "funds") {
-          for (const [section, selector] of [["accounts", ".account-grid .account-card"], ["investment_products", ".investment-summary-table tbody tr"],
+          for (const [section, selector] of [["accounts", ".account-grid .account-card"], ["investment_products", ".investment-grid > .investment-card"],
             ["movements", ".book-activity-row"], ["statements", ".bank-activity-item"]]) await check(section, selector);
         } else if (module.key === "employees") {
           await check("employees", '[aria-label="员工明细记录"] .employee-card');

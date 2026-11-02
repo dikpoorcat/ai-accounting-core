@@ -157,7 +157,10 @@ def test_new_coupon_day_batch_and_old_unpaid_coupon_reach_maturity_without_dupli
     apply_facts(app, company, funding, *paid, received)
     december = activity(app, company, "2026-12")
     assert december.actual_receipts_fen == 240000
-    assert december.products[0].pending_receipts_fen == 0
+    (product,) = [item for item in december.products if item.terms_id == holding["business_id"]]
+    assert product.actual_receipts_fen == 240000
+    assert product.actual_payments_fen == 0
+    assert product.pending_receipts_fen == 0
     with app.storage.read_unit(company) as read:
         snapshot = app.ledger.financial_snapshot(
             {

@@ -55,9 +55,9 @@ function result(name, marker) {
   if (name === "Reports") return { ...structuredClone(contractSamples.quarterly_report.response), marker };
   if (name === "Funds") {
     const collection = () => ({ items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } });
-    return { schema_version: 6, snapshot_version: "same", selected_period: { key: "2026-01", label: "一月" }, data: {
-      marker, collections: { accounts: collection(), movements: collection(), statements: collection(), investment_products: collection(), investment_events: collection() },
-      investments: {}, bank_statement: {},
+    return { schema_version: contractSamples.cash_funds.response.schema_version, snapshot_version: "same", selected_period: { key: "2026-01", label: "一月" }, data: {
+      marker, collections: { accounts: collection(), movements: collection(), statements: collection(), investment_products: collection() },
+      investments: { closing_cost_fen: "0" }, bank_statement: {},
     } };
   }
   const briefContract = contractSamples.deferred_brief.response;
@@ -214,12 +214,12 @@ function recoveryResult(name, marker) {
   const value = result(name, marker);
   value.snapshot_version = "v1";
   value.read_context = { company_id: "company-a" };
-  for (const section of ["activity", "open_items", "movements", "statements", "investment_events", "accounts", "investment_products", "employees", "labor_workers", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
+  for (const section of ["activity", "open_items", "movements", "statements", "accounts", "investment_products", "employees", "labor_workers", "assets", "projects"]) value.data.collections[section] = recoveryCollection();
   return value;
 }
 const recoveryPaths = [
   ["Brief", "activity"], ["Brief", "open_items"],
-  ["Funds", "book"], ["Funds", "bank"], ["Funds", "investment"], ["Funds", "accounts"], ["Funds", "investment_products"],
+  ["Funds", "book"], ["Funds", "bank"], ["Funds", "accounts"], ["Funds", "investment_products"],
   ["Employees", "employees"], ["Employees", "labor_workers"],
   ["Assets", "assets"], ["Assets", "projects"],
 ];

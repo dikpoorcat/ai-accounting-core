@@ -14,9 +14,11 @@
 
 ## 1. 唯一响应合同
 
-[dashboard-response-v2.json](contracts/dashboard-response-v2.json) 是前后端共同采用的响应真源，保留现有字段和页面用法。资产取得及启用时间允许真实月份或日期，未明确实际日就保留月份；长期资产净值未知时为null，老板待办没有明确所属月时同样保持null，由页面说明待核对。按 UTF-8、LF 行尾计算的 SHA-256 为 `27d38bfddb4ce0ffc937eae27019cf31b9b275de32fbcae553eb1fd3a0914fbe`；Windows 检出的 CRLF 先规范为 LF。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
+[dashboard-response-v2.json](contracts/dashboard-response-v2.json) 是前后端共同采用的响应真源。资产取得及启用时间允许真实月份或日期，未明确实际日就保留月份；长期资产净值未知时为null，老板待办没有明确所属月时同样保持null，由页面说明待核对。按 UTF-8、LF 行尾计算的 SHA-256 为 `de5626126a5f260436585141dc75650d27d670f14788e4de0ca6fc546e5da092`；Windows 检出的 CRLF 先规范为 LF。顶层是以命令名索引的 Schema 集合，每项单独作为 JSON Schema 使用；其中 `$ref` 从该项根解析。
 
 本文下表列出的响应以该合同为字段、必填项、枚举、空值、金额格式及 `additionalProperties` 的唯一真源。它不替代新数据库合同，也不随旧内核模型自动覆盖。前端生成器从此真源生成 `dashboardResponseSchemas.json`、TypeScript类型和Ajv校验，后端生成包内同份合同；不维护两套当前响应定义。允许资产月份没有改变原字段、内层版本常量或对已有日期的接受范围。确需变更时发布新合同并同步消费者。不能凭字段名称另写近似响应，不能为通过校验伪造零值或旧处理状态。合同还包含其他旧命令，保存它们不表示新体系实现这些入口，尤其不恢复旧审批、重放和审计机制。
+
+投资产品统一必填持仓身份 `investment_id`、产品类别 `product_type` 和中文类别 `category_label`。合作项目须提供合作权益、代管资金及双方待补四项金额；其他金融产品须提供月末待收款、确认收益、其中待收收益、实际付款、实际到账及 `activity_only`。这些字段均来自当前正式专业结果，缺失视为合同错误，不能由页面补零；数量、持有标签和有日期的参考估值按实际资料可选提供。条件必填沿用同一产品对象和版本12，不增加页面专用业务类型。
 
 公司说明使用独立[CompanyNoteQuery/Response合同](contracts/company-note.schema.json)，不改变下表的五页响应或版本。工具区入口、公司范围、只读状态、Markdown呈现及接续预期集中在[公司说明设计](11-company-note.md)，与本文共同约束前端。
 
@@ -25,7 +27,7 @@
 | `/api/dashboard/context` | `dashboard_context` | 3 |
 | `/api/dashboard/brief` | `dashboard_brief`；首读外壳 `dashboard_brief_delivery` | 19；外壳 6 |
 | `/api/dashboard/brief-group` | `dashboard_brief_group` | 3 |
-| `/api/dashboard/funds` | `dashboard_funds`；首读外壳 `dashboard_funds_delivery` | 10；外壳 6 |
+| `/api/dashboard/funds` | `dashboard_funds`；首读外壳 `dashboard_funds_delivery` | 12；外壳 6 |
 | `/api/dashboard/employees` | `dashboard_employees`；首读外壳 `dashboard_employees_delivery` | 13；外壳 6 |
 | `/api/dashboard/assets` | `dashboard_assets`；首读外壳 `dashboard_assets_delivery` | 10；外壳 6 |
 | `/api/dashboard/quarterly-report` | `dashboard_quarterly_report`；首读外壳 `dashboard_quarterly_report_delivery` | 5；外壳 6 |
@@ -61,7 +63,7 @@
 | `context` | 只接受可选 `company_id`。返回可选公司、月份、季度及默认值。月份和季度按新到旧排列，默认最新有效项；已选择公司不可用时明确报错。 |
 | `brief` | `section=activity/open_items/vouchers`；可用 `activity_key:string`、`voucher_version_id:string` 或 `voucher_number:正整数` 精确定位，三者互斥且不得与 `section` 合用。首次主请求直接定位，不翻遍分页。`activity_group=business/cash/people/assets/tax/investment/correction` 仅筛选本月发生集合。接受 limit/cursor/expected_version/preparation。 |
 | `brief-group` | 必须提供 `section=activity/open_items`、`group_key:string`、`expected_version`；接受 limit/cursor，不接受 preparation、精确凭证定位或其他筛选。 |
-| `funds` | `section=accounts/movements/statements/investment_products/investment_events`；`movement_account_type=bank/cash/payment_platform` 与 `movement_account_id:string` 成对；`statement_account_id:string` 独立筛选银行流水；`movement_account_selection=all/first` 默认 all，first 只用于未指定账户、section、cursor的首屏。 |
+| `funds` | `section=accounts/movements/statements/investment_products`；`movement_account_type=bank/cash/payment_platform` 与 `movement_account_id:string` 成对；`statement_account_id:string` 独立筛选银行流水；`investment_filter=all/financial/cooperation` 只筛选完整投资产品集合，不改全公司摘要、账户和流水；`movement_account_selection=all/first` 默认 all，first 只用于未指定账户、section、cursor的首屏。 |
 | `employees` | `section=employees/labor_workers/labor_sources`；`employee_filter=all/in_period/unknown/ended/employment_active/employment_unpaid_leave/employment_departed/employment_unknown`，默认 employment_active；可选 `employee_id:string`，查询 labor_sources 时必须提供对应人员身份。 |
 | `assets` | `section=assets/projects`；`asset_filter=all/active/fixed/intangible/pending/exited`，API 默认 all；可选 `asset_id:string`、`project_id:string`，分别定位对应集合。页面普通默认 active，精确资产定位使用 all，不能混淆 API 与页面默认。 |
 | `quarterly-report` | 只接受 `company_id`、`year:1..9999整数`、`quarter:1..4整数`、可选 preparation；季度为 `YYYY-Qn`，不能套用月页的 period、section或cursor。 |
@@ -142,7 +144,7 @@ HTTP 处理器只做解析、校验和字段适配，按下表调用 `reading.pu
 | 简报 focused_*、collections.vouchers | 精确原凭证和业务定位、完整分录、对象、资产链接；独立凭证清单与业务配对凭证分开。 | ledger公开凭证查询、对象及assets公开身份。 |
 | 资金顶层及collections.accounts | 全公司月初／月末资金、对外收付及内部划转；账户卡片流入流出包含本账户划转，不能把账户金额当全公司对外金额。 | money账户、实际资金发生与核对，ledger资金余额。 |
 | 资金collections.movements/statements | 按业务与按原始银行流水两种清单；原用途、摘要、对象、日期及方向，批次保留真实成员与合计。按业务以 `has_business_progress` 判断是否有补充内容，无明细时右侧留空，不响应点击或键盘展开，也不请求详情；相关账户、款项及后续进度仍可展开。流水原文不能换成AI猜测。 | money实际收付、银行行及批次关系，领域业务说明、ledger义务和业务当前状态。 |
-| 资金investments及investment_products/events | 六类投资统一读取。持仓、当月确认、当月实际收付款、未清权利及精确产品税调整共同确定范围；清仓后本月收齐尾款的产品仍保留。金融投资按持仓身份分别显示数量、账面金额、未收收益与本期事件，同一产品的不同条款不合并，零成本存续份额不遗漏。总览投资收益为正式5111净额，产品标明未扣投资增值税的确认收益，公司统一税费调整及实际投资损失分别列示。管理估值独立标明日期，合作项目权益、代管资金及双方待补独立列示。 | Investment公开月度正式持仓和事件、money真实收付及ledger公开利润贡献；税正式量解释归属并与分录对平。前端不计算成本、权益或税额，公司池调整不虚构产品身份。 |
+| 资金investments及investment_products | 投资区复用资产明细的卡片／列表样式，切换不重新读取。主金额为金融投资月末账面金额或合作权益；金融产品展示未扣投资增值税的本月确认收益、本月实际到账、月末待收款，数量、持有安排、非零付款及损失、有日期的参考估值按实际结果补充。到账可含退出本金，待收收益属于待收款，不重复相加。合作项目展示代管资金及双方待补，不填金融收益或分摊合作现金。全公司金融账面合计不随筛选变化；多项投资提供全部／金融投资／合作项目筛选，在服务端完整范围筛选后分页，只更新投资区域；已选分类的筛选控件在全公司总数降为0或1、筛选为空时仍保留。无库存记录保持未知账面金额，同产品不同条款、零成本存续份额和清仓尾款不遗漏。资金核对位于公司资金账户后、投资区前，导航同序。 | Investment专业公开月度结果；现金仅沿正式事件的精确持仓身份归组，不把确认金额当实际到账。前端不计算成本、权益、税额或局部分页合计，不恢复独立投资事件集合。 |
 | 员工employees、workforce_cost、outstanding_remuneration_fen | 本月员工薪酬成本与在册人数、工资奖金、公司社保公积金、实际发薪；截至月末未付包含以前月份工资和个人劳务及资本化劳务。 | people月度关系／薪酬、ledger完整清偿、money实际付款。 |
 | 员工collections.employees/labor_workers/labor_sources | 正式人员身份及所选月关系区间、工资奖金和代扣各项、报酬费用与资本化分开、当月及跨月清偿。月度日期不补造日。 | people当前有效关系及薪酬、ledger义务和分配，identity必要显示档案。 |
 | 资产汇总、fixed/intangible、collections.assets/projects | 资产及项目成本、累计与本月折旧摊销、所选月末价值、在用／待启用／退出及本月变动，未进入卡片的项目投入分别表达。 | assets正式生命周期与成本、ledger资产余额及成本消耗。 |

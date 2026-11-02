@@ -7608,10 +7608,6 @@ class DashboardFundsDelivery__Collection_FundMovement_(TypedDict):
     items: list[DashboardFundsDelivery__FundMovement]
     page: DashboardFundsDelivery__CollectionPage
 
-class DashboardFundsDelivery__Collection_InvestmentEvent_(TypedDict):
-    items: list[DashboardFundsDelivery__InvestmentEvent]
-    page: DashboardFundsDelivery__CollectionPage
-
 class DashboardFundsDelivery__Collection_InvestmentProduct_(TypedDict):
     items: list[DashboardFundsDelivery__InvestmentProduct]
     page: DashboardFundsDelivery__CollectionPage
@@ -7676,18 +7672,7 @@ class DashboardFundsDelivery__FundAccount(TypedDict):
     reconciliation: DashboardFundsDelivery__Reconciliation
 
 class DashboardFundsDelivery__FundInvestments(TypedDict):
-    opening_cost_fen: str | None
-    subscription_cost_fen: str
-    redemption_cost_fen: str
     closing_cost_fen: str | None
-    investment_income_fen: str
-    actual_payments_fen: str
-    actual_receipts_fen: str
-    event_count: int
-    cooperation_count: NotRequired[int]
-    recognized_income_fen: str
-    vat_adjustment_fen: str
-    actual_loss_fen: str
 
 class DashboardFundsDelivery__FundMovement(TypedDict):
     id: str
@@ -7713,10 +7698,9 @@ class DashboardFundsDelivery__FundsCollections(TypedDict):
     movements: NotRequired[DashboardFundsDelivery__Collection_FundMovement_]
     statements: NotRequired[DashboardFundsDelivery__Collection_BankStatementRow_]
     investment_products: NotRequired[DashboardFundsDelivery__Collection_InvestmentProduct_]
-    investment_events: NotRequired[DashboardFundsDelivery__Collection_InvestmentEvent_]
 
 class DashboardFundsDelivery__FundsDashboardResponse(TypedDict):
-    schema_version: Literal[10]
+    schema_version: Literal[12]
     snapshot_version: str | None
     selected_period: DashboardFundsDelivery__DashboardPeriod | None
     read_semantics: DashboardFundsDelivery__ReadSemantics
@@ -7747,31 +7731,28 @@ class DashboardFundsDelivery__FundsData(TypedDict):
     bank_statement: DashboardFundsDelivery__BankStatement
     collections: DashboardFundsDelivery__FundsCollections
 
-type DashboardFundsDelivery__InvestmentEvent = DashboardFundsDelivery__InvestmentEventVariant1 | DashboardFundsDelivery__InvestmentEventVariant2
-
 class DashboardFundsDelivery__InvestmentProduct(TypedDict):
     fund_id: str
-    opening_cost_fen: str | None
-    subscription_cost_fen: str
-    redemption_cost_fen: str
     closing_cost_fen: str | None
     name: str
-    investment_id: NotRequired[str]
-    product_type: NotRequired[Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']]
-    category_label: NotRequired[str]
-    quantity_label: NotRequired[str]
-    accrued_income_fen: NotRequired[str]
+    investment_id: str
+    product_type: Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']
+    category_label: str
     cooperation_held_fen: NotRequired[str]
     cooperation_operator_due_fen: NotRequired[str]
     cooperation_company_due_fen: NotRequired[str]
-    holding_label: NotRequired[str]
     cooperation_equity_fen: NotRequired[str]
-    market_value_fen: NotRequired[str]
-    market_as_of: NotRequired[str]
     pending_receipts_fen: NotRequired[str]
-    recognized_income_fen: str
     actual_loss_fen: str
     activity_only: NotRequired[bool]
+    quantity_label: NotRequired[str]
+    holding_label: NotRequired[str]
+    recognized_income_fen: NotRequired[str]
+    accrued_income_fen: NotRequired[str]
+    market_value_fen: NotRequired[str]
+    market_as_of: NotRequired[str]
+    actual_payments_fen: NotRequired[str]
+    actual_receipts_fen: NotRequired[str]
 
 class DashboardFundsDelivery__ReadSemantics(TypedDict):
     knowledge: Literal['current_knowledge']
@@ -9030,10 +9011,6 @@ class DashboardFunds__Collection_FundMovement_(TypedDict):
     items: list[DashboardFunds__FundMovement]
     page: DashboardFunds__CollectionPage
 
-class DashboardFunds__Collection_InvestmentEvent_(TypedDict):
-    items: list[DashboardFunds__InvestmentEvent]
-    page: DashboardFunds__CollectionPage
-
 class DashboardFunds__Collection_InvestmentProduct_(TypedDict):
     items: list[DashboardFunds__InvestmentProduct]
     page: DashboardFunds__CollectionPage
@@ -9074,18 +9051,7 @@ class DashboardFunds__FundAccount(TypedDict):
     reconciliation: DashboardFunds__Reconciliation
 
 class DashboardFunds__FundInvestments(TypedDict):
-    opening_cost_fen: str | None
-    subscription_cost_fen: str
-    redemption_cost_fen: str
     closing_cost_fen: str | None
-    investment_income_fen: str
-    actual_payments_fen: str
-    actual_receipts_fen: str
-    event_count: int
-    cooperation_count: NotRequired[int]
-    recognized_income_fen: str
-    vat_adjustment_fen: str
-    actual_loss_fen: str
 
 class DashboardFunds__FundMovement(TypedDict):
     id: str
@@ -9111,7 +9077,6 @@ class DashboardFunds__FundsCollections(TypedDict):
     movements: NotRequired[DashboardFunds__Collection_FundMovement_]
     statements: NotRequired[DashboardFunds__Collection_BankStatementRow_]
     investment_products: NotRequired[DashboardFunds__Collection_InvestmentProduct_]
-    investment_events: NotRequired[DashboardFunds__Collection_InvestmentEvent_]
 
 class DashboardFunds__FundsData(TypedDict):
     selected_movement_account: DashboardFunds__SelectedMovementAccount | None
@@ -9137,31 +9102,28 @@ class DashboardFunds__FundsData(TypedDict):
     bank_statement: DashboardFunds__BankStatement
     collections: DashboardFunds__FundsCollections
 
-type DashboardFunds__InvestmentEvent = DashboardFunds__InvestmentEventVariant1 | DashboardFunds__InvestmentEventVariant2
-
 class DashboardFunds__InvestmentProduct(TypedDict):
     fund_id: str
-    opening_cost_fen: str | None
-    subscription_cost_fen: str
-    redemption_cost_fen: str
     closing_cost_fen: str | None
     name: str
-    investment_id: NotRequired[str]
-    product_type: NotRequired[Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']]
-    category_label: NotRequired[str]
-    quantity_label: NotRequired[str]
-    accrued_income_fen: NotRequired[str]
+    investment_id: str
+    product_type: Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']
+    category_label: str
     cooperation_held_fen: NotRequired[str]
     cooperation_operator_due_fen: NotRequired[str]
     cooperation_company_due_fen: NotRequired[str]
-    holding_label: NotRequired[str]
     cooperation_equity_fen: NotRequired[str]
-    market_value_fen: NotRequired[str]
-    market_as_of: NotRequired[str]
     pending_receipts_fen: NotRequired[str]
-    recognized_income_fen: str
     actual_loss_fen: str
     activity_only: NotRequired[bool]
+    quantity_label: NotRequired[str]
+    holding_label: NotRequired[str]
+    recognized_income_fen: NotRequired[str]
+    accrued_income_fen: NotRequired[str]
+    market_value_fen: NotRequired[str]
+    market_as_of: NotRequired[str]
+    actual_payments_fen: NotRequired[str]
+    actual_receipts_fen: NotRequired[str]
 
 class DashboardFunds__ReadSemantics(TypedDict):
     knowledge: Literal['current_knowledge']
@@ -9183,7 +9145,7 @@ class DashboardFunds__SelectedMovementAccount(TypedDict):
     account_id: str
 
 class DashboardFundsWire(TypedDict):
-    schema_version: Literal[10]
+    schema_version: Literal[12]
     snapshot_version: str | None
     selected_period: DashboardFunds__DashboardPeriod | None
     read_semantics: DashboardFunds__ReadSemantics
@@ -11839,70 +11801,6 @@ class AccountingReviewReviewResultVariant5(TypedDict):
     sources: list[ReviewSource]
     collection: Literal['links']
     items: list[ReviewLinkItem]
-
-class DashboardFundsDelivery__InvestmentEventVariant1(TypedDict):
-    id: str
-    subject_id: str
-    date: str | None
-    period: str
-    fund_id: str
-    name: str
-    type: str
-    cost_fen: str | None
-    net_proceeds_fen: str | None
-    investment_income_fen: str | None
-    settlement_fen: str | None
-    actual_loss_fen: str | None
-    attribution: Literal['event']
-    investment_id: str
-
-class DashboardFundsDelivery__InvestmentEventVariant2(TypedDict):
-    id: str
-    subject_id: str
-    date: str | None
-    period: str
-    fund_id: None
-    name: str
-    type: str
-    cost_fen: str | None
-    net_proceeds_fen: str | None
-    investment_income_fen: str | None
-    settlement_fen: str | None
-    actual_loss_fen: str | None
-    attribution: Literal['company_pool']
-    investment_id: None
-
-class DashboardFunds__InvestmentEventVariant1(TypedDict):
-    id: str
-    subject_id: str
-    date: str | None
-    period: str
-    fund_id: str
-    name: str
-    type: str
-    cost_fen: str | None
-    net_proceeds_fen: str | None
-    investment_income_fen: str | None
-    settlement_fen: str | None
-    actual_loss_fen: str | None
-    attribution: Literal['event']
-    investment_id: str
-
-class DashboardFunds__InvestmentEventVariant2(TypedDict):
-    id: str
-    subject_id: str
-    date: str | None
-    period: str
-    fund_id: None
-    name: str
-    type: str
-    cost_fen: str | None
-    net_proceeds_fen: str | None
-    investment_income_fen: str | None
-    settlement_fen: str | None
-    actual_loss_fen: str | None
-    attribution: Literal['company_pool']
-    investment_id: None
 
 class ObjectVariant1Data(TypedDict):
     identity_document: NotRequired[str]

@@ -14,12 +14,14 @@ import {
   type FundMovement,
   type FundsData,
   type FundsQuery,
+  type InvestmentFilter,
 } from "../api/funds";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardSelect from "../components/DashboardSelect.vue";
+import FundInvestments from "../components/FundInvestments.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { cashFlowClass, fen, formatFen, formatPositiveFen } from "../utils/money";
@@ -37,7 +39,7 @@ const {
 } = useDashboardContext();
 
 const selectedPeriod = ref("");
-type PageKind = "book" | "bank" | "investment" | "accounts" | "investment_products";
+type PageKind = "book" | "bank" | "accounts" | "investment_products";
 interface MovementAccountEntry {
   value: string;
   label: string;
@@ -46,11 +48,12 @@ interface MovementAccountEntry {
 }
 const pageStates = ref<Record<PageKind, { loading: boolean; error: string }>>({
   book: { loading: false, error: "" }, bank: { loading: false, error: "" },
-  investment: { loading: false, error: "" }, accounts: { loading: false, error: "" }, investment_products: { loading: false, error: "" },
+  accounts: { loading: false, error: "" }, investment_products: { loading: false, error: "" },
 });
 const pageRequests = new Map<PageKind, AbortController>();
 const selectedAccount = ref(routeAccount());
 const selectedBankAccount = ref(queryText("statement_account_id"));
+const selectedInvestmentFilter = ref<InvestmentFilter>("all");
 const selectedDetailView = ref<"book" | "bank">(queryText("funds_view") === "bank" ? "bank" : "book");
 const expandedMovementId = ref("");
 // Hidden progress mounts on first open; valid instances survive local collapse.
@@ -84,8 +87,7 @@ const detailViews = ["book", "bank"] as const;
 const accounts = computed(() => funds.value?.collections.accounts?.items ?? []);
 const movements = computed(() => funds.value?.collections.movements?.items ?? []);
 const bankRows = computed(() => funds.value?.collections.statements?.items ?? []);
-const investmentProducts = computed(() => funds.value?.collections.investment_products?.items ?? []);
-const investmentEvents = computed(() => funds.value?.collections.investment_events?.items ?? []);
+const hasInvestments = computed(() => Boolean(funds.value?.collections.investment_products?.page.total_count) || selectedInvestmentFilter.value !== "all");
 const visibleMovements = movements;
 const bankAccounts = computed(
   () => accounts.value.filter((account) => account.type === "bank"),
@@ -166,8 +168,8 @@ const sectionLinks = computed(() => {
     { id: "funds-overview", label: "概览" },
     { id: "fund-accounts", label: "账户" },
   ];
-  if (investmentProducts.value.length || funds.value.investments.event_count) links.push({ id: "fund-investments", label: "投资与理财" });
-  if (attentionItems.value.length || funds.value?.attention_account_count) links.push({ id: "funds-attention", label: "关注" });
+  if (attentionItems.value.length || funds.value?.attention_account_count) links.push({ id: "funds-attention", label: "资金核对" });
+  if (hasInvestments.value) links.push({ id: "fund-investments", label: "投资与理财" });
   links.push({ id: "bank-details", label: "资金明细" });
   return links;
 });
@@ -189,27 +191,28 @@ function cancelPages() {
   for (const state of Object.values(pageStates.value)) { state.loading = false; state.error = ""; }
 }
 
-function queryFilters(): FundsQuery {
+function queryFilters(kind?: PageKind): FundsQuery {
   const separator = selectedAccount.value.indexOf(":");
   const type = selectedAccount.value.slice(0, separator);
   const filters: FundsQuery = {};
   if (separator > 0 && (type === "bank" || type === "cash" || type === "payment_platform")) {
     filters.movement_account_type = type;
     filters.movement_account_id = selectedAccount.value.slice(separator + 1);
-  } else {
+  } else if (kind === undefined) {
     filters.movement_account_selection = "first";
   }
   if (selectedBankAccount.value) filters.statement_account_id = selectedBankAccount.value;
+  if (selectedInvestmentFilter.value !== "all") filters.investment_filter = selectedInvestmentFilter.value;
   return filters;
 }
 let requestedFilters = "";
 
 function selectionKey() {
-  return JSON.stringify([route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, selectedBankAccount.value]);
+  return JSON.stringify([route.query.company_id, route.query.period, selectedPeriod.value, selectedAccount.value, selectedBankAccount.value, selectedInvestmentFilter.value]);
 }
 function pageSelectionKey(kind: PageKind) {
   return JSON.stringify([route.query.company_id, route.query.period, selectedPeriod.value,
-    kind === "book" ? selectedAccount.value : kind === "bank" ? selectedBankAccount.value : null]);
+    kind === "book" ? selectedAccount.value : kind === "bank" ? selectedBankAccount.value : kind === "investment_products" ? selectedInvestmentFilter.value : null]);
 }
 function isPageCurrent(kind: PageKind, generation: number, selection: string) {
   return mounted && generation === requestGeneration && pageSelectionKey(kind) === selection;
@@ -486,21 +489,21 @@ async function loadFunds(periodKey: string, contextGate?: Promise<void>, retryMo
   }
 }
 
-async function loadDetail(kind: "book" | "bank") {
+async function loadDetail(kind: "book" | "bank" | "investment_products") {
   if (!funds.value || loading.value || !snapshotVersion.value) return;
-  const section = kind === "book" ? "movements" : "statements";
+  const section = kind === "book" ? "movements" : kind === "bank" ? "statements" : "investment_products";
   const generation = requestGeneration, selection = pageSelectionKey(kind), version = snapshotVersion.value;
   pageRequests.get(kind)?.abort();
   const request = new AbortController(); pageRequests.set(kind, request);
   const state = pageStates.value[kind]; state.loading = true; state.error = "";
-  // Clear only the changed account's rows; summaries and other collections stay visible.
+  // Replace only the changed collection; summaries and other selections stay visible.
   const current = funds.value;
   const collection = current.collections[section];
   if (collection) funds.value = { ...current, collections: { ...current.collections, [section]: { ...collection, items: [] } } };
   const valid = () => isPageCurrent(kind, generation, selection) && pageRequests.get(kind) === request && snapshotVersion.value === version;
   try {
     const next = await fetchFundsDashboard(selectedPeriod.value, request.signal,
-      { ...queryFilters(), expected_version: version, section });
+      { ...queryFilters(kind), expected_version: version, section });
     if (!valid() || !next.data || !funds.value || !next.data.collections[section]) return;
     if (next.snapshot_version !== version) { await refreshChanged(); return; }
     prepareDashboardCollections(next.data);
@@ -517,12 +520,12 @@ async function loadDetail(kind: "book" | "bank") {
 }
 
 async function loadMore(kind: PageKind) {
-  if ((kind === "book" || kind === "bank") && pageStates.value[kind].error
-    && !funds.value?.collections[kind === "book" ? "movements" : "statements"]?.items.length) {
+  if ((kind === "book" || kind === "bank" || kind === "investment_products") && pageStates.value[kind].error
+    && !funds.value?.collections[kind === "book" ? "movements" : kind === "bank" ? "statements" : "investment_products"]?.items.length) {
     return loadDetail(kind);
   }
   const current = funds.value;
-  const section = kind === "book" ? "movements" : kind === "bank" ? "statements" : kind === "investment" ? "investment_events" : kind;
+  const section = kind === "book" ? "movements" : kind === "bank" ? "statements" : kind;
   const page = current?.collections[section]?.page;
   const state = pageStates.value[kind];
   if (!current || !page?.has_more || !page.next_cursor || state.loading || loading.value) return;
@@ -532,7 +535,7 @@ async function loadMore(kind: PageKind) {
   const request = new AbortController(); pageRequests.set(kind, request); state.loading = true; state.error = "";
   try {
     const next = await fetchFundsDashboard(selectedPeriod.value, request.signal,
-      { ...queryFilters(), expected_version: snapshotVersion.value, section, cursor: page.next_cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT });
+      { ...queryFilters(kind), expected_version: snapshotVersion.value, section, cursor: page.next_cursor, limit: AUTOMATIC_DASHBOARD_PAGE_LIMIT });
     if (!isPageCurrent(kind, generation, selection) || pageRequests.get(kind) !== request || !next.data || !funds.value || snapshotVersion.value !== version) return;
     const latest = funds.value;
     const collection = next.data.collections[section];
@@ -804,6 +807,7 @@ watch(
     selectedPeriodLabel.value = "";
     selectedAccount.value = "";
     selectedBankAccount.value = "";
+    selectedInvestmentFilter.value = "all";
     activeSection.value = "funds-overview";
     loading.value = false;
     requestError.value = "";
@@ -862,7 +866,7 @@ watch(
 );
 
 watch(
-  () => [selectedAccount.value, selectedBankAccount.value],
+  () => [selectedAccount.value, selectedBankAccount.value, selectedInvestmentFilter.value],
   (value, previous) => {
     if (!selectedPeriod.value || JSON.stringify(queryFilters()) === requestedFilters) return;
     if (!funds.value || !snapshotVersion.value || activeRequest) {
@@ -873,6 +877,7 @@ watch(
     requestedFilters = JSON.stringify(queryFilters());
     if (value[0] !== previous[0]) void loadDetail("book");
     if (value[1] !== previous[1]) void loadDetail("bank");
+    if (value[2] !== previous[2]) void loadDetail("investment_products");
   },
 );
 watch(
@@ -1067,89 +1072,6 @@ onBeforeUnmount(() => {
           <DashboardPagination automatic :active="!loading && ['fund-accounts', 'funds-attention', 'bank-details'].includes(activeSection)" :scope="paginationScope('accounts')" @pause="pausePages('accounts', $event)" compact item-label="个账户" :page="funds.collections.accounts?.page" :loaded="accounts.length" :loading="pageStates.accounts.loading" :error="pageStates.accounts.error" @more="loadMore('accounts')" @retry="loadMore('accounts')" />
         </section>
 
-        <section v-if="investmentProducts.length || funds.investments.event_count" id="fund-investments"
-          class="panel section-panel section-anchor" tabindex="-1" aria-labelledby="fund-investments-title">
-          <div class="section-heading">
-            <div><h2 id="fund-investments-title">投资与理财</h2></div>
-            <strong>金融投资账面金额 {{ formatFen(funds.investments.closing_cost_fen) }}</strong>
-          </div>
-          <p class="muted">金融投资按账面金额列示，不代表当前市值；合作项目权益与代管资金分别列示，未计入上方账户资金。</p>
-          <p class="muted">本月投资收益（已计投资增值税）{{ formatFen(funds.investments.investment_income_fen) }} ·
-            实际投资付款 <span :class="cashFlowClass(funds.investments.actual_payments_fen, 'outflow')">{{ formatFen(funds.investments.actual_payments_fen) }}</span> ·
-            实际投资到账 <span :class="cashFlowClass(funds.investments.actual_receipts_fen, 'inflow')">{{ formatFen(funds.investments.actual_receipts_fen) }}</span></p>
-          <p class="muted">未扣投资增值税的确认收益 {{ formatFen(funds.investments.recognized_income_fen) }} ·
-            投资增值税影响 {{ formatFen(funds.investments.vat_adjustment_fen) }}
-            <template v-if="fen(funds.investments.actual_loss_fen) !== 0n"> · 实际投资损失 {{ formatFen(funds.investments.actual_loss_fen) }}</template></p>
-          <p class="muted">产品收益未扣投资增值税；金融转让增值税由公司统一核算。实际投资损失另列。</p>
-          <div v-if="investmentProducts.length" class="table-wrap" data-section-focus role="region" aria-label="投资产品汇总" tabindex="0">
-            <table class="investment-table investment-summary-table">
-              <colgroup><col><col class="investment-amount-column"><col class="investment-amount-column"></colgroup>
-              <thead><tr><th scope="col">产品／项目</th><th scope="col" class="number">月末账面金额／合作权益</th><th scope="col" class="number">未扣增值税收益</th></tr></thead>
-              <tbody><tr v-for="item in investmentProducts" :key="item.investment_id || item.fund_id">
-                <td>
-                  {{ item.name }}<small v-if="item.category_label" class="muted"> · {{ item.category_label }}</small>
-                  <div v-if="item.activity_only" class="muted">收益及收款记录</div>
-                  <div v-if="item.holding_label" class="muted">{{ item.holding_label }}</div>
-                  <div v-if="item.quantity_label" class="muted">{{ item.quantity_label }}</div>
-                  <div v-if="item.accrued_income_fen && item.accrued_income_fen !== '0'" class="muted">
-                    已确认待收收益 {{ formatFen(item.accrued_income_fen) }}
-                  </div>
-                  <div v-if="item.pending_receipts_fen && item.pending_receipts_fen !== '0'" class="muted">
-                    投资待收款合计 {{ formatFen(item.pending_receipts_fen) }}
-                  </div>
-                  <div v-if="item.market_value_fen !== undefined" class="muted">
-                    {{ formatDate(item.market_as_of ?? null) }}参考估值 {{ formatFen(item.market_value_fen) }}
-                  </div>
-                  <div v-if="item.product_type === 'cooperation'" class="muted">
-                    代管资金 {{ formatFen(item.cooperation_held_fen) }} ·
-                    经营者待补 {{ formatFen(item.cooperation_operator_due_fen) }} ·
-                    公司待补 {{ formatFen(item.cooperation_company_due_fen) }}
-                  </div>
-                </td>
-                <td class="number" :data-label="item.product_type === 'cooperation' ? '合作权益' : '月末账面金额'">{{ item.activity_only ? '—' : formatFen(item.product_type === 'cooperation' ? item.cooperation_equity_fen : item.closing_cost_fen) }}</td>
-                <td class="number">{{ item.product_type === 'cooperation' ? '计入经营损益' : formatFen(item.recognized_income_fen) }}
-                  <small v-if="fen(item.actual_loss_fen) !== 0n" class="muted">实际损失 {{ formatFen(item.actual_loss_fen) }}</small></td>
-              </tr></tbody></table>
-          </div>
-          <DashboardPagination automatic :active="!loading && activeSection === 'fund-investments'" :scope="paginationScope('investment_products')" @pause="pausePages('investment_products', $event)" compact item-label="个产品" :page="funds.collections.investment_products?.page" :loaded="investmentProducts.length" :loading="pageStates.investment_products.loading" :error="pageStates.investment_products.error" @more="loadMore('investment_products')" @retry="loadMore('investment_products')" />
-          <details class="investment-details">
-          <summary>查看取得、退出与收付款明细</summary>
-          <p class="muted">确认金额与实际收付款分别列示，确认收益不等于已经到账。</p>
-          <div class="table-wrap" data-section-focus role="region" aria-label="投资账面金额变动" tabindex="0">
-            <table class="investment-table investment-cost-table">
-              <colgroup><col><col v-for="column in 5" :key="column" class="investment-amount-column"></colgroup>
-              <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初账面金额</th><th scope="col" class="number">新增投资成本</th>
-              <th scope="col" class="number">退出账面金额</th><th scope="col" class="number">期末账面金额</th><th scope="col" class="number">未扣增值税收益</th></tr></thead>
-              <tbody><tr v-for="item in investmentProducts.filter(product => product.product_type !== 'cooperation' && !product.activity_only)" :key="item.investment_id || item.fund_id">
-                <td>{{ item.name }}</td>
-                <td class="number">{{ formatFen(item.opening_cost_fen) }}</td>
-                <td class="number">{{ formatFen(item.subscription_cost_fen) }}</td>
-                <td class="number">{{ formatFen(item.redemption_cost_fen) }}</td>
-                <td class="number">{{ formatFen(item.closing_cost_fen) }}</td>
-                <td class="number">{{ formatFen(item.recognized_income_fen) }}</td>
-              </tr></tbody></table>
-          </div>
-          <h3>本月确认及收付款</h3>
-          <div v-if="investmentEvents.length" class="table-wrap" data-section-focus role="region" aria-label="投资确认及收付款明细" tabindex="0">
-            <table class="investment-table investment-events-table">
-              <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"></colgroup>
-              <thead><tr><th scope="col">日期／所属月</th><th scope="col">产品及事项</th><th scope="col" class="number">确认成本</th>
-              <th scope="col" class="number">确认对价或收益权利</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th></tr></thead>
-              <tbody><tr v-for="item in investmentEvents" :key="item.id">
-                <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}
-                  <small v-if="item.actual_loss_fen !== null && fen(item.actual_loss_fen) !== 0n" class="muted">实际投资损失 {{ formatFen(item.actual_loss_fen) }}</small>
-                  <BusinessStatusDetails :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical" summary-label="查看业务事项" @changed="refreshChanged" /></td>
-                <td class="number">{{ item.cost_fen === null ? "—" : formatFen(item.cost_fen) }}</td>
-                <td class="number">{{ item.net_proceeds_fen === null ? "—" : formatFen(item.net_proceeds_fen) }}</td>
-                <td class="number">{{ item.investment_income_fen === null ? "—" : formatFen(item.investment_income_fen) }}</td>
-                <td class="number">{{ item.settlement_fen === null ? "—" : formatFen(item.settlement_fen) }}</td>
-              </tr></tbody></table>
-          </div>
-          <p v-else class="empty">{{ loading ? "正在读取投资明细…" : "本月没有投资确认或实际收付款。" }}</p>
-          <DashboardPagination automatic :active="!loading && activeSection === 'fund-investments'" :scope="paginationScope('investment')" @pause="pausePages('investment', $event)" compact item-label="条明细" :page="funds.collections.investment_events?.page" :loaded="investmentEvents.length" :loading="pageStates.investment.loading" :error="pageStates.investment.error" @more="loadMore('investment')" @retry="loadMore('investment')" />
-          </details>
-        </section>
-
         <details v-if="attentionItems.length || funds.attention_account_count" id="funds-attention" class="funds-review section-anchor" tabindex="-1">
           <summary>
             <span class="review-mark" aria-hidden="true">!</span>
@@ -1162,6 +1084,16 @@ onBeforeUnmount(() => {
             <ul class="attention-list"><li v-for="(item, index) in attentionItems" :key="`${index}-${item}`">{{ item }}</li></ul>
           </div>
         </details>
+
+        <FundInvestments v-if="hasInvestments"
+          :summary="funds.investments" :collection="funds.collections.investment_products"
+          :filter="selectedInvestmentFilter" :loading="loading"
+          :page-state="pageStates.investment_products" :active="activeSection === 'fund-investments'"
+          :scope="paginationScope('investment_products')"
+          @filter="selectedInvestmentFilter = $event"
+          @pause="pausePages('investment_products', $event)"
+          @more="loadMore('investment_products')" @retry="loadMore('investment_products')"
+        />
 
         <div class="final-section-space">
         <section
@@ -1501,17 +1433,9 @@ onBeforeUnmount(() => {
 .gain, .funds-page .cash-inflow { color: var(--cash-in); }
 .funds-page .cash-outflow { color: var(--danger); }
 
-.investment-details {
-  margin-top: 14px;
-}
-
 summary {
   cursor: pointer;
   color: var(--muted);
-}
-
-.investment-details > summary {
-  padding: 10px 0;
 }
 
 .section-panel {
@@ -2164,45 +2088,6 @@ summary {
   color: var(--text);
 }
 
-.table-wrap {
-  background: var(--surface);
-  min-width: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  padding-inline: var(--dashboard-list-gutter);
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.investment-table {
-  table-layout: auto;
-}
-
-.date-column { width: 90px; }
-.reference-column { width: 84px; }
-.investment-amount-column { width: 140px; }
-.investment-summary-table { min-width: 500px; }
-.investment-cost-table { min-width: 920px; }
-.investment-events-table { min-width: 1040px; }
-
-.table-wrap:focus-visible {
-  outline: none;
-}
-
-.investment-table td {
-  overflow-wrap: anywhere;
-}
-
-.investment-table a {
-  color: var(--accent);
-}
-
 .direction {
   display: inline-flex;
   padding: 2px 6px;
@@ -2213,35 +2098,6 @@ table {
 
 .direction.inflow { color: var(--cash-in); background: var(--cash-in-soft); }
 .direction.outflow { color: var(--danger); background: var(--danger-soft); }
-
-th,
-td {
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
-}
-
-th {
-  background: var(--surface-soft);
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.number {
-  text-align: right;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.attention-row {
-  background: color-mix(in srgb, var(--warning-soft) 46%, var(--surface));
-}
 
 .empty {
   margin: 0;
@@ -2427,27 +2283,5 @@ tbody tr:last-child td {
 
 
 .bank-owner-note { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
-@media (max-width: 760px) {
-  .investment-table, .investment-table tbody, .investment-table tr, .investment-table td { display: block; min-width: 0; width: auto; }
-  .investment-table thead, .investment-table colgroup { display: none; }
-  .investment-table tr { padding: 12px 4px; border-bottom: 1px solid var(--line); }
-  .investment-table td { display: grid; grid-template-columns: minmax(90px, .6fr) minmax(0, 1fr); gap: 10px; padding: 6px 0; border: 0; overflow-wrap: anywhere; }
-  .investment-table td::before { color: var(--muted); text-align: left; }
-  .investment-summary-table td:first-child { display: block; }
-  .investment-summary-table td:nth-child(2)::before { content: attr(data-label); }
-  .investment-summary-table td:nth-child(3)::before { content: "未扣增值税收益"; }
-  .investment-cost-table td:nth-child(1)::before { content: "产品"; }
-  .investment-cost-table td:nth-child(2)::before { content: "期初账面金额"; }
-  .investment-cost-table td:nth-child(3)::before { content: "新增投资成本"; }
-  .investment-cost-table td:nth-child(4)::before { content: "退出账面金额"; }
-  .investment-cost-table td:nth-child(5)::before { content: "期末账面金额"; }
-  .investment-cost-table td:nth-child(6)::before { content: "未扣增值税收益"; }
-  .investment-events-table td:nth-child(1)::before { content: "日期／所属月"; }
-  .investment-events-table td:nth-child(2)::before { content: "产品及事项"; }
-  .investment-events-table td:nth-child(3)::before { content: "确认成本"; }
-  .investment-events-table td:nth-child(4)::before { content: "确认对价或收益权利"; }
-  .investment-events-table td:nth-child(5)::before { content: "确认收益"; }
-  .investment-events-table td:nth-child(6)::before { content: "实际收付款"; }
-  .table-wrap { overflow-x: visible; }
-}
+
 </style>

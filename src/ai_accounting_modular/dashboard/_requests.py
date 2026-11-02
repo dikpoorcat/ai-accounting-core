@@ -79,6 +79,7 @@ def monthly(page_key, values):
             "movement_account_id",
             "statement_account_id",
             "movement_account_selection",
+            "investment_filter",
         },
         "assets": {"asset_filter", "asset_id", "project_id"},
         "employees": {"employee_filter", "employee_id"},

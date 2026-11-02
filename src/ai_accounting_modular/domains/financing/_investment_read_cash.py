@@ -1,12 +1,14 @@
 """Actual settlements retain their economic purpose and exact origin."""
 
+from dataclasses import replace
+
 from ai_accounting_modular.ledger.opening.public import (
     OpeningInvestmentReference,
     opening_obligation_references,
 )
 from ai_accounting_modular.ledger.public import SettlementEventQuery
 
-from ._common import amount, fail
+from ._common import amount, checked, fail, total
 from ._investment_events import EVENT_KINDS
 from ._investment_read_sources import source_contents
 from ._read_funds import _pages
@@ -125,3 +127,44 @@ def cash_events(ledger, scope, selected, read, cache):
             )
         )
     return events
+
+
+def with_product_cash(products, events, *, payments_fen, receipts_fen):
+    """Attribute already verified cash once, keeping each sourced holding separate."""
+    by_identity = {item.terms_id or item.fund_id: item for item in products}
+    if len(by_identity) != len(products):
+        fail("投资持仓身份重复，不能归集实际收付款。", "storage_corrupt")
+    amounts = {identity: [0, 0] for identity in by_identity}
+    for event in events:
+        if event.settlement_fen is None:
+            continue
+        identity = getattr(event, "terms_id", None) or event.fund_id
+        product = by_identity.get(identity)
+        if product is None or product.fund_id != event.fund_id:
+            fail("投资实际收付款缺少同一持仓的产品身份。", "storage_corrupt")
+        if event.kind in {"purchase_payment", "acquisition_payment"}:
+            column = 0
+        elif event.kind in {
+            "redemption_receipt",
+            "disposal_receipt",
+            "income_receipt",
+            "capital_return_receipt",
+        }:
+            column = 1
+        else:
+            fail("投资实际收付款缺少明确的资金用途。", "storage_corrupt")
+        amounts[identity][column] += event.settlement_fen
+    result = tuple(
+        replace(
+            item,
+            actual_payments_fen=checked(amounts[item.terms_id or item.fund_id][0]),
+            actual_receipts_fen=checked(amounts[item.terms_id or item.fund_id][1]),
+        )
+        for item in products
+    )
+    if (
+        total(item.actual_payments_fen for item in result) != payments_fen
+        or total(item.actual_receipts_fen for item in result) != receipts_fen
+    ):
+        fail("产品实际收付款与专业投资汇总不一致。", "storage_corrupt")
+    return result

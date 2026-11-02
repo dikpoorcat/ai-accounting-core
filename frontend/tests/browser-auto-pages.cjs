@@ -56,8 +56,9 @@ async function run(config) {
       accounts: [clone(account), ...expand(account, "account_id").slice(1)],
       movements: expand(fixtures.frozen_funds.response.data.collections.movements.items[0], "id"),
       statements: expand(f.collections.statements.items[0], "id"),
-      investment_products: expand({ fund_id: "", opening_cost_fen: "0", subscription_cost_fen: "10000", redemption_cost_fen: "0", closing_cost_fen: "10000", investment_income_fen: "0", name: "演示基金" }, "fund_id"),
-      investment_events: expand({ id: "", subject_id: "auto-investment", date: null, period: config.period, fund_id: "auto-fund_id-0", name: "演示基金", type: "申购", cost_fen: "10000", net_proceeds_fen: null, investment_income_fen: null, settlement_fen: "10000" }, "id"),
+      investment_products: expand({ fund_id: "", investment_id: "", product_type: "money_fund", category_label: "货币基金", closing_cost_fen: "10000", pending_receipts_fen: "0", actual_loss_fen: "0", activity_only: false,
+        recognized_income_fen: "0", accrued_income_fen: "0", actual_payments_fen: "0", actual_receipts_fen: "0", name: "演示基金" }, "fund_id")
+        .map((item, index) => ({ ...item, investment_id: `auto-holding-${index}` })),
     },
     employees: { employees: expand(employee, "employee_id"), labor_workers: laborWorkers },
     assets: {
@@ -142,7 +143,7 @@ async function run(config) {
       ["brief", "本月发生", ["activity"], "#activity .event-row"],
       ["brief", "应收应付", ["open_items"], "#open-items .open-event-row"],
       ["funds", "账户", ["accounts"], ".account-grid .account-card"],
-      ["funds", "货币基金", ["investment_products", "investment_events"], ".investment-summary-table tbody tr"],
+      ["funds", "投资与理财", ["investment_products"], ".investment-grid > .investment-card"],
       ["funds", "资金明细", ["accounts", "movements"], ".book-activity-row"],
       ["employees", "员工明细", ["employees"], ".panel:has(#employee-list-title) .employee-card"],
       ["employees", "个人劳务", ["labor_workers"], ".panel:has(#labor-title) .employee-card"],

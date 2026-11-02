@@ -252,7 +252,7 @@ base 遵守 FinancialProjectionReader：提供 header_json 和按输入顺序返
 | `money.query_movements(scope, query, page, read)` | 查询可选账户，None 明确表示全公司；返回 ReadPage、稳定资金身份、正式采用、账户、真实日、方向、金额、交易方及精确清偿分项。整笔资金和各义务分配分别表达。普通收付、工资组合及抵销在Basis保存实际采用义务的公开引用、科目、方向、原金额及收款人；读取实际分项沿消费时的采用量，不从后来被改写的来源猜收款人。 |
 | `money.query_statement_rows(scope, query, page, read)` | 按可选账户及 bank/platform 类型返回正式原行、稳定行身份、资料位置、原文及真实匹配组。冻结金额和日期从所选正式 Basis 取得；当前原行文字只补充已核对的同一行，不替换冻结数据。 |
 | `investment.money_fund_activity(scope, read)` | 一次返回完整产品、确认／清偿事件和整公司／逐基金汇总，包含有源期初、正式成本、申购确认、赎回成本和确认损益。成本由 ledger 余额及成本结果提供；实际付款和到账由正式清偿提供。所有 AmountCell 的缺项索引都指向同一 issues 问题池。 |
-| `investment.investment_activity(scope, read)` | 资金页的统一月度入口：按持仓身份返回金融投资数量、账面金额、未收收益、本期确认及实际收付，兼容已有货币基金事实。零账面但仍有数量的权益保留，合作项目的公司权益、代管资金及双方待补单列，不加进金融投资金额。只批量读取本期事件、正式月度持仓及未清权利的必要精确来源，前端不计算成本和税额。 |
+| `investment.investment_activity(scope, read)` | 完整专业投资活动：按持仓身份返回数量、账面金额、收益、确认与实际收付、公司及产品税费调整，并与正式总账收益和损失核对。零成本存续份额、未清权利及本月清仓尾款保留；没有库存的收益或收款记录不补造零持仓。资金页按精确持仓身份消费这些正式结果，合作权益、代管资金和双方待补单列，不混入金融投资合计。 |
 | `investment.query_money_fund_events(scope, page, read)` | 返回有界确认与实际清偿事件，包含稳定事件键、基金、业务、精确采用、经济月、采用月及可空真实日。闭期更正的新旧分腿分别读取自身 Target/Basis，不把确认收益再次当作到账收益。 |
 | `investment.cooperation_positions(scope, read, contract_ids=())` | 返回截至明确月每合同最近有效正式位置、实际采用合同中的经营者和项目、代管金额及双方应补、状态和精确来源。只读取既有正式结果，不重算、不造普通义务；静月沿最近位置接续，as_of_period保留真实原月。所选月的历史采用与当前最终事实分别读取，应补减少不等于实际付款。 |
 

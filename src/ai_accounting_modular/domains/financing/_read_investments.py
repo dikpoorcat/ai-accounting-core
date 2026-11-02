@@ -6,7 +6,7 @@ from ai_accounting_modular.contracts.public import ReadInputs, content_digest
 
 from ._common import fail, total
 from ._investment_events import EVENT_KINDS
-from ._investment_read_cash import cash_events
+from ._investment_read_cash import cash_events, with_product_cash
 from ._investment_read_flows import flows
 from ._investment_read_holdings import activity_descriptors, add, pending_income, products
 from ._investment_read_income import TAX_KINDS, income
@@ -71,6 +71,21 @@ def activity(owner, scope, read):
             key=lambda item: (item.period, item.actual_on or "", item.business_id, item.event_id),
         )
     )
+    payments_fen = total(
+        (
+            legacy.actual_payments_fen,
+            total(item.settlement_fen for item in cash if item.kind == "acquisition_payment"),
+        )
+    )
+    receipts_fen = total(
+        (
+            legacy.actual_receipts_fen,
+            total(item.settlement_fen for item in cash if item.kind != "acquisition_payment"),
+        )
+    )
+    output = with_product_cash(
+        output, combined, payments_fen=payments_fen, receipts_fen=receipts_fen
+    )
     cooperation = owner.cooperation_positions(normalized, read)
     inputs = legacy.inputs.merge(
         cooperation.inputs,
@@ -129,10 +144,8 @@ def activity(owner, scope, read):
         total(item.subscription_cost_fen for item in output),
         total(item.redemption_cost_fen for item in output),
         net,
-        legacy.actual_payments_fen
-        + total(item.settlement_fen for item in cash if item.kind == "acquisition_payment"),
-        legacy.actual_receipts_fen
-        + total(item.settlement_fen for item in cash if item.kind != "acquisition_payment"),
+        payments_fen,
+        receipts_fen,
         len(combined) + len(adjustments),
         output,
         combined,

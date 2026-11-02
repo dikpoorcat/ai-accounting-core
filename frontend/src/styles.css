@@ -176,6 +176,73 @@ button {
   display: none;
 }
 
+/* Asset and investment records share the same card and list presentation. */
+.assets-page .section-heading, .dashboard-record-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.assets-page .section-heading h2, .dashboard-record-heading h2 { margin: 0; font-size: 20px; }
+.assets-page .section-heading:has(.list-caption), .dashboard-record-heading:has(.list-caption) { align-items: flex-end; margin-bottom: 16px; }
+.assets-page .list-caption, .dashboard-record-heading .list-caption { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.assets-page .list-caption strong, .dashboard-record-heading .list-caption strong { font-weight: inherit; }
+.assets-page .asset-toolbar, .dashboard-record-toolbar { display: flex; align-items: center; flex: none; justify-content: flex-end; flex-wrap: wrap; gap: 10px; max-width: 100%; margin: 0; }
+.assets-page .display-switch, .dashboard-display-switch { display: grid; flex: 0 0 auto; grid-template-columns: repeat(2, 1fr); gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); }
+.assets-page .display-switch button, .dashboard-display-switch button { min-height: 34px; padding: 0 13px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.assets-page .display-switch button[aria-pressed="true"], .dashboard-display-switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); }
+.assets-page .display-switch button:focus-visible, .dashboard-display-switch button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.assets-page .asset-results, .dashboard-record-results { min-width: 0; max-width: 100%; }
+.assets-page .asset-results.list-results, .dashboard-record-results.is-list { container: dashboard-record-list / inline-size; overflow: hidden; padding-inline: var(--dashboard-list-gutter); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.assets-page .asset-grid, .dashboard-record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
+.assets-page .asset-grid.asset-list, .dashboard-record-grid.is-list { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.assets-page .asset-list-header, .assets-page .asset-list-summary, .dashboard-record-list-header, .dashboard-record-list-row { display: grid; min-width: 0; grid-template-columns: var(--dashboard-record-list-columns, var(--asset-list-columns)); align-items: center; gap: 10px; }
+.assets-page .asset-list-header, .dashboard-record-list-header { padding: 10px 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+.assets-page .asset-list-header > span, .dashboard-record-list-header > span { min-width: 0; overflow-wrap: anywhere; }
+.assets-page .asset-list .asset-card, .dashboard-record-grid.is-list > .dashboard-record-card { border-width: 0 0 1px; border-style: solid; border-color: var(--line); border-radius: 0; opacity: 1; background: var(--surface); }
+.assets-page .asset-list .asset-card:hover, .assets-page .asset-list .asset-card:focus-within, .dashboard-record-grid.is-list > .dashboard-record-card:focus-within { border-color: var(--line); }
+.assets-page .asset-list .asset-card:last-child, .dashboard-record-grid.is-list > .dashboard-record-card:last-child { border-bottom: 0; }
+.assets-page .asset-list-summary, .dashboard-record-list-row { min-height: 62px; padding: 10px 4px; font-size: 13px; line-height: 1.5; list-style: none; transition: background 140ms ease; }
+.assets-page .asset-list-summary > strong, .dashboard-record-list-value { min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.5; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.assets-page .asset-list-summary > .asset-list-book, .dashboard-record-list-value.is-primary { color: var(--asset); font-size: 14px; font-weight: 700; }
+:where(.assets-page .asset-list-summary) .asset-list-name, .dashboard-record-list-name { display: grid; min-width: 0; gap: 2px; }
+:where(.assets-page .asset-list-summary) .asset-list-name h3, .dashboard-record-list-name h3 { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
+:where(.assets-page .asset-list-summary) .asset-list-name p, .dashboard-record-list-name p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.assets-page .asset-card-summary, .dashboard-record-body { min-height: 228px; padding: 17px 18px 18px; }
+:where(.assets-page .asset-card-summary) .asset-card-topline, .dashboard-record-topline { display: flex; align-items: center; gap: 12px; margin-bottom: 11px; }
+:where(.assets-page .asset-card-summary) .asset-classification, .dashboard-record-classification { min-width: 0; color: var(--muted); font-size: 11px; font-weight: 720; overflow-wrap: anywhere; }
+:where(.assets-page .asset-card-summary) .asset-card-head, .dashboard-record-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+:where(.assets-page .asset-card-summary) .asset-name, .dashboard-record-name { display: grid; min-width: 0; gap: 7px; }
+:where(.assets-page .asset-card-summary) .asset-name h3, .dashboard-record-name h3 { margin: 0; overflow-wrap: anywhere; font-size: 20px; line-height: 1.2; }
+:where(.assets-page .asset-card-summary) .book-value, .dashboard-record-value { display: grid; min-width: 140px; justify-items: end; gap: 2px; text-align: right; white-space: nowrap; }
+:where(.assets-page .asset-card-summary) .book-value span, :where(.assets-page .asset-card-summary) .book-value small, .dashboard-record-value span, .dashboard-record-value small { color: var(--muted); font-size: 11px; }
+:where(.assets-page .asset-card-summary) .book-value strong, .dashboard-record-value strong { color: var(--asset); font-size: 22px; line-height: 1.2; }
+:where(.assets-page .asset-card-summary) .book-value small, .dashboard-record-value small { color: var(--accent); font-weight: 720; }
+:where(.assets-page .asset-card-summary) .book-value.unknown strong, .dashboard-record-value.unknown strong { color: var(--warning); font-size: 17px; }
+:where(.assets-page .asset-card-summary) .owner-value-grid, .dashboard-record-metrics { display: grid; grid-template-columns: .85fr .9fr 1.35fr; margin-top: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 11px; background: var(--surface-soft); }
+:where(.assets-page .asset-card-summary) .owner-value-grid > div, .dashboard-record-metrics > div { display: grid; min-width: 0; align-content: start; gap: 3px; padding: 11px 12px; }
+:where(.assets-page .asset-card-summary) .owner-value-grid > div + div, .dashboard-record-metrics > div + div { border-left: 1px solid var(--line); }
+:where(.assets-page .asset-card-summary) .owner-value-grid span, :where(.assets-page .asset-card-summary) .owner-value-grid small, .dashboard-record-metrics span, .dashboard-record-metrics small { color: var(--muted); font-size: 10.5px; line-height: 1.35; }
+:where(.assets-page .asset-card-summary) .owner-value-grid strong, .dashboard-record-metrics strong { color: var(--text); font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+@container dashboard-record-list (max-width: 1020px) {
+  .assets-page .asset-grid.asset-list, .dashboard-record-grid.is-list { padding-block: 8px; }
+  .assets-page .asset-list-header, .dashboard-record-list-header { display: none; }
+  .assets-page .asset-list-summary, .dashboard-record-list-row { grid-template-columns: repeat(2, minmax(0, 1fr)); position: relative; padding-block: 14px; }
+  .dashboard-record-list-name { grid-column: 1 / -1; }
+  .dashboard-record-list-value { align-self: start; text-align: left; }
+  .dashboard-record-list-value::before { display: block; content: attr(data-label); margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .assets-page .asset-list .asset-card, .assets-page .asset-list .asset-card:last-child, .dashboard-record-grid.is-list > .dashboard-record-card, .dashboard-record-grid.is-list > .dashboard-record-card:last-child { border: 1px solid var(--line); border-radius: var(--radius-control); margin-bottom: 8px; }
+  .assets-page .asset-list .asset-card:last-child, .dashboard-record-grid.is-list > .dashboard-record-card:last-child { margin-bottom: 0; }
+}
+@media (max-width: 900px) {
+  .assets-page .asset-grid, .dashboard-record-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .assets-page .display-switch button, .dashboard-display-switch button { min-height: 44px; }
+  .assets-page .asset-toolbar, :where(.assets-page .asset-card-summary) .asset-card-head, .dashboard-record-toolbar, .dashboard-record-head { align-items: flex-start; flex-direction: column; }
+  .assets-page .asset-toolbar, .dashboard-record-toolbar { width: 100%; }
+  .assets-page .asset-card-summary, .dashboard-record-body { min-height: 0; }
+  :where(.assets-page .asset-card-summary) .book-value, .dashboard-record-value { min-width: 0; justify-items: start; text-align: left; white-space: normal; }
+  :where(.assets-page .asset-card-summary) .owner-value-grid, .dashboard-record-metrics { grid-template-columns: 1fr; }
+  :where(.assets-page .asset-card-summary) .owner-value-grid > div + div, .dashboard-record-metrics > div + div { border-top: 1px solid var(--line); border-left: 0; }
+  .assets-page .section-heading, .dashboard-record-heading { flex-wrap: wrap; gap: 10px; }
+}
+
 .skip-link {
   position: fixed;
   z-index: 100;

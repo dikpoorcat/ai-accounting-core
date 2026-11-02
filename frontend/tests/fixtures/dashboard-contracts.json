@@ -42,7 +42,7 @@
   "funds_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
@@ -67,7 +67,7 @@
   "first_account_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
@@ -1432,7 +1432,7 @@
   "cash_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1482,17 +1482,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -1614,16 +1604,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -1632,7 +1612,7 @@
   "first_account_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1685,17 +1665,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -1809,16 +1779,6 @@
             }
           },
           "investment_products": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
-          },
-          "investment_events": {
             "items": [],
             "page": {
               "total_count": 0,
@@ -1835,7 +1795,7 @@
   "deferred_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1885,17 +1845,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2017,16 +1967,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -2035,7 +1975,7 @@
   "page_accounts": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2085,17 +2025,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2156,7 +2086,7 @@
   "page_movements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2206,17 +2136,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2267,7 +2187,7 @@
   "page_statements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2317,17 +2237,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2358,7 +2268,7 @@
   "page_investment_products": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2408,17 +2318,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2446,101 +2346,10 @@
       }
     }
   },
-  "page_investment_events": {
-    "command": "dashboard_funds",
-    "response": {
-      "schema_version": 10,
-      "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
-      "selected_period": {
-        "key": "2026-01",
-        "year": 2026,
-        "month": 1,
-        "label": "2026 年 1 月",
-        "short_label": "1 月",
-        "status": "open",
-        "start_date": "2026-01-01",
-        "end_date": "2026-01-31",
-        "closed_at": null
-      },
-      "read_semantics": {
-        "knowledge": "current_knowledge",
-        "accounting": "as_posted",
-        "business_basis": "current_known",
-        "display": "current",
-        "system_time_replay": false,
-        "recorded_at": "system_recording_time",
-        "recording_period": "business_recording_period",
-        "recorded_later": "business_recording_period_after_selected_period"
-      },
-      "read_context": {
-        "company_id": "48c91af7c30d42c59702e78d57714cda",
-        "database_id": "a08b7b54bcbe47748dc2afbca2749034",
-        "as_of": "2026-10-13",
-        "read_version": "f7a9f27a8b7cfd180dd05f6ebe65c77bd189508a149c493e01296d1ebe8c0224"
-      },
-      "data": {
-        "selected_movement_account": null,
-        "opening_fen": "0",
-        "net_change_fen": "87500",
-        "inflow_fen": "100000",
-        "outflow_fen": "12500",
-        "internal_transfer_fen": "0",
-        "movement_count": 2,
-        "total_fen": "87500",
-        "bank_opening_fen": "0",
-        "bank_inflow_fen": "0",
-        "bank_outflow_fen": "0",
-        "bank_fen": "0",
-        "cash_fen": "87500",
-        "payment_platform_fen": "0",
-        "account_count": 1,
-        "bank_account_count": 0,
-        "cash_account_count": 1,
-        "payment_platform_account_count": 0,
-        "attention_account_count": 0,
-        "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
-        },
-        "bank_statement": {
-          "transaction_count": 0,
-          "inflow_fen": null,
-          "outflow_fen": null,
-          "review_state": "complete",
-          "coverage_state": "not_applicable",
-          "statement_count": 0,
-          "expected_account_count": 0,
-          "provided_account_count": 0,
-          "missing_account_count": 0
-        },
-        "collections": {
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
-          }
-        }
-      }
-    }
-  },
   "account_filter": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2593,17 +2402,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2698,16 +2497,6 @@
             }
           },
           "investment_products": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
-          },
-          "investment_events": {
             "items": [],
             "page": {
               "total_count": 0,
@@ -5437,7 +5226,7 @@
   "bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "e3ef83b0e5622d5973c0cbec485cf54ecb34d7c035ebecb99df528613f64adad",
       "selected_period": {
         "key": "2026-09",
@@ -5487,17 +5276,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 2,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 2,
@@ -5704,16 +5483,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -5722,7 +5491,7 @@
   "filtered_bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "e3ef83b0e5622d5973c0cbec485cf54ecb34d7c035ebecb99df528613f64adad",
       "selected_period": {
         "key": "2026-09",
@@ -5775,17 +5544,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 2,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 2,
@@ -5901,16 +5660,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -5919,7 +5668,7 @@
   "frozen_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "2c63c1f17b2fa59e1c29af4f0d69419f6d8a28f85b5410fb65808586a104da93",
       "selected_period": {
         "key": "2026-09",
@@ -5969,17 +5718,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 3,
@@ -6198,16 +5937,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -6216,7 +5945,7 @@
   "first_frozen_account_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "2c63c1f17b2fa59e1c29af4f0d69419f6d8a28f85b5410fb65808586a104da93",
       "selected_period": {
         "key": "2026-09",
@@ -6269,17 +5998,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 3,
@@ -6459,16 +6178,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -6477,7 +6186,7 @@
   "wage_mapping_missing": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "20c3685a8afd8b33505dc3a78600445ba883201ba073afeb5d0e67c76111b571",
       "selected_period": {
         "key": "2026-01",
@@ -6527,17 +6236,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -6590,16 +6289,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -6608,7 +6297,7 @@
   "wage_mapping_unsupported": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "b5b872984bf0768fb0c2bfc964b8cb1ada083514babbb81d211333d9a44f0de0",
       "selected_period": {
         "key": "2026-01",
@@ -6658,17 +6347,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -6721,16 +6400,6 @@
               "has_more": false,
               "next_cursor": null
             }
-          },
-          "investment_events": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
           }
         }
       }
@@ -6739,7 +6408,7 @@
   "late_closed_missing_material": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 10,
+      "schema_version": 12,
       "snapshot_version": "5aa1db1d20ff043f61c875d5043c1b9cc4d9cb98f94eff6951d6f61e67ccef68",
       "selected_period": {
         "key": "2026-02",
@@ -6789,17 +6458,7 @@
         "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "investments": {
-          "opening_cost_fen": "0",
-          "subscription_cost_fen": "0",
-          "redemption_cost_fen": "0",
-          "closing_cost_fen": "0",
-          "investment_income_fen": "0",
-          "actual_payments_fen": "0",
-          "actual_receipts_fen": "0",
-          "event_count": 0,
-          "recognized_income_fen": "0",
-          "vat_adjustment_fen": "0",
-          "actual_loss_fen": "0"
+          "closing_cost_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -6844,16 +6503,6 @@
             }
           },
           "investment_products": {
-            "items": [],
-            "page": {
-              "total_count": 0,
-              "filtered_count": 0,
-              "returned_count": 0,
-              "has_more": false,
-              "next_cursor": null
-            }
-          },
-          "investment_events": {
             "items": [],
             "page": {
               "total_count": 0,

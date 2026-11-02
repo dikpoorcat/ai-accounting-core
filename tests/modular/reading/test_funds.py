@@ -35,6 +35,11 @@ def selection(case, month="2026-01"):
     )
 
 
+def investment_activity(case, month="2026-01"):
+    with case.kernel.storage.read_unit(case.company) as read:
+        return case.kernel.reading.investment.investment_activity(selection(case, month), read)
+
+
 def apply(case, *facts, **extra):
     values = deepcopy(facts)
     for item in values:
@@ -149,7 +154,8 @@ def test_actual_company_account_and_mixed_investment_cash_are_distinct(case, mon
         data["bank_inflow_fen"],
         data["bank_outflow_fen"],
     ) == ("700", "300", "2000", "1300")
-    assert data["investments"]["actual_payments_fen"] == "300"
+    assert data["investments"] == {"closing_cost_fen": "300"}
+    assert investment_activity(case).actual_payments_fen == 300
     assert set(data["collections"]) == set(_funds.COLLECTIONS)
     assert data["selected_movement_account"] == {"type": "bank", "account_id": BANK}
     cards = {item["account_id"]: item for item in data["collections"]["accounts"]["items"]}
@@ -313,16 +319,19 @@ def test_frozen_month_and_month_only_correction_show_original_business_period(ca
     capture(case, "2026-02")
     data = page(case, "2026-02")["data"]
     check_data(data)
-    events = data["collections"]["investment_events"]["items"]
-    assert sorted(item["cost_fen"] for item in events) == ["-100", "90"]
+    activity = investment_activity(case, "2026-02")
+    events = activity.events
+    assert sorted(item.cost_fen for item in events) == [-100, 90]
     assert all(
-        item["period"] == "2026-01"
-        and item["date"] is None
-        and item["type"].startswith("更正原业务")
+        item.business_period == "2026-01"
+        and item.period == "2026-02"
+        and item.actual_on is None
+        and item.correction
         for item in events
     )
-    assert data["investments"]["subscription_cost_fen"] == "-10"
-    assert data["investments"]["actual_payments_fen"] == "0"
+    assert activity.subscription_cost_fen == -10
+    assert activity.actual_payments_fen == 0
+    assert "investment_events" not in data["collections"]
 
 
 @pytest.mark.parametrize(
@@ -333,6 +342,7 @@ def test_frozen_month_and_month_only_correction_show_original_business_period(ca
         {"statement_account_id": CASH},
         {"movement_account_selection": "first", "section": "movements"},
         {"cursor": "fake"},
+        {"section": "investment_events"},
     ),
 )
 def test_account_filters_and_first_have_exact_meaning(case, query):
@@ -343,7 +353,7 @@ def test_account_filters_and_first_have_exact_meaning(case, query):
     assert error.value.code in {"invalid_input", "not_found"}
 
 
-def test_501_fund_sources_and_1002_events_have_full_totals_and_bounded_hot_pages(case, monkeypatch):
+def test_501_sources_keep_full_professional_totals_and_lean_hot_pages(case, monkeypatch):
     initialize(case)
     *_, prototype, _ = six()
     prototype["data"]["purchase_price_fen"] = "1"
@@ -367,18 +377,12 @@ def test_501_fund_sources_and_1002_events_have_full_totals_and_bounded_hot_pages
     capture(case)
     assert len(calls) == 1
     initial = page(case)["data"]
-    assert (
-        initial["investments"]["subscription_cost_fen"]
-        == initial["investments"]["actual_payments_fen"]
-        == "501"
-    )
-    collection = initial["collections"]["investment_events"]
-    assert (len(collection["items"]), collection["page"]["total_count"]) == (20, 1002)
-    found = list(collection["items"])
-    while collection["page"]["has_more"]:
-        collection = page(
-            case, section="investment_events", limit=500, cursor=collection["page"]["next_cursor"]
-        )["data"]["collections"]["investment_events"]
-        found.extend(collection["items"])
-    assert len(found) == len({item["id"] for item in found}) == 1002
-    assert len(calls) == 1
+    assert initial["investments"] == {"closing_cost_fen": "501"}
+    assert "investment_events" not in initial["collections"]
+    activity = investment_activity(case)
+    assert activity.subscription_cost_fen == activity.actual_payments_fen == 501
+    assert len(activity.events) == len({item.event_id for item in activity.events}) == 1002
+    assert len(calls) == 2
+    hot = page(case, section="investment_products")["data"]["collections"]["investment_products"]
+    assert hot == initial["collections"]["investment_products"]
+    assert len(calls) == 2

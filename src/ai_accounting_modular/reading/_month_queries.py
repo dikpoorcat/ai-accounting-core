@@ -9,7 +9,6 @@ FUND_COLLECTIONS = (
     "movements",
     "statements",
     "investment_products",
-    "investment_events",
 )
 
 
@@ -38,10 +37,18 @@ def funds(query, scope):
             "movement_account_id",
             "statement_account_id",
             "movement_account_selection",
+            "investment_filter",
         ),
         FUND_COLLECTIONS,
     )
     section = selected.get("section")
+    investment_filter = selected.get("investment_filter", "all")
+    if not isinstance(investment_filter, str) or investment_filter not in {
+        "all",
+        "financial",
+        "cooperation",
+    }:
+        raise ContractError("invalid_input", "投资筛选无效。")
     account_type = selected.get("movement_account_type")
     account_id = selected.get("movement_account_id")
     if ("movement_account_type" in selected) != ("movement_account_id" in selected) or (

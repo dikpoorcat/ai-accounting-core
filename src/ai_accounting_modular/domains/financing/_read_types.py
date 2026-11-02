@@ -128,6 +128,8 @@ class InvestmentProduct:
     pending_receipts_fen: int = 0
     actual_loss_fen: int = 0
     activity_only: bool = False
+    actual_payments_fen: int = 0
+    actual_receipts_fen: int = 0
 
 
 @dataclass(frozen=True)

@@ -189,7 +189,7 @@ test("fund and employee rows bind explicit business identity, selected period an
         assert.ok(tag.includes('@changed="refreshChanged"'));
       }
     }
-    if (name === "Funds") assert.equal(tags.filter(tag => tag.includes(':subject-id="item.subject_id"')).length, 2);
+    if (name === "Funds") assert.equal(tags.filter(tag => tag.includes(':subject-id="item.subject_id"')).length, 1, "only the existing cash movement retains a business progress entrance");
   }
 });
 
