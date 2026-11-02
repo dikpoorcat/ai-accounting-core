@@ -8,6 +8,7 @@ from ai_accounting_modular.ledger.reporting.public import cash_totals, profit_to
 from ._balance_cube import previous
 from ._financial_calculation import amount
 from ._financial_cells import known
+from ._financial_investments import opening_bonds
 from ._financial_order import CHILD_KEYS
 from ._financial_positions import cash_before, positions
 from ._financial_projection_bodies import COLUMN
@@ -100,6 +101,22 @@ class ProjectionSelection(Selection):
                         rows, key=lambda row: row[CHILD_KEYS[table]]
                     )
         return result
+
+    def bond_balances(self, cutoff):
+        if cutoff < self.start:
+            return {
+                (product, maturity): amount for product, maturity, amount in opening_bonds(self)
+            }
+        key, role = self.model.stock_role(self.view, cutoff)
+        self.used_roles[key].add("journal")
+        return role.bond_balances(opening_bonds(self))
+
+    def financial_transfer_components(self, cutoff):
+        if cutoff < self.start:
+            return 0, 0
+        key, role = self.model.stock_role(self.view, cutoff)
+        self.used_roles[key].add("journal")
+        return role.tax.values()
 
     def all_sources(self):
         atoms = set(self.used_atoms)

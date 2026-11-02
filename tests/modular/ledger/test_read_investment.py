@@ -120,3 +120,47 @@ def test_first_formal_fund_month_survives_closed_target_correction(tmp_path):
     assert current.ending["amount_fen"] == "120"
     assert original.ending["amount_fen"] == "100"
     assert current.first_recorded_period == original.first_recorded_period == "2026-01"
+
+
+def test_profit_contributions_share_frozen_baseline_and_read_only_selected_journals(
+    tmp_path, monkeypatch
+):
+    book = assemble(tmp_path, include_investment=True)
+    bought = purchase("profit-purchase", "100")
+    sold = fact(
+        "profit-redemption",
+        "investment.money_fund_redemption",
+        {
+            "fund_id": FUND,
+            "counterparty_id": PARTY_A,
+            "classification": "readily_redeemable_held_not_over_one_year",
+            "cost_basis": "documented_cost",
+            "costs": [
+                {
+                    "source": {"business_id": bought["business_id"], "slot": "cost"},
+                    "amount_fen": "100",
+                }
+            ],
+            "net_proceeds_fen": "120",
+        },
+    )
+    book.submit(opening(), bought, sold, objects=[fund_object()])
+    book.freeze_formal_heads_for_test("2026-01")
+    changed = deepcopy(sold)
+    changed["data"]["net_proceeds_fen"] = "125"
+    book.replace(changed, correction_period="2026-03")
+
+    def net(month, view="as_posted"):
+        scope = {"company_id": book.company, "period_from": month, "period_to": month, "view": view}
+        with book.app.storage.read_unit(book.company) as read:
+
+            def forbid(*args, **kwargs):
+                raise AssertionError("profit contributions loaded full formal bodies")
+
+            monkeypatch.setattr(type(read.repository("ledger")), "results", forbid)
+            result = book.app.ledger.profit_contributions(scope, PageQuery(500), read)
+        return sum(item.investment_income_fen - item.baseline_income_fen for item in result.items)
+
+    assert net("2026-01") == 20
+    assert net("2026-01", "current") == 25
+    assert net("2026-03") == 5

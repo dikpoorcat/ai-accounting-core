@@ -17,7 +17,7 @@ _ACTUAL_ROWS = {
 }
 
 
-def filing(fact, metrics, sales, policy, calculated_fields=None, actual=None):
+def filing(fact, metrics, sales, policy, calculated_fields=None, actual=None, *, actual_fact=None):
     problems = []
     profile = fact["data"].get("filing_profile")
     if profile is None:
@@ -106,8 +106,8 @@ def filing(fact, metrics, sales, policy, calculated_fields=None, actual=None):
             if source not in actual and source not in ("row11_fen", "row19_fen"):
                 problems.append(
                     issue(
-                        fact,
-                        "/data/actual_declaration/" + source,
+                        actual_fact or fact,
+                        "/data/" + source,
                         f"实际来源没有明确{target}，不拿计算参考补值。",
                         blocking_scope="none",
                     )
@@ -117,8 +117,8 @@ def filing(fact, metrics, sales, policy, calculated_fields=None, actual=None):
         ) > amount(actual["row1_fen"]):
             problems.append(
                 issue(
-                    fact,
-                    "/data/actual_declaration/row1_fen",
+                    actual_fact or fact,
+                    "/data/row1_fen",
                     "实际开票栏超过应税净销售栏；当前普通表式无法说明差额或跨期开票关系，"
                     "税额仍可按有源实际金额采用，申报明细不能标为完整。",
                     code="unsupported_form",

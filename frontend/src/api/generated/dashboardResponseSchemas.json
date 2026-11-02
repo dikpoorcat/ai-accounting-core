@@ -3897,6 +3897,28 @@
             "minimum": 0,
             "title": "Event Count",
             "type": "integer"
+          },
+          "cooperation_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recognized_income_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "vat_adjustment_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "actual_loss_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
           }
         },
         "required": [
@@ -3907,7 +3929,10 @@
           "investment_income_fen",
           "actual_payments_fen",
           "actual_receipts_fen",
-          "event_count"
+          "event_count",
+          "recognized_income_fen",
+          "vat_adjustment_fen",
+          "actual_loss_fen"
         ],
         "title": "FundInvestments",
         "type": "object"
@@ -4301,113 +4326,272 @@
         "type": "object"
       },
       "InvestmentEvent": {
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "subject_id": {
-            "title": "Subject Id",
-            "type": "string"
-          },
-          "date": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+        "title": "InvestmentEvent",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "title": "Id",
                 "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Date"
-          },
-          "period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Period",
-            "type": "string"
-          },
-          "fund_id": {
-            "title": "Fund Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "type": {
-            "title": "Type",
-            "type": "string"
-          },
-          "cost_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "subject_id": {
+                "title": "Subject Id",
+                "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Fen"
-          },
-          "net_proceeds_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "date": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Date"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Proceeds Fen"
-          },
-          "investment_income_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "period": {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "title": "Period",
+                "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Investment Income Fen"
-          },
-          "settlement_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "fund_id": {
+                "title": "Fund Id",
+                "type": "string"
               },
-              {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              },
+              "cost_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cost Fen"
+              },
+              "net_proceeds_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Net Proceeds Fen"
+              },
+              "investment_income_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "settlement_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Settlement Fen"
+              },
+              "actual_loss_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "attribution": {
+                "const": "event",
+                "type": "string"
+              },
+              "investment_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "subject_id",
+              "date",
+              "period",
+              "fund_id",
+              "name",
+              "type",
+              "cost_fen",
+              "net_proceeds_fen",
+              "investment_income_fen",
+              "settlement_fen",
+              "actual_loss_fen",
+              "attribution",
+              "investment_id"
+            ],
+            "title": "InvestmentEvent",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "subject_id": {
+                "title": "Subject Id",
+                "type": "string"
+              },
+              "date": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Date"
+              },
+              "period": {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "title": "Period",
+                "type": "string"
+              },
+              "fund_id": {
+                "type": "null"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              },
+              "cost_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cost Fen"
+              },
+              "net_proceeds_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Net Proceeds Fen"
+              },
+              "investment_income_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "settlement_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Settlement Fen"
+              },
+              "actual_loss_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "attribution": {
+                "const": "company_pool",
+                "type": "string"
+              },
+              "investment_id": {
                 "type": "null"
               }
+            },
+            "required": [
+              "id",
+              "subject_id",
+              "date",
+              "period",
+              "fund_id",
+              "name",
+              "type",
+              "cost_fen",
+              "net_proceeds_fen",
+              "investment_income_fen",
+              "settlement_fen",
+              "actual_loss_fen",
+              "attribution",
+              "investment_id"
             ],
-            "title": "Settlement Fen"
+            "title": "InvestmentEvent",
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "subject_id",
-          "date",
-          "period",
-          "fund_id",
-          "name",
-          "type",
-          "cost_fen",
-          "net_proceeds_fen",
-          "investment_income_fen",
-          "settlement_fen"
-        ],
-        "title": "InvestmentEvent",
-        "type": "object"
+        ]
       },
       "InvestmentProduct": {
         "additionalProperties": false,
@@ -4454,15 +4638,86 @@
             ],
             "title": "Closing Cost Fen"
           },
-          "investment_income_fen": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "investment_id": {
+            "type": "string"
+          },
+          "product_type": {
+            "type": "string",
+            "enum": [
+              "money_fund",
+              "bank_wealth",
+              "other_fund",
+              "bond",
+              "equity",
+              "cooperation"
+            ]
+          },
+          "category_label": {
+            "type": "string"
+          },
+          "quantity_label": {
+            "type": "string"
+          },
+          "accrued_income_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "cooperation_held_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "cooperation_operator_due_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "cooperation_company_due_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "holding_label": {
+            "type": "string"
+          },
+          "cooperation_equity_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "market_value_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "market_as_of": {
+            "type": "string",
+            "format": "date"
+          },
+          "pending_receipts_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "recognized_income_fen": {
             "pattern": "^(0|-?[1-9][0-9]*)$",
             "title": "Investment Income Fen",
             "type": "string",
             "x-fen-int64": true
           },
-          "name": {
-            "title": "Name",
-            "type": "string"
+          "actual_loss_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "activity_only": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -4471,8 +4726,9 @@
           "subscription_cost_fen",
           "redemption_cost_fen",
           "closing_cost_fen",
-          "investment_income_fen",
-          "name"
+          "recognized_income_fen",
+          "name",
+          "actual_loss_fen"
         ],
         "title": "InvestmentProduct",
         "type": "object"
@@ -13749,6 +14005,28 @@
             "minimum": 0,
             "title": "Event Count",
             "type": "integer"
+          },
+          "cooperation_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recognized_income_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "vat_adjustment_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "actual_loss_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
           }
         },
         "required": [
@@ -13759,7 +14037,10 @@
           "investment_income_fen",
           "actual_payments_fen",
           "actual_receipts_fen",
-          "event_count"
+          "event_count",
+          "recognized_income_fen",
+          "vat_adjustment_fen",
+          "actual_loss_fen"
         ],
         "title": "FundInvestments",
         "type": "object"
@@ -14096,113 +14377,272 @@
         "type": "object"
       },
       "InvestmentEvent": {
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "subject_id": {
-            "title": "Subject Id",
-            "type": "string"
-          },
-          "date": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+        "title": "InvestmentEvent",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "title": "Id",
                 "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Date"
-          },
-          "period": {
-            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
-            "title": "Period",
-            "type": "string"
-          },
-          "fund_id": {
-            "title": "Fund Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "type": {
-            "title": "Type",
-            "type": "string"
-          },
-          "cost_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "subject_id": {
+                "title": "Subject Id",
+                "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Fen"
-          },
-          "net_proceeds_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "date": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Date"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Proceeds Fen"
-          },
-          "investment_income_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "period": {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "title": "Period",
+                "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Investment Income Fen"
-          },
-          "settlement_fen": {
-            "anyOf": [
-              {
-                "pattern": "^(0|-?[1-9][0-9]*)$",
-                "type": "string",
-                "x-fen-int64": true
+              "fund_id": {
+                "title": "Fund Id",
+                "type": "string"
               },
-              {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              },
+              "cost_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cost Fen"
+              },
+              "net_proceeds_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Net Proceeds Fen"
+              },
+              "investment_income_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "settlement_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Settlement Fen"
+              },
+              "actual_loss_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "attribution": {
+                "const": "event",
+                "type": "string"
+              },
+              "investment_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "subject_id",
+              "date",
+              "period",
+              "fund_id",
+              "name",
+              "type",
+              "cost_fen",
+              "net_proceeds_fen",
+              "investment_income_fen",
+              "settlement_fen",
+              "actual_loss_fen",
+              "attribution",
+              "investment_id"
+            ],
+            "title": "InvestmentEvent",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "subject_id": {
+                "title": "Subject Id",
+                "type": "string"
+              },
+              "date": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Date"
+              },
+              "period": {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+                "title": "Period",
+                "type": "string"
+              },
+              "fund_id": {
+                "type": "null"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              },
+              "cost_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Cost Fen"
+              },
+              "net_proceeds_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Net Proceeds Fen"
+              },
+              "investment_income_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "settlement_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Settlement Fen"
+              },
+              "actual_loss_fen": {
+                "anyOf": [
+                  {
+                    "pattern": "^(0|-?[1-9][0-9]*)$",
+                    "type": "string",
+                    "x-fen-int64": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Investment Income Fen"
+              },
+              "attribution": {
+                "const": "company_pool",
+                "type": "string"
+              },
+              "investment_id": {
                 "type": "null"
               }
+            },
+            "required": [
+              "id",
+              "subject_id",
+              "date",
+              "period",
+              "fund_id",
+              "name",
+              "type",
+              "cost_fen",
+              "net_proceeds_fen",
+              "investment_income_fen",
+              "settlement_fen",
+              "actual_loss_fen",
+              "attribution",
+              "investment_id"
             ],
-            "title": "Settlement Fen"
+            "title": "InvestmentEvent",
+            "type": "object"
           }
-        },
-        "required": [
-          "id",
-          "subject_id",
-          "date",
-          "period",
-          "fund_id",
-          "name",
-          "type",
-          "cost_fen",
-          "net_proceeds_fen",
-          "investment_income_fen",
-          "settlement_fen"
-        ],
-        "title": "InvestmentEvent",
-        "type": "object"
+        ]
       },
       "InvestmentProduct": {
         "additionalProperties": false,
@@ -14249,15 +14689,86 @@
             ],
             "title": "Closing Cost Fen"
           },
-          "investment_income_fen": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "investment_id": {
+            "type": "string"
+          },
+          "product_type": {
+            "type": "string",
+            "enum": [
+              "money_fund",
+              "bank_wealth",
+              "other_fund",
+              "bond",
+              "equity",
+              "cooperation"
+            ]
+          },
+          "category_label": {
+            "type": "string"
+          },
+          "quantity_label": {
+            "type": "string"
+          },
+          "accrued_income_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "cooperation_held_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "cooperation_operator_due_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "cooperation_company_due_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "holding_label": {
+            "type": "string"
+          },
+          "cooperation_equity_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "market_value_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "market_as_of": {
+            "type": "string",
+            "format": "date"
+          },
+          "pending_receipts_fen": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "x-fen-int64": true
+          },
+          "recognized_income_fen": {
             "pattern": "^(0|-?[1-9][0-9]*)$",
             "title": "Investment Income Fen",
             "type": "string",
             "x-fen-int64": true
           },
-          "name": {
-            "title": "Name",
-            "type": "string"
+          "actual_loss_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "activity_only": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -14266,8 +14777,9 @@
           "subscription_cost_fen",
           "redemption_cost_fen",
           "closing_cost_fen",
-          "investment_income_fen",
-          "name"
+          "recognized_income_fen",
+          "name",
+          "actual_loss_fen"
         ],
         "title": "InvestmentProduct",
         "type": "object"

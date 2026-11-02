@@ -9,6 +9,7 @@ from ai_accounting_modular.contracts.public import (
 
 from ._changes import object_roles, validate_fact
 from ._cooperation_common import PREFIX
+from ._investment_events import KINDS as FINANCIAL_KINDS
 
 _TABLES = {"financing": "financing_fact", "investment": "investment_fact"}
 
@@ -53,6 +54,17 @@ class FinancingRepository:
         self._session = session
 
     def _main_object(self, fact):
+        if fact["kind"] in {"investment.terms", "investment.unit_change_basis"}:
+            return fact["data"]["product_id"]
+        if fact["kind"] in FINANCIAL_KINDS:
+            row = self._session.fetchone(
+                "SELECT data_json FROM investment_fact "
+                "WHERE business_id=? AND schema_key='investment.terms'",
+                (fact["data"]["terms_id"],),
+            )
+            if row is None:
+                raise ContractError("storage_corrupt", "投资当前事实缺少本模块维护的持仓条款身份。")
+            return loads_json(row["data_json"])["data"]["product_id"]
         if not fact["kind"].startswith(PREFIX):
             return _main_object(fact)
         if fact["kind"] == PREFIX + "contract":
@@ -95,6 +107,8 @@ class FinancingRepository:
                 "funds_account_id",
                 "project_id",
                 "operator_id",
+                "product_id",
+                "terms_id",
             )
             clauses.append(
                 "(main_object_id=? OR "

@@ -143,14 +143,31 @@ def dependencies(fact, context, result_slots):
         previous = result_slot
         for other in possible:
             resource_slot = _TRADE_SLOTS.get(other["kind"])
-            if resource_slot is not None or other["period"] == period or ended or opening:
+            opening_refs = (
+                [
+                    "member:" + member["member_id"] + ":trade:" + trade["entry_key"]
+                    for member in other["data"].get("members", ())
+                    if member["data"]["type"] == "cooperation"
+                    and member["data"]["contract_id"] == business_id
+                    for trade in member["data"]["open_trades"]
+                ]
+                if other["kind"] == "opening.package"
+                else []
+            )
+            if (
+                resource_slot is not None
+                or opening_refs
+                or other["period"] == period
+                or ended
+                or opening
+            ):
                 found.append(_edge(fact, other["business_id"], consumer_slot=result_slot))
-            if resource_slot is not None:
+            for source_slot in [resource_slot] if resource_slot is not None else opening_refs:
                 balance = _edge(
                     fact,
                     other["business_id"],
                     consumer_slot=result_slot,
-                    producer_slot=resource_slot,
+                    producer_slot=source_slot,
                     mode="balance",
                     relation="settlement",
                     first="0001-01",

@@ -37,6 +37,7 @@ def problem(fact, field, message, *, missing=False):
 
 
 def total(values):
+    values = tuple(values)
     try:
         return sum_fen(values)
     except ValueError as error:

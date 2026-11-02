@@ -19,7 +19,7 @@ COLLECTIONS = ("accounts", "movements", "statements", "investment_products", "in
 
 def prepare(reader, scope, read):
     activity = reader.money.account_activity(scope, read)
-    funds = reader.investment.money_fund_activity(scope, read)
+    funds = reader.investment.investment_activity(scope, read)
     balances = _funds_accounts.positions(reader.ledger, activity.accounts, scope["period_to"], read)
     objects = _funds_items.identities(reader, activity, read)
     cards = _funds_accounts.cards(activity, balances, objects)
@@ -51,7 +51,16 @@ def prepare(reader, scope, read):
     items.extend(_funds_items.movements(activity, accounts, objects, sources, presence))
     matched = _funds_statements.batches(activity, sources, objects)
     items.extend(_funds_statements.statements(activity, accounts, matched))
-    investments, fund_items = _funds_items.investment(funds)
+    projects = sorted({item.project_id for item in funds.cooperation_positions})
+    project_objects = {}
+    for start in range(0, len(projects), 500):
+        project_objects.update(
+            (obj["object_id"], obj)
+            for obj in reader.identity.get_batch(projects[start : start + 500], read)
+        )
+    if set(project_objects) != set(projects):
+        raise ContractError("storage_corrupt", "合作投资正式位置引用的项目身份不完整。")
+    investments, fund_items = _funds_items.investment(funds, project_objects)
     items.extend(fund_items)
     summary = _funds_accounts.summary(activity, balances, cards)
     summary["investments"] = investments

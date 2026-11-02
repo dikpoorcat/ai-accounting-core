@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, TypeVar, runtime_checkable
 
 from ._errors import ContractError
 from ._resource_dependencies import ALL_RESOURCE_COMPONENTS, resource_component, resource_components
@@ -32,6 +32,7 @@ from ._wire_types import (
     PretaxFields,
     ResourceComponent,
     ResultPublication,
+    ResultRef,
     ResultSourceRef,
     ResultTarget,
     Settlement,
@@ -41,6 +42,7 @@ from ._wire_types import (
 )
 
 ResourceKind = Literal["obligation", "cost", "funds"]
+_CandidateValue = TypeVar("_CandidateValue")
 
 
 @dataclass(frozen=True)
@@ -287,6 +289,28 @@ class TaxSaleView:
 
 
 @dataclass(frozen=True)
+class InvestmentTaxEventView:
+    """One selected investment transaction, including its frozen tax facts."""
+
+    event: dict
+    source: ResultSourceRef
+    period: str
+    effective_on: str | None = None
+    event_index: int = 0
+
+    def __post_init__(self) -> None:
+        validate_contract("business-facts.schema.json", "InvestmentTaxEvent", self.event)
+        validate_contract("business-facts.schema.json", "ResultSourceRef", self.source)
+        validate_contract("core.schema.json", "Month", self.period)
+        if self.effective_on is not None:
+            validate_contract("core.schema.json", "Date", self.effective_on)
+            if self.effective_on[:7] != self.period:
+                raise ContractError("invalid_input", "投资税务量的实际日与所属月不一致。")
+        if type(self.event_index) is not int or self.event_index < 0:
+            raise ContractError("invalid_input", "投资税务量在来源内的序号无效。")
+
+
+@dataclass(frozen=True)
 class PretaxView:
     """The shared financial selector's pretax fields and necessary basis."""
 
@@ -312,6 +336,32 @@ class EvaluationContext(Protocol):
     @property
     def evaluation_period_to(self) -> str:
         """Latest explicitly reached accounting month, never an invented today."""
+        ...
+
+    @property
+    def previous_period_to(self) -> str:
+        """Latest reached month before this submission changes the work calendar."""
+        ...
+
+    def current_result_refs(self, business_ids: Sequence[str]) -> tuple[ResultRef, ...]:
+        """Read exact current slot metadata for at most 500 identities, without bodies."""
+        ...
+
+    def current_dependencies(self, business_ids: Sequence[str]) -> tuple[Dependency, ...]:
+        """Read the existing dependency directory for at most 500 explicit identities.
+
+        Description may retain unchanged slots' exact edges without loading
+        their facts or basis. This directory does not replace business facts.
+        """
+        ...
+
+    @property
+    def changed_business_ids(self) -> frozenset[str]:
+        """Facts truly changed by this submission, excluding recalculation.
+
+        The application supplies the classified create/replace/withdraw/restore
+        and handoff changes, including changes owned by other domains.
+        """
         ...
 
     def get_fact(self, business_id: str) -> Fact | None:
@@ -354,12 +404,43 @@ class EvaluationContext(Protocol):
         """Use an evaluated submission slot before a persisted public result."""
         ...
 
+    def candidate_memo(
+        self, namespace: str, key: Hashable, build: Callable[[], _CandidateValue]
+    ) -> _CandidateValue:
+        """Share immutable domain calculations within one complete candidate.
+
+        The owner checks exact declared source readiness on every access. A new
+        candidate, success or failure ends this workspace; staged results do not
+        alter the candidate's final facts.
+        """
+        ...
+
+    def require_result_sources(self, refs: Sequence[BusinessRef]) -> tuple[ResultSourceRef, ...]:
+        """Check this active slot's exact dependencies and readiness without bodies."""
+        ...
+
+    def declared_result_refs(
+        self, producer_id: str, relation_kind: DependencyRelationKind
+    ) -> tuple[BusinessRef, ...]:
+        """Read this active scope's exact result dependencies from the candidate graph."""
+        ...
+
+    def is_result_pending(self, business_id: str, result_slot: str) -> bool:
+        """Whether this candidate recomputes the slot, including after it is staged."""
+        ...
+
     def facts_in_scope(
         self, kinds: Sequence[str], period_from: str, period_to: str
     ) -> tuple[Fact, ...]: ...
 
     def tax_sales(self, period_from: str, period_to: str) -> tuple[TaxSaleView, ...]:
         """Current tax-period components after the declared publisher slots are ready."""
+        ...
+
+    def investment_tax_events(
+        self, period_from: str, period_to: str, *, kinds: tuple[str, ...] | None = None
+    ) -> tuple[InvestmentTaxEventView, ...]:
+        """Declared investment scopes with exact candidate or adopted producer results."""
         ...
 
     def pre_tax(self, period_from: str, period_to: str) -> PretaxView:

@@ -251,6 +251,44 @@ class Selection:
                 fail("storage_corrupt", "正式期初的采用余额与完整目标总额不一致。")
         return values
 
+    def bond_balances(self, cutoff):
+        from ._financial_investments import capture_bonds, opening_bonds
+
+        heads = list(self.stock(cutoff).values()) if cutoff >= self.start else []
+        rows = capture_bonds(self, heads, self.lines(heads))
+        values = defaultdict(int)
+        for product, maturity, amount in opening_bonds(self):
+            values[product, maturity] = sum_amounts((values[product, maturity], amount))
+        for head in sorted(heads, key=target_key):
+            for product, maturity, amount in rows[head["result_id"]]:
+                values[product, maturity] = sum_amounts((values[product, maturity], amount))
+        return dict(values)
+
+    def financial_transfer_components(self, cutoff):
+        from ._financial_tax_positions import KINDS, capture, components
+
+        heads = (
+            [head for head in self.stock(cutoff).values() if self.boundary_kind(head) in KINDS]
+            if cutoff >= self.start
+            else []
+        )
+        resources = self.position_resources(heads, (("222107", False),))
+        by_result = {
+            head["result_id"]: {
+                table: values.get(head["result_id"], []) for table, values in resources.items()
+            }
+            for head in heads
+        }
+        rows = capture(self, heads, by_result)
+        for head in heads:
+            if rows[head["result_id"]] is not None:
+                self.source(head)
+        return components(
+            (head["result_id"], rows[head["result_id"]])
+            for head in heads
+            if rows[head["result_id"]] is not None
+        )
+
     def prior(self, statement, first, last):
         count = 32 if statement == "profit" else 22
         result = zeros(count)

@@ -3,6 +3,11 @@
 from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import ContractError, ResourceCutoff
+from ai_accounting_modular.ledger.public import (
+    investment_settlement_identity,
+    settlement_purpose,
+    validate_settlement_counterparty,
+)
 
 from ._cashflow import combine_parts, payment_parts
 from ._common import (
@@ -61,6 +66,52 @@ def _settlement(plan, fact, allocation, *, method, movement_id=None):
     plan["settlements"].append(value)
 
 
+def _adopt_authorization(fact, context, plan, allocation, definition, actual_party, subjects):
+    ref = allocation["authorization"]
+    selected = context.get_result(ref["business_id"], ref["slot"])
+    producer = context.get_result(
+        definition.source["business_id"], definition.source["result_slot"]
+    )
+    if (
+        selected is None
+        or selected.target["kind"] != "investment.terms"
+        or "authorization" not in selected.target["values"]
+        or producer is None
+    ):
+        fail("投资代收付缺少有效的正式授权。")
+    authorization = selected.target["values"]["authorization"]
+    terms_id, product_id = investment_settlement_identity(
+        producer,
+        allocation["source"],
+        subjects=subjects,
+    )
+    purpose = settlement_purpose(
+        producer.target["kind"],
+        fact["data"]["direction"],
+        account_code=definition.value["account_code"],
+    )
+    validate_settlement_counterparty(
+        authorization,
+        terms_id=terms_id,
+        product_id=product_id,
+        principal_id=definition.value.get("party_id"),
+        actual_party_id=actual_party,
+        purpose=purpose,
+        actual_on=fact["effective_on"],
+    )
+    adopt_source(plan, selected.source)
+    plan["basis"]["adopted_quantities"].append(
+        {
+            "type": "investment_settlement_authorization",
+            "source": deepcopy(selected.source),
+            "authorization": deepcopy(authorization),
+            "obligation_source": deepcopy(allocation["source"]),
+            "amount_fen": allocation["amount_fen"],
+            "purpose": purpose,
+        }
+    )
+
+
 def settlement(fact, context):
     data = fact["data"]
     value = amount(data["amount_fen"])
@@ -75,7 +126,9 @@ def settlement(fact, context):
     definitions = _definitions(fact, context)
     if data["payment_method"] == "individual":
         parties = {
-            item.value["party_id"] for item in definitions if item.value.get("party_id") is not None
+            item.value["party_id"]
+            for allocation, item in zip(allocations, definitions, strict=True)
+            if "authorization" not in allocation and item.value.get("party_id") is not None
         }
         if len(parties) > 1:
             fail("一笔普通收付只能对应同一实际交易方；多收款人使用银行批量付款。")
@@ -98,7 +151,7 @@ def settlement(fact, context):
         },
         actual=True,
     )
-    parts = []
+    parts, authorization_subjects = [], {}
     for index, (allocation, definition) in enumerate(zip(allocations, definitions, strict=True)):
         ob = definition.value
         if "money" not in ob["allowed_settlements"]:
@@ -120,10 +173,36 @@ def settlement(fact, context):
                         ),
                     ],
                 )
-            if allocation.get("recipient_id", ob["party_id"]) != ob["party_id"]:
+            if "authorization" in allocation:
+                recipient = allocation.get("recipient_id")
+                if recipient is None:
+                    fail("银行批量代收付须明确本项实际收款人。", "invalid_input")
+                _adopt_authorization(
+                    fact,
+                    context,
+                    plan,
+                    allocation,
+                    definition,
+                    recipient,
+                    authorization_subjects,
+                )
+            elif allocation.get("recipient_id", ob["party_id"]) != ob["party_id"]:
                 fail(f"银行批量付款第{index + 1}项实际收款人与来源义务不一致。")
-        elif allocation.get("recipient_id", party) != party:
-            fail("实际收款人与来源义务不一致。")
+        else:
+            if "authorization" in allocation:
+                _adopt_authorization(
+                    fact,
+                    context,
+                    plan,
+                    allocation,
+                    definition,
+                    party,
+                    authorization_subjects,
+                )
+            elif ob.get("party_id") is not None and party != ob["party_id"]:
+                fail("实际交易方与来源义务不一致。")
+            if allocation.get("recipient_id", party) != party:
+                fail("实际收款人与来源义务不一致。")
         paid = amount(allocation["amount_fen"])
         line(
             plan,

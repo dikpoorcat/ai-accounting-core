@@ -64,6 +64,7 @@ def checked(value):
 
 
 def total(values):
+    values = tuple(values)
     try:
         return sum_fen(values)
     except ValueError as error:

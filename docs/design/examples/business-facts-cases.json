@@ -3053,6 +3053,481 @@
           "tax"
         ]
       }
+    },
+    {
+      "case_id": "INV-terms",
+      "kind": "investment.terms",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+        "kind": "investment.terms",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "product_id": "eb8edd0f-9840-5b89-b30d-6973d479fa27",
+          "product_type": "other_fund",
+          "legal_form": "securities_fund",
+          "holding_arrangement": "noncurrent",
+          "measurement": "other_financial_cost",
+          "quantity_unit": "units",
+          "terms_source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          },
+          "tax_facts": {
+            "instrument_type": "securities_fund",
+            "source": {
+              "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+            }
+          },
+          "financial_instrument_reference": {
+            "reference": "synthetic-fund-class-A",
+            "source": {
+              "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+            }
+          }
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "adopted_cost_method": "fifo"
+        }
+      }
+    },
+    {
+      "case_id": "INV-acquire",
+      "kind": "investment.acquire",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "3ea2a814-daca-521b-afd3-11f330c9ca88",
+        "kind": "investment.acquire",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "quantity": "3",
+          "purchase_price_fen": "100",
+          "acquisition_fees_fen": "0",
+          "separate_declared_income_fen": "0"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "cost_fen": "100"
+        }
+      }
+    },
+    {
+      "case_id": "INV-income",
+      "kind": "investment.income",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "abc8498b-d37b-51c7-b348-602038120d57",
+        "kind": "investment.income",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "income_character": "fund_distribution",
+          "amount_fen": "20"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "receivable_fen": "20"
+        }
+      }
+    },
+    {
+      "case_id": "INV-dispose",
+      "kind": "investment.dispose",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "894fd9bc-9861-58ac-b6f5-1fd74e4e369d",
+        "kind": "investment.dispose",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "quantity": "1",
+          "gross_proceeds_fen": "40",
+          "disposal_fees_fen": "0",
+          "exit_mode": "redemption"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "cost_fen": "33",
+          "gain_loss_fen": "7"
+        }
+      }
+    },
+    {
+      "case_id": "INV-capital_return",
+      "kind": "investment.capital_return",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "c486510e-2022-50c1-81d9-b22af88aab1e",
+        "kind": "investment.capital_return",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "source": {
+            "business_id": "3ea2a814-daca-521b-afd3-11f330c9ca88",
+            "slot": "cost"
+          },
+          "amount_fen": "20"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "remaining_cost_fen": "80",
+          "investment_income_fen": "0"
+        }
+      }
+    },
+    {
+      "case_id": "INV-reinvest",
+      "kind": "investment.reinvest",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "4f6c5f3d-ed85-565e-849a-405254dfbdeb",
+        "kind": "investment.reinvest",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "income_source": {
+            "business_id": "abc8498b-d37b-51c7-b348-602038120d57",
+            "slot": "income"
+          },
+          "quantity": "1",
+          "amount_fen": "20",
+          "acquisition_fees_fen": "0"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "new_cost_fen": "20",
+          "cashflow_fen": "0"
+        }
+      }
+    },
+    {
+      "case_id": "INV-unit_change",
+      "kind": "investment.unit_change",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "8d03df1e-dd16-5fd1-9379-217a01011fea",
+        "kind": "investment.unit_change",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "source": {
+            "business_id": "3ea2a814-daca-521b-afd3-11f330c9ca88",
+            "slot": "cost"
+          },
+          "quantity_after": "6"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "cost_fen": "100",
+          "quantity": "6"
+        }
+      }
+    },
+    {
+      "case_id": "INV-loss",
+      "kind": "investment.loss",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "b0c11b29-cd03-51fb-af2b-31e634a2a83e",
+        "kind": "investment.loss",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "source": {
+            "business_id": "3ea2a814-daca-521b-afd3-11f330c9ca88",
+            "slot": "cost"
+          },
+          "quantity": "3",
+          "loss_basis": "legal_extinction",
+          "recovered_fen": "0"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "actual_loss_fen": "100"
+        }
+      }
+    },
+    {
+      "case_id": "INV-debt_interest",
+      "kind": "investment.debt_interest",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "直接长期债券：成本102000分、面值100000分、两个等长付息期，每期合同票息10000分。"
+      ],
+      "when": {
+        "business_id": "3a9232bf-ad40-5ec9-9175-4a5b7179cdab",
+        "kind": "investment.debt_interest",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "source": {
+            "business_id": "3ea2a814-daca-521b-afd3-11f330c9ca88",
+            "slot": "cost"
+          },
+          "payment_on": "2026-01-31"
+        },
+        "effective_on": "2026-01-31"
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "contract_coupon_fen": "10000",
+          "premium_amortization_fen": "1000",
+          "gain_loss_fen": "9000"
+        }
+      }
+    },
+    {
+      "case_id": "INV-holding_change",
+      "kind": "investment.holding_change",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "a4c7169c-f1bc-5c87-aa82-9ef451c0ae2a",
+        "kind": "investment.holding_change",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "holding_arrangement": "current",
+          "effective_from": "2026-01-15",
+          "change_source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          }
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "investment_income_fen": "0",
+          "cashflow_fen": "0"
+        }
+      }
+    },
+    {
+      "case_id": "INV-market_estimate",
+      "kind": "investment.market_estimate",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "5d07ebb2-c5eb-5b3d-bea1-d4f8cb91e6d7",
+        "kind": "investment.market_estimate",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "estimated_value_fen": "120",
+          "as_of_on": "2026-01-15",
+          "estimate_source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          }
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "formal_cost_fen": "100",
+          "investment_income_fen": "0"
+        }
+      }
+    },
+    {
+      "case_id": "INV-taxes.financial_transfer_basis",
+      "kind": "taxes.financial_transfer_basis",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "e65523fc-051a-5841-bd8e-77a3e1417ac7",
+        "kind": "taxes.financial_transfer_basis",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "method": "weighted_average",
+          "elected_on": "2026-01-15",
+          "source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          },
+          "vat_policy_ids": [
+            "a8ab7217-64bf-5b03-8a1c-ba2e50807e5a"
+          ]
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "method": "weighted_average"
+        }
+      }
+    },
+    {
+      "case_id": "INV-taxes.partnership_allocation",
+      "kind": "taxes.partnership_allocation",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "6f14fab5-79c5-55d0-a87b-291c912c9521",
+        "kind": "taxes.partnership_allocation",
+        "period": "2026-12",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "investment_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "tax_year": 2026,
+          "allocated_taxable_income_fen": "5000",
+          "distributed_income_fen": "2000",
+          "retained_income_fen": "3000",
+          "source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          },
+          "distributions": [
+            {
+              "source": {
+                "business_id": "abc8498b-d37b-51c7-b348-602038120d57",
+                "slot": "main"
+              },
+              "amount_fen": "2000"
+            }
+          ]
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "annual_inclusion_fen": "5000",
+          "annual_adjustment_fen": "3000"
+        }
+      }
+    },
+    {
+      "case_id": "INV-investment.unit_change_basis",
+      "kind": "investment.unit_change_basis",
+      "given": [
+        "隔离合同样例；原份额调整已由正式结果成立，真实转换公告明确同一产品的1比2转换。"
+      ],
+      "when": {
+        "business_id": "ecc26a15-e4eb-5091-b774-385733b9d150",
+        "kind": "investment.unit_change_basis",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "product_id": "eb8edd0f-9840-5b89-b30d-6973d479fa27",
+          "action_reference": "合成份额转换公告001",
+          "effective_on": "2026-01-15",
+          "from_units": "1",
+          "to_units": "2",
+          "unit_change_sources": [
+            {
+              "business_id": "8d03df1e-dd16-5fd1-9379-217a01011fea",
+              "slot": "main"
+            }
+          ],
+          "source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          }
+        }
+      },
+      "then": {
+        "schema": "valid"
+      }
     }
   ],
   "negative_cases": [
@@ -3667,6 +4142,72 @@
         "schema": "valid",
         "business": "rejected",
         "reason": "确认顺序与实际月份矛盾，不能调换或猜日期使其通过。"
+      }
+    },
+    {
+      "case_id": "INV-caller-cost-rejected",
+      "kind": "investment.dispose",
+      "given": [
+        "隔离合成案例，前提按同类真实应用测试构造，不把互斥案例连续入同一本账。",
+        "相应条款、批次或收益已由公开正式结果成立；原批次3份、成本100分。"
+      ],
+      "when": {
+        "business_id": "894fd9bc-9861-58ac-b6f5-1fd74e4e369d",
+        "kind": "investment.dispose",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
+          "counterparty_id": "ae0adf4e-52cc-5317-ae24-6b414e9b03f4",
+          "quantity": "1",
+          "gross_proceeds_fen": "40",
+          "disposal_fees_fen": "0",
+          "exit_mode": "redemption",
+          "allocated_cost_fen": "33"
+        },
+        "effective_on": "2026-01-15"
+      },
+      "then": {
+        "schema": "invalid",
+        "reason": "退出成本必须由程序按条款和批次计算。"
+      }
+    },
+    {
+      "case_id": "INV-unit-basis-source-reference-is-not-locator",
+      "kind": "investment.unit_change_basis",
+      "given": [
+        "隔离合同样例；原份额调整已由正式结果成立，真实转换公告明确同一产品的1比2转换。"
+      ],
+      "when": {
+        "business_id": "ecc26a15-e4eb-5091-b774-385733b9d150",
+        "kind": "investment.unit_change_basis",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "product_id": "eb8edd0f-9840-5b89-b30d-6973d479fa27",
+          "action_reference": "合成份额转换公告001",
+          "effective_on": "2026-01-15",
+          "from_units": "1",
+          "to_units": "2",
+          "unit_change_sources": [
+            {
+              "business_id": "8d03df1e-dd16-5fd1-9379-217a01011fea",
+              "slot": "main",
+              "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+            }
+          ],
+          "source": {
+            "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
+          }
+        }
+      },
+      "then": {
+        "schema": "invalid",
+        "reason": "正式业务引用不能混入原件来源字段。"
       }
     }
   ],

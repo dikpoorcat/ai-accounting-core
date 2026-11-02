@@ -23,6 +23,15 @@ def _company_amount(fact, context, trade, rate):
             "同一来源已有池外收付、抵销或债务承接，需要明确这笔实际替公司清了多少。",
         )
     offset = amount(trade.quantity["project_range_from_fen"])
+    expected = interval_share(
+        0, abs(amount(trade.quantity["project_amount_fen"])), rate, offset=offset
+    )
+    if expected != abs(amount(trade.quantity["company_net_amount_fen"])):
+        missing(
+            fact,
+            "/data/company_amount_fen",
+            "原未清款已采用的实际公司分配与通常份额不同，需要明确本次真实清偿的公司金额。",
+        )
     before = 0
     for other in agencies_for(fact, context):
         if event_order(other) >= event_order(fact):

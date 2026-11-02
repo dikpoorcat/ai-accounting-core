@@ -16,6 +16,13 @@ class BusinessAmount:
 # These are actual business events; contracts, projections and evidence-only profiles are not.
 EVENT_KINDS = frozenset(
     {
+        "investment.acquire",
+        "investment.income",
+        "investment.dispose",
+        "investment.capital_return",
+        "investment.reinvest",
+        "investment.loss",
+        "investment.debt_interest",
         "operations.service_sale",
         "operations.expense",
         "operations.other_income",
@@ -58,6 +65,18 @@ EVENT_KINDS = frozenset(
 
 def amount(content):
     kind, values = content.target["kind"], content.target.get("values", {})
+    if kind.startswith("investment.") and "terms_id" in values:
+        if kind in {
+            "investment.terms",
+            "investment.position",
+            "investment.unit_change",
+            "investment.holding_change",
+            "investment.market_estimate",
+        }:
+            return BusinessAmount(None, "不产生业务金额", "not_applicable")
+        if kind == "investment.loss":
+            return BusinessAmount(values["cost_fen"], "实际损失金额")
+        return BusinessAmount(values["amount_fen"], "投资业务金额")
     match kind:
         case "operations.service_sale" | "operations.advance" | "operations.advance_fulfillment":
             value, label = values["gross_fen"], "业务金额"
@@ -119,6 +138,14 @@ def amount(content):
                 parse_fen(values["vat_credit_fen"]) + parse_fen(values["surtax_credit_fen"])
             )
             label = "税费退抵金额"
+        case "taxes.financial_transfer_basis":
+            if values.get("type") != "financial_transfer_position":
+                return BusinessAmount(None, "计税方法采用不产生金额", "not_applicable")
+            value = format_fen(
+                parse_fen(values["recognized_tax_change_fen"])
+                + parse_fen(values["interest_vat_fen"])
+            )
+            label = "本月投资增值税影响"
         case _:
             return BusinessAmount(None, "业务金额", "unknown")
     return BusinessAmount(value, label)

@@ -166,7 +166,7 @@ const sectionLinks = computed(() => {
     { id: "funds-overview", label: "概览" },
     { id: "fund-accounts", label: "账户" },
   ];
-  if (investmentProducts.value.length) links.push({ id: "fund-investments", label: "货币基金" });
+  if (investmentProducts.value.length || funds.value.investments.event_count) links.push({ id: "fund-investments", label: "投资与理财" });
   if (attentionItems.value.length || funds.value?.attention_account_count) links.push({ id: "funds-attention", label: "关注" });
   links.push({ id: "bank-details", label: "资金明细" });
   return links;
@@ -1067,58 +1067,85 @@ onBeforeUnmount(() => {
           <DashboardPagination automatic :active="!loading && ['fund-accounts', 'funds-attention', 'bank-details'].includes(activeSection)" :scope="paginationScope('accounts')" @pause="pausePages('accounts', $event)" compact item-label="个账户" :page="funds.collections.accounts?.page" :loaded="accounts.length" :loading="pageStates.accounts.loading" :error="pageStates.accounts.error" @more="loadMore('accounts')" @retry="loadMore('accounts')" />
         </section>
 
-        <section v-if="investmentProducts.length" id="fund-investments"
+        <section v-if="investmentProducts.length || funds.investments.event_count" id="fund-investments"
           class="panel section-panel section-anchor" tabindex="-1" aria-labelledby="fund-investments-title">
           <div class="section-heading">
-            <div><h2 id="fund-investments-title">货币基金</h2></div>
-            <strong>期末账面成本 {{ formatFen(funds.investments.closing_cost_fen) }}</strong>
+            <div><h2 id="fund-investments-title">投资与理财</h2></div>
+            <strong>金融投资账面金额 {{ formatFen(funds.investments.closing_cost_fen) }}</strong>
           </div>
-          <p class="muted">按账面成本列示，不代表当前市值；未计入上方账户资金。</p>
-          <p class="muted">本月确认收益 {{ formatFen(funds.investments.investment_income_fen) }} ·
-            实际申购付款 <span :class="cashFlowClass(funds.investments.actual_payments_fen, 'outflow')">{{ formatFen(funds.investments.actual_payments_fen) }}</span> ·
-            实际赎回到账 <span :class="cashFlowClass(funds.investments.actual_receipts_fen, 'inflow')">{{ formatFen(funds.investments.actual_receipts_fen) }}</span></p>
-          <div class="table-wrap" data-section-focus role="region" aria-label="基金产品汇总" tabindex="0">
+          <p class="muted">金融投资按账面金额列示，不代表当前市值；合作项目权益与代管资金分别列示，未计入上方账户资金。</p>
+          <p class="muted">本月投资收益（已计投资增值税）{{ formatFen(funds.investments.investment_income_fen) }} ·
+            实际投资付款 <span :class="cashFlowClass(funds.investments.actual_payments_fen, 'outflow')">{{ formatFen(funds.investments.actual_payments_fen) }}</span> ·
+            实际投资到账 <span :class="cashFlowClass(funds.investments.actual_receipts_fen, 'inflow')">{{ formatFen(funds.investments.actual_receipts_fen) }}</span></p>
+          <p class="muted">未扣投资增值税的确认收益 {{ formatFen(funds.investments.recognized_income_fen) }} ·
+            投资增值税影响 {{ formatFen(funds.investments.vat_adjustment_fen) }}
+            <template v-if="fen(funds.investments.actual_loss_fen) !== 0n"> · 实际投资损失 {{ formatFen(funds.investments.actual_loss_fen) }}</template></p>
+          <p class="muted">产品收益未扣投资增值税；金融转让增值税由公司统一核算。实际投资损失另列。</p>
+          <div v-if="investmentProducts.length" class="table-wrap" data-section-focus role="region" aria-label="投资产品汇总" tabindex="0">
             <table class="investment-table investment-summary-table">
               <colgroup><col><col class="investment-amount-column"><col class="investment-amount-column"></colgroup>
-              <thead><tr><th scope="col">产品</th><th scope="col" class="number">月末账面成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
-              <tbody><tr v-for="item in investmentProducts" :key="item.fund_id">
-                <td>{{ item.name }}</td><td class="number">{{ formatFen(item.closing_cost_fen) }}</td>
-                <td class="number">{{ formatFen(item.investment_income_fen) }}</td>
+              <thead><tr><th scope="col">产品／项目</th><th scope="col" class="number">月末账面金额／合作权益</th><th scope="col" class="number">未扣增值税收益</th></tr></thead>
+              <tbody><tr v-for="item in investmentProducts" :key="item.investment_id || item.fund_id">
+                <td>
+                  {{ item.name }}<small v-if="item.category_label" class="muted"> · {{ item.category_label }}</small>
+                  <div v-if="item.activity_only" class="muted">收益及收款记录</div>
+                  <div v-if="item.holding_label" class="muted">{{ item.holding_label }}</div>
+                  <div v-if="item.quantity_label" class="muted">{{ item.quantity_label }}</div>
+                  <div v-if="item.accrued_income_fen && item.accrued_income_fen !== '0'" class="muted">
+                    已确认待收收益 {{ formatFen(item.accrued_income_fen) }}
+                  </div>
+                  <div v-if="item.pending_receipts_fen && item.pending_receipts_fen !== '0'" class="muted">
+                    投资待收款合计 {{ formatFen(item.pending_receipts_fen) }}
+                  </div>
+                  <div v-if="item.market_value_fen !== undefined" class="muted">
+                    {{ formatDate(item.market_as_of ?? null) }}参考估值 {{ formatFen(item.market_value_fen) }}
+                  </div>
+                  <div v-if="item.product_type === 'cooperation'" class="muted">
+                    代管资金 {{ formatFen(item.cooperation_held_fen) }} ·
+                    经营者待补 {{ formatFen(item.cooperation_operator_due_fen) }} ·
+                    公司待补 {{ formatFen(item.cooperation_company_due_fen) }}
+                  </div>
+                </td>
+                <td class="number" :data-label="item.product_type === 'cooperation' ? '合作权益' : '月末账面金额'">{{ item.activity_only ? '—' : formatFen(item.product_type === 'cooperation' ? item.cooperation_equity_fen : item.closing_cost_fen) }}</td>
+                <td class="number">{{ item.product_type === 'cooperation' ? '计入经营损益' : formatFen(item.recognized_income_fen) }}
+                  <small v-if="fen(item.actual_loss_fen) !== 0n" class="muted">实际损失 {{ formatFen(item.actual_loss_fen) }}</small></td>
               </tr></tbody></table>
           </div>
           <DashboardPagination automatic :active="!loading && activeSection === 'fund-investments'" :scope="paginationScope('investment_products')" @pause="pausePages('investment_products', $event)" compact item-label="个产品" :page="funds.collections.investment_products?.page" :loaded="investmentProducts.length" :loading="pageStates.investment_products.loading" :error="pageStates.investment_products.error" @more="loadMore('investment_products')" @retry="loadMore('investment_products')" />
           <details class="investment-details">
-          <summary>查看申购、赎回与收付款明细</summary>
+          <summary>查看取得、退出与收付款明细</summary>
           <p class="muted">确认金额与实际收付款分别列示，确认收益不等于已经到账。</p>
-          <div class="table-wrap" data-section-focus role="region" aria-label="基金成本变动" tabindex="0">
+          <div class="table-wrap" data-section-focus role="region" aria-label="投资账面金额变动" tabindex="0">
             <table class="investment-table investment-cost-table">
               <colgroup><col><col v-for="column in 5" :key="column" class="investment-amount-column"></colgroup>
-              <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初成本</th><th scope="col" class="number">申购成本变动</th>
-              <th scope="col" class="number">赎回成本变动</th><th scope="col" class="number">期末成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
-              <tbody><tr v-for="item in investmentProducts" :key="item.fund_id">
+              <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初账面金额</th><th scope="col" class="number">新增投资成本</th>
+              <th scope="col" class="number">退出账面金额</th><th scope="col" class="number">期末账面金额</th><th scope="col" class="number">未扣增值税收益</th></tr></thead>
+              <tbody><tr v-for="item in investmentProducts.filter(product => product.product_type !== 'cooperation' && !product.activity_only)" :key="item.investment_id || item.fund_id">
                 <td>{{ item.name }}</td>
                 <td class="number">{{ formatFen(item.opening_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.subscription_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.redemption_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.closing_cost_fen) }}</td>
-                <td class="number">{{ formatFen(item.investment_income_fen) }}</td>
+                <td class="number">{{ formatFen(item.recognized_income_fen) }}</td>
               </tr></tbody></table>
           </div>
           <h3>本月确认及收付款</h3>
-          <div v-if="investmentEvents.length" class="table-wrap" data-section-focus role="region" aria-label="基金确认及收付款明细" tabindex="0">
+          <div v-if="investmentEvents.length" class="table-wrap" data-section-focus role="region" aria-label="投资确认及收付款明细" tabindex="0">
             <table class="investment-table investment-events-table">
               <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"></colgroup>
               <thead><tr><th scope="col">日期／所属月</th><th scope="col">产品及事项</th><th scope="col" class="number">确认成本</th>
-              <th scope="col" class="number">确认赎回净款</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th></tr></thead>
+              <th scope="col" class="number">确认对价或收益权利</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th></tr></thead>
               <tbody><tr v-for="item in investmentEvents" :key="item.id">
-                <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}<BusinessStatusDetails :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical" summary-label="查看业务事项" @changed="refreshChanged" /></td>
+                <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}
+                  <small v-if="item.actual_loss_fen !== null && fen(item.actual_loss_fen) !== 0n" class="muted">实际投资损失 {{ formatFen(item.actual_loss_fen) }}</small>
+                  <BusinessStatusDetails :subject-id="item.subject_id" :period="selectedPeriod" :snapshot-version="snapshotVersion" settlement-view="historical" summary-label="查看业务事项" @changed="refreshChanged" /></td>
                 <td class="number">{{ item.cost_fen === null ? "—" : formatFen(item.cost_fen) }}</td>
                 <td class="number">{{ item.net_proceeds_fen === null ? "—" : formatFen(item.net_proceeds_fen) }}</td>
                 <td class="number">{{ item.investment_income_fen === null ? "—" : formatFen(item.investment_income_fen) }}</td>
                 <td class="number">{{ item.settlement_fen === null ? "—" : formatFen(item.settlement_fen) }}</td>
               </tr></tbody></table>
           </div>
-          <p v-else class="empty">{{ loading ? "正在读取基金明细…" : "本月没有已确认的申赎或实际收付款。" }}</p>
+          <p v-else class="empty">{{ loading ? "正在读取投资明细…" : "本月没有投资确认或实际收付款。" }}</p>
           <DashboardPagination automatic :active="!loading && activeSection === 'fund-investments'" :scope="paginationScope('investment')" @pause="pausePages('investment', $event)" compact item-label="条明细" :page="funds.collections.investment_events?.page" :loaded="investmentEvents.length" :loading="pageStates.investment.loading" :error="pageStates.investment.error" @more="loadMore('investment')" @retry="loadMore('investment')" />
           </details>
         </section>
@@ -2406,16 +2433,19 @@ tbody tr:last-child td {
   .investment-table tr { padding: 12px 4px; border-bottom: 1px solid var(--line); }
   .investment-table td { display: grid; grid-template-columns: minmax(90px, .6fr) minmax(0, 1fr); gap: 10px; padding: 6px 0; border: 0; overflow-wrap: anywhere; }
   .investment-table td::before { color: var(--muted); text-align: left; }
+  .investment-summary-table td:first-child { display: block; }
+  .investment-summary-table td:nth-child(2)::before { content: attr(data-label); }
+  .investment-summary-table td:nth-child(3)::before { content: "未扣增值税收益"; }
   .investment-cost-table td:nth-child(1)::before { content: "产品"; }
-  .investment-cost-table td:nth-child(2)::before { content: "期初成本"; }
-  .investment-cost-table td:nth-child(3)::before { content: "申购成本变动"; }
-  .investment-cost-table td:nth-child(4)::before { content: "赎回成本变动"; }
-  .investment-cost-table td:nth-child(5)::before { content: "期末成本"; }
-  .investment-cost-table td:nth-child(6)::before { content: "本月确认收益"; }
+  .investment-cost-table td:nth-child(2)::before { content: "期初账面金额"; }
+  .investment-cost-table td:nth-child(3)::before { content: "新增投资成本"; }
+  .investment-cost-table td:nth-child(4)::before { content: "退出账面金额"; }
+  .investment-cost-table td:nth-child(5)::before { content: "期末账面金额"; }
+  .investment-cost-table td:nth-child(6)::before { content: "未扣增值税收益"; }
   .investment-events-table td:nth-child(1)::before { content: "日期／所属月"; }
   .investment-events-table td:nth-child(2)::before { content: "产品及事项"; }
   .investment-events-table td:nth-child(3)::before { content: "确认成本"; }
-  .investment-events-table td:nth-child(4)::before { content: "确认赎回净款"; }
+  .investment-events-table td:nth-child(4)::before { content: "确认对价或收益权利"; }
   .investment-events-table td:nth-child(5)::before { content: "确认收益"; }
   .investment-events-table td:nth-child(6)::before { content: "实际收付款"; }
   .table-wrap { overflow-x: visible; }

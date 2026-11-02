@@ -5,6 +5,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import ContractError, format_fen, parse_rate
 
+from . import _investment_vat
 from ._actual import check_actual, declarations
 from ._common import (
     adopt_source,
@@ -22,6 +23,8 @@ from ._common import (
 )
 from ._credits import apply_credits
 from ._filing import filing
+from ._financial_transfer import SLOT_PREFIX
+from ._investment_effects import check_effects
 from ._policies import adopt_policy
 
 
@@ -97,9 +100,7 @@ def calculate(fact, sales, policy, surtax):
         elif row["invoice_kind"] == "ordinary":
             ordinary = total((ordinary, amount(row["net_sales_fen"])))
     if used_tax < 0 or any(value < 0 for value in groups.values()):
-        _unsupported_calculation(
-            fact, "当前参考算法未覆盖不同类别或税率的净退回，不能互相套率。"
-        )
+        _unsupported_calculation(fact, "当前参考算法未覆盖不同类别或税率的净退回，不能互相套率。")
     nominal_groups, reduction_groups = defaultdict(int), defaultdict(int)
     for (nominal, payable), value in groups.items():
         if payable > nominal:
@@ -161,9 +162,15 @@ def calculate(fact, sales, policy, surtax):
     return metrics, fields
 
 
-def _actual_metrics(fact, source, sales, reference):
+def _actual_metrics(
+    fact, source, sales, reference, *, reconcile=True, accrued_override=None, relief_capacity=None
+):
     data = source["data"]
-    accrued = total(amount(row["vat_fen"]) for row in sales)
+    accrued = (
+        total(amount(row["vat_fen"]) for row in sales)
+        if accrued_override is None
+        else accrued_override
+    )
     metrics = {
         "type": "vat",
         "net_sales_fen": format_fen(total(amount(row["net_sales_fen"]) for row in sales)),
@@ -179,7 +186,7 @@ def _actual_metrics(fact, source, sales, reference):
     }
     payable = amount(data["assessed_vat_fen"])
     relief = amount(data.get("exemption_relief_fen", "0"))
-    if relief > max(0, accrued):
+    if relief > (max(0, accrued) if relief_capacity is None else relief_capacity):
         reject("本期实际免税采用金额不能超过可核对的本期已计VAT。", "invalid_input")
     if "exemption_relief_fen" in data:
         metrics["relief_fen"] = data["exemption_relief_fen"]
@@ -192,14 +199,54 @@ def _actual_metrics(fact, source, sales, reference):
     ):
         metrics["relief_fen"] = reference["relief_fen"]
         metrics["rounding_adjustment_fen"] = reference["rounding_adjustment_fen"]
-    elif payable + relief != accrued and not (accrued < 0 and payable == 0 and relief == 0):
+    elif (
+        reconcile
+        and payable + relief != accrued
+        and not (accrued < 0 and payable == 0 and relief == 0)
+    ):
         missing(
-            fact,
-            "/data/actual_declaration",
+            source,
+            "/data",
             "实际应纳、明确免税与正式已计VAT不能对平；需要差额的真实会计原因及来源，"
             "补齐相关业务或免税依据后再采用，不能把差额记作舍入、损失或退税。",
         )
     return metrics
+
+
+def _ordinary_actual_metrics(fact, source, sales, reference, whole, investment, final):
+    """Project the sourced whole-period exemption onto the ordinary ledger component."""
+    ordinary_source = deepcopy(source)
+    payable = total((amount(whole["payable_vat_fen"]), -final["transfer"], -final["interest"]))
+    ordinary_source["data"]["assessed_vat_fen"] = str(payable)
+    if "relief_fen" in whole:
+        accrued = total(amount(row["vat_fen"]) for row in sales)
+        matched = reference is not None and payable == amount(reference["payable_vat_fen"])
+        rounding = amount(reference["rounding_adjustment_fen"]) if matched else 0
+        ordinary_relief = total((accrued, rounding, -payable))
+        if accrued < 0 and payable == 0 and rounding == 0:
+            ordinary_relief = 0  # An actual zero does not turn a net return into exemption income.
+        whole_relief = amount(whole["relief_fen"])
+        if not 0 <= ordinary_relief <= whole_relief:
+            missing(
+                source,
+                "/data/exemption_relief_fen",
+                "整期实际免税额不能解释普通业务的正式已计与实际应纳差额；"
+                "须核实原件及相关业务，不把差额推定为免税或舍入。",
+            )
+        investment_relief = whole_relief - ordinary_relief
+        capacity = total(
+            max(0, investment["recognized"][category] - final[category])
+            for category in ("transfer", "interest")
+        )
+        if investment_relief > capacity:
+            missing(
+                source,
+                "/data/exemption_relief_fen",
+                "整期实际免税额扣除已证明的普通部分后，超过投资各组成的实际降税金额；"
+                "须核实免税来源及实际税额组成，不能重复确认免税收益。",
+            )
+        ordinary_source["data"]["exemption_relief_fen"] = str(ordinary_relief)
+    return _actual_metrics(fact, ordinary_source, sales, reference)
 
 
 def _weights(sales, metrics):
@@ -345,13 +392,14 @@ def vat(fact, context):
         if source["data"]["type"] != "vat":
             reject("VAT计提不能采用其他税种实际来源。", "invalid_input")
     plan = plan_for(fact, context, {})
+    plan["calculation_revision"] = plan["rule_refs"][0]["revision"] = 2
     if source is not None:
         adopted = result_for(
-            fact,
+            source,
             context,
             source["business_id"],
             "taxes.actual_declaration",
-            "/data/actual_declaration",
+            "/",
         )
         adopt_source(plan, adopted.source)
     views = context.tax_sales(data["start_month"], data["end_month"])
@@ -381,6 +429,11 @@ def vat(fact, context):
         data["end_month"],
         required=source is None,
     )
+    ordinary_sales = sales
+    financial_sales, investment = _investment_vat.components(
+        fact, context, plan, policy, source["data"] if source else None, actual_fact=source
+    )
+    sales = [*sales, *financial_sales]
     reference, fields, reference_error = None, None, None
     try:
         if policy is not None and surtax is not None:
@@ -394,9 +447,67 @@ def vat(fact, context):
     if source is None:
         metrics = reference
     else:
-        metrics = _actual_metrics(fact, source, sales, reference)
+        accrued = relief_capacity = None
+        if investment:
+            ordinary_accrued = total(amount(row["vat_fen"]) for row in ordinary_sales)
+            recognized = tuple(investment["recognized"].values())
+            accrued = total((ordinary_accrued, *recognized))
+            relief_capacity = total(
+                (max(0, ordinary_accrued), *(max(0, value) for value in recognized))
+            )
+        metrics = _actual_metrics(
+            fact,
+            source,
+            sales,
+            reference,
+            reconcile=investment is None,
+            accrued_override=accrued,
+            relief_capacity=relief_capacity,
+        )
+    ordinary_metrics = metrics
+    investment_final = None
+    if investment is not None:
+        ordinary_reference = None
+        if reference is not None:
+            ordinary_reference = _investment_vat.ordinary_metrics(
+                fact, ordinary_sales, reference, policy, surtax, calculate
+            )
+        if (
+            source is not None
+            and (reference is None or metrics["payable_vat_fen"] != reference["payable_vat_fen"])
+            and not all(
+                field in source["data"]
+                for field in ("financial_transfer_vat_fen", "investment_interest_vat_fen")
+            )
+        ):
+            missing(
+                source,
+                "/data/financial_transfer_vat_fen",
+                "实际VAT与参考不同，需要来源明确投资税额组成后接续，不能按比例猜测。",
+            )
+        investment_final = _investment_vat.final_amounts(
+            source or fact,
+            investment,
+            metrics,
+            ordinary_reference or metrics,
+            source["data"] if source else None,
+        )
+        if source is not None:
+            ordinary_metrics = _ordinary_actual_metrics(
+                fact,
+                source,
+                ordinary_sales,
+                ordinary_reference,
+                metrics,
+                investment,
+                investment_final,
+            )
+        else:
+            ordinary_metrics = ordinary_reference
     plan["target"]["values"] = metrics
-    filing(fact, metrics, sales, policy, fields, source["data"] if source else None)
+    filing(
+        fact, metrics, sales, policy, fields, source["data"] if source else None, actual_fact=source
+    )
     if reference_error is not None:
         problems = reference_error.fact_issues or (
             issue(
@@ -418,17 +529,49 @@ def vat(fact, context):
     ):
         metrics["filing_issues"].append(
             issue(
-                fact,
-                "/data/actual_declaration",
+                source,
+                "/data/assessed_vat_fen",
                 "有源实际税额与参考不同；正式账目已对平，申报明细仍以实际来源为准。",
                 blocking_scope="none",
             )
         )
     if metrics["filing_issues"] and metrics["filing_state"] == "ready":
         metrics["filing_state"] = "partial"
-    _tax_lines(plan, metrics)
+    _tax_lines(plan, ordinary_metrics)
+    _investment_vat.adjustment_lines(plan, investment, investment_final)
     weights = _weights(sales, metrics)
-    obligation(plan, "vat", "222101", amount(metrics["payable_vat_fen"]), weights=weights)
+    transfer_vat = investment_final["transfer"] if investment_final else 0
+    obligation(
+        plan, "vat", "222101", amount(metrics["payable_vat_fen"]) - transfer_vat, weights=weights
+    )
+    has_investment_position = any(
+        source["result_slot"].startswith(SLOT_PREFIX) for source in plan["basis"]["source_results"]
+    )
+    if has_investment_position:
+        obligation(plan, "financial_transfer_vat", "222107", transfer_vat, weights=weights)
+        plan["basis"]["adopted_quantities"].append(
+            {
+                "type": "financial_transfer_tax_assessment",
+                "tax_period_start": data["start_month"],
+                "tax_period_end": data["end_month"],
+                "obligation_slot": "financial_transfer_vat",
+                "amount_fen": str(transfer_vat),
+            }
+        )
     obligation(plan, "surtax", "222102", amount(metrics["surtax_fen"]), weights=weights)
     _credit_lines(plan, credits)
+    ordinary_exemption = total(
+        (
+            amount(ordinary_metrics.get("relief_fen", "0")),
+            *(-amount(credit.basis["input"]["exemption_reversal_fen"]) for credit in credits),
+        )
+    )
+    plan["basis"]["adopted_quantities"].append(
+        {
+            "type": "ordinary_vat_accounting",
+            "exemption_income_fen": str(ordinary_exemption),
+            "rounding_adjustment_fen": ordinary_metrics.get("rounding_adjustment_fen", "0"),
+        }
+    )
+    check_effects(plan)
     return plan

@@ -16,22 +16,7 @@ from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
 from ai_accounting_modular.storage._immutable_tree import structure
 from ai_accounting_modular.storage.public import block_digest as digest
-
-
-class Blocks:
-    header_json = None
-
-    def __init__(self):
-        self.values = {}
-
-    def get_blocks(self, keys):
-        return tuple(self.values.get(key) for key in keys)
-
-    def publish(self, plan):
-        for key in plan.deletes:
-            del self.values[key]
-        self.values.update(((collection, key), raw) for collection, key, raw in plan.writes)
-        self.header_json = plan.header_json
+from tests.modular._projection_blocks import Blocks as Blocks
 
 
 def scope(book, month="2026-01", view="as_posted"):

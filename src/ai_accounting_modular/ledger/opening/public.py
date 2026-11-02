@@ -22,7 +22,16 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 from ._asset_accounting import AssetAccounting
 from ._common import base_plan, fail, total
 from ._facts import dependencies, validate_fact, validate_roles
+from ._investment_accounting import (
+    INVESTMENT_MEMBERS,
+    InvestmentAccounting,
+)
+from ._investment_accounting import (
+    OpeningInvestmentAccounting as OpeningInvestmentAccounting,
+)
 from ._members import CALCULATORS, asset_balances
+from ._obligation_read import OpeningCooperationTradeReference as OpeningCooperationTradeReference
+from ._obligation_read import OpeningInvestmentReference as OpeningInvestmentReference
 from ._obligation_read import OpeningLoanReference as OpeningLoanReference
 from ._obligation_read import OpeningOrdinaryReference as OpeningOrdinaryReference
 from ._obligation_read import OpeningTaxReference as OpeningTaxReference
@@ -40,8 +49,14 @@ def repository_factory() -> RepositoryFactory:
 class Opening:
     supported_kinds = ("opening.package",)
 
-    def __init__(self, *, asset_accounting: OpeningAssetAccounting | None = None):
+    def __init__(
+        self,
+        *,
+        asset_accounting: OpeningAssetAccounting | None = None,
+        investment_accounting: OpeningInvestmentAccounting | None = None,
+    ):
         self._asset_accounting = AssetAccounting(asset_accounting)
+        self._investment_accounting = InvestmentAccounting(investment_accounting)
 
     def declare_relations(self, changes, context: EvaluationContext) -> tuple[DirectRelation, ...]:
         return tuple(
@@ -71,6 +86,7 @@ class Opening:
                     fail("期初责任缺少相同业务身份的完整事实。", "invalid_input")
                 validate_fact(fact, context)
                 validate_roles(fact, context)
+                self._investment_accounting.require_for(fact)
                 assets = self._asset_accounting.describe(fact, context)
                 responsibility.update(
                     fact=deepcopy(fact),
@@ -113,7 +129,10 @@ class Opening:
             return self._asset_accounting.evaluate(fact, result_slot, context)
         cards = self._asset_accounting.cards(fact, context)
         plan = base_plan(fact, context)
+        self._investment_accounting.apply(plan, fact, context)
         for member in sorted(fact["data"]["members"], key=lambda item: item["member_id"]):
+            if member["data"]["type"] in INVESTMENT_MEMBERS:
+                continue
             if member["data"]["type"] == "asset":
                 asset_balances(plan, member, cards[member["data"]["asset_id"]])
             else:
@@ -138,6 +157,7 @@ class Opening:
                 validate_fact(responsibility["fact"], context)
                 validate_roles(responsibility["fact"], context)
                 self._asset_accounting.require_for(responsibility["fact"])
+                self._investment_accounting.require_for(responsibility["fact"])
         self._asset_accounting.validate(plan, context)
 
     def apply_current(self, plan: ChangePlan, uow: UnitOfWork) -> None:
@@ -170,5 +190,9 @@ class Opening:
         return read_context.repository("ledger.opening").query(query)
 
 
-def create_opening(*, asset_accounting: OpeningAssetAccounting | None = None) -> Opening:
-    return Opening(asset_accounting=asset_accounting)
+def create_opening(
+    *,
+    asset_accounting: OpeningAssetAccounting | None = None,
+    investment_accounting: OpeningInvestmentAccounting | None = None,
+) -> Opening:
+    return Opening(asset_accounting=asset_accounting, investment_accounting=investment_accounting)

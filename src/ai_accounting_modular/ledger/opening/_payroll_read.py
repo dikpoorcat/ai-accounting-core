@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from ai_accounting_modular.contracts.public import BusinessRef
+from ai_accounting_modular.contracts.public import BusinessRef, EvaluatedSlot
 
 from ._read_members import member_reference, validated_members
 
@@ -25,7 +25,9 @@ class OpeningPayrollReference:
     tax_period: str | None
 
 
-def opening_payroll_references(content: AdoptedContent) -> tuple[OpeningPayrollReference, ...]:
+def opening_payroll_references(
+    content: AdoptedContent | EvaluatedSlot,
+) -> tuple[OpeningPayrollReference, ...]:
     business_id, members = validated_members(content)
     result = []
     for member in members:

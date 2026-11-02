@@ -10,6 +10,7 @@ from ._cooperation_common import PREFIX, adopt_result, cooperation_plan
 from ._cooperation_events import inputs, project_facts, require_book_start, totals
 from ._cooperation_math import Totals, position
 from ._cooperation_month import month_inputs
+from ._cooperation_opening import apply_snapshot, opening_snapshot
 
 _TOTAL_KEYS = {
     field.name: field.name.removeprefix("company_")
@@ -47,6 +48,13 @@ def position_plan(fact, result_slot, context):
     previous = _previous(fact, period, context)
     exclusions = (fact["business_id"], result_slot)
     proof_sources, initial_ended = [], False
+    snapshot = previous.target["values"].get("opening_state") if previous is not None else None
+    opening_result = None
+    if previous is None:
+        snapshot, opening_result = opening_snapshot(fact["business_id"], context, period)
+    if opening_result is not None:
+        proof_sources.append(opening_result.source)
+        initial_ended = snapshot["status"] in {"operations_ended", "settled"}
     start = context.read_context.start_period
     if previous is None and YearMonth(start).ordinal:
         before_start = str(YearMonth.from_ordinal(YearMonth(start).ordinal - 1))
@@ -54,7 +62,7 @@ def position_plan(fact, result_slot, context):
             opening = inputs(fact["business_id"], context, period, excluding_consumer=exclusions)
             require_book_start(fact, opening.events, start)
             proof_sources.extend(opening.sources)
-            initial_ended = any(
+            initial_ended = initial_ended or any(
                 event.period < start
                 and event.fact is not None
                 and event.fact["kind"] == PREFIX + "exit"
@@ -77,7 +85,7 @@ def position_plan(fact, result_slot, context):
     current = previous_totals.plus(
         **{field.name: getattr(monthly, field.name) for field in fields(Totals)}
     )
-    computed = position(current)
+    computed = apply_snapshot(position(current), snapshot)
     if computed["pool_fen"] < 0 or computed["held_fen"] < 0:
         fail("截至该月的已知项目现款或公司代管资金不足，不能推定有无来源借款。")
     receivable = total(
@@ -132,11 +140,17 @@ def position_plan(fact, result_slot, context):
         "company_trade_receivable_net_fen": format_fen(receivable),
         "company_trade_payable_fen": format_fen(payable),
     }
+    if snapshot is not None:
+        values.update(totals_from_period=start, lifetime_totals=None, opening_state=snapshot)
     contract = context.get_result(fact["business_id"], "main")
     accounting_input = {
         "contract_id": fact["business_id"],
         "company_revenue_expense_share": contract.target["values"]["company_revenue_expense_share"],
-        "opening": "previous_adopted_position" if previous is not None else "zero_at_start",
+        "opening": "previous_adopted_position"
+        if previous is not None
+        else "opening_snapshot"
+        if snapshot is not None
+        else "zero_at_start",
         "period_totals": {
             _TOTAL_KEYS[field.name]: format_fen(getattr(monthly, field.name))
             for field in fields(Totals)
@@ -150,6 +164,8 @@ def position_plan(fact, result_slot, context):
     plan = cooperation_plan(position_fact, context, values, accounting_input=accounting_input)
     plan["result_slot"] = plan["target"]["result_slot"] = plan["basis"]["result_slot"] = result_slot
     adopt_result(plan, contract)
+    if snapshot is not None:
+        plan["basis"]["adopted_quantities"].append(deepcopy(snapshot))
     if previous is not None:
         adopt_result(plan, previous)
         plan["basis"]["adopted_quantities"].append(
@@ -174,7 +190,8 @@ def position_plan(fact, result_slot, context):
         ("operator_due_fen", "122107", True),
         ("company_due_fen", "224106", False),
     ):
-        delta = computed[field] - amount(previous_values.get(field, "0"))
+        prior = previous_values.get(field, snapshot[field] if snapshot is not None else "0")
+        delta = computed[field] - amount(prior)
         if not delta:
             continue
         debit = (delta > 0) == increase_debit

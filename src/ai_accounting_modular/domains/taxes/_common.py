@@ -49,6 +49,34 @@ def missing(fact, field, message, *, precision=()):
     )
 
 
+def missing_investment_input(
+    event,
+    business_id,
+    field,
+    message,
+    *,
+    precision=("integer_fen", "decimal_quantity", "day", "transaction_sequence"),
+    meaning="投资税务核算所需的现实依据",
+):
+    """Attribute an actual missing investment fact to its adopted source."""
+    raise ContractError(
+        "needs_information",
+        message,
+        fact_issues=[
+            {
+                "business_id": business_id,
+                "code": "missing_fact",
+                "field": field,
+                "meaning": meaning,
+                "message": message,
+                "allowed_precision": list(precision),
+                "reusable_sources": [event["tax_facts"]["source"]],
+                "blocking_scope": "business",
+            }
+        ],
+    )
+
+
 def amount(value):
     return parse_fen(value)
 
@@ -61,8 +89,9 @@ def checked(value):
 
 
 def total(values):
+    values = tuple(values)
     try:
-        return sum_fen(tuple(values))
+        return sum_fen(values)
     except ValueError as error:
         raise ContractError("invalid_input", "税务合计超出有符号64位整数分范围。") from error
 

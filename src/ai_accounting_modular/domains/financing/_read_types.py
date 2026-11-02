@@ -45,6 +45,28 @@ class MoneyFundEvent:
 
 
 @dataclass(frozen=True)
+class InvestmentEvent(MoneyFundEvent):
+    kind: str
+    terms_id: str | None = None
+    actual_loss_fen: int = 0
+
+
+@dataclass(frozen=True)
+class InvestmentIncomeAdjustment:
+    event_id: str
+    business_id: str
+    period: str
+    component: str
+    attribution: Literal["company_pool", "event"]
+    amount_fen: int
+    source: ResultSourceRef
+    adopted: ResultRef
+    correction: bool
+    terms_id: str | None = None
+    product_id: str | None = None
+
+
+@dataclass(frozen=True)
 class MoneyFundActivity:
     """One complete month projection, ready for a reading-owned item index."""
 
@@ -72,6 +94,7 @@ class CooperationPosition:
     held_fen: int
     operator_due_fen: int
     company_due_fen: int
+    company_capital_fen: int
     status: Literal["active", "operations_ended", "settled"]
     reference: ResultRef
     source: ResultSourceRef
@@ -82,3 +105,48 @@ class CooperationPositions:
     version: str
     positions: tuple[CooperationPosition, ...]
     inputs: ReadInputs
+
+
+@dataclass(frozen=True)
+class InvestmentProduct:
+    fund_id: str
+    name: str
+    opening_cost: AmountCell | None
+    closing_cost: AmountCell | None
+    subscription_cost_fen: int
+    redemption_cost_fen: int
+    investment_income_fen: int
+    terms_id: str | None
+    product_type: str
+    measurement: str | None
+    quantity: str | None
+    quantity_unit: str | None
+    accrued_income_fen: int
+    holding_arrangement: str | None = None
+    market_value_fen: int | None = None
+    market_as_of: str | None = None
+    pending_receipts_fen: int = 0
+    actual_loss_fen: int = 0
+    activity_only: bool = False
+
+
+@dataclass(frozen=True)
+class InvestmentActivity:
+    version: str
+    opening_cost: AmountCell
+    closing_cost: AmountCell
+    subscription_cost_fen: int
+    redemption_cost_fen: int
+    investment_income_fen: int
+    actual_payments_fen: int
+    actual_receipts_fen: int
+    event_count: int
+    products: tuple[InvestmentProduct, ...]
+    events: tuple[MoneyFundEvent, ...]
+    issues: tuple[FactIssue, ...]
+    inputs: ReadInputs
+    cooperation_positions: tuple[CooperationPosition, ...]
+    recognized_income_fen: int
+    vat_adjustment_fen: int
+    actual_loss_fen: int
+    income_adjustments: tuple[InvestmentIncomeAdjustment, ...]

@@ -58,6 +58,9 @@ export namespace DashboardFundsDeliveryContract {
   export type ActualPaymentsFen = string;
   export type ActualReceiptsFen = string;
   export type EventCount = number;
+  export type InvestmentIncomeFen1 = string;
+  export type InvestmentIncomeFen2 = string;
+  export type InvestmentIncomeFen3 = string;
   export type TransactionCount = number;
   export type InflowFen1 = string | null;
   export type OutflowFen1 = string | null;
@@ -137,9 +140,11 @@ export namespace DashboardFundsDeliveryContract {
   export type SubscriptionCostFen1 = string;
   export type RedemptionCostFen1 = string;
   export type ClosingCostFen1 = string | null;
-  export type InvestmentIncomeFen1 = string;
   export type Name1 = string;
+  export type InvestmentIncomeFen4 = string;
+  export type InvestmentIncomeFen5 = string;
   export type Items4 = InvestmentProduct[];
+  export type InvestmentEvent = InvestmentEvent1 | InvestmentEvent2;
   export type Id2 = string;
   export type SubjectId1 = string;
   export type Date2 = string | null;
@@ -149,18 +154,30 @@ export namespace DashboardFundsDeliveryContract {
   export type Type3 = string;
   export type CostFen = string | null;
   export type NetProceedsFen = string | null;
-  export type InvestmentIncomeFen2 = string | null;
+  export type InvestmentIncomeFen6 = string | null;
   export type SettlementFen = string | null;
+  export type InvestmentIncomeFen7 = string | null;
+  export type Id3 = string;
+  export type SubjectId2 = string;
+  export type Date3 = string | null;
+  export type Period2 = string;
+  export type Name3 = string;
+  export type Type4 = string;
+  export type CostFen1 = string | null;
+  export type NetProceedsFen1 = string | null;
+  export type InvestmentIncomeFen8 = string | null;
+  export type SettlementFen1 = string | null;
+  export type InvestmentIncomeFen9 = string | null;
   export type Items5 = InvestmentEvent[];
   export type SchemaVersion2 = 6;
   export type CompanyId2 = string;
-  export type Period2 = string | null;
+  export type Period3 = string | null;
   export type ModelVersion1 = string | null;
   export type State2 = "preparing";
   export type RetryAfterMs = number;
   export type SchemaVersion3 = 6;
   export type CompanyId3 = string;
-  export type Period3 = string | null;
+  export type Period4 = string | null;
   export type ModelVersion2 = string | null;
   export type State3 = "failed";
   export type Reason = "corrupt" | "production_failed";
@@ -245,6 +262,10 @@ export namespace DashboardFundsDeliveryContract {
     actual_payments_fen: ActualPaymentsFen;
     actual_receipts_fen: ActualReceiptsFen;
     event_count: EventCount;
+    cooperation_count?: number;
+    recognized_income_fen: InvestmentIncomeFen1;
+    vat_adjustment_fen: InvestmentIncomeFen2;
+    actual_loss_fen: InvestmentIncomeFen3;
   }
   export interface BankStatement {
     transaction_count: TransactionCount;
@@ -367,14 +388,29 @@ export namespace DashboardFundsDeliveryContract {
     subscription_cost_fen: SubscriptionCostFen1;
     redemption_cost_fen: RedemptionCostFen1;
     closing_cost_fen: ClosingCostFen1;
-    investment_income_fen: InvestmentIncomeFen1;
     name: Name1;
+    investment_id?: string;
+    product_type?: "money_fund" | "bank_wealth" | "other_fund" | "bond" | "equity" | "cooperation";
+    category_label?: string;
+    quantity_label?: string;
+    accrued_income_fen?: string;
+    cooperation_held_fen?: string;
+    cooperation_operator_due_fen?: string;
+    cooperation_company_due_fen?: string;
+    holding_label?: string;
+    cooperation_equity_fen?: string;
+    market_value_fen?: string;
+    market_as_of?: string;
+    pending_receipts_fen?: string;
+    recognized_income_fen: InvestmentIncomeFen4;
+    actual_loss_fen: InvestmentIncomeFen5;
+    activity_only?: boolean;
   }
   export interface Collection4 {
     items: Items5;
     page: CollectionPage;
   }
-  export interface InvestmentEvent {
+  export interface InvestmentEvent1 {
     id: Id2;
     subject_id: SubjectId1;
     date: Date2;
@@ -384,13 +420,32 @@ export namespace DashboardFundsDeliveryContract {
     type: Type3;
     cost_fen: CostFen;
     net_proceeds_fen: NetProceedsFen;
-    investment_income_fen: InvestmentIncomeFen2;
+    investment_income_fen: InvestmentIncomeFen6;
     settlement_fen: SettlementFen;
+    actual_loss_fen: InvestmentIncomeFen7;
+    attribution: "event";
+    investment_id: string;
+  }
+  export interface InvestmentEvent2 {
+    id: Id3;
+    subject_id: SubjectId2;
+    date: Date3;
+    period: Period2;
+    fund_id: null;
+    name: Name3;
+    type: Type4;
+    cost_fen: CostFen1;
+    net_proceeds_fen: NetProceedsFen1;
+    investment_income_fen: InvestmentIncomeFen8;
+    settlement_fen: SettlementFen1;
+    actual_loss_fen: InvestmentIncomeFen9;
+    attribution: "company_pool";
+    investment_id: null;
   }
   export interface DashboardPreparing {
     schema_version: SchemaVersion2;
     company_id: CompanyId2;
-    period: Period2;
+    period: Period3;
     model_version: ModelVersion1;
     state: State2;
     retry_after_ms: RetryAfterMs;
@@ -398,7 +453,7 @@ export namespace DashboardFundsDeliveryContract {
   export interface DashboardFailed {
     schema_version: SchemaVersion3;
     company_id: CompanyId3;
-    period: Period3;
+    period: Period4;
     model_version: ModelVersion2;
     state: State3;
     reason: Reason;

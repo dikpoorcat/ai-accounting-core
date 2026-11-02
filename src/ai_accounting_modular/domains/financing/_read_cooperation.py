@@ -121,6 +121,7 @@ def positions(owner, scope, read, contract_ids):
                 amount(data["held_fen"]),
                 amount(data["operator_due_fen"]),
                 amount(data["company_due_fen"]),
+                amount(data["company_capital_fen"]),
                 data["status"],
                 item.reference,
                 item.source,

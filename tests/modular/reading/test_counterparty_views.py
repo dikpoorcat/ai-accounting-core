@@ -153,23 +153,19 @@ def test_funds_distinguish_external_missing_parties_from_company_internal_accoun
     rows = page(case)["data"]["collections"]["movements"]["items"]
     unresolved_ids = {item["business_id"] for item in movements}
     assert {
-        (item["direction"], item["party"])
-        for item in rows
-        if item["subject_id"] in unresolved_ids
+        (item["direction"], item["party"]) for item in rows if item["subject_id"] in unresolved_ids
     } == {("inflow", "付款方未提供"), ("outflow", "收款方未提供")}
     assert [item["party"] for item in rows if item["internal_transfer"]] == [
         "公司内部账户划转",
         "公司内部账户划转",
     ]
     owned_ids = {item["business_id"] for item in owned}
-    assert {
-        item["party"] for item in rows if item["subject_id"] in owned_ids
-    } == {"合成自有平台（公司自有资金）"}
-    assert {
-        row["party"]
-        for row in activity(case)["items"]
-        if row["amount_fen"] == "120"
-    } == {"合成自有平台（公司自有资金）"}
+    assert {item["party"] for item in rows if item["subject_id"] in owned_ids} == {
+        "合成自有平台（公司自有资金）"
+    }
+    assert {row["party"] for row in activity(case)["items"] if row["amount_fen"] == "120"} == {
+        "合成自有平台（公司自有资金）"
+    }
     bank_row = page(case)["data"]["collections"]["statements"]["items"][0]
     assert (bank_row["party"], bank_row["memo"]) == ("原行过渡户名称", "原行平台转回摘要")
     review = case.app.accounting_review(
@@ -210,8 +206,35 @@ def test_closed_current_channel_updates_only_its_activity_and_preserves_vouchers
     capture(case)
     capture_funds(case)
     original_rows = activity(case)["items"]
+    original_subjects = {
+        row["key"]: member_scope(case, row)[0]["subject_id"] for row in original_rows
+    }
+    # Both names initially match. Choose the first actual row, rather than let
+    # random formal-source digests decide whether this case exercises a move.
+    first_key, other_key = (row["key"] for row in original_rows)
+    facts = {item["business_id"]: item for item in (first, other)}
+    first = facts[original_subjects[first_key]]
+    other = facts[original_subjects[other_key]]
+    original_amount = first["data"]["amount_fen"]
+    original_by_key = {row["key"]: row for row in original_rows}
+    original_identities = {
+        row["key"]: (original_subjects[row["key"]], row["amount_fen"]) for row in original_rows
+    }
+    original_funds = {
+        row["subject_id"]: row for row in page(case)["data"]["collections"]["movements"]["items"]
+    }
     original_vouchers = vouchers(case)["items"]
-    reference = case.get(first["business_id"])["businesses"][0]["results"][0]["reference"]
+
+    def formal_references():
+        return {
+            (result["reference"]["business_id"], result["reference"]["result_slot"]): result[
+                "reference"
+            ]
+            for item in case.get(first["business_id"], other["business_id"])["businesses"]
+            for result in item["results"]
+        }
+
+    references = formal_references()
     original = case.kernel.ledger.get_adopted_contents
     requested = []
 
@@ -238,24 +261,34 @@ def test_closed_current_channel_updates_only_its_activity_and_preserves_vouchers
             assert case.kernel.reading.run_pending(case.company)
         assert set(requested) <= {first["business_id"]}
         expected = name + "（公司自有资金）" if name else "付款方未提供"
-        selected = next(row for row in activity(case)["items"] if row["amount_fen"] == "100")
-        assert selected["party"] == expected
         current_rows = activity(case)["items"]
-        assert [(row["key"], row["amount_fen"]) for row in current_rows] == [
-            (row["key"], row["amount_fen"]) for row in original_rows
-        ]
-        assert vouchers(case)["items"] == original_vouchers
-        current = case.get(first["business_id"])["businesses"][0]["results"][0]["reference"]
-        assert (current["result_id"], current["generation"]) == (
-            reference["result_id"], reference["generation"]
+        current_by_key = {row["key"]: row for row in current_rows}
+        assert current_by_key[first_key] == original_by_key[first_key] | {"party": expected}
+        assert current_by_key[other_key] == original_by_key[other_key]
+        assert {
+            row["key"]: (member_scope(case, row)[0]["subject_id"], row["amount_fen"])
+            for row in current_rows
+        } == original_identities
+        # Same date: fukuanfang precedes gongsi. Removing the channel restores
+        # the original tie order; the business grouping identity never changes.
+        assert [row["key"] for row in current_rows] == (
+            [other_key, first_key] if name else [first_key, other_key]
         )
+        assert [row["party"] for row in current_rows] == ["付款方未提供", expected]
+        assert vouchers(case)["items"] == original_vouchers
+        assert formal_references() == references
         funds = page(case)["data"]["collections"]["movements"]["items"]
         current_funds = next(row for row in funds if row["subject_id"] == first["business_id"])
         assert current_funds["party"] == expected
+        assert (
+            next(row for row in funds if row["subject_id"] == other["business_id"])
+            == (original_funds[other["business_id"]])
+        )
         # A fresh rebuild must agree with the incremental publication.
         capture(case)
         capture_funds(case)
         assert activity(case)["items"] == current_rows
+        assert page(case)["data"]["collections"]["movements"]["items"] == funds
 
     first["data"].update(
         amount_fen="120",
@@ -270,10 +303,13 @@ def test_closed_current_channel_updates_only_its_activity_and_preserves_vouchers
     assert saved["completion"] == "complete", saved
     capture(case)
     capture(case, "2026-02")
-    previous = next(row for row in activity(case)["items"] if row["amount_fen"] == "100")
+    previous = next(row for row in activity(case)["items"] if row["key"] == first_key)
     assert previous["party"] == "付款方未提供"
     corrections = {row["amount_fen"]: row["party"] for row in activity(case, "2026-02")["items"]}
-    assert corrections == {"-100": "付款方未提供", "120": "公司新备用渠道（公司自有资金）"}
+    assert corrections == {
+        "-" + original_amount: "付款方未提供",
+        "120": "公司新备用渠道（公司自有资金）",
+    }
     periods = []
     original_capture = _brief_activity.capture
 
@@ -291,4 +327,7 @@ def test_closed_current_channel_updates_only_its_activity_and_preserves_vouchers
         assert case.kernel.reading.run_pending(case.company)
     assert periods == ["2026-02"]
     corrections = {row["amount_fen"]: row["party"] for row in activity(case, "2026-02")["items"]}
-    assert corrections == {"-100": "付款方未提供", "120": "公司当前备用渠道（公司自有资金）"}
+    assert corrections == {
+        "-" + original_amount: "付款方未提供",
+        "120": "公司当前备用渠道（公司自有资金）",
+    }

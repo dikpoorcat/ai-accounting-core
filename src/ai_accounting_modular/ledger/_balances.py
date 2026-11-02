@@ -7,11 +7,13 @@ from collections import defaultdict
 
 from ai_accounting_modular.contracts.public import checked_fen, format_fen
 
+from ._settlement_authorization import validate_authorization_limits, validate_authorized_money
 from ._timing import ResultTimes
 from ._values import agency_proof, fail
 
 
 def sum_amounts(values):
+    values = tuple(values)
     try:
         return checked_fen(sum(checked_fen(value) for value in values))
     except ValueError:
@@ -90,6 +92,8 @@ def validate_capacities(repo, business_ids, retired_keys=()):
             (allocated[row["movement_id"]], row["amount_fen"])
         )
     agency_totals = defaultdict(int)
+    authorization_terms = set()
+    authorization_subjects = {}
     for row in settlements:
         key = row["source_business_id"], row["source_public_slot"]
         ob = obligations.get(key)
@@ -105,10 +109,20 @@ def validate_capacities(repo, business_ids, retired_keys=()):
                 fail("dependency_conflict", "资金清偿须采用本业务的真实资金发生。")
             if move["direction"] != expected_direction:
                 fail("dependency_conflict", "实际资金方向与义务清偿方向不符。")
+            authorization = validate_authorized_money(
+                repo,
+                row,
+                ob,
+                move,
+                subjects=authorization_subjects,
+            )
+            if authorization is not None:
+                authorization_terms.add(authorization)
             if (
                 move["party_id"] is not None
                 and ob["party_id"] is not None
                 and move["party_id"] != ob["party_id"]
+                and authorization is None
             ):
                 fail("dependency_conflict", "实际资金交易方与被清偿义务不符。")
             if row["actual_on"] is not None and row["actual_on"] != move["actual_on"]:
@@ -148,6 +162,7 @@ def validate_capacities(repo, business_ids, retired_keys=()):
         )
         if total != int(proof["amount_fen"]):
             fail("dependency_conflict", "代理清偿合计须等于正式证明金额。")
+    validate_authorization_limits(repo, authorization_terms)
     for row in relations:
         source = obligations.get((row["source_business_id"], row["source_public_slot"]))
         target_key = row["target_business_id"], row["target_public_slot"]

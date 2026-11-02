@@ -107,9 +107,9 @@ def month_inputs(contract_id, context, period, previous, *, excluding_consumer):
             _add(catalog, trade.quantity, (result.source,), current=True)
             project_changed |= bool(amount(trade.quantity["project_amount_fen"]))
             parent = recovery_parent(trade)
-            if parent is None:
+            if parent is None and fact["kind"] != "opening.package":
                 events.append(recognition_event(fact, trade))
-            else:
+            elif parent is not None:
                 claims.append(parent)
     for parent in claims:
         if _key(parent) in catalog:

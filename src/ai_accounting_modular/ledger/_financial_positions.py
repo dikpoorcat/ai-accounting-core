@@ -43,6 +43,10 @@ _DIRECT = {
     "1002": (1, 1),
     "1012": (1, 1),
     "1101": (2, 1),
+    "1131": (6, 1),
+    "1132": (7, 1),
+    "149901": (14, 1),
+    "1511": (17, 1),
     "1601": (18, 1),
     "1602": (19, -1),
     "1604": (21, 1),
@@ -50,6 +54,7 @@ _DIRECT = {
     "1702": (25, 1),
     "4301": (26, 1),
     "189901": (28, 1),
+    "189902": (28, 1),
     "2001": (31, -1),
     "221101": (35, -1),
     "221102": (35, -1),
@@ -64,7 +69,7 @@ _DIRECT = {
 
 # A normal party balance is classified by GL alone. Resources additionally
 # establish adopted loan terms and anonymous social/housing attribution.
-_RESOURCE_ACCOUNTS = (("2501", False), ("224102", True), ("224103", True))
+_RESOURCE_ACCOUNTS = (("2501", False), ("224102", True), ("224103", True), ("222107", False))
 
 
 def _resource_positions(selection, heads):
@@ -147,6 +152,60 @@ def _loan_balances(selection, cutoff, resources, loan_total):
     )
 
 
+def _bond_balances(selection, cutoff, cube):
+    gl, proven = defaultdict(int), defaultdict(int)
+    for (code, _, product), value in cube.items():
+        if code == "1501":
+            gl[product] = sum_amounts((gl[product], value))
+    if not any(gl.values()):
+        return 0, 0
+    report_day = date(
+        int(cutoff[:4]), int(cutoff[5:]), calendar.monthrange(int(cutoff[:4]), int(cutoff[5:]))[1]
+    )
+    edge = (
+        date(
+            report_day.year + 1,
+            report_day.month,
+            min(report_day.day, calendar.monthrange(report_day.year + 1, report_day.month)[1]),
+        )
+        if report_day.year < 9999
+        else date.max
+    )
+    short = long = 0
+    for (product, maturity), amount in selection.bond_balances(cutoff).items():
+        if amount < 0:
+            return None
+        proven[product] = sum_amounts((proven[product], amount))
+        if date.fromisoformat(maturity) <= edge:
+            short = sum_amounts((short, amount))
+        else:
+            long = sum_amounts((long, amount))
+    if {key: value for key, value in gl.items() if value} != {
+        key: value for key, value in proven.items() if value
+    }:
+        return None
+    return short, long
+
+
+def _financial_tax_balances(selection, cutoff, grouped, resources):
+    asset, unassessed = selection.financial_transfer_components(cutoff)
+    liability, overpaid = unassessed, 0
+    for _, owner, obligation, remaining in resources:
+        if obligation["account_code"] != "222107":
+            continue
+        if remaining:
+            selection.source(owner)
+        signed = remaining if obligation["direction"] == "payable" else -remaining
+        if signed >= 0:
+            liability = sum_amounts((liability, signed))
+        else:
+            overpaid = sum_amounts((overpaid, -signed))
+    net = sum_amounts(amount for (code, _), amount in grouped.items() if code == "222107")
+    return (
+        (asset, liability, overpaid) if sum_amounts((asset, overpaid, -liability)) == net else None
+    )
+
+
 def positions(selection, cutoff, column, *, balance_provider=None):
     if cutoff < selection.start:
         if selection.continuation and cutoff == f"{int(selection.start[:4]) - 1:04d}-12":
@@ -198,7 +257,9 @@ def positions(selection, cutoff, column, *, balance_provider=None):
     unknown = set()
     for code, party in sorted(grouped, key=dimension_key):
         amount = grouped[code, party]
-        if code in _DIRECT:
+        if code == "222107":
+            continue
+        elif code in _DIRECT:
             line, sign = _DIRECT[code]
             totals[line] = sum_amounts((totals[line], sign * amount))
         elif code in _PAIRS:
@@ -224,7 +285,7 @@ def positions(selection, cutoff, column, *, balance_provider=None):
             elif amount:
                 line = asset if amount > 0 else liability
                 totals[line] = sum_amounts((totals[line], abs(amount)))
-        elif code != "2501":
+        elif code not in {"2501", "1501"}:
             if is_profit_account(code):
                 # Undistributed profit contains the credit balance of all P&L accounts once.
                 totals[51] = sum_amounts((totals[51], -amount))
@@ -238,6 +299,21 @@ def positions(selection, cutoff, column, *, balance_provider=None):
         result[40], result[42] = (known(amount) for amount in loans)
     else:
         unknown.update((40, 42))
+    bonds = _bond_balances(selection, cutoff, cube)
+    if bonds is None:
+        unknown.update((14, 16))
+    else:
+        result[14] = known(sum_amounts((totals[14], bonds[0])))
+        result[16] = known(bonds[1])
+    financial_tax = _financial_tax_balances(selection, cutoff, grouped, resources)
+    if financial_tax is None:
+        unknown.update((8, 14, 36))
+    else:
+        asset, liability, overpaid = financial_tax
+        if result[14]["state"] == "known":
+            result[14] = known(sum_amounts((parse_fen(result[14]["amount_fen"]), asset)))
+        result[36] = known(sum_amounts((totals[36], liability)))
+        result[8] = known(sum_amounts((totals[8], overpaid)))
     for line in sorted(unknown):
         result[line] = selection.issues.unknown(
             f"/balance_sheet/{line}/{column}",

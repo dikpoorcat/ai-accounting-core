@@ -186,6 +186,19 @@ class LedgerRepository(ReadRepository):
             )
         ]
 
+    def authorization_uses(self, terms_ids):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT DISTINCT r.* FROM json_each(?) k JOIN result_basis_ref b "
+                "ON b.producer_business_id=k.value "
+                "JOIN result_slot_current c ON c.head_result_id=b.result_id "
+                "JOIN adopted_result r ON r.result_id=c.head_result_id "
+                "WHERE b.producer_result_slot LIKE 'authorization:%'",
+                (canonical(list(terms_ids)),),
+            )
+        ]
+
     def inherited_basis_ref(self, baseline_id, ref):
         return (
             self._session.fetchone(
@@ -437,7 +450,7 @@ class LedgerRepository(ReadRepository):
         if not result_ids:
             return {table: [] for table in tables}
         controlled = (
-            "(d.account_code='2501' OR "
+            "(d.account_code IN ('2501','222107') OR "
             "(d.account_code IN ('224102','224103') AND d.party_id IS NULL))"
         )
         ids = canonical(list(result_ids))

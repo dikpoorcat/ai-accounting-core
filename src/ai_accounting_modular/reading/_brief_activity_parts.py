@@ -14,6 +14,7 @@ from ai_accounting_modular.money.public import counterparty_meaning
 from ._brief_activity_amounts import amount, recognition, signed
 from ._business_labels import (
     BusinessLabel,
+    ObligationFields,
     business_label,
     business_matter,
     origin_fields,
@@ -22,6 +23,8 @@ from ._business_labels import (
     settlement_title,
 )
 from ._counterparty_display import label as counterparty_label
+from ._investment_settlement_display import authorized_sources
+from ._opening_investment_meaning import label as opening_investment_label
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,7 @@ _COMPONENTS = {
 }
 
 
-def _individual_party(content):
+def _individual_party(content, cache):
     """Only an individual settlement proves that all allocations share one actual party."""
     target, basis = origin_fields(content)
     data = basis.get("input", {})
@@ -62,10 +65,13 @@ def _individual_party(content):
         or data.get("payment_method") != "individual"
     ):
         return None
+    authorized = authorized_sources(content, cache, data.get("counterparty_id"))
     known = {
         item["party_id"]
         for item in basis["adopted_quantities"]
-        if item["type"] == "obligation" and item.get("party_id") is not None
+        if item["type"] == "obligation"
+        and item.get("party_id") is not None
+        and (item["source"]["business_id"], item["source"]["slot"]) not in authorized
     }
     if len(known) > 1:
         raise ContractError("storage_corrupt", "普通收付的正式来源存在不同实际交易方。")
@@ -132,11 +138,21 @@ def business_parties(content, cache):
             return (data["buyer_id"],) if data["type"] == "sale" else ()
         case "financing.owner_funding":
             return (data["owner_id"],)
-        case "investment.money_fund_purchase" | "investment.money_fund_redemption":
-            return (data["counterparty_id"],)
+        case (
+            "investment.money_fund_purchase"
+            | "investment.money_fund_redemption"
+            | "investment.acquire"
+            | "investment.income"
+            | "investment.dispose"
+            | "investment.capital_return"
+            | "investment.reinvest"
+            | "investment.loss"
+            | "investment.debt_interest"
+        ):
+            return (data["counterparty_id"],) if "counterparty_id" in data else ()
         case "money.movement":
             if data.get("payment_method") == "individual" and data["type"] == "settlement":
-                party = _individual_party(content)
+                party = _individual_party(content, cache)
                 return (party,) if party is not None else ()
             if data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve":
                 return tuple(
@@ -190,6 +206,17 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
     ]
     if len(adopted) != 1:
         raise ContractError("storage_corrupt", "实际分配缺少唯一的正式采用义务。")
+    if kind.startswith("investment.") and slot in {"declared_income", "income"}:
+        label = business_label(
+            producer,
+            ObligationFields(
+                source,
+                adopted[0]["direction"],
+                "investment",
+                producer.basis["period"],
+                adopted[0].get("party_id"),
+            ),
+        )
     person, recipient, payroll, component = None, adopted[0].get("party_id"), None, None
     data = content.basis.get("input", {})
     if (
@@ -216,7 +243,12 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
             )
             label = BusinessLabel(*_COMPONENTS.get(component, ("wage", "期初工资")))
         else:
-            label = BusinessLabel("opening_obligation", "期初往来款")
+            reference = cache.opening_obligations(producer).get(
+                (source["business_id"], source["slot"])
+            )
+            label = opening_investment_label(reference) or BusinessLabel(
+                "opening_obligation", "期初往来款"
+            )
     elif kind == "operations.pass_through":
         label = (
             BusinessLabel("pass_through_collection", "代收款")
@@ -259,7 +291,7 @@ def parts(content, cache):
         batch = data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve"
         grouped = defaultdict(list)
         labels = {}
-        payment_party = _individual_party(content)
+        payment_party = _individual_party(content, cache)
         for allocation in data["allocations"]:
             label, actual = allocation_source(
                 content, allocation, cache, payment_party=payment_party

@@ -43,8 +43,9 @@ def fail(message, code="dependency_conflict"):
 
 
 def total(values):
+    values = tuple(values)
     try:
-        return sum_fen(tuple(values))
+        return sum_fen(values)
     except ValueError as error:
         raise ContractError("invalid_input", "资金合计超出有符号64位整数分范围。") from error
 

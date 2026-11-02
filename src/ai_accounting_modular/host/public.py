@@ -102,7 +102,10 @@ def _modules():
         financing.create_financing(),
         investments,
         funds,
-        opening.create_opening(asset_accounting=asset_accounting),
+        opening.create_opening(
+            asset_accounting=asset_accounting,
+            investment_accounting=investments,
+        ),
         reporting.create_reporting(),
     )
     verifier = application.create_backup_verifier(

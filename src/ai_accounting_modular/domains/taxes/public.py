@@ -16,6 +16,7 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
+from . import _financial_transfer, _investment_income, _partnership
 from ._actual import actual, declarations
 from ._common import interval, reject
 from ._credits import credit
@@ -45,6 +46,8 @@ _CALCULATORS = {
     "taxes.actual_declaration": actual,
     "taxes.tax_credit": credit,
     "taxes.assessment": None,
+    _financial_transfer.BASIS_KIND: _financial_transfer.adoption,
+    _partnership.KIND: _partnership.allocation,
 }
 
 
@@ -107,7 +110,20 @@ def _scope(fact, kind, start="0001-01", end="9999-12"):
 def _direct_dependencies(fact):
     data, kind = fact["data"], fact["kind"]
     edges = []
-    if kind == "taxes.tax_point":
+    if kind == _financial_transfer.BASIS_KIND:
+        edges.extend(
+            _edge(fact, identity, relation="policy") for identity in data["vat_policy_ids"]
+        )
+    elif kind == _partnership.KIND:
+        edges.append(_edge(fact, data["investment_id"], relation="reference"))
+        edges.extend(
+            _edge(fact, row["source"]["business_id"], relation="reference")
+            for row in data["distributions"]
+        )
+        for claim in data.get("previously_taxed_distributions", ()):
+            edges.append(_edge(fact, claim["tax_assessment_id"], relation="reference"))
+            edges.append(_edge(fact, claim["allocation_id"], relation="reference"))
+    elif kind == "taxes.tax_point":
         edges.append(_edge(fact, data["target_business_id"], mode="fact", relation="reference"))
         for event in data.get("events", ()):
             if event["type"] == "receipt":
@@ -148,6 +164,11 @@ def _direct_dependencies(fact):
         edges.extend(
             _edge(fact, identity, relation="reference") for identity in data.get("credit_ids", ())
         )
+    elif kind == "taxes.assessment" and data["type"] == "income_tax":
+        edges.extend(
+            _edge(fact, row["allocation_id"], relation="reference")
+            for row in data.get("partnership_inclusions", ())
+        )
     return edges
 
 
@@ -178,7 +199,16 @@ def _fact_relations(fact):
 def _dependencies(fact, context, actuals=()):
     data, kind = fact["data"], fact["kind"]
     edges = _direct_dependencies(fact)
-    if kind == "taxes.tax_point" and data.get("type") == "owner_receipt_default":
+    if kind == _financial_transfer.BASIS_KIND:
+        edges.extend(
+            _financial_transfer.dependencies(
+                fact, context, _financial_transfer.slots(fact, context)
+            )
+        )
+    elif kind == _partnership.KIND:
+        for claim in data.get("previously_taxed_distributions", ()):
+            edges.append(_collection(fact, claim["tax_assessment_id"]))
+    elif kind == "taxes.tax_point" and data.get("type") == "owner_receipt_default":
         edges.append(_collection(fact, data["target_business_id"], relation="settlement"))
         edges.extend(
             _edge(fact, receipt["business_id"], mode="fact", relation="reference")
@@ -199,6 +229,7 @@ def _dependencies(fact, context, actuals=()):
         if source is not None:
             edges.append(_edge(fact, source["business_id"], relation="reference"))
         if data["type"] == "vat":
+            edges.extend(_financial_transfer.assessment_dependencies(fact, context))
             edges.append(_aggregate(fact, "tax_sales", data["start_month"], data["end_month"]))
             for field in ("vat_policy_id", "surtax_policy_id"):
                 if field in data and (source is None or context.get_fact(data[field]) is not None):
@@ -230,6 +261,20 @@ def _dependencies(fact, context, actuals=()):
                     edges.append(_collection(fact, earlier["business_id"], relation="settlement"))
             if assessment_method(data) == "computed_provision" and source is None:
                 edges.extend(
+                    _financial_transfer.investment_dependencies(
+                        fact,
+                        context,
+                        year + "-01",
+                        data["quarter_end"],
+                        kinds=_investment_income.RELIEF_EVENT_KINDS,
+                    )
+                )
+                edges.extend(
+                    _investment_income.dependencies(
+                        fact, context, year + "-01", data["quarter_end"]
+                    )
+                )
+                edges.extend(
                     (
                         _edge(fact, data["policy_id"], relation="policy"),
                         _edge(fact, data["prepayment_basis_id"]),
@@ -241,6 +286,10 @@ def _dependencies(fact, context, actuals=()):
 
 def _natural_key(fact):
     data, kind = fact["data"], fact["kind"]
+    if kind == _financial_transfer.BASIS_KIND:
+        return "taxes:financial_transfer_basis:" + data["elected_on"][:7]
+    if kind == _partnership.KIND:
+        return f"taxes:partnership:{data['investment_id']}:{data['tax_year']}"
     if kind == "taxes.tax_point":
         return "taxes:point:" + data["target_business_id"]
     if kind == "taxes.prepayment_basis":
@@ -302,6 +351,18 @@ class Taxes:
             row.update(
                 fact=deepcopy(fact), complete_result_slots=["main"], natural_key=_natural_key(fact)
             )
+            if fact["kind"] == _financial_transfer.BASIS_KIND:
+                row["complete_result_slots"] = _financial_transfer.slots(fact, context)
+                publications.extend(
+                    {
+                        "business_id": business_id,
+                        "result_slot": slot,
+                        "collection": "pre_tax",
+                        "period_from": slot.removeprefix(_financial_transfer.SLOT_PREFIX),
+                        "period_to": slot.removeprefix(_financial_transfer.SLOT_PREFIX),
+                    }
+                    for slot in row["complete_result_slots"][1:]
+                )
             if fact["kind"] == "taxes.assessment" and fact["data"]["type"] == "income_tax":
                 row["complete_result_slots"].append(NETTING_SLOT)
             dependencies.extend(_dependencies(fact, context, actuals))
@@ -330,6 +391,12 @@ class Taxes:
         if fact is None:
             reject("税费当前事实不存在。")
         _validate(fact)
+        if result_slot.startswith(_financial_transfer.SLOT_PREFIX):
+            if fact["kind"] != _financial_transfer.BASIS_KIND:
+                reject("金融商品月度槽必须属于公司金融商品买入价方法。", "invalid_input")
+            plan = _financial_transfer.position(fact, result_slot, context)
+            validate_contract("business-facts.schema.json", "PostingPlan", plan)
+            return plan
         if result_slot == NETTING_SLOT:
             if fact["kind"] != "taxes.assessment" or fact["data"]["type"] != "income_tax":
                 reject("内部所得税抵减只能属于所得税累计节点。", "invalid_input")
@@ -349,6 +416,11 @@ class Taxes:
         validate_contract("business-facts.schema.json", "ChangePlan", plan)
         if plan["domain"] != "taxes" or plan["issues"]:
             reject("税费不能核验其他领域或仍有问题的候选。", "invalid_input")
+        if any(
+            row.get("fact", {}).get("kind") == _financial_transfer.BASIS_KIND
+            for row in plan["businesses"]
+        ):
+            _financial_transfer.validate_bases(context)
         if not any(
             row.get("fact", {}).get("kind") == "taxes.assessment" for row in plan["businesses"]
         ):

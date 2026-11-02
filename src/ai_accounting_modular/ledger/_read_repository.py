@@ -63,6 +63,30 @@ _BALANCE_MATCH = (
 
 
 class ReadRepository:
+    def read_profit_scope(self, scope, selection, accounts):
+        table, where, args = self.read_result_scope(scope, (), selection, flow=True)
+        # An unchanged journal may belong to an earlier formal-only head. Search
+        # only versions of each already month-selected slot, never all bodies.
+        where += (
+            " AND EXISTS (SELECT 1 FROM adopted_result evidence "
+            "JOIN voucher v ON v.result_id=evidence.result_id "
+            "JOIN voucher_line l ON l.voucher_id=v.voucher_id "
+            "WHERE evidence.business_id=r.business_id AND evidence.result_slot=r.result_slot "
+            "AND l.account_code IN (SELECT value FROM json_each(?)))"
+        )
+        return table, where, (*args, canonical_json(list(accounts)))
+
+    def read_profit_lines(self, voucher_ids, accounts):
+        return [
+            dict(row)
+            for row in self._session.fetchall(
+                "SELECT voucher_id,line_no,account_code,debit_fen,credit_fen FROM voucher_line "
+                "WHERE voucher_id IN (SELECT value FROM json_each(?)) "
+                "AND account_code IN (SELECT value FROM json_each(?)) ORDER BY voucher_id,line_no",
+                (canonical_json(sorted(voucher_ids)), canonical_json(list(accounts))),
+            )
+        ]
+
     def read_balance_heads(self, keys, cutoff, *, view):
         predicate, args = selected("r", cutoff if view == "as_posted" else None)
         # Search every historical journal: a later correction can introduce an

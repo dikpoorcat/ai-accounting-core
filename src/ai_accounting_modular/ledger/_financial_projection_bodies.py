@@ -14,9 +14,12 @@ from ai_accounting_modular.contracts.public import (
 
 from ._cashflow import _ROWS, money_targets
 from ._financial_cells import Issues
+from ._financial_investments import capture_bonds
 from ._financial_order import CHILD_KEYS
-from ._financial_profit import _TARGET_VALUES, _contribution
+from ._financial_profit import _contribution, load_profit_inputs
 from ._financial_projection_fold import Notice, merge_notices
+from ._financial_tax_positions import capture as capture_tax_positions
+from ._financial_tax_positions import validate_row as validate_tax_row
 from ._journal_amounts import journal_amount
 from ._profit import pretax_values
 
@@ -62,8 +65,8 @@ def _resource(table, row):
             or row["direction"] not in ("receivable", "payable")
             or type(row["category"]) is not str
             or not row["category"]
-            or row["account_code"] not in ("2501", "224102", "224103")
-            or (row["account_code"] != "2501" and row["party_id"] is not None)
+            or row["account_code"] not in ("2501", "224102", "224103", "222107")
+            or (row["account_code"] in ("224102", "224103") and row["party_id"] is not None)
         ):
             raise ValueError
         if row["party_id"] is not None:
@@ -166,6 +169,8 @@ def validate_body(body, identity):
             "cash",
             "pretax",
             "resources",
+            "bonds",
+            "financial_tax",
         }:
             raise ValueError
         validate_contract("business-facts.schema.json", "ResultSourceRef", body["source"])
@@ -184,6 +189,17 @@ def validate_body(body, identity):
         ):
             raise ValueError
         validate_resources(body["resources"])
+        if body["financial_tax"] is not None:
+            validate_tax_row(body["financial_tax"])
+        for row in body["bonds"]:
+            if type(row) is not list or len(row) != 3 or not _fen(row[2]) or not row[2]:
+                raise ValueError
+            validate_contract("core.schema.json", "Id", row[0])
+            validate_contract("core.schema.json", "Date", row[1])
+        if body["bonds"] != sorted(body["bonds"]) or len(
+            {tuple(row[:2]) for row in body["bonds"]}
+        ) != len(body["bonds"]):
+            raise ValueError
         notices = tuple(Notice.from_record(raw) for raw in body["notices"])
         if len({note.field for note in notices}) != len(notices):
             raise ValueError
@@ -245,7 +261,7 @@ def validate_body(body, identity):
     return body
 
 
-def _body(selection, head, lines, details, funds, resources):
+def _body(selection, head, lines, details, funds, resources, bonds, financial_tax):
     local = copy(selection)
     local.issues = _CapturedIssues()
     profit = _contribution(local, head, lines, details, COLUMN)
@@ -290,6 +306,8 @@ def _body(selection, head, lines, details, funds, resources):
         if any(value for line, value in main.items() if line != 31)
         else None,
         "resources": resources,
+        "bonds": bonds,
+        "financial_tax": financial_tax,
     }
 
 
@@ -297,6 +315,7 @@ def capture_bodies(selection, heads):
     """Batch the original owner inputs, then keep only their consumed financial meaning."""
     heads = tuple(heads)
     journals = selection.lines(heads)
+    bonds = capture_bonds(selection, heads, journals)
     details = selection.report_details(heads)
     funds = selection.children("result_fund_movement", heads)
     records = selection.repo.financial_projection_resources([head["result_id"] for head in heads])
@@ -308,7 +327,8 @@ def capture_bodies(selection, heads):
             )
         for grouped in resources.values():
             grouped[table].sort(key=lambda row: row[CHILD_KEYS[table]])
-    selection.load_targets([head for head in heads if selection.kind(head) in _TARGET_VALUES])
+    load_profit_inputs(selection, heads)
+    tax_positions = capture_tax_positions(selection, heads, resources)
     bodies = {}
     for head in heads:
         identity = head["result_id"]
@@ -319,6 +339,8 @@ def capture_bodies(selection, heads):
             details[identity],
             funds[identity],
             resources[identity],
+            bonds[identity],
+            tax_positions[identity],
         )
         bodies[source_atom(body["source"])] = body
     return bodies

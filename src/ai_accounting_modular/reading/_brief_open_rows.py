@@ -8,6 +8,8 @@ from ai_accounting_modular.contracts.public import (
     sum_fen,
 )
 from ai_accounting_modular.ledger.opening.public import (
+    OpeningCooperationTradeReference,
+    OpeningInvestmentReference,
     OpeningLoanReference,
     OpeningOrdinaryReference,
     OpeningPayrollReference,
@@ -28,6 +30,7 @@ from ._business_labels import (
     origin_fields,
     remuneration_identity,
 )
+from ._opening_investment_meaning import label as opening_investment_label
 
 _CONTRIBUTIONS = {
     "employee_social": "个人社保",
@@ -81,6 +84,10 @@ def _category(content, definition, metadata):
             "employee_reimbursement": "employee_payables",
             "deposit_receivable": "refundable_deposit_receivables",
         }.get(metadata.nature, other)
+    if isinstance(metadata, OpeningCooperationTradeReference):
+        return "customer_receivables" if metadata.side == "revenue" else "supplier_payables"
+    if isinstance(metadata, OpeningInvestmentReference):
+        return "other_receivables"
     target, basis = origin_fields(content)
     kind, data = target["kind"], basis.get("input", {})
     if category == "trade":
@@ -184,6 +191,36 @@ def _meaning(content, definition, opening):
                 metadata.contract_id,
                 metadata.lender_id,
                 metadata.component,
+            ),
+        )
+    if isinstance(metadata, OpeningInvestmentReference):
+        label = opening_investment_label(metadata)
+        return Meaning(
+            category,
+            label,
+            party,
+            label.title,
+            metadata.original_business_reference,
+            opening_identity=(
+                "investment",
+                metadata.terms_id,
+                metadata.income_kind,
+                metadata.original_business_reference,
+            ),
+        )
+    if isinstance(metadata, OpeningCooperationTradeReference):
+        label = opening_investment_label(metadata)
+        return Meaning(
+            category,
+            label,
+            party,
+            label.title,
+            metadata.original_business_reference,
+            opening_identity=(
+                "cooperation",
+                metadata.contract_id,
+                metadata.side,
+                metadata.original_business_reference,
             ),
         )
     return Meaning(category, label, party, label.title)

@@ -6,6 +6,7 @@ from collections import defaultdict
 from ._common import amount, fail, missing, total
 from ._cooperation_events import inputs, recovery_parent, require_book_start
 from ._cooperation_math import position
+from ._cooperation_opening import opening_snapshot
 
 
 def _time_issue(event, context, message):
@@ -21,7 +22,7 @@ def _time_issue(event, context, message):
     )
 
 
-def _cash_checks(events, context):
+def _cash_checks(events, context, *, initial_cash=0):
     """Bound every possible day-end balance without assigning any unknown day.
 
     Between known cash dates the bounds are constant. At month end every
@@ -32,7 +33,7 @@ def _cash_checks(events, context):
         value = position(event.delta)["pool_fen"]
         if value:
             months[event.period].append((event, value))
-    cash = 0
+    cash = initial_cash
     unresolved = None
     for period in sorted(months):
         unknown = [(event, value) for event, value in months[period] if event.on is None]
@@ -139,4 +140,11 @@ def validate_contract_events(contract_fact, context):
     adopted = inputs(contract_fact["business_id"], context, context.evaluation_period_to)
     require_book_start(contract_fact, adopted.events, context.read_context.start_period)
     _recovery_checks(adopted, context)
-    _cash_checks(adopted.events, context)
+    snapshot, _ = opening_snapshot(
+        contract_fact["business_id"], context, context.evaluation_period_to
+    )
+    _cash_checks(
+        adopted.events,
+        context,
+        initial_cash=amount(snapshot["pool_fen"]) if snapshot is not None else 0,
+    )

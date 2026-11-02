@@ -1,11 +1,15 @@
 """One responsibility and explicit current dependencies for each complete fact."""
 
+from hashlib import sha256
+
 from ai_accounting_modular.contracts.public import validate_contract
 
+from . import _investment_description
 from ._common import ACCOUNTS, fail, require_object
 from ._cooperation_common import KINDS as COOPERATION_KINDS
 from ._cooperation_common import PREFIX
 from ._interest import interval
+from ._investment_events import KINDS as FINANCIAL_INVESTMENT_KINDS
 
 FINANCING_KINDS = (
     "financing.owner_funding",
@@ -17,6 +21,7 @@ INVESTMENT_KINDS = (
     "investment.money_fund_purchase",
     "investment.money_fund_redemption",
     *COOPERATION_KINDS,
+    *FINANCIAL_INVESTMENT_KINDS,
 )
 
 
@@ -53,6 +58,7 @@ def object_roles(fact):
         "funds_account_id",
         "project_id",
         "operator_id",
+        "product_id",
     ):
         if field not in data:
             continue
@@ -60,7 +66,7 @@ def object_roles(fact):
             {"organization"}
             if field == "lender_id"
             else {"investment_product"}
-            if field in {"fund_id", "project_id"}
+            if field in {"fund_id", "project_id", "product_id"}
             else {"bank_account"}
             if field == "funds_account_id" and fact["kind"] == "financing.loan_drawdown"
             else ACCOUNTS
@@ -81,6 +87,18 @@ def validate_roles(fact, context):
 
 
 def natural_key(fact):
+    if fact["kind"] == "investment.unit_change_basis":
+        return (
+            "investment_unit_action:"
+            + fact["data"]["product_id"]
+            + ":"
+            + sha256(fact["data"]["action_reference"].encode("utf-8")).hexdigest()
+        )
+    if fact["kind"] == "investment.debt_interest":
+        data = fact["data"]
+        return "investment_coupon:" + ":".join(
+            (data["source"]["business_id"], data["source"]["slot"], data["payment_on"])
+        )
     if fact["kind"] == PREFIX + "contract":
         return "cooperation:" + fact["data"]["project_id"]
     if fact["kind"] == PREFIX + "exit":
@@ -109,6 +127,8 @@ def edge(business_id, producer, relation, *, mode="result", kind="business", fir
 def direct_dependencies(fact):
     """Final direct references only; no reverse lookup, result slot or amount inference."""
     business_id, data, kind = fact["business_id"], fact["data"], fact["kind"]
+    if kind in FINANCIAL_INVESTMENT_KINDS:
+        return _investment_description.direct(fact)
     result = [
         edge(business_id, oid, "identity", mode="fact", kind="object")
         for _, oid, _ in object_roles(fact)
@@ -137,6 +157,8 @@ def direct_dependencies(fact):
 
 def dependencies(fact, context):
     business_id, data, kind = fact["business_id"], fact["data"], fact["kind"]
+    if kind in FINANCIAL_INVESTMENT_KINDS:
+        return _investment_description.dependencies(fact, context)
     result = direct_dependencies(fact)
     if kind == "financing.interest_period":
         source_id = data["principal_source"]["business_id"]
@@ -194,6 +216,8 @@ def dependencies(fact, context):
 
 
 def publications(fact):
+    if fact["kind"] in FINANCIAL_INVESTMENT_KINDS:
+        return _investment_description.publications(fact)
     if fact["kind"] not in {"financing.interest_period", "investment.money_fund_redemption"}:
         return []
     return [

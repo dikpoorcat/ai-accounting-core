@@ -188,14 +188,14 @@ def test_real_same_unit_vat_sources_and_later_new_publisher_recalculate_aggregat
     original = main(app, company_id, current)
     assert original["target"]["values"]["payable_vat_fen"] == "3000"
     assert original["target"]["values"]["surtax_fen"] == "180"
-    assert len(original["basis"]["adopted_quantities"]) == 1
+    assert sum(row["type"] == "tax_sale" for row in original["basis"]["adopted_quantities"]) == 1
     extra = sale("extra", "10300")
     created = app.accounting_apply(request(company_id, extra))
     assert created["completion"] == "complete", created
     updated = main(app, company_id, current)
     assert updated["target"]["values"]["payable_vat_fen"] == "3300"
     assert updated["reference"]["voucher_number"] == original["reference"]["voucher_number"]
-    assert len(updated["basis"]["adopted_quantities"]) == 2
+    assert sum(row["type"] == "tax_sale" for row in updated["basis"]["adopted_quantities"]) == 2
 
 
 def return_fact(original, name="return", gross="10300", vat="300"):

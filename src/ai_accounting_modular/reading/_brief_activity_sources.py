@@ -1,7 +1,10 @@
 """Resolve exact formal bodies once; never substitute a currently selected business."""
 
 from ai_accounting_modular.contracts.public import ContractError, PageQuery
-from ai_accounting_modular.ledger.opening.public import opening_payroll_references
+from ai_accounting_modular.ledger.opening.public import (
+    opening_obligation_references,
+    opening_payroll_references,
+)
 from ai_accounting_modular.ledger.public import AdoptedContent
 
 
@@ -34,6 +37,7 @@ class Contents:
     def __init__(self, ledger, read):
         self.ledger, self.read, self.saved = ledger, read, {}
         self._opening = {}
+        self._opening_obligations = {}
 
     def reuse(self, contents):
         """Borrow exact Ledger outputs explicitly passed by this preparation's caller."""
@@ -70,6 +74,15 @@ class Contents:
                 for item in opening_payroll_references(content)
             }
         return self._opening[identity]
+
+    def opening_obligations(self, content):
+        identity = content.source["result_id"], content.source["result_generation"]
+        if identity not in self._opening_obligations:
+            self._opening_obligations[identity] = {
+                (item.source["business_id"], item.source["slot"]): item
+                for item in opening_obligation_references(content)
+            }
+        return self._opening_obligations[identity]
 
     def load(self, references):
         requested = {}

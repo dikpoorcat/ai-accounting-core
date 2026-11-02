@@ -93,6 +93,10 @@ def _dependency(business_id, producer_id, relation, *, kind="business", mode="re
 
 def _validate_fact(fact):
     validate_contract("business-facts.schema.json", "Fact", fact)
+    if any("authorization" in item for item in allocation_refs(fact)) and not (
+        fact["kind"] == "money.movement" and fact["data"]["type"] == "settlement"
+    ):
+        fail("投资代收付授权只适用于实际资金清偿，不能用于抵销或其他资金事实。", "invalid_input")
     actual = fact["kind"] == "money.movement" or (
         fact["kind"] == "money.transfer" and fact["data"]["type"] == "physical"
     )
@@ -112,6 +116,12 @@ def _direct_dependencies(fact, context):
         _dependency(business_id, allocation["source"]["business_id"], "settlement")
         for allocation in allocation_refs(fact)
     )
+    for allocation in allocation_refs(fact):
+        if "authorization" in allocation:
+            ref = allocation["authorization"]
+            edge = _dependency(business_id, ref["business_id"], "settlement")
+            edge["producer_public_slot"] = ref["slot"]
+            edges.append(edge)
     if fact["kind"] == "money.reconciliation":
         edges.append(_dependency(business_id, fact["data"]["statement_id"], "reference"))
         source = context.get_fact(fact["data"]["statement_id"])

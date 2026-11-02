@@ -1489,7 +1489,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -1689,7 +1692,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -1886,7 +1892,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2083,7 +2092,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2201,7 +2213,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2309,7 +2324,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2397,7 +2415,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2485,7 +2506,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -2576,7 +2600,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -5467,7 +5494,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 2,
@@ -5752,7 +5782,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 2,
@@ -5943,7 +5976,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 3,
@@ -6240,7 +6276,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 3,
@@ -6495,7 +6534,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -6623,7 +6665,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,
@@ -6751,7 +6796,10 @@
           "investment_income_fen": "0",
           "actual_payments_fen": "0",
           "actual_receipts_fen": "0",
-          "event_count": 0
+          "event_count": 0,
+          "recognized_income_fen": "0",
+          "vat_adjustment_fen": "0",
+          "actual_loss_fen": "0"
         },
         "bank_statement": {
           "transaction_count": 0,

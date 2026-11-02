@@ -1,20 +1,24 @@
 """One-submission overlays; formal identities remain the ledger's responsibility."""
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Hashable, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
+from typing import TypeVar
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
     DomainOwner,
     EvaluatedSlot,
+    InvestmentTaxEventView,
     ResourceCutoff,
     validate_contract,
 )
 
 from ._changes import fact_digest
 from ._resources import check_scope as check_resource_scope
+
+_CandidateValue = TypeVar("_CandidateValue")
 
 
 class DomainRegistry:
@@ -84,6 +88,7 @@ class SubmissionContext:
         *,
         objects=(),
         facts=None,
+        changed_business_ids=(),
         money=None,
         evaluation_period_to,
         previous_period_to=None,
@@ -96,12 +101,18 @@ class SubmissionContext:
         self.previous_period_to = previous_period_to or evaluation_period_to
         self._objects = {obj["object_id"]: obj for obj in objects}
         self._facts = dict(facts or {})
+        self._changed_business_ids = frozenset(changed_business_ids)
         self._plans = {}
         self._slots = {}
         self._fact_cache = {}
         self._result_cache = {}
+        self._result_sources = {}
+        self._candidate_values = None
+        self._candidate_building = set()
         self._stored_results = {}
         self._dependencies = ()
+        self._result_readers = {}
+        self._declared_result_refs = {}
         self._relations = ()
         self._relation_roots = frozenset()
         self._candidate = None
@@ -113,6 +124,20 @@ class SubmissionContext:
 
     def current_result_refs(self, business_ids):
         return self._ledger.get_result_refs(business_ids, self.read_context)
+
+    def current_dependencies(self, business_ids):
+        identities = tuple(business_ids)
+        if len(identities) > 500:
+            raise ContractError("invalid_input", "一次最多读取500个业务身份的依赖目录。")
+        for identity in identities:
+            validate_contract("core.schema.json", "Id", identity)
+        return self.read_context.repository("application").dependencies(
+            tuple(dict.fromkeys(identities))
+        )
+
+    @property
+    def changed_business_ids(self):
+        return self._changed_business_ids
 
     def select_results(self, pending_slots, references, complete_slots):
         self.pending_slots = frozenset(pending_slots)
@@ -139,10 +164,28 @@ class SubmissionContext:
 
     def begin_candidate(self, descriptions, correction_period):
         self._candidate_complete = False
+        self._plans.clear()
         self._result_cache.clear()
+        self._result_sources.clear()
+        self._candidate_values = {}
+        self._candidate_building.clear()
         self._dependencies = tuple(
             edge for _, description in descriptions for edge in description["dependencies"]
         )
+        readers = defaultdict(set)
+        references = defaultdict(lambda: defaultdict(set))
+        for edge in self._dependencies:
+            if edge["producer_kind"] == "business" and edge["read_mode"] == "result":
+                consumer = edge["consumer_business_id"], edge["consumer_result_slot"]
+                readers[edge["producer_id"], edge["producer_public_slot"]].add(consumer)
+                references[edge["producer_id"], edge["relation_kind"]][consumer].add(
+                    edge["producer_public_slot"]
+                )
+        self._result_readers = {key: frozenset(values) for key, values in readers.items()}
+        self._declared_result_refs = {
+            key: {consumer: tuple(sorted(slots)) for consumer, slots in values.items()}
+            for key, values in references.items()
+        }
         self._candidate = self._ledger.begin_candidate(
             [business for _, description in descriptions for business in description["businesses"]],
             self.read_context,
@@ -153,6 +196,72 @@ class SubmissionContext:
             resource_uses=[edge for edge in self._dependencies if edge["read_mode"] == "use"],
             retained_results=list(self._retained_results.values()),
         )
+
+    def end_candidate(self):
+        self._candidate_values = None
+        self._candidate_building.clear()
+        self._plans.clear()
+        self._result_cache.clear()
+        self._result_sources.clear()
+        self._candidate = None
+        self._candidate_complete = False
+
+    def candidate_memo(
+        self, namespace: str, key: Hashable, build: Callable[[], _CandidateValue]
+    ) -> _CandidateValue:
+        if self._candidate_values is None or not self._active_slots:
+            raise ContractError("invalid_operation", "共享计算只允许用于当前候选的结果求值或核验。")
+        if not isinstance(namespace, str) or not namespace or not callable(build):
+            raise ContractError("invalid_input", "共享计算须有明确职责名称和计算函数。")
+        identity = namespace, key
+        try:
+            hash(identity)
+        except TypeError as error:
+            raise ContractError("invalid_input", "共享计算身份须为不可变、可比较的键。") from error
+        if identity in self._candidate_building:
+            raise ContractError("dependency_conflict", "共享计算不能循环依赖自身。")
+        if identity not in self._candidate_values:
+            self._candidate_building.add(identity)
+            try:
+                value = build()
+            finally:
+                self._candidate_building.remove(identity)
+            self._candidate_values[identity] = value
+        return self._candidate_values[identity]
+
+    def is_result_pending(self, business_id, result_slot):
+        if self._candidate_values is None:
+            raise ContractError("invalid_operation", "只能检查当前候选承担的结果槽。")
+        validate_contract(
+            "core.schema.json",
+            "BusinessRef",
+            {
+                "business_id": business_id,
+                "slot": result_slot,
+            },
+        )
+        return (business_id, result_slot) in self.pending_slots
+
+    def require_result_sources(self, refs):
+        if self._candidate_values is None or not self._active_slots:
+            raise ContractError("invalid_operation", "正式来源核验须位于当前候选结果范围。")
+        result = []
+        for ref in refs:
+            validate_contract("core.schema.json", "BusinessRef", ref)
+            if not self._active_slots.intersection(
+                self._result_readers.get((ref["business_id"], ref["slot"]), ())
+            ):
+                raise ContractError("dependency_conflict", "当前结果槽未声明采用该精确正式来源。")
+            result.append(deepcopy(self._current_result_source(ref["business_id"], ref["slot"])))
+        return tuple(result)
+
+    def declared_result_refs(self, producer_id, relation_kind):
+        if self._candidate_values is None or not self._active_slots:
+            raise ContractError("invalid_operation", "声明来源只允许在当前候选结果范围读取。")
+        validate_contract("core.schema.json", "Id", producer_id)
+        readers = self._declared_result_refs.get((producer_id, relation_kind), {})
+        slots = {slot for consumer in self._active_slots for slot in readers.get(consumer, ())}
+        return tuple({"business_id": producer_id, "slot": slot} for slot in sorted(slots))
 
     @contextmanager
     def result_scope(self, slots):
@@ -180,6 +289,125 @@ class SubmissionContext:
         self._check_aggregate_scope("tax_sales", period_from, period_to)
         return self._candidate.tax_sales(period_from, period_to)
 
+    def investment_tax_events(self, period_from, period_to, *, kinds=None):
+        """Read only declared scopes, using the same candidate overlay as calculation."""
+        available_kinds = (
+            "investment.acquire",
+            "investment.income",
+            "investment.dispose",
+            "investment.capital_return",
+            "investment.reinvest",
+            "investment.unit_change",
+            "investment.loss",
+            "investment.debt_interest",
+            "investment.money_fund_purchase",
+            "investment.money_fund_redemption",
+            "opening.package",
+        )
+        kinds = available_kinds if kinds is None else tuple(kinds)
+        if not set(kinds) <= set(available_kinds) or len(kinds) != len(set(kinds)):
+            raise ContractError("invalid_input", "投资税务量只允许选择明确支持且不重复的事实种类。")
+        self._periods(period_from, period_to)
+        if period_from is None or period_to is None:
+            raise ContractError("invalid_input", "投资税务量读取必须指定完整月份范围。")
+        if not kinds:
+            return ()
+        edges = [
+            edge
+            for edge in self._dependencies
+            if (edge["consumer_business_id"], edge["consumer_result_slot"]) in self._active_slots
+        ]
+        for kind in kinds:
+            if not any(
+                edge["producer_kind"] == "scope"
+                and edge["producer_id"] == kind
+                and edge["period_from"] <= period_from <= period_to <= edge["period_to"]
+                for edge in edges
+            ):
+                raise ContractError("dependency_conflict", "投资税务量读取未声明完整事实范围。")
+        result = []
+        for fact in self.facts_in_scope(kinds, period_from, period_to):
+            if not any(
+                edge["producer_kind"] == "business"
+                and edge["producer_id"] == fact["business_id"]
+                and edge["producer_public_slot"] == "main"
+                and edge["read_mode"] == "result"
+                for edge in edges
+            ):
+                raise ContractError("dependency_conflict", "投资税务量未声明实际生产结果。")
+            adopted = self.get_result(fact["business_id"], "main")
+            if adopted is None or adopted.target["kind"] == "system.withdrawal":
+                continue
+            values = adopted.target["values"]
+            events = values.get("tax_events", [])
+            if "tax_event" in values:
+                events = [values["tax_event"]]
+            if fact["kind"] == "opening.package":
+                events = [
+                    {
+                        "event_kind": "opening",
+                        "terms_id": quantity["terms_id"],
+                        "product_id": quantity["product_id"],
+                        "tax_facts": deepcopy(quantity["tax_facts"]),
+                        "quantity": quantity["quantity"],
+                        "origin_ref": deepcopy(quantity["source"]),
+                        **{
+                            target: quantity[source]
+                            for source, target in (
+                                ("tax_buy_basis_fen", "opening_vat_buy_basis_fen"),
+                                ("eit_tax_basis_fen", "opening_eit_tax_basis_fen"),
+                                ("acquired_on", "acquired_on"),
+                                ("acquisition_origin", "acquisition_origin"),
+                                ("eit_interest_realized_through", "eit_interest_realized_through"),
+                                ("eit_interest_source", "eit_interest_source"),
+                                ("legal_form", "legal_form"),
+                                ("quantity_unit", "quantity_unit"),
+                                (
+                                    "financial_instrument_reference",
+                                    "financial_instrument_reference",
+                                ),
+                            )
+                            if source in quantity
+                        },
+                    }
+                    for quantity in adopted.basis.get("adopted_quantities", ())
+                    if quantity["type"] == "investment_lot"
+                ]
+            elif (
+                fact["kind"]
+                in {"investment.money_fund_purchase", "investment.money_fund_redemption"}
+                and not events
+            ):
+                raise ContractError(
+                    "needs_information",
+                    "旧货币基金事实没有投资税务性质和独立买入价依据，不能推定免税或税基。",
+                    fact_issues=[
+                        {
+                            "code": "investment_tax_basis_required",
+                            "business_id": fact["business_id"],
+                            "field": "/data",
+                            "meaning": "投资税务性质和独立计税基础",
+                            "message": "需要从原投资资料核实真实权利、税务性质和买入价。",
+                            "allowed_precision": [],
+                            "reusable_sources": [
+                                {"source_id": value} for value in fact["evidence_ids"]
+                            ],
+                            "blocking_scope": "business",
+                        }
+                    ],
+                )
+            for index, event in enumerate(events):
+                result.append(
+                    InvestmentTaxEventView(
+                        deepcopy(event),
+                        deepcopy(adopted.source),
+                        adopted.basis["period"],
+                        adopted.basis.get("effective_on"),
+                        index,
+                    )
+                )
+        return tuple(result)
+
     def pre_tax(self, period_from, period_to):
         self._check_aggregate_scope("pre_tax", period_from, period_to)
         return self._candidate.pre_tax(period_from, period_to)
@@ -189,6 +417,8 @@ class SubmissionContext:
         self._candidate_complete = True
 
     def add_fact(self, fact):
+        if self._candidate_values is not None:
+            raise ContractError("invalid_operation", "候选开始后不能更换事实，须重新建立完整候选。")
         self._facts[fact["business_id"]] = deepcopy(fact)
 
     def declare_slots(self, responsibility):
@@ -203,6 +433,7 @@ class SubmissionContext:
         key = plan["business_id"], plan["result_slot"]
         self._plans[key] = plan
         self._result_cache.pop(key, None)
+        self._result_sources.pop(key, None)
 
     def get_fact(self, business_id):
         if business_id in self._facts:
@@ -433,12 +664,24 @@ class SubmissionContext:
             self._result_cache[key] = self._load_result(business_id, result_slot)
         return deepcopy(self._result_cache[key])
 
+    def _current_result_source(self, business_id, result_slot):
+        key = business_id, result_slot
+        if key not in self._result_sources:
+            plan = self._plans.get(key)
+            if business_id in self._slots and plan is None:
+                if result_slot not in self._slots[business_id] or key not in self._retained_results:
+                    raise ContractError(
+                        "dependency_conflict", "同单所需结果槽尚未完成，须先声明正确依赖。"
+                    )
+            self._result_sources[key] = self._ledger.get_result_source(
+                business_id, result_slot, self.read_context, plan=plan
+            )
+        return self._result_sources[key]
+
     def _load_result(self, business_id, result_slot):
         plan = self._plans.get((business_id, result_slot))
         if plan is not None:
-            source = self._ledger.get_result_source(
-                business_id, result_slot, self.read_context, plan=plan
-            )
+            source = self._current_result_source(business_id, result_slot)
             return EvaluatedSlot(source, deepcopy(plan["target"]), deepcopy(plan["basis"]))
         if business_id in self._slots:
             if result_slot not in self._slots[business_id]:
@@ -452,7 +695,7 @@ class SubmissionContext:
                 retained["result_id"], retained["generation"], self.read_context
             )
             return EvaluatedSlot(
-                self._ledger.get_result_source(business_id, result_slot, self.read_context),
+                self._current_result_source(business_id, result_slot),
                 found["target"],
                 found["basis"],
             )
@@ -465,7 +708,7 @@ class SubmissionContext:
         if found is None:
             return None
         return EvaluatedSlot(
-            self._ledger.get_result_source(business_id, result_slot, self.read_context),
+            self._current_result_source(business_id, result_slot),
             found["target"],
             found["basis"],
         )

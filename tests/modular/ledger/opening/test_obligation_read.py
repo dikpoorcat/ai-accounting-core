@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, PageQuery
 from ai_accounting_modular.ledger.opening.public import (
     OpeningLoanReference,
     OpeningOrdinaryReference,
@@ -208,3 +208,34 @@ def test_nonopening_formal_content_is_rejected_before_member_interpretation(tmp_
     with pytest.raises(ContractError) as error:
         opening_obligation_references(adopted(app, company, contract["business_id"]))
     assert error.value.code == "unsupported_business"
+
+
+def test_evaluated_opening_metadata_uses_its_real_source_without_fabricating_a_result_ref(tmp_path):
+    app, company, package = create_package(tmp_path)
+    content = adopted(app, company, package["business_id"])
+    evaluated = EvaluatedSlot(
+        deepcopy(content.source), deepcopy(content.target), deepcopy(content.basis)
+    )
+    assert not hasattr(evaluated, "reference")
+    assert opening_obligation_references(evaluated) == opening_obligation_references(content)
+
+
+@pytest.mark.parametrize("damage", ["count", "duplicate", "start"])
+def test_evaluated_opening_metadata_preserves_the_complete_directory_checks(tmp_path, damage):
+    app, company, package = create_package(tmp_path)
+    content = adopted(app, company, package["business_id"])
+    source, target, basis = (
+        deepcopy(content.source),
+        deepcopy(content.target),
+        deepcopy(content.basis),
+    )
+    if damage == "count":
+        target["values"]["member_count"] += 1
+    elif damage == "duplicate":
+        basis["input"]["members"].append(deepcopy(basis["input"]["members"][0]))
+        target["values"]["member_count"] += 1
+    else:
+        target["values"]["bookkeeping_start"] = "2026-06"
+    with pytest.raises(ContractError) as error:
+        opening_obligation_references(EvaluatedSlot(source, target, basis))
+    assert error.value.code == "storage_corrupt"

@@ -114,3 +114,64 @@ def test_partial_opening_loan_can_be_incomplete_but_cannot_assert_both_component
         "PartialOpeningLoan",
         {"type": "loan", "principal_fen": "100"},
     )
+
+
+@pytest.fixture
+def cooperation_basis_quantities(tmp_path):
+    from ai_accounting_modular.domains.financing.public import create_investment
+    from tests.modular.ledger.opening._support import assemble, get, opening
+    from tests.modular.ledger.opening.test_investment_cutover import (
+        agency,
+        coop_member,
+        cooperation,
+        equity,
+        open_trade,
+        submit,
+    )
+
+    app, company = assemble(tmp_path, investment_accounting=create_investment(), operations=True)
+    product, agreement = cooperation()
+    initial = coop_member(
+        agreement,
+        [open_trade("receivable", "revenue", "50"), open_trade("payable", "expense", "20")],
+    )
+    package = opening(initial, equity(78))
+    actual = submit(app, company, agreement, package, products=[(product, "cooperation")])
+    assert actual.get("completion") == "complete", actual
+    collected = agency(agreement, package, initial, "receivable", "revenue", "50", "2026-07-10")
+    paid = agency(agreement, package, initial, "payable", "expense", "20", "2026-08-11")
+    paid["period"] = "2026-08"
+    actual = submit(app, company, collected, paid)
+    assert actual.get("completion") == "complete", actual
+    businesses = get(app, company, agreement["business_id"], paid["business_id"])["businesses"]
+    return {
+        quantity["type"]: quantity
+        for business in businesses
+        for result in business["results"]
+        for quantity in result["basis"]["adopted_quantities"]
+        if quantity["type"] in {"cooperation_cash_source", "cooperation_position"}
+    }
+
+
+@pytest.mark.parametrize(
+    ("tag", "definition"),
+    [
+        ("cooperation_cash_source", "CooperationAdoptedCooperationCashSource"),
+        ("cooperation_position", "CooperationAdoptedCooperationQuantity"),
+    ],
+)
+def test_real_cooperation_basis_uses_the_canonical_quantity_contract(
+    cooperation_basis_quantities, tag, definition
+):
+    value = cooperation_basis_quantities[tag]
+    for contract in (definition, "AdoptedQuantity"):
+        validate_contract("business-facts.schema.json", contract, value)
+        for field in value:
+            incomplete = deepcopy(value)
+            del incomplete[field]
+            with pytest.raises(ContractError):
+                validate_contract("business-facts.schema.json", contract, incomplete)
+        with pytest.raises(ContractError):
+            validate_contract(
+                "business-facts.schema.json", contract, {**value, "unsupported_field": "0"}
+            )

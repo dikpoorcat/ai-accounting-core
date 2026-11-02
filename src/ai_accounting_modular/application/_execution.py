@@ -86,6 +86,7 @@ def execute(application, submission, unit, *, evaluation_period_to=None, prepare
         application.records,
         objects=identity_plan.objects,
         facts={change.business_id: change.fact for change in changes},
+        changed_business_ids=(change.business_id for change in changes if change.changed),
         money=application.money,
         evaluation_period_to=max(
             [

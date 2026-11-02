@@ -834,6 +834,7 @@ class Allocation(TypedDict):
     source: BusinessRef
     amount_fen: PositiveFen
     recipient_id: NotRequired[Id]
+    authorization: NotRequired[BusinessRef]
 
 class ExpenseDestination(TypedDict):
     type: Literal['expense']
@@ -1330,6 +1331,7 @@ class IncomeTaxAmountAssessment(TypedDict):
     tax_period_end: Month
     cumulative_tax_fen: NonNegativeFen
     source: SourceLocation
+    partnership_inclusions: NotRequired[list[PartnershipTaxInclusion]]
 
 type TaxesAssessment = VatAssessment | IncomeTaxComputedAssessment | IncomeTaxAmountAssessment
 
@@ -1384,6 +1386,8 @@ class ActualVatDeclaration(TypedDict):
     row19_fen: NotRequired[NonNegativeFen]
     exemption_relief_fen: NotRequired[NonNegativeFen]
     settlement_as_of: NotRequired[Date]
+    financial_transfer_vat_fen: NotRequired[NonNegativeFen]
+    investment_interest_vat_fen: NotRequired[NonNegativeFen]
 
 class ActualIncomeTaxDeclaration(TypedDict):
     type: Literal['income_tax']
@@ -1502,7 +1506,7 @@ class OpeningMoneyFund(TypedDict):
     classification: Literal['readily_redeemable_held_not_over_one_year']
     cost_basis: Literal['documented_cost']
 
-type OpeningMemberData = OpeningBank | OpeningCash | OpeningObligation | OpeningAsset | OpeningLoan | OpeningTax | OpeningPayrollPayable | OpeningEquity | OpeningMoneyFund
+type OpeningMemberData = dict[str, JsonValue]
 
 class OpeningMember(TypedDict):
     member_id: Id
@@ -1896,7 +1900,7 @@ class FactReportsContinuation(TypedDict):
     evidence_ids: list[Id]
     data: ReportsContinuation
 
-type Fact = FactOperationsServiceSale | FactOperationsExpense | FactOperationsOtherIncome | FactOperationsAdvance | FactOperationsAdvanceFulfillment | FactOperationsSaleReturn | FactOperationsAdvanceRefund | FactOperationsExpenseRecovery | FactOperationsPassThrough | FactOperationsPassThroughReturn | FactOperationsDeposit | FactOperationsReimbursement | FactOperationsOverpayment | FactPeopleEmployment | FactPeopleRemuneration | FactPeopleContributionPolicy | FactPeopleContributionActual | FactAssetsProjectCost | FactAssetsProjectRelease | FactAssetsAcquisition | FactAssetsActivation | FactAssetsDisposal | FactFinancingOwnerFunding | FactFinancingLoanContract | FactFinancingLoanDrawdown | FactFinancingInterestPeriod | FactInvestmentMoneyFundPurchase | FactInvestmentMoneyFundRedemption | FactMoneyMovement | FactMoneyTransfer | FactMoneyBankStatement | FactMoneyReconciliation | FactMoneyReserveInternal | FactMoneyPlatformActivity | FactTaxesVatPolicy | FactTaxesSurtaxPolicy | FactTaxesUsedAssetVatPolicy | FactTaxesIncomeTaxPolicy | FactTaxesPrepaymentBasis | FactTaxesAssessment | FactTaxesTaxCredit | FactTaxesActualDeclaration | FactTaxesTaxPoint | FactOpeningPackage | FactReportsContinuation | CooperationFact | FactPeopleRelationship | FactPeopleRemunerationTax
+type Fact = FactOperationsServiceSale | FactOperationsExpense | FactOperationsOtherIncome | FactOperationsAdvance | FactOperationsAdvanceFulfillment | FactOperationsSaleReturn | FactOperationsAdvanceRefund | FactOperationsExpenseRecovery | FactOperationsPassThrough | FactOperationsPassThroughReturn | FactOperationsDeposit | FactOperationsReimbursement | FactOperationsOverpayment | FactPeopleEmployment | FactPeopleRemuneration | FactPeopleContributionPolicy | FactPeopleContributionActual | FactAssetsProjectCost | FactAssetsProjectRelease | FactAssetsAcquisition | FactAssetsActivation | FactAssetsDisposal | FactFinancingOwnerFunding | FactFinancingLoanContract | FactFinancingLoanDrawdown | FactFinancingInterestPeriod | FactInvestmentMoneyFundPurchase | FactInvestmentMoneyFundRedemption | FactMoneyMovement | FactMoneyTransfer | FactMoneyBankStatement | FactMoneyReconciliation | FactMoneyReserveInternal | FactMoneyPlatformActivity | FactTaxesVatPolicy | FactTaxesSurtaxPolicy | FactTaxesUsedAssetVatPolicy | FactTaxesIncomeTaxPolicy | FactTaxesPrepaymentBasis | FactTaxesAssessment | FactTaxesTaxCredit | FactTaxesActualDeclaration | FactTaxesTaxPoint | FactOpeningPackage | FactReportsContinuation | CooperationFact | FactPeopleRelationship | FactPeopleRemunerationTax | FactInvestmentTerms | FactInvestmentAcquire | FactInvestmentIncome | FactInvestmentDispose | FactInvestmentCapitalReturn | FactInvestmentReinvest | FactInvestmentUnitChange | FactInvestmentLoss | FactInvestmentDebtInterest | FactInvestmentHoldingChange | FactTaxesFinancialTransferBasis | FactTaxesPartnershipAllocation | FactInvestmentMarketEstimate | FactInvestmentUnitChangeBasis
 
 class PartialBusinessRef(TypedDict):
     business_id: NotRequired[Id]
@@ -1920,6 +1924,7 @@ class PartialAllocation(TypedDict):
     source: NotRequired[PartialBusinessRef]
     amount_fen: NotRequired[PositiveFen]
     recipient_id: NotRequired[Id]
+    authorization: NotRequired[PartialBusinessRef]
 
 class PartialExpenseDestination(TypedDict):
     type: NotRequired[Literal['expense']]
@@ -2416,6 +2421,7 @@ class PartialIncomeTaxAmountAssessment(TypedDict):
     tax_period_end: NotRequired[Month]
     cumulative_tax_fen: NotRequired[NonNegativeFen]
     source: NotRequired[PartialSourceLocation]
+    partnership_inclusions: NotRequired[list[PartnershipTaxInclusion]]
 
 type PartialTaxesAssessment = PartialVatAssessment | PartialIncomeTaxComputedAssessment | PartialIncomeTaxAmountAssessment
 
@@ -2470,6 +2476,8 @@ class PartialActualVatDeclaration(TypedDict):
     row19_fen: NotRequired[NonNegativeFen]
     exemption_relief_fen: NotRequired[NonNegativeFen]
     settlement_as_of: NotRequired[Date]
+    financial_transfer_vat_fen: NotRequired[NonNegativeFen]
+    investment_interest_vat_fen: NotRequired[NonNegativeFen]
 
 class PartialActualIncomeTaxDeclaration(TypedDict):
     type: NotRequired[Literal['income_tax']]
@@ -2588,7 +2596,7 @@ class PartialOpeningMoneyFund(TypedDict):
     classification: NotRequired[Literal['readily_redeemable_held_not_over_one_year']]
     cost_basis: NotRequired[Literal['documented_cost']]
 
-type PartialOpeningMemberData = PartialOpeningBank | PartialOpeningCash | PartialOpeningObligation | PartialOpeningAsset | PartialOpeningLoan | PartialOpeningTax | PartialOpeningPayrollPayable | PartialOpeningEquity | PartialOpeningMoneyFund
+type PartialOpeningMemberData = PartialOpeningBank | PartialOpeningCash | PartialOpeningObligation | PartialOpeningAsset | PartialOpeningLoan | PartialOpeningTax | PartialOpeningPayrollPayable | PartialOpeningEquity | PartialOpeningMoneyFund | PartialOpeningInvestment | PartialOpeningInvestmentReceivable | PartialOpeningCooperation
 
 class PartialOpeningMember(TypedDict):
     member_id: NotRequired[Id]
@@ -2982,7 +2990,7 @@ class PartialFactReportsContinuation(TypedDict):
     evidence_ids: NotRequired[list[Id]]
     data: NotRequired[PartialReportsContinuation]
 
-type PartialFact = PartialFactOperationsServiceSale | PartialFactOperationsExpense | PartialFactOperationsOtherIncome | PartialFactOperationsAdvance | PartialFactOperationsAdvanceFulfillment | PartialFactOperationsSaleReturn | PartialFactOperationsAdvanceRefund | PartialFactOperationsExpenseRecovery | PartialFactOperationsPassThrough | PartialFactOperationsPassThroughReturn | PartialFactOperationsDeposit | PartialFactOperationsReimbursement | PartialFactOperationsOverpayment | PartialFactPeopleEmployment | PartialFactPeopleRemuneration | PartialFactPeopleContributionPolicy | PartialFactPeopleContributionActual | PartialFactAssetsProjectCost | PartialFactAssetsProjectRelease | PartialFactAssetsAcquisition | PartialFactAssetsActivation | PartialFactAssetsDisposal | PartialFactFinancingOwnerFunding | PartialFactFinancingLoanContract | PartialFactFinancingLoanDrawdown | PartialFactFinancingInterestPeriod | PartialFactInvestmentMoneyFundPurchase | PartialFactInvestmentMoneyFundRedemption | PartialFactMoneyMovement | PartialFactMoneyTransfer | PartialFactMoneyBankStatement | PartialFactMoneyReconciliation | PartialFactMoneyReserveInternal | PartialFactMoneyPlatformActivity | PartialFactTaxesVatPolicy | PartialFactTaxesSurtaxPolicy | PartialFactTaxesUsedAssetVatPolicy | PartialFactTaxesIncomeTaxPolicy | PartialFactTaxesPrepaymentBasis | PartialFactTaxesAssessment | PartialFactTaxesTaxCredit | PartialFactTaxesActualDeclaration | PartialFactTaxesTaxPoint | PartialFactOpeningPackage | PartialFactReportsContinuation | CooperationPartialFact | PartialFactPeopleRelationship | PartialFactPeopleRemunerationTax
+type PartialFact = PartialFactOperationsServiceSale | PartialFactOperationsExpense | PartialFactOperationsOtherIncome | PartialFactOperationsAdvance | PartialFactOperationsAdvanceFulfillment | PartialFactOperationsSaleReturn | PartialFactOperationsAdvanceRefund | PartialFactOperationsExpenseRecovery | PartialFactOperationsPassThrough | PartialFactOperationsPassThroughReturn | PartialFactOperationsDeposit | PartialFactOperationsReimbursement | PartialFactOperationsOverpayment | PartialFactPeopleEmployment | PartialFactPeopleRemuneration | PartialFactPeopleContributionPolicy | PartialFactPeopleContributionActual | PartialFactAssetsProjectCost | PartialFactAssetsProjectRelease | PartialFactAssetsAcquisition | PartialFactAssetsActivation | PartialFactAssetsDisposal | PartialFactFinancingOwnerFunding | PartialFactFinancingLoanContract | PartialFactFinancingLoanDrawdown | PartialFactFinancingInterestPeriod | PartialFactInvestmentMoneyFundPurchase | PartialFactInvestmentMoneyFundRedemption | PartialFactMoneyMovement | PartialFactMoneyTransfer | PartialFactMoneyBankStatement | PartialFactMoneyReconciliation | PartialFactMoneyReserveInternal | PartialFactMoneyPlatformActivity | PartialFactTaxesVatPolicy | PartialFactTaxesSurtaxPolicy | PartialFactTaxesUsedAssetVatPolicy | PartialFactTaxesIncomeTaxPolicy | PartialFactTaxesPrepaymentBasis | PartialFactTaxesAssessment | PartialFactTaxesTaxCredit | PartialFactTaxesActualDeclaration | PartialFactTaxesTaxPoint | PartialFactOpeningPackage | PartialFactReportsContinuation | CooperationPartialFact | PartialFactPeopleRelationship | PartialFactPeopleRemunerationTax | PartialFactInvestmentTerms | PartialFactInvestmentAcquire | PartialFactInvestmentIncome | PartialFactInvestmentDispose | PartialFactInvestmentCapitalReturn | PartialFactInvestmentReinvest | PartialFactInvestmentUnitChange | PartialFactInvestmentLoss | PartialFactInvestmentDebtInterest | PartialFactInvestmentHoldingChange | PartialFactTaxesFinancialTransferBasis | PartialFactTaxesPartnershipAllocation | PartialFactInvestmentMarketEstimate | PartialFactInvestmentUnitChangeBasis
 
 type CashflowCategory = Literal['none', 'customer_receipts', 'other_operating_receipts', 'materials_services_payments', 'employee_payments', 'tax_payments', 'other_operating_payments', 'investment_recovery', 'investment_income', 'asset_disposal', 'investment_acquisition', 'asset_acquisition', 'loan_receipts', 'capital_receipts', 'loan_repayment', 'interest_payments', 'profit_distributions']
 
@@ -3084,6 +3092,7 @@ class IncomeTaxAssessmentMetrics(TypedDict):
     taxable_profit_fen: NotRequired[NonNegativeFen]
     rate: NotRequired[Rate]
     taxable_fraction: NotRequired[Rate]
+    investment_exempt_income_fen: NotRequired[NonNegativeFen]
 
 class TargetOperationsServiceSale(TypedDict):
     kind: Literal['operations.service_sale']
@@ -3317,11 +3326,11 @@ class TargetReportsContinuation(TypedDict):
 
 class WithdrawnTarget(TypedDict):
     kind: Literal['system.withdrawal']
-    business_kind: Literal['operations.service_sale', 'operations.expense', 'operations.other_income', 'operations.advance', 'operations.advance_fulfillment', 'operations.sale_return', 'operations.advance_refund', 'operations.expense_recovery', 'operations.pass_through', 'operations.pass_through_return', 'operations.deposit', 'operations.reimbursement', 'operations.overpayment', 'people.employment', 'people.remuneration', 'people.contribution_policy', 'people.contribution_actual', 'assets.project_cost', 'assets.project_release', 'assets.acquisition', 'assets.activation', 'assets.disposal', 'financing.owner_funding', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.interest_period', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.movement', 'money.transfer', 'money.bank_statement', 'money.reconciliation', 'money.reserve_internal', 'money.platform_activity', 'taxes.vat_policy', 'taxes.surtax_policy', 'taxes.used_asset_vat_policy', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.assessment', 'taxes.tax_credit', 'taxes.actual_declaration', 'taxes.tax_point', 'opening.package', 'reports.continuation', 'investment.cooperation_contract', 'investment.cooperation_funding', 'investment.cooperation_collection', 'investment.cooperation_payment', 'investment.cooperation_operator_transfer', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'assets.consumption', 'investment.cooperation_position', 'people.remuneration_tax']
+    business_kind: Literal['assets.acquisition', 'assets.activation', 'assets.consumption', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.acquire', 'investment.capital_return', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.cooperation_position', 'investment.debt_interest', 'investment.dispose', 'investment.holding_change', 'investment.income', 'investment.loss', 'investment.market_estimate', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'investment.position', 'investment.reinvest', 'investment.terms', 'investment.unit_change', 'investment.unit_change_basis', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.remuneration', 'people.remuneration_tax', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.financial_transfer_basis', 'taxes.income_tax_policy', 'taxes.partnership_allocation', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
     result_slot: Slot
     state: Literal['withdrawn']
 
-type ResultTarget = TargetOperationsServiceSale | TargetOperationsExpense | TargetOperationsExpenseRecovery | TargetOperationsOtherIncome | TargetOperationsAdvance | TargetOperationsAdvanceFulfillment | TargetOperationsSaleReturn | TargetOperationsAdvanceRefund | TargetOperationsPassThrough | TargetOperationsPassThroughReturn | TargetOperationsDeposit | TargetOperationsReimbursement | TargetOperationsOverpayment | TargetPeopleEmployment | TargetPeopleContributionPolicy | TargetTaxesVatPolicy | TargetTaxesSurtaxPolicy | TargetTaxesUsedAssetVatPolicy | TargetTaxesIncomeTaxPolicy | TargetPeopleContributionActual | TargetPeopleRemuneration | TargetAssetsProjectCost | TargetAssetsProjectRelease | TargetAssetsAcquisition | TargetAssetsActivation | TargetAssetsDisposal | TargetAssetsConsumption | TargetFinancingOwnerFunding | TargetFinancingLoanContract | TargetFinancingLoanDrawdown | TargetFinancingInterestPeriod | TargetInvestmentMoneyFundPurchase | TargetInvestmentMoneyFundRedemption | TargetMoneyMovement | TargetMoneyTransfer | TargetMoneyBankStatement | TargetMoneyPlatformActivity | TargetMoneyReserveInternal | TargetMoneyReconciliation | TargetTaxesPrepaymentBasis | TargetTaxesAssessment | TargetTaxesTaxCredit | TargetTaxesActualDeclaration | TargetTaxesTaxPoint | TargetOpeningPackage | TargetReportsContinuation | WithdrawnTarget | CooperationResultTarget | TargetOperationsTaxRelease | TargetTaxesIncomeTaxNetting | TargetPeopleRemunerationTax
+type ResultTarget = TargetOperationsServiceSale | TargetOperationsExpense | TargetOperationsExpenseRecovery | TargetOperationsOtherIncome | TargetOperationsAdvance | TargetOperationsAdvanceFulfillment | TargetOperationsSaleReturn | TargetOperationsAdvanceRefund | TargetOperationsPassThrough | TargetOperationsPassThroughReturn | TargetOperationsDeposit | TargetOperationsReimbursement | TargetOperationsOverpayment | TargetPeopleEmployment | TargetPeopleContributionPolicy | TargetTaxesVatPolicy | TargetTaxesSurtaxPolicy | TargetTaxesUsedAssetVatPolicy | TargetTaxesIncomeTaxPolicy | TargetPeopleContributionActual | TargetPeopleRemuneration | TargetAssetsProjectCost | TargetAssetsProjectRelease | TargetAssetsAcquisition | TargetAssetsActivation | TargetAssetsDisposal | TargetAssetsConsumption | TargetFinancingOwnerFunding | TargetFinancingLoanContract | TargetFinancingLoanDrawdown | TargetFinancingInterestPeriod | TargetInvestmentMoneyFundPurchase | TargetInvestmentMoneyFundRedemption | TargetMoneyMovement | TargetMoneyTransfer | TargetMoneyBankStatement | TargetMoneyPlatformActivity | TargetMoneyReserveInternal | TargetMoneyReconciliation | TargetTaxesPrepaymentBasis | TargetTaxesAssessment | TargetTaxesTaxCredit | TargetTaxesActualDeclaration | TargetTaxesTaxPoint | TargetOpeningPackage | TargetReportsContinuation | WithdrawnTarget | CooperationResultTarget | TargetOperationsTaxRelease | TargetTaxesIncomeTaxNetting | TargetPeopleRemunerationTax | TargetInvestmentTerms | TargetInvestmentAcquire | TargetInvestmentIncome | TargetInvestmentDispose | TargetInvestmentCapitalReturn | TargetInvestmentReinvest | TargetInvestmentUnitChange | TargetInvestmentLoss | TargetInvestmentDebtInterest | TargetInvestmentHoldingChange | TargetTaxesFinancialTransferBasis | TargetTaxesPartnershipAllocation | TargetInvestmentAuthorization | TargetInvestmentPosition | TargetInvestmentMarketEstimate | TargetInvestmentUnitChangeBasis
 
 class AdoptedObligationQuantity(TypedDict):
     type: Literal['obligation']
@@ -3420,7 +3429,7 @@ class AdoptedBalanceQuantity(TypedDict):
     balance_fen: Fen
     as_of_period: Month
 
-type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity | CooperationTradeQuantity | AdoptedRemunerationQuantity
+type AdoptedQuantity = AdoptedObligationQuantity | AdoptedExpenseQuantity | AdoptedCostQuantity | AdoptedFundQuantity | AdoptedPayrollQuantity | AdoptedAssetQuantity | AdoptedLoanQuantity | AdoptedLoanTermsQuantity | AdoptedTaxSaleQuantity | AdoptedProfitQuantity | AdoptedBalanceQuantity | AdoptedEmploymentQuantity | AdoptedContributionActualQuantity | AdoptedCumulativeRangeQuantity | AdoptedTaxPointQuantity | AdoptedTaxReturnQuantity | AdoptedIncomeTaxCumulativeQuantity | AdoptedOpeningBalanceQuantity | CooperationTradeQuantity | AdoptedRemunerationQuantity | InvestmentLot | InvestmentLotUse | AdoptedFinancialTransferEventQuantity | AdoptedInvestmentSettlementAuthorization | CooperationOpeningSnapshot | AdoptedInvestmentIncomeReliefQuantity | AdoptedInvestmentIncomeVatQuantity | AdoptedFinancialTransferTaxPositionQuantity | AdoptedFinancialTransferTaxAssessmentQuantity | AdoptedPartnershipTaxInclusionQuantity | AdoptedOpeningInvestmentReceivableQuantity | CooperationAdoptedCooperationCashSource | CooperationAdoptedCooperationQuantity | AdoptedInvestmentIncomeAdjustment | AdoptedInvestmentUnitNormalization | AdoptedGovernmentBondInterestRealization | AdoptedInvestmentReliefVatAllocation | OrdinaryVatAccountingQuantity
 
 class AdoptedPeopleContributionPolicy(TypedDict):
     policy_business_id: Id
@@ -3461,6 +3470,7 @@ class AccountingAllocation(TypedDict):
     source: BusinessRef
     amount_fen: PositiveFen
     recipient_id: NotRequired[Id]
+    authorization: NotRequired[BusinessRef]
 
 class AccountingExpenseDestination(TypedDict):
     type: Literal['expense']
@@ -3940,6 +3950,7 @@ class AccountingIncomeTaxAmountAssessment(TypedDict):
     tax_year: int
     tax_period_end: Month
     cumulative_tax_fen: NonNegativeFen
+    partnership_inclusions: NotRequired[list[PartnershipTaxInclusion]]
 
 type AccountingTaxesAssessment = AccountingVatAssessment | AccountingIncomeTaxComputedAssessment | AccountingIncomeTaxAmountAssessment
 
@@ -3991,6 +4002,8 @@ class AccountingActualVatDeclaration(TypedDict):
     row19_fen: NotRequired[NonNegativeFen]
     exemption_relief_fen: NotRequired[NonNegativeFen]
     settlement_as_of: NotRequired[Date]
+    financial_transfer_vat_fen: NotRequired[NonNegativeFen]
+    investment_interest_vat_fen: NotRequired[NonNegativeFen]
 
 class AccountingActualIncomeTaxDeclaration(TypedDict):
     type: Literal['income_tax']
@@ -4104,7 +4117,7 @@ class AccountingOpeningMoneyFund(TypedDict):
     classification: Literal['readily_redeemable_held_not_over_one_year']
     cost_basis: Literal['documented_cost']
 
-type AccountingOpeningMemberData = AccountingOpeningBank | AccountingOpeningCash | AccountingOpeningObligation | AccountingOpeningAsset | AccountingOpeningLoan | AccountingOpeningTax | AccountingOpeningPayrollPayable | AccountingOpeningEquity | AccountingOpeningMoneyFund
+type AccountingOpeningMemberData = AccountingOpeningBank | AccountingOpeningCash | AccountingOpeningObligation | AccountingOpeningAsset | AccountingOpeningLoan | AccountingOpeningTax | AccountingOpeningPayrollPayable | AccountingOpeningEquity | AccountingOpeningMoneyFund | OpeningInvestment | OpeningInvestmentReceivable | OpeningCooperation
 
 class AccountingOpeningMember(TypedDict):
     member_id: Id
@@ -4649,7 +4662,7 @@ class WithdrawnBasis(TypedDict):
     explanation: str
     source_locations: list[SourceLocator]
 
-type AdoptedBasis = BasisOperationsServiceSale | BasisOperationsExpense | BasisOperationsOtherIncome | BasisOperationsAdvance | BasisOperationsAdvanceFulfillment | BasisOperationsSaleReturn | BasisOperationsAdvanceRefund | BasisOperationsExpenseRecovery | BasisOperationsPassThrough | BasisOperationsPassThroughReturn | BasisOperationsDeposit | BasisOperationsReimbursement | BasisOperationsOverpayment | BasisPeopleEmployment | BasisPeopleRemuneration | BasisPeopleContributionPolicy | BasisPeopleContributionActual | BasisAssetsProjectCost | BasisAssetsProjectRelease | BasisAssetsAcquisition | BasisAssetsActivation | BasisAssetsDisposal | BasisFinancingOwnerFunding | BasisFinancingLoanContract | BasisFinancingLoanDrawdown | BasisFinancingInterestPeriod | BasisInvestmentMoneyFundPurchase | BasisInvestmentMoneyFundRedemption | BasisMoneyMovement | BasisMoneyTransfer | BasisMoneyBankStatement | BasisMoneyReconciliation | BasisMoneyReserveInternal | BasisMoneyPlatformActivity | BasisTaxesVatPolicy | BasisTaxesSurtaxPolicy | BasisTaxesUsedAssetVatPolicy | BasisTaxesIncomeTaxPolicy | BasisTaxesPrepaymentBasis | BasisTaxesAssessment | BasisTaxesTaxCredit | BasisTaxesActualDeclaration | BasisTaxesTaxPoint | BasisOpeningPackage | BasisReportsContinuation | BasisAssetsConsumption | WithdrawnBasis | CooperationAdoptedBasis | BasisOperationsTaxRelease | BasisTaxesIncomeTaxNetting | BasisPeopleRemunerationTax
+type AdoptedBasis = BasisOperationsServiceSale | BasisOperationsExpense | BasisOperationsOtherIncome | BasisOperationsAdvance | BasisOperationsAdvanceFulfillment | BasisOperationsSaleReturn | BasisOperationsAdvanceRefund | BasisOperationsExpenseRecovery | BasisOperationsPassThrough | BasisOperationsPassThroughReturn | BasisOperationsDeposit | BasisOperationsReimbursement | BasisOperationsOverpayment | BasisPeopleEmployment | BasisPeopleRemuneration | BasisPeopleContributionPolicy | BasisPeopleContributionActual | BasisAssetsProjectCost | BasisAssetsProjectRelease | BasisAssetsAcquisition | BasisAssetsActivation | BasisAssetsDisposal | BasisFinancingOwnerFunding | BasisFinancingLoanContract | BasisFinancingLoanDrawdown | BasisFinancingInterestPeriod | BasisInvestmentMoneyFundPurchase | BasisInvestmentMoneyFundRedemption | BasisMoneyMovement | BasisMoneyTransfer | BasisMoneyBankStatement | BasisMoneyReconciliation | BasisMoneyReserveInternal | BasisMoneyPlatformActivity | BasisTaxesVatPolicy | BasisTaxesSurtaxPolicy | BasisTaxesUsedAssetVatPolicy | BasisTaxesIncomeTaxPolicy | BasisTaxesPrepaymentBasis | BasisTaxesAssessment | BasisTaxesTaxCredit | BasisTaxesActualDeclaration | BasisTaxesTaxPoint | BasisOpeningPackage | BasisReportsContinuation | BasisAssetsConsumption | WithdrawnBasis | CooperationAdoptedBasis | BasisOperationsTaxRelease | BasisTaxesIncomeTaxNetting | BasisPeopleRemunerationTax | BasisInvestmentTerms | BasisInvestmentAcquire | BasisInvestmentIncome | BasisInvestmentDispose | BasisInvestmentCapitalReturn | BasisInvestmentReinvest | BasisInvestmentUnitChange | BasisInvestmentLoss | BasisInvestmentDebtInterest | BasisInvestmentHoldingChange | BasisTaxesFinancialTransferBasis | BasisTaxesPartnershipAllocation | BasisInvestmentPosition | BasisInvestmentMarketEstimate | BasisInvestmentUnitChangeBasis
 
 class CalculationRuleRef(TypedDict):
     key: str
@@ -4963,6 +4976,9 @@ class CooperationPositionValues(TypedDict):
     company_paid_fen: Fen
     company_outside_settled_out_fen: NonNegativeFen
     company_outside_settled_in_fen: NonNegativeFen
+    totals_from_period: NotRequired[Month]
+    lifetime_totals: NotRequired[None]
+    opening_state: NotRequired[CooperationOpeningSnapshot]
 
 class CooperationOpeningPosition(TypedDict):
     contract_id: Id
@@ -5048,7 +5064,7 @@ class CooperationAccountingContract(TypedDict):
 class CooperationAccountingPosition(TypedDict):
     contract_id: Id
     company_revenue_expense_share: CooperationShare
-    opening: Literal['zero_at_start', 'previous_adopted_position']
+    opening: Literal['zero_at_start', 'previous_adopted_position', 'opening_snapshot']
     period_totals: CooperationAccountingPositionPeriodTotals
     ending_trade_receivable_net_fen: NonNegativeFen
     ending_trade_payable_fen: NonNegativeFen
@@ -5138,7 +5154,7 @@ class CooperationBasisPosition(TypedDict):
     effective_on: NotRequired[Date]
     input: CooperationAccountingPosition
     source_results: list[CooperationResultSourceRef]
-    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity]
+    adopted_quantities: list[CooperationAdoptedCooperationQuantity | AdoptedObligationQuantity | CooperationAdoptedCooperationCashSource | CooperationTradeQuantity | CooperationOpeningSnapshot]
     policies: list[CooperationAdoptedCooperationPolicy]
     source_locations: list[SourceLocator]
 
@@ -5158,7 +5174,7 @@ class CooperationAdoptedCooperationCashSource(TypedDict):
 
 type CooperationShare = Rate
 
-type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.relationship', 'people.remuneration', 'people.remuneration_tax', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.income_tax_policy', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
+type FactKind = Literal['assets.acquisition', 'assets.activation', 'assets.disposal', 'assets.project_cost', 'assets.project_release', 'financing.interest_period', 'financing.loan_contract', 'financing.loan_drawdown', 'financing.owner_funding', 'investment.acquire', 'investment.capital_return', 'investment.cooperation_collection', 'investment.cooperation_contract', 'investment.cooperation_distribution', 'investment.cooperation_exit', 'investment.cooperation_funding', 'investment.cooperation_operator_transfer', 'investment.cooperation_payment', 'investment.debt_interest', 'investment.dispose', 'investment.holding_change', 'investment.income', 'investment.loss', 'investment.market_estimate', 'investment.money_fund_purchase', 'investment.money_fund_redemption', 'investment.position', 'investment.reinvest', 'investment.terms', 'investment.unit_change', 'investment.unit_change_basis', 'money.bank_statement', 'money.movement', 'money.platform_activity', 'money.reconciliation', 'money.reserve_internal', 'money.transfer', 'opening.package', 'operations.advance', 'operations.advance_fulfillment', 'operations.advance_refund', 'operations.deposit', 'operations.expense', 'operations.expense_recovery', 'operations.other_income', 'operations.overpayment', 'operations.pass_through', 'operations.pass_through_return', 'operations.reimbursement', 'operations.sale_return', 'operations.service_sale', 'people.contribution_actual', 'people.contribution_policy', 'people.employment', 'people.relationship', 'people.remuneration', 'people.remuneration_tax', 'reports.continuation', 'taxes.actual_declaration', 'taxes.assessment', 'taxes.financial_transfer_basis', 'taxes.income_tax_policy', 'taxes.partnership_allocation', 'taxes.prepayment_basis', 'taxes.surtax_policy', 'taxes.tax_credit', 'taxes.tax_point', 'taxes.used_asset_vat_policy', 'taxes.vat_policy']
 
 class AdoptedEmploymentQuantity(TypedDict):
     type: Literal['employment']
@@ -5448,7 +5464,1302 @@ class PartialOwnFundsChannel(TypedDict):
     name: NotRequired[str]
     source: NotRequired[PartialSourceLocator]
 
-type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1221', '122105', '122106', '122107', '1601', '1602', '1604', '1701', '1702', '189901', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '5801', '6301', '630101']
+type InvestmentQuantity = str
+
+class InvestmentLot(TypedDict):
+    type: Literal['investment_lot']
+    source: BusinessRef
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    quantity_unit: Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']
+    historical_cost_fen: NonNegativeFen
+    carrying_fen: NonNegativeFen
+    acquired_period: Month
+    acquired_on: NotRequired[Date]
+    tax_buy_basis_fen: NotRequired[NonNegativeFen]
+    eit_tax_basis_fen: NotRequired[NonNegativeFen]
+    debt_face_fen: NotRequired[NonNegativeFen]
+    origin_source: NotRequired[BusinessRef]
+    account_code: Literal['1101', '149901', '1501', '1511', '189902']
+    matures_on: NotRequired[Date]
+    tax_facts: NotRequired[InvestmentTaxFacts]
+    opening_debt: NotRequired[OpeningInvestmentDebt]
+    accrued_interest_fen: NotRequired[NonNegativeFen]
+    acquisition_sequence: NotRequired[int]
+    acquired_coupon_dates: NotRequired[list[Date]]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+    eit_interest_realized_through: NotRequired[Date]
+    eit_interest_source: NotRequired[SourceLocator]
+    allocation_state: NotRequired[InvestmentAllocationState]
+    legal_form: NotRequired[Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']]
+    financial_instrument_reference: NotRequired[InvestmentInstrumentReference]
+
+class InvestmentLotSelection(TypedDict):
+    source: BusinessRef
+    quantity: InvestmentQuantity
+
+class InvestmentLotUse(TypedDict):
+    type: Literal['investment_lot_use']
+    source: BusinessRef
+    terms_id: Id
+    quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    quantity_before: InvestmentQuantity
+    quantity_after: InvestmentQuantity
+    cost_before_fen: NonNegativeFen
+    cost_after_fen: NonNegativeFen
+
+type InvestmentTaxEvent = TradeInvestmentTaxEvent | InvestmentOpeningTaxEvent
+
+class InvestmentTerms(TypedDict):
+    product_id: Id
+    product_type: Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']
+    legal_form: Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']
+    measurement: Literal['short_term_cost', 'other_financial_cost', 'long_bond_cost', 'long_equity_cost']
+    quantity_unit: Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']
+    cost_method: NotRequired[Literal['fifo', 'specific_identification']]
+    holding_arrangement: Literal['current', 'noncurrent']
+    terms_source: SourceLocator
+    tax_facts: InvestmentTaxFacts
+    coupon_schedule: NotRequired[list[InvestmentTermsCouponScheduleItem]]
+    settlement_authorizations: NotRequired[list[InvestmentSettlementAuthorizationInput]]
+    initial_holding_intent: NotRequired[Literal['short_term', 'long_term']]
+    financial_instrument_reference: NotRequired[InvestmentInstrumentReference]
+
+class FactInvestmentTerms(TypedDict):
+    business_id: Id
+    kind: Literal['investment.terms']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentTerms
+
+class PartialInvestmentTerms(TypedDict):
+    product_id: NotRequired[Id]
+    product_type: NotRequired[Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']]
+    legal_form: NotRequired[Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']]
+    measurement: NotRequired[Literal['short_term_cost', 'other_financial_cost', 'long_bond_cost', 'long_equity_cost']]
+    quantity_unit: NotRequired[Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']]
+    cost_method: NotRequired[Literal['fifo', 'specific_identification']]
+    holding_arrangement: NotRequired[Literal['current', 'noncurrent']]
+    terms_source: NotRequired[SourceLocator]
+    tax_facts: NotRequired[InvestmentTaxFacts]
+    coupon_schedule: NotRequired[list[PartialInvestmentTermsCouponScheduleItem]]
+    settlement_authorizations: NotRequired[list[InvestmentSettlementAuthorizationInput]]
+    initial_holding_intent: NotRequired[Literal['short_term', 'long_term']]
+    financial_instrument_reference: NotRequired[InvestmentInstrumentReference]
+
+class PartialFactInvestmentTerms(TypedDict):
+    business_id: Id
+    kind: Literal['investment.terms']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentTerms
+
+class TargetInvestmentTerms(TypedDict):
+    kind: Literal['investment.terms']
+    result_slot: Slot
+    values: AccountingInvestmentTerms
+
+class AccountingInvestmentTerms(TypedDict):
+    product_id: Id
+    product_type: Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']
+    legal_form: Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']
+    measurement: Literal['short_term_cost', 'other_financial_cost', 'long_bond_cost', 'long_equity_cost']
+    quantity_unit: Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']
+    cost_method: Literal['fifo', 'specific_identification']
+    holding_arrangement: Literal['current', 'noncurrent']
+    terms_source: SourceLocator
+    tax_facts: InvestmentTaxFacts
+    coupon_schedule: NotRequired[list[AccountingInvestmentTermsCouponScheduleItem]]
+    settlement_authorizations: NotRequired[list[InvestmentSettlementAuthorizationInput]]
+    debt_amortization_method: NotRequired[Literal['remaining_contract_periods_straight_line']]
+    initial_holding_intent: NotRequired[Literal['short_term', 'long_term']]
+    financial_instrument_reference: NotRequired[InvestmentInstrumentReference]
+
+class BasisInvestmentTerms(TypedDict):
+    kind: Literal['investment.terms']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentTerms
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentAcquire(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    quantity: InvestmentQuantity
+    purchase_price_fen: NonNegativeFen
+    acquisition_fees_fen: NonNegativeFen
+    separate_declared_income_fen: NonNegativeFen
+    acquired_coupon_dates: NotRequired[list[Date]]
+    separate_income_character: NotRequired[Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']]
+    transaction_sequence: NotRequired[int]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+
+class FactInvestmentAcquire(TypedDict):
+    business_id: Id
+    kind: Literal['investment.acquire']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentAcquire
+
+class PartialInvestmentAcquire(TypedDict):
+    terms_id: NotRequired[Id]
+    counterparty_id: NotRequired[Id]
+    quantity: NotRequired[InvestmentQuantity]
+    purchase_price_fen: NotRequired[NonNegativeFen]
+    acquisition_fees_fen: NotRequired[NonNegativeFen]
+    separate_declared_income_fen: NotRequired[NonNegativeFen]
+    acquired_coupon_dates: NotRequired[list[Date]]
+    separate_income_character: NotRequired[Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']]
+    transaction_sequence: NotRequired[int]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+
+class PartialFactInvestmentAcquire(TypedDict):
+    business_id: Id
+    kind: Literal['investment.acquire']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentAcquire
+
+class TargetInvestmentAcquire(TypedDict):
+    kind: Literal['investment.acquire']
+    result_slot: Slot
+    values: TargetInvestmentAcquireValues
+
+class AccountingInvestmentAcquire(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    quantity: InvestmentQuantity
+    purchase_price_fen: NonNegativeFen
+    acquisition_fees_fen: NonNegativeFen
+    separate_declared_income_fen: NonNegativeFen
+    acquired_coupon_dates: NotRequired[list[Date]]
+    separate_income_character: NotRequired[Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']]
+    transaction_sequence: NotRequired[int]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+
+class BasisInvestmentAcquire(TypedDict):
+    kind: Literal['investment.acquire']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentAcquire
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentIncome(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    income_character: Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']
+    amount_fen: PositiveFen
+    entitlements: NotRequired[list[InvestmentIncomeEntitlementsItem]]
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentIncome(TypedDict):
+    business_id: Id
+    kind: Literal['investment.income']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentIncome
+
+class PartialInvestmentIncome(TypedDict):
+    terms_id: NotRequired[Id]
+    counterparty_id: NotRequired[Id]
+    income_character: NotRequired[Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']]
+    amount_fen: NotRequired[PositiveFen]
+    entitlements: NotRequired[list[PartialInvestmentIncomeEntitlementsItem]]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentIncome(TypedDict):
+    business_id: Id
+    kind: Literal['investment.income']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentIncome
+
+class TargetInvestmentIncome(TypedDict):
+    kind: Literal['investment.income']
+    result_slot: Slot
+    values: InvestmentIncomeValues | LegacyInvestmentIncomeValues
+
+class AccountingInvestmentIncome(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    income_character: Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']
+    amount_fen: PositiveFen
+    entitlements: NotRequired[list[AccountingInvestmentIncomeEntitlementsItem]]
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentIncome(TypedDict):
+    kind: Literal['investment.income']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentIncome
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentDispose(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    quantity: InvestmentQuantity
+    gross_proceeds_fen: NonNegativeFen
+    disposal_fees_fen: NonNegativeFen
+    exit_mode: Literal['transfer', 'redemption', 'maturity']
+    lot_allocations: NotRequired[list[InvestmentLotSelection]]
+    maturity_income: NotRequired[InvestmentMaturityIncome]
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentDispose(TypedDict):
+    business_id: Id
+    kind: Literal['investment.dispose']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentDispose
+
+class PartialInvestmentDispose(TypedDict):
+    terms_id: NotRequired[Id]
+    counterparty_id: NotRequired[Id]
+    quantity: NotRequired[InvestmentQuantity]
+    gross_proceeds_fen: NotRequired[NonNegativeFen]
+    disposal_fees_fen: NotRequired[NonNegativeFen]
+    exit_mode: NotRequired[Literal['transfer', 'redemption', 'maturity']]
+    lot_allocations: NotRequired[list[InvestmentLotSelection]]
+    maturity_income: NotRequired[InvestmentMaturityIncome]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentDispose(TypedDict):
+    business_id: Id
+    kind: Literal['investment.dispose']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentDispose
+
+class TargetInvestmentDispose(TypedDict):
+    kind: Literal['investment.dispose']
+    result_slot: Slot
+    values: TargetInvestmentDisposeValues
+
+class AccountingInvestmentDispose(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    quantity: InvestmentQuantity
+    gross_proceeds_fen: NonNegativeFen
+    disposal_fees_fen: NonNegativeFen
+    exit_mode: Literal['transfer', 'redemption', 'maturity']
+    lot_allocations: NotRequired[list[InvestmentLotSelection]]
+    maturity_income: NotRequired[InvestmentMaturityIncome]
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentDispose(TypedDict):
+    kind: Literal['investment.dispose']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentDispose
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentCapitalReturn(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    source: BusinessRef
+    amount_fen: PositiveFen
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentCapitalReturn(TypedDict):
+    business_id: Id
+    kind: Literal['investment.capital_return']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentCapitalReturn
+
+class PartialInvestmentCapitalReturn(TypedDict):
+    terms_id: NotRequired[Id]
+    counterparty_id: NotRequired[Id]
+    source: NotRequired[BusinessRef]
+    amount_fen: NotRequired[PositiveFen]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentCapitalReturn(TypedDict):
+    business_id: Id
+    kind: Literal['investment.capital_return']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentCapitalReturn
+
+class TargetInvestmentCapitalReturn(TypedDict):
+    kind: Literal['investment.capital_return']
+    result_slot: Slot
+    values: TargetInvestmentCapitalReturnValues
+
+class AccountingInvestmentCapitalReturn(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    source: BusinessRef
+    amount_fen: PositiveFen
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentCapitalReturn(TypedDict):
+    kind: Literal['investment.capital_return']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentCapitalReturn
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentReinvest(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    income_source: BusinessRef
+    quantity: InvestmentQuantity
+    amount_fen: PositiveFen
+    acquisition_fees_fen: NonNegativeFen
+    acquired_coupon_dates: NotRequired[list[Date]]
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentReinvest(TypedDict):
+    business_id: Id
+    kind: Literal['investment.reinvest']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentReinvest
+
+class PartialInvestmentReinvest(TypedDict):
+    terms_id: NotRequired[Id]
+    counterparty_id: NotRequired[Id]
+    income_source: NotRequired[BusinessRef]
+    quantity: NotRequired[InvestmentQuantity]
+    amount_fen: NotRequired[PositiveFen]
+    acquisition_fees_fen: NotRequired[NonNegativeFen]
+    acquired_coupon_dates: NotRequired[list[Date]]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentReinvest(TypedDict):
+    business_id: Id
+    kind: Literal['investment.reinvest']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentReinvest
+
+class TargetInvestmentReinvest(TypedDict):
+    kind: Literal['investment.reinvest']
+    result_slot: Slot
+    values: TargetInvestmentReinvestValues
+
+class AccountingInvestmentReinvest(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    income_source: BusinessRef
+    quantity: InvestmentQuantity
+    amount_fen: PositiveFen
+    acquisition_fees_fen: NonNegativeFen
+    acquired_coupon_dates: NotRequired[list[Date]]
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentReinvest(TypedDict):
+    kind: Literal['investment.reinvest']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentReinvest
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentUnitChange(TypedDict):
+    terms_id: Id
+    source: BusinessRef
+    quantity_after: InvestmentQuantity
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentUnitChange(TypedDict):
+    business_id: Id
+    kind: Literal['investment.unit_change']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentUnitChange
+
+class PartialInvestmentUnitChange(TypedDict):
+    terms_id: NotRequired[Id]
+    source: NotRequired[BusinessRef]
+    quantity_after: NotRequired[InvestmentQuantity]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentUnitChange(TypedDict):
+    business_id: Id
+    kind: Literal['investment.unit_change']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentUnitChange
+
+class TargetInvestmentUnitChange(TypedDict):
+    kind: Literal['investment.unit_change']
+    result_slot: Slot
+    values: TargetInvestmentUnitChangeValues
+
+class AccountingInvestmentUnitChange(TypedDict):
+    terms_id: Id
+    source: BusinessRef
+    quantity_after: InvestmentQuantity
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentUnitChange(TypedDict):
+    kind: Literal['investment.unit_change']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentUnitChange
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentLoss(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    source: BusinessRef
+    quantity: InvestmentQuantity
+    loss_basis: Literal['legal_extinction', 'bankruptcy', 'documented_unrecoverable']
+    recovered_fen: NonNegativeFen
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentLoss(TypedDict):
+    business_id: Id
+    kind: Literal['investment.loss']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentLoss
+
+class PartialInvestmentLoss(TypedDict):
+    terms_id: NotRequired[Id]
+    counterparty_id: NotRequired[Id]
+    source: NotRequired[BusinessRef]
+    quantity: NotRequired[InvestmentQuantity]
+    loss_basis: NotRequired[Literal['legal_extinction', 'bankruptcy', 'documented_unrecoverable']]
+    recovered_fen: NotRequired[NonNegativeFen]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentLoss(TypedDict):
+    business_id: Id
+    kind: Literal['investment.loss']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentLoss
+
+class TargetInvestmentLoss(TypedDict):
+    kind: Literal['investment.loss']
+    result_slot: Slot
+    values: TargetInvestmentLossValues
+
+class AccountingInvestmentLoss(TypedDict):
+    terms_id: Id
+    counterparty_id: Id
+    source: BusinessRef
+    quantity: InvestmentQuantity
+    loss_basis: Literal['legal_extinction', 'bankruptcy', 'documented_unrecoverable']
+    recovered_fen: NonNegativeFen
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentLoss(TypedDict):
+    kind: Literal['investment.loss']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentLoss
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentDebtInterest(TypedDict):
+    terms_id: Id
+    source: BusinessRef
+    counterparty_id: Id
+    payment_on: Date
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentDebtInterest(TypedDict):
+    business_id: Id
+    kind: Literal['investment.debt_interest']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentDebtInterest
+
+class PartialInvestmentDebtInterest(TypedDict):
+    terms_id: NotRequired[Id]
+    source: NotRequired[BusinessRef]
+    counterparty_id: NotRequired[Id]
+    payment_on: NotRequired[Date]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentDebtInterest(TypedDict):
+    business_id: Id
+    kind: Literal['investment.debt_interest']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentDebtInterest
+
+class TargetInvestmentDebtInterest(TypedDict):
+    kind: Literal['investment.debt_interest']
+    result_slot: Slot
+    values: TargetInvestmentDebtInterestValues
+
+class AccountingInvestmentDebtInterest(TypedDict):
+    terms_id: Id
+    source: BusinessRef
+    counterparty_id: Id
+    payment_on: Date
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentDebtInterest(TypedDict):
+    kind: Literal['investment.debt_interest']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentDebtInterest
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentHoldingChange(TypedDict):
+    terms_id: Id
+    holding_arrangement: Literal['current', 'noncurrent']
+    effective_from: Date
+    change_source: SourceLocator
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentHoldingChange(TypedDict):
+    business_id: Id
+    kind: Literal['investment.holding_change']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentHoldingChange
+
+class PartialInvestmentHoldingChange(TypedDict):
+    terms_id: NotRequired[Id]
+    holding_arrangement: NotRequired[Literal['current', 'noncurrent']]
+    effective_from: NotRequired[Date]
+    change_source: NotRequired[SourceLocator]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentHoldingChange(TypedDict):
+    business_id: Id
+    kind: Literal['investment.holding_change']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentHoldingChange
+
+class TargetInvestmentHoldingChange(TypedDict):
+    kind: Literal['investment.holding_change']
+    result_slot: Slot
+    values: TargetInvestmentHoldingChangeValues
+
+class AccountingInvestmentHoldingChange(TypedDict):
+    terms_id: Id
+    holding_arrangement: Literal['current', 'noncurrent']
+    effective_from: Date
+    change_source: SourceLocator
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentHoldingChange(TypedDict):
+    kind: Literal['investment.holding_change']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentHoldingChange
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+type TaxQuantity = str
+
+class InvestmentTaxFacts(TypedDict):
+    instrument_type: Literal['securities_fund', 'contractual_asset_management', 'partnership', 'listed_equity', 'unlisted_equity', 'government_bond', 'local_government_bond', 'corporate_bond', 'bank_wealth']
+    principal_protected: NotRequired[bool]
+    issuer_resident: NotRequired[bool]
+    original_issue_on: NotRequired[Date]
+    maturity_on: NotRequired[Date]
+    source: SourceLocator
+    government_bond_eit: NotRequired[GovernmentBondEitTerms]
+
+class TaxesFinancialTransferBasis(TypedDict):
+    method: Literal['weighted_average', 'moving_weighted_average']
+    elected_on: Date
+    source: SourceLocator
+    vat_policy_ids: list[Id]
+
+class TaxesPartnershipAllocation(TypedDict):
+    investment_id: Id
+    tax_year: int
+    allocated_taxable_income_fen: Fen
+    distributed_income_fen: NonNegativeFen
+    retained_income_fen: Fen
+    source: SourceLocator
+    distributions: list[TaxesPartnershipAllocationDistributionsItem]
+    previously_taxed_distributions: NotRequired[list[PartnershipPreviouslyTaxedDistribution]]
+
+class FinancialTransferInventory(TypedDict):
+    product_id: Id
+    quantity: NotRequired[TaxQuantity]
+    vat_basis_fen: NotRequired[NonNegativeFen]
+    eit_basis_fen: NotRequired[NonNegativeFen]
+    vat_basis_unknown_sources: NotRequired[list[BusinessRef]]
+    eit_lots: list[InvestmentEitTaxLot]
+    unit_basis_unknown_sources: NotRequired[list[BusinessRef]]
+    vat_unit_segments: NotRequired[list[FinancialTransferInventoryVatUnitSegmentsItem]]
+    vat_pool_identity: NotRequired[FinancialTransferInventoryVatPoolIdentity]
+
+class FinancialTransferDisposal(TypedDict):
+    source: BusinessRef
+    vat_buy_price_fen: NotRequired[NonNegativeFen]
+    eit_basis_fen: NotRequired[NonNegativeFen]
+
+class FinancialTransferPosition(TypedDict):
+    type: Literal['financial_transfer_position']
+    period: Month
+    current_difference_fen: Fen
+    opening_loss_fen: NonNegativeFen
+    tax_period_start: Month
+    tax_period_difference_fen: Fen
+    tax_period_opening_loss_fen: NonNegativeFen
+    closing_loss_fen: NonNegativeFen
+    opening_tax_carry_fen: NonNegativeFen
+    closing_tax_carry_fen: NonNegativeFen
+    payable_tax_fen: NonNegativeFen
+    recognized_tax_change_fen: Fen
+    expired_loss_fen: NonNegativeFen
+    taxable_interest_gross_fen: NonNegativeFen
+    interest_vat_fen: NonNegativeFen
+    positions: list[FinancialTransferInventory]
+    disposals: list[FinancialTransferDisposal]
+
+class FactTaxesFinancialTransferBasis(TypedDict):
+    business_id: Id
+    kind: Literal['taxes.financial_transfer_basis']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: TaxesFinancialTransferBasis
+
+class PartialFactTaxesFinancialTransferBasis(TypedDict):
+    kind: Literal['taxes.financial_transfer_basis']
+    business_id: NotRequired[Id]
+    period: NotRequired[Month]
+    effective_on: NotRequired[Date]
+    evidence_ids: NotRequired[list[Id]]
+    data: NotRequired[PartialTaxesFinancialTransferBasis]
+
+class PartialTaxesFinancialTransferBasis(TypedDict):
+    method: NotRequired[Literal['weighted_average', 'moving_weighted_average']]
+    elected_on: NotRequired[Date]
+    source: NotRequired[SourceLocator]
+    vat_policy_ids: NotRequired[list[Id]]
+
+class TargetTaxesFinancialTransferBasis(TypedDict):
+    kind: Literal['taxes.financial_transfer_basis']
+    result_slot: Slot
+    values: TargetTaxesFinancialTransferBasisValuesVariant1 | FinancialTransferPosition
+
+class AccountingTaxesFinancialTransferBasis(TypedDict):
+    method: Literal['weighted_average', 'moving_weighted_average']
+    elected_on: Date
+    vat_policy_ids: list[Id]
+
+class BasisTaxesFinancialTransferBasis(TypedDict):
+    kind: Literal['taxes.financial_transfer_basis']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingTaxesFinancialTransferBasis
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class FactTaxesPartnershipAllocation(TypedDict):
+    business_id: Id
+    kind: Literal['taxes.partnership_allocation']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: TaxesPartnershipAllocation
+
+class PartialFactTaxesPartnershipAllocation(TypedDict):
+    kind: Literal['taxes.partnership_allocation']
+    business_id: NotRequired[Id]
+    period: NotRequired[Month]
+    effective_on: NotRequired[Date]
+    evidence_ids: NotRequired[list[Id]]
+    data: NotRequired[PartialTaxesPartnershipAllocation]
+
+class PartialTaxesPartnershipAllocation(TypedDict):
+    investment_id: NotRequired[Id]
+    tax_year: NotRequired[int]
+    allocated_taxable_income_fen: NotRequired[Fen]
+    distributed_income_fen: NotRequired[NonNegativeFen]
+    retained_income_fen: NotRequired[Fen]
+    source: NotRequired[SourceLocator]
+    distributions: NotRequired[list[PartialTaxesPartnershipAllocationDistributionsItem]]
+    previously_taxed_distributions: NotRequired[list[PartnershipPreviouslyTaxedDistribution]]
+
+class TargetTaxesPartnershipAllocation(TypedDict):
+    kind: Literal['taxes.partnership_allocation']
+    result_slot: Slot
+    values: TargetTaxesPartnershipAllocationValues
+
+class AccountingTaxesPartnershipAllocation(TypedDict):
+    investment_id: Id
+    tax_year: int
+    allocated_taxable_income_fen: Fen
+    distributed_income_fen: NonNegativeFen
+    retained_income_fen: Fen
+    distributions: list[AccountingTaxesPartnershipAllocationDistributionsItem]
+    previously_taxed_distributions: NotRequired[list[PartnershipPreviouslyTaxedDistribution]]
+
+class BasisTaxesPartnershipAllocation(TypedDict):
+    kind: Literal['taxes.partnership_allocation']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingTaxesPartnershipAllocation
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class AdoptedFinancialTransferEventQuantity(TypedDict):
+    type: Literal['financial_transfer_event']
+    source: ResultSourceRef
+    event_index: int
+    event: InvestmentTaxEvent
+    period: Month
+    effective_on: NotRequired[Date]
+
+class InvestmentSettlementAuthorizationInput(TypedDict):
+    entry_key: str
+    principal_party_id: Id
+    agent_id: Id
+    purposes: list[Literal['acquisition_payment', 'redemption_receipt', 'distribution_receipt']]
+    valid_from: Month | Date
+    valid_through: NotRequired[Month | Date]
+    source: SourceLocator
+    limit_fen: NotRequired[PositiveFen]
+
+class InvestmentSettlementAuthorization(TypedDict):
+    terms_id: Id
+    product_id: Id
+    entry_key: str
+    principal_party_id: Id
+    agent_id: Id
+    purposes: list[Literal['acquisition_payment', 'redemption_receipt', 'distribution_receipt']]
+    valid_from: Month | Date
+    valid_through: NotRequired[Month | Date]
+    source: SourceLocator
+    limit_fen: NotRequired[PositiveFen]
+
+class TargetInvestmentAuthorization(TypedDict):
+    kind: Literal['investment.terms']
+    result_slot: str
+    values: TargetInvestmentAuthorizationValues
+
+class AdoptedInvestmentSettlementAuthorization(TypedDict):
+    type: Literal['investment_settlement_authorization']
+    source: ResultSourceRef
+    authorization: InvestmentSettlementAuthorization
+    obligation_source: BusinessRef
+    amount_fen: PositiveFen
+    purpose: Literal['acquisition_payment', 'redemption_receipt', 'distribution_receipt']
+
+class OpeningInvestmentDebt(TypedDict):
+    face_fen: NonNegativeFen
+    unamortized_premium_fen: Fen
+    accrued_interest_fen: NonNegativeFen
+    interest_start_on: Date
+
+class OpeningInvestment(TypedDict):
+    type: Literal['investment']
+    terms_id: Id
+    original_lot_reference: str
+    acquired_period: Month
+    acquired_on: NotRequired[Date]
+    quantity: InvestmentQuantity
+    historical_cost_fen: NonNegativeFen
+    carrying_fen: NonNegativeFen
+    tax_buy_basis_fen: NotRequired[NonNegativeFen]
+    eit_tax_basis_fen: NotRequired[NonNegativeFen]
+    debt: NotRequired[OpeningInvestmentDebt]
+    acquisition_sequence: NotRequired[int]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+    eit_interest_realized_through: NotRequired[Date]
+    eit_interest_source: NotRequired[SourceLocator]
+
+class OpeningInvestmentReceivable(TypedDict):
+    type: Literal['investment_receivable']
+    terms_id: Id
+    income_kind: Literal['dividend', 'interest']
+    counterparty_id: Id
+    amount_fen: PositiveFen
+    original_business_reference: str
+
+class OpeningCooperationTrade(TypedDict):
+    entry_key: Slot
+    side: Literal['revenue', 'expense']
+    counterparty_id: Id
+    original_business_reference: str
+    original_project_amount_fen: PositiveFen
+    project_cleared_before_fen: NonNegativeFen
+    company_cleared_before_fen: NonNegativeFen
+    project_range_from_fen: NonNegativeFen
+
+class OpeningCooperation(TypedDict):
+    type: Literal['cooperation']
+    contract_id: Id
+    status: Literal['active', 'operations_ended', 'settled']
+    company_cash_right_fen: Fen
+    operator_cash_right_fen: Fen
+    company_capital_fen: NotRequired[Fen]
+    operator_capital_fen: NotRequired[Fen]
+    open_trades: list[OpeningCooperationTrade]
+
+class CooperationOpeningSnapshot(TypedDict):
+    type: Literal['cooperation_opening']
+    source: BusinessRef
+    contract_id: Id
+    as_of_period: Month
+    status: Literal['active', 'operations_ended', 'settled']
+    company_cash_right_fen: Fen
+    operator_cash_right_fen: Fen
+    company_capital_fen: Fen
+    operator_capital_fen: Fen
+    pool_fen: NonNegativeFen
+    held_fen: NonNegativeFen
+    operator_due_fen: NonNegativeFen
+    company_due_fen: NonNegativeFen
+
+class PartialOpeningInvestment(TypedDict):
+    type: NotRequired[Literal['investment']]
+    terms_id: NotRequired[Id]
+    original_lot_reference: NotRequired[str]
+    acquired_period: NotRequired[Month]
+    acquired_on: NotRequired[Date]
+    quantity: NotRequired[InvestmentQuantity]
+    historical_cost_fen: NotRequired[NonNegativeFen]
+    carrying_fen: NotRequired[NonNegativeFen]
+    tax_buy_basis_fen: NotRequired[NonNegativeFen]
+    eit_tax_basis_fen: NotRequired[NonNegativeFen]
+    debt: NotRequired[OpeningInvestmentDebt]
+    acquisition_sequence: NotRequired[int]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+    eit_interest_realized_through: NotRequired[Date]
+    eit_interest_source: NotRequired[SourceLocator]
+
+class PartialOpeningInvestmentReceivable(TypedDict):
+    type: NotRequired[Literal['investment_receivable']]
+    terms_id: NotRequired[Id]
+    income_kind: NotRequired[Literal['dividend', 'interest']]
+    counterparty_id: NotRequired[Id]
+    amount_fen: NotRequired[PositiveFen]
+    original_business_reference: NotRequired[str]
+
+class PartialOpeningCooperation(TypedDict):
+    type: NotRequired[Literal['cooperation']]
+    contract_id: NotRequired[Id]
+    status: NotRequired[Literal['active', 'operations_ended', 'settled']]
+    company_cash_right_fen: NotRequired[Fen]
+    operator_cash_right_fen: NotRequired[Fen]
+    company_capital_fen: NotRequired[Fen]
+    operator_capital_fen: NotRequired[Fen]
+    open_trades: NotRequired[list[OpeningCooperationTrade]]
+
+class TargetInvestmentPosition(TypedDict):
+    kind: Literal['investment.position']
+    result_slot: Slot
+    values: TargetInvestmentPositionValues
+
+class AccountingInvestmentPosition(TypedDict):
+    terms_id: Id
+    as_of_period: Month
+
+class BasisInvestmentPosition(TypedDict):
+    kind: Literal['investment.position']
+    result_slot: Slot
+    period: Month
+    input: AccountingInvestmentPosition
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class AdoptedInvestmentIncomeReliefQuantity(TypedDict):
+    type: Literal['investment_income_relief']
+    source: ResultSourceRef
+    event_index: int
+    category: Literal['government_bond_interest', 'local_government_bond_interest', 'eligible_dividends', 'securities_fund_distribution']
+    amount_fen: NonNegativeFen
+
+class AdoptedInvestmentIncomeVatQuantity(TypedDict):
+    type: Literal['investment_income_vat']
+    source: ResultSourceRef
+    event_index: int
+    amount_fen: Fen
+
+class InvestmentEitTaxLot(TypedDict):
+    source: BusinessRef
+    quantity: TaxQuantity
+    eit_basis_fen: NotRequired[NonNegativeFen]
+    allocation_quantity: TaxQuantity
+    allocation_basis_fen: NotRequired[NonNegativeFen]
+    consumed_quantity: TaxQuantity
+    terms_id: NotRequired[Id]
+
+class InvestmentMarketEstimate(TypedDict):
+    terms_id: Id
+    estimated_value_fen: NonNegativeFen
+    as_of_on: Date
+    estimate_source: SourceLocator
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentMarketEstimate(TypedDict):
+    business_id: Id
+    kind: Literal['investment.market_estimate']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentMarketEstimate
+
+class PartialInvestmentMarketEstimate(TypedDict):
+    terms_id: NotRequired[Id]
+    estimated_value_fen: NotRequired[NonNegativeFen]
+    as_of_on: NotRequired[Date]
+    estimate_source: NotRequired[SourceLocator]
+    transaction_sequence: NotRequired[int]
+
+class PartialFactInvestmentMarketEstimate(TypedDict):
+    business_id: Id
+    kind: Literal['investment.market_estimate']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentMarketEstimate
+
+class TargetInvestmentMarketEstimate(TypedDict):
+    kind: Literal['investment.market_estimate']
+    result_slot: Slot
+    values: TargetInvestmentMarketEstimateValues
+
+class AccountingInvestmentMarketEstimate(TypedDict):
+    terms_id: Id
+    estimated_value_fen: NonNegativeFen
+    as_of_on: Date
+    estimate_source: SourceLocator
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentMarketEstimate(TypedDict):
+    kind: Literal['investment.market_estimate']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentMarketEstimate
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class InvestmentMaturityIncome(TypedDict):
+    character: Literal['interest', 'market_distribution', 'fund_distribution']
+    amount_fen: NonNegativeFen
+    source: SourceLocator
+    recognized_income_source: NotRequired[BusinessRef]
+
+class AdoptedFinancialTransferTaxPositionQuantity(TypedDict):
+    type: Literal['financial_transfer_tax_position']
+    period: Month
+    tax_period_start: Month
+    tax_period_end: Month
+    carry_asset_fen: NonNegativeFen
+    current_period_payable_fen: NonNegativeFen
+
+class AdoptedFinancialTransferTaxAssessmentQuantity(TypedDict):
+    type: Literal['financial_transfer_tax_assessment']
+    tax_period_start: Month
+    tax_period_end: Month
+    obligation_slot: Literal['financial_transfer_vat']
+    amount_fen: NonNegativeFen
+
+class PartnershipPreviouslyTaxedDistribution(TypedDict):
+    allocation_id: Id
+    tax_assessment_id: Id
+    income_source: BusinessRef
+    amount_fen: PositiveFen
+
+class PartnershipTaxInclusion(TypedDict):
+    allocation_id: Id
+    included_income_fen: NonNegativeFen
+    taxed_retained_income_fen: NonNegativeFen
+
+class AdoptedPartnershipTaxInclusionQuantity(TypedDict):
+    type: Literal['partnership_tax_inclusion']
+    allocation_source: ResultSourceRef
+    investment_id: Id
+    tax_year: int
+    included_income_fen: NonNegativeFen
+    taxed_retained_income_fen: NonNegativeFen
+
+class AdoptedOpeningInvestmentReceivableQuantity(TypedDict):
+    type: Literal['opening_investment_receivable']
+    source: BusinessRef
+    terms_id: Id
+    product_id: Id
+    income_kind: Literal['dividend', 'interest']
+
+class TradeInvestmentTaxEvent(TypedDict):
+    terms_id: Id
+    product_id: Id
+    tax_facts: InvestmentTaxFacts
+    event_kind: Literal['acquisition', 'disposal', 'income', 'capital_return', 'unit_change', 'loss', 'debt_interest']
+    quantity: NotRequired[InvestmentQuantity]
+    gross_price_fen: NonNegativeFen
+    transaction_fees_fen: NonNegativeFen
+    separate_declared_income_fen: NonNegativeFen
+    exit_mode: NotRequired[Literal['transfer', 'redemption', 'maturity']]
+    income_character: NotRequired[Literal['interest', 'dividend', 'fund_distribution', 'market_distribution', 'capital_return']]
+    lot_allocations: NotRequired[list[InvestmentLotSelection]]
+    accounting_cost_fen: NotRequired[NonNegativeFen]
+    accounting_income_fen: NotRequired[Fen]
+    transaction_sequence: NotRequired[int]
+    dividend_holding: NotRequired[list[TradeInvestmentTaxEventDividendHoldingItem]]
+    maturity_income: NotRequired[InvestmentMaturityIncome]
+    acquired_coupon_dates: NotRequired[list[Date]]
+    separate_income_character: NotRequired[Literal['interest', 'dividend', 'fund_distribution', 'market_distribution']]
+    bond_entitlements: NotRequired[list[InvestmentBondEntitlement]]
+    bond_coupon_dates: NotRequired[list[Date]]
+    legal_form: NotRequired[Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']]
+    quantity_unit: NotRequired[Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']]
+    financial_instrument_reference: NotRequired[InvestmentInstrumentReference]
+
+class InvestmentOpeningTaxEvent(TypedDict):
+    event_kind: Literal['opening']
+    terms_id: Id
+    product_id: Id
+    tax_facts: InvestmentTaxFacts
+    quantity: TaxQuantity
+    origin_ref: BusinessRef
+    opening_vat_buy_basis_fen: NotRequired[NonNegativeFen]
+    opening_eit_tax_basis_fen: NotRequired[NonNegativeFen]
+    acquired_on: NotRequired[Date]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+    eit_interest_realized_through: NotRequired[Date]
+    eit_interest_source: NotRequired[SourceLocator]
+    legal_form: NotRequired[Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']]
+    quantity_unit: NotRequired[Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']]
+    financial_instrument_reference: NotRequired[InvestmentInstrumentReference]
+
+class GovernmentBondEitTerms(TypedDict):
+    amount_basis: Literal['face_value', 'issue_price']
+    issue_price_per_100_face_fen: NotRequired[PositiveFen]
+    rate_periods: list[GovernmentBondEitTermsRatePeriodsItem]
+    source: SourceLocator
+
+class InvestmentIncomeAdjustmentPool(TypedDict):
+    type: Literal['investment_income_adjustment']
+    component: Literal['transfer_vat', 'interest_vat']
+    attribution: Literal['company_pool']
+    amount_fen: Fen
+
+class InvestmentIncomeAdjustmentEvent(TypedDict):
+    type: Literal['investment_income_adjustment']
+    component: Literal['interest_vat']
+    attribution: Literal['event']
+    amount_fen: Fen
+    source: ResultSourceRef
+    event_index: int
+    terms_id: Id
+    product_id: Id
+
+type AdoptedInvestmentIncomeAdjustment = InvestmentIncomeAdjustmentPool | InvestmentIncomeAdjustmentEvent
+
+class LegacyInvestmentIncomeValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class InvestmentIncomeValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class AdoptedInvestmentUnitNormalization(TypedDict):
+    type: Literal['investment_unit_normalization']
+    product_id: Id
+    ratio_numerator: str
+    ratio_denominator: str
+    source_events: list[ResultSourceRef]
+    basis_source: NotRequired[ResultSourceRef]
+
+class InvestmentAllocationState(TypedDict):
+    original_quantity: InvestmentQuantity
+    original_cost_fen: NonNegativeFen
+    original_historical_cost_fen: NonNegativeFen
+    consumed_quantity: InvestmentQuantity
+    consumed_cost_fen: NonNegativeFen
+    original_accrued_interest_fen: NonNegativeFen
+
+class InvestmentBondEntitlement(TypedDict):
+    source: BusinessRef
+    nominal_fen: NonNegativeFen
+    acquired_on: NotRequired[Date]
+    acquisition_origin: NotRequired[Literal['primary_subscription', 'secondary_market']]
+    eit_interest_realized_through: NotRequired[Date]
+    eit_interest_source: NotRequired[SourceLocator]
+    acquired_period: NotRequired[Month]
+    origin_source: NotRequired[BusinessRef]
+
+class InvestmentUnitChangeBasis(TypedDict):
+    product_id: Id
+    action_reference: str
+    effective_on: Date
+    from_units: InvestmentQuantity
+    to_units: InvestmentQuantity
+    unit_change_sources: list[BusinessRef]
+    source: SourceLocator
+    transaction_sequence: NotRequired[int]
+
+class PartialInvestmentUnitChangeBasis(TypedDict):
+    product_id: NotRequired[Id]
+    action_reference: NotRequired[str]
+    effective_on: NotRequired[Date]
+    from_units: NotRequired[InvestmentQuantity]
+    to_units: NotRequired[InvestmentQuantity]
+    unit_change_sources: NotRequired[list[BusinessRef]]
+    source: NotRequired[SourceLocator]
+    transaction_sequence: NotRequired[int]
+
+class FactInvestmentUnitChangeBasis(TypedDict):
+    business_id: Id
+    kind: Literal['investment.unit_change_basis']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: InvestmentUnitChangeBasis
+
+class PartialFactInvestmentUnitChangeBasis(TypedDict):
+    business_id: Id
+    kind: Literal['investment.unit_change_basis']
+    period: Month
+    effective_on: NotRequired[Date]
+    evidence_ids: list[Id]
+    data: PartialInvestmentUnitChangeBasis
+
+class TargetInvestmentUnitChangeBasis(TypedDict):
+    kind: Literal['investment.unit_change_basis']
+    result_slot: Slot
+    values: TargetInvestmentUnitChangeBasisValues
+
+class AccountingInvestmentUnitChangeBasis(TypedDict):
+    product_id: Id
+    action_reference: str
+    effective_on: Date
+    from_units: InvestmentQuantity
+    to_units: InvestmentQuantity
+    unit_change_sources: list[BusinessRef]
+    source: SourceLocator
+    transaction_sequence: NotRequired[int]
+
+class BasisInvestmentUnitChangeBasis(TypedDict):
+    kind: Literal['investment.unit_change_basis']
+    result_slot: Slot
+    period: Month
+    effective_on: NotRequired[Date]
+    input: AccountingInvestmentUnitChangeBasis
+    source_results: list[ResultSourceRef]
+    adopted_quantities: list[AdoptedQuantity]
+    policies: list[AdoptedPolicy]
+    source_locations: list[SourceLocator]
+
+class AdoptedGovernmentBondInterestRealization(TypedDict):
+    type: Literal['government_bond_interest_realization']
+    source: ResultSourceRef
+    event_index: int
+    realized_on: Date
+    gross_interest_numerator: str
+    gross_interest_denominator: str
+    gross_exempt_interest_fen: NonNegativeFen
+    entitlements: list[AdoptedGovernmentBondInterestRealizationEntitlementsItem]
+
+class AdoptedInvestmentReliefVatAllocation(TypedDict):
+    type: Literal['investment_relief_vat_allocation']
+    source: ResultSourceRef
+    event_index: int
+    gross_exempt_income_fen: NonNegativeFen
+    income_gross_fen: NonNegativeFen
+    allocated_vat_fen: NonNegativeFen
+
+class InvestmentInstrumentReference(TypedDict):
+    reference: str
+    source: SourceLocator
+
+class OrdinaryVatAccountingQuantity(TypedDict):
+    type: Literal['ordinary_vat_accounting']
+    exemption_income_fen: Fen
+    rounding_adjustment_fen: Fen
+
+type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1131', '1132', '1221', '122105', '122106', '122107', '149901', '1501', '1511', '1601', '1602', '1604', '1701', '1702', '189901', '189902', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '222107', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '571106', '571107', '571108', '5801', '6301', '630101']
 
 class KnownAmount(TypedDict):
     state: Literal['known']
@@ -6373,6 +7684,10 @@ class DashboardFundsDelivery__FundInvestments(TypedDict):
     actual_payments_fen: str
     actual_receipts_fen: str
     event_count: int
+    cooperation_count: NotRequired[int]
+    recognized_income_fen: str
+    vat_adjustment_fen: str
+    actual_loss_fen: str
 
 class DashboardFundsDelivery__FundMovement(TypedDict):
     id: str
@@ -6432,18 +7747,7 @@ class DashboardFundsDelivery__FundsData(TypedDict):
     bank_statement: DashboardFundsDelivery__BankStatement
     collections: DashboardFundsDelivery__FundsCollections
 
-class DashboardFundsDelivery__InvestmentEvent(TypedDict):
-    id: str
-    subject_id: str
-    date: str | None
-    period: str
-    fund_id: str
-    name: str
-    type: str
-    cost_fen: str | None
-    net_proceeds_fen: str | None
-    investment_income_fen: str | None
-    settlement_fen: str | None
+type DashboardFundsDelivery__InvestmentEvent = DashboardFundsDelivery__InvestmentEventVariant1 | DashboardFundsDelivery__InvestmentEventVariant2
 
 class DashboardFundsDelivery__InvestmentProduct(TypedDict):
     fund_id: str
@@ -6451,8 +7755,23 @@ class DashboardFundsDelivery__InvestmentProduct(TypedDict):
     subscription_cost_fen: str
     redemption_cost_fen: str
     closing_cost_fen: str | None
-    investment_income_fen: str
     name: str
+    investment_id: NotRequired[str]
+    product_type: NotRequired[Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']]
+    category_label: NotRequired[str]
+    quantity_label: NotRequired[str]
+    accrued_income_fen: NotRequired[str]
+    cooperation_held_fen: NotRequired[str]
+    cooperation_operator_due_fen: NotRequired[str]
+    cooperation_company_due_fen: NotRequired[str]
+    holding_label: NotRequired[str]
+    cooperation_equity_fen: NotRequired[str]
+    market_value_fen: NotRequired[str]
+    market_as_of: NotRequired[str]
+    pending_receipts_fen: NotRequired[str]
+    recognized_income_fen: str
+    actual_loss_fen: str
+    activity_only: NotRequired[bool]
 
 class DashboardFundsDelivery__ReadSemantics(TypedDict):
     knowledge: Literal['current_knowledge']
@@ -7763,6 +9082,10 @@ class DashboardFunds__FundInvestments(TypedDict):
     actual_payments_fen: str
     actual_receipts_fen: str
     event_count: int
+    cooperation_count: NotRequired[int]
+    recognized_income_fen: str
+    vat_adjustment_fen: str
+    actual_loss_fen: str
 
 class DashboardFunds__FundMovement(TypedDict):
     id: str
@@ -7814,18 +9137,7 @@ class DashboardFunds__FundsData(TypedDict):
     bank_statement: DashboardFunds__BankStatement
     collections: DashboardFunds__FundsCollections
 
-class DashboardFunds__InvestmentEvent(TypedDict):
-    id: str
-    subject_id: str
-    date: str | None
-    period: str
-    fund_id: str
-    name: str
-    type: str
-    cost_fen: str | None
-    net_proceeds_fen: str | None
-    investment_income_fen: str | None
-    settlement_fen: str | None
+type DashboardFunds__InvestmentEvent = DashboardFunds__InvestmentEventVariant1 | DashboardFunds__InvestmentEventVariant2
 
 class DashboardFunds__InvestmentProduct(TypedDict):
     fund_id: str
@@ -7833,8 +9145,23 @@ class DashboardFunds__InvestmentProduct(TypedDict):
     subscription_cost_fen: str
     redemption_cost_fen: str
     closing_cost_fen: str | None
-    investment_income_fen: str
     name: str
+    investment_id: NotRequired[str]
+    product_type: NotRequired[Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']]
+    category_label: NotRequired[str]
+    quantity_label: NotRequired[str]
+    accrued_income_fen: NotRequired[str]
+    cooperation_held_fen: NotRequired[str]
+    cooperation_operator_due_fen: NotRequired[str]
+    cooperation_company_due_fen: NotRequired[str]
+    holding_label: NotRequired[str]
+    cooperation_equity_fen: NotRequired[str]
+    market_value_fen: NotRequired[str]
+    market_as_of: NotRequired[str]
+    pending_receipts_fen: NotRequired[str]
+    recognized_income_fen: str
+    actual_loss_fen: str
+    activity_only: NotRequired[bool]
 
 class DashboardFunds__ReadSemantics(TypedDict):
     knowledge: Literal['current_knowledge']
@@ -9561,6 +10888,253 @@ class TargetPeopleRemunerationTaxValues(TypedDict):
     additional_tax_fen: NonNegativeFen
     basis_type: Literal['final_statement', 'actual_withholding']
 
+class InvestmentTermsCouponScheduleItem(TypedDict):
+    payment_on: Date
+    coupon_rate: Rate
+
+class PartialInvestmentTermsCouponScheduleItem(TypedDict):
+    payment_on: Date
+    coupon_rate: Rate
+
+class AccountingInvestmentTermsCouponScheduleItem(TypedDict):
+    payment_on: Date
+    coupon_rate: Rate
+
+class TargetInvestmentAcquireValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class InvestmentIncomeEntitlementsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: NonNegativeFen
+
+class PartialInvestmentIncomeEntitlementsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: NonNegativeFen
+
+class AccountingInvestmentIncomeEntitlementsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: NonNegativeFen
+
+class TargetInvestmentDisposeValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TargetInvestmentCapitalReturnValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TargetInvestmentReinvestValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TargetInvestmentUnitChangeValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TargetInvestmentLossValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TargetInvestmentDebtInterestValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TargetInvestmentHoldingChangeValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TaxesPartnershipAllocationDistributionsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: PositiveFen
+
+class FinancialTransferInventoryVatUnitSegmentsItem(TypedDict):
+    source: BusinessRef
+    quantity: TaxQuantity
+
+class FinancialTransferInventoryVatPoolIdentity(TypedDict):
+    instrument_type: Literal['securities_fund', 'contractual_asset_management', 'partnership', 'listed_equity', 'unlisted_equity', 'government_bond', 'local_government_bond', 'corporate_bond', 'bank_wealth']
+    legal_form: NotRequired[Literal['securities_fund', 'contractual_fund', 'financial_contract', 'company_equity', 'partnership_interest', 'direct_bond']]
+    quantity_unit: NotRequired[Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']]
+    instrument_reference: NotRequired[str]
+
+class TargetTaxesFinancialTransferBasisValuesVariant1(TypedDict):
+    method: Literal['weighted_average', 'moving_weighted_average']
+    elected_on: Date
+
+class PartialTaxesPartnershipAllocationDistributionsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: PositiveFen
+
+class TargetTaxesPartnershipAllocationValues(TypedDict):
+    investment_id: Id
+    tax_year: int
+    allocated_taxable_income_fen: Fen
+    distributed_income_fen: NonNegativeFen
+    retained_income_fen: Fen
+    distributions: list[TargetTaxesPartnershipAllocationValuesDistributionsItem]
+    previously_taxed_distributions: NotRequired[list[PartnershipPreviouslyTaxedDistribution]]
+    annual_inclusion_fen: NonNegativeFen
+    accounting_income_fen: NonNegativeFen
+    annual_adjustment_fen: Fen
+    previously_taxed_distribution_fen: NotRequired[NonNegativeFen]
+
+class AccountingTaxesPartnershipAllocationDistributionsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: PositiveFen
+
+class TargetInvestmentAuthorizationValues(TypedDict):
+    authorization: InvestmentSettlementAuthorization
+
+class TargetInvestmentPositionValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    as_of_period: Month
+    product_type: Literal['money_fund', 'bank_wealth', 'other_fund', 'bond', 'equity', 'cooperation']
+    measurement: Literal['short_term_cost', 'other_financial_cost', 'long_bond_cost', 'long_equity_cost']
+    quantity_unit: Literal['units', 'shares', 'ownership_fraction', 'nominal_fen']
+    holding_arrangement: Literal['current', 'noncurrent']
+    quantity: InvestmentQuantity
+    opening_quantity: InvestmentQuantity
+    opening_cost_fen: NonNegativeFen
+    closing_cost_fen: NonNegativeFen
+    lots: list[InvestmentLot]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+    inventory_revision: NotRequired[Literal[2]]
+
+class TargetInvestmentMarketEstimateValues(TypedDict):
+    terms_id: Id
+    product_id: Id
+    quantity: InvestmentQuantity
+    remaining_quantity: InvestmentQuantity
+    cost_fen: NonNegativeFen
+    carrying_change_fen: Fen
+    amount_fen: NonNegativeFen
+    gain_loss_fen: Fen
+    allocations: list[InvestmentLotUse]
+    created_lots: list[InvestmentLot]
+    tax_event: NotRequired[InvestmentTaxEvent]
+    market_value_fen: NotRequired[NonNegativeFen]
+    market_as_of: NotRequired[Date]
+
+class TradeInvestmentTaxEventDividendHoldingItem(TypedDict):
+    acquired_on: NotRequired[Date]
+    acquired_period: Month
+    amount_fen: NonNegativeFen
+
+class GovernmentBondEitTermsRatePeriodsItem(TypedDict):
+    start_on: Date
+    end_before: Date
+    annual_rate: Rate
+
+class TargetInvestmentUnitChangeBasisValues(TypedDict):
+    product_id: Id
+    action_reference: str
+    effective_on: Date
+    from_units: InvestmentQuantity
+    to_units: InvestmentQuantity
+    unit_change_sources: list[BusinessRef]
+    transaction_sequence: NotRequired[int]
+    members: list[ResultSourceRef]
+
+class AdoptedGovernmentBondInterestRealizationEntitlementsItem(TypedDict):
+    source: BusinessRef
+    nominal_fen: NonNegativeFen
+    method: Literal['primary_to_maturity', 'holding_days']
+    start_on: NotRequired[Date]
+    end_before: NotRequired[Date]
+    gross_exempt_interest_fen: NonNegativeFen
+    rate_sections: list[AdoptedGovernmentBondInterestRealizationEntitlementsItemRateSectionsItem]
+
 class BalanceSheet1(TypedDict):
     name: Literal['货币资金']
     ending: AmountCell
@@ -10266,6 +11840,70 @@ class AccountingReviewReviewResultVariant5(TypedDict):
     collection: Literal['links']
     items: list[ReviewLinkItem]
 
+class DashboardFundsDelivery__InvestmentEventVariant1(TypedDict):
+    id: str
+    subject_id: str
+    date: str | None
+    period: str
+    fund_id: str
+    name: str
+    type: str
+    cost_fen: str | None
+    net_proceeds_fen: str | None
+    investment_income_fen: str | None
+    settlement_fen: str | None
+    actual_loss_fen: str | None
+    attribution: Literal['event']
+    investment_id: str
+
+class DashboardFundsDelivery__InvestmentEventVariant2(TypedDict):
+    id: str
+    subject_id: str
+    date: str | None
+    period: str
+    fund_id: None
+    name: str
+    type: str
+    cost_fen: str | None
+    net_proceeds_fen: str | None
+    investment_income_fen: str | None
+    settlement_fen: str | None
+    actual_loss_fen: str | None
+    attribution: Literal['company_pool']
+    investment_id: None
+
+class DashboardFunds__InvestmentEventVariant1(TypedDict):
+    id: str
+    subject_id: str
+    date: str | None
+    period: str
+    fund_id: str
+    name: str
+    type: str
+    cost_fen: str | None
+    net_proceeds_fen: str | None
+    investment_income_fen: str | None
+    settlement_fen: str | None
+    actual_loss_fen: str | None
+    attribution: Literal['event']
+    investment_id: str
+
+class DashboardFunds__InvestmentEventVariant2(TypedDict):
+    id: str
+    subject_id: str
+    date: str | None
+    period: str
+    fund_id: None
+    name: str
+    type: str
+    cost_fen: str | None
+    net_proceeds_fen: str | None
+    investment_income_fen: str | None
+    settlement_fen: str | None
+    actual_loss_fen: str | None
+    attribution: Literal['company_pool']
+    investment_id: None
+
 class ObjectVariant1Data(TypedDict):
     identity_document: NotRequired[str]
     phone: NotRequired[str]
@@ -10307,7 +11945,7 @@ class ObjectVariant6Data(TypedDict):
 class ObjectVariant7Data(TypedDict):
     issuer_id: NotRequired[Id]
     product_code: NotRequired[str]
-    category: Literal['money_fund', 'equity', 'cooperation', 'bond', 'other']
+    category: Literal['money_fund', 'bank_wealth', 'other_fund', 'equity', 'cooperation', 'bond', 'other']
 
 class ObjectVariant8Data(TypedDict):
     asset_type: Literal['fixed', 'intangible']
@@ -10356,7 +11994,7 @@ class DocumentObjectVariant6Data(TypedDict):
 class DocumentObjectVariant7Data(TypedDict):
     issuer_id: NotRequired[Id]
     product_code: NotRequired[str]
-    category: Literal['money_fund', 'equity', 'cooperation', 'bond', 'other']
+    category: Literal['money_fund', 'bank_wealth', 'other_fund', 'equity', 'cooperation', 'bond', 'other']
 
 class DocumentObjectVariant8Data(TypedDict):
     asset_type: Literal['fixed', 'intangible']
@@ -10409,7 +12047,7 @@ class CurrentObjectVariant6Data(TypedDict):
 class CurrentObjectVariant7Data(TypedDict):
     issuer_id: NotRequired[Id]
     product_code: NotRequired[str]
-    category: Literal['money_fund', 'equity', 'cooperation', 'bond', 'other']
+    category: Literal['money_fund', 'bank_wealth', 'other_fund', 'equity', 'cooperation', 'bond', 'other']
 
 class CurrentObjectVariant8Data(TypedDict):
     asset_type: Literal['fixed', 'intangible']
@@ -10438,6 +12076,16 @@ class TargetAssetsConsumptionValuesItemsItem(TypedDict):
 class BasisTaxesIncomeTaxNettingInputCutoff(TypedDict):
     period: Month
     on: NotRequired[Date]
+
+class TargetTaxesPartnershipAllocationValuesDistributionsItem(TypedDict):
+    source: BusinessRef
+    amount_fen: PositiveFen
+
+class AdoptedGovernmentBondInterestRealizationEntitlementsItemRateSectionsItem(TypedDict):
+    start_on: Date
+    end_before: Date
+    days: int
+    annual_rate: Rate
 
 __all__ = [
     'JsonValue',
@@ -11249,6 +12897,156 @@ __all__ = [
     'PartialOwnerRecognitionTaxPoint',
     'AccountingOwnerRecognitionTaxPoint',
     'PartialOwnFundsChannel',
+    'InvestmentQuantity',
+    'InvestmentLot',
+    'InvestmentLotSelection',
+    'InvestmentLotUse',
+    'InvestmentTaxEvent',
+    'InvestmentTerms',
+    'FactInvestmentTerms',
+    'PartialInvestmentTerms',
+    'PartialFactInvestmentTerms',
+    'TargetInvestmentTerms',
+    'AccountingInvestmentTerms',
+    'BasisInvestmentTerms',
+    'InvestmentAcquire',
+    'FactInvestmentAcquire',
+    'PartialInvestmentAcquire',
+    'PartialFactInvestmentAcquire',
+    'TargetInvestmentAcquire',
+    'AccountingInvestmentAcquire',
+    'BasisInvestmentAcquire',
+    'InvestmentIncome',
+    'FactInvestmentIncome',
+    'PartialInvestmentIncome',
+    'PartialFactInvestmentIncome',
+    'TargetInvestmentIncome',
+    'AccountingInvestmentIncome',
+    'BasisInvestmentIncome',
+    'InvestmentDispose',
+    'FactInvestmentDispose',
+    'PartialInvestmentDispose',
+    'PartialFactInvestmentDispose',
+    'TargetInvestmentDispose',
+    'AccountingInvestmentDispose',
+    'BasisInvestmentDispose',
+    'InvestmentCapitalReturn',
+    'FactInvestmentCapitalReturn',
+    'PartialInvestmentCapitalReturn',
+    'PartialFactInvestmentCapitalReturn',
+    'TargetInvestmentCapitalReturn',
+    'AccountingInvestmentCapitalReturn',
+    'BasisInvestmentCapitalReturn',
+    'InvestmentReinvest',
+    'FactInvestmentReinvest',
+    'PartialInvestmentReinvest',
+    'PartialFactInvestmentReinvest',
+    'TargetInvestmentReinvest',
+    'AccountingInvestmentReinvest',
+    'BasisInvestmentReinvest',
+    'InvestmentUnitChange',
+    'FactInvestmentUnitChange',
+    'PartialInvestmentUnitChange',
+    'PartialFactInvestmentUnitChange',
+    'TargetInvestmentUnitChange',
+    'AccountingInvestmentUnitChange',
+    'BasisInvestmentUnitChange',
+    'InvestmentLoss',
+    'FactInvestmentLoss',
+    'PartialInvestmentLoss',
+    'PartialFactInvestmentLoss',
+    'TargetInvestmentLoss',
+    'AccountingInvestmentLoss',
+    'BasisInvestmentLoss',
+    'InvestmentDebtInterest',
+    'FactInvestmentDebtInterest',
+    'PartialInvestmentDebtInterest',
+    'PartialFactInvestmentDebtInterest',
+    'TargetInvestmentDebtInterest',
+    'AccountingInvestmentDebtInterest',
+    'BasisInvestmentDebtInterest',
+    'InvestmentHoldingChange',
+    'FactInvestmentHoldingChange',
+    'PartialInvestmentHoldingChange',
+    'PartialFactInvestmentHoldingChange',
+    'TargetInvestmentHoldingChange',
+    'AccountingInvestmentHoldingChange',
+    'BasisInvestmentHoldingChange',
+    'TaxQuantity',
+    'InvestmentTaxFacts',
+    'TaxesFinancialTransferBasis',
+    'TaxesPartnershipAllocation',
+    'FinancialTransferInventory',
+    'FinancialTransferDisposal',
+    'FinancialTransferPosition',
+    'FactTaxesFinancialTransferBasis',
+    'PartialFactTaxesFinancialTransferBasis',
+    'PartialTaxesFinancialTransferBasis',
+    'TargetTaxesFinancialTransferBasis',
+    'AccountingTaxesFinancialTransferBasis',
+    'BasisTaxesFinancialTransferBasis',
+    'FactTaxesPartnershipAllocation',
+    'PartialFactTaxesPartnershipAllocation',
+    'PartialTaxesPartnershipAllocation',
+    'TargetTaxesPartnershipAllocation',
+    'AccountingTaxesPartnershipAllocation',
+    'BasisTaxesPartnershipAllocation',
+    'AdoptedFinancialTransferEventQuantity',
+    'InvestmentSettlementAuthorizationInput',
+    'InvestmentSettlementAuthorization',
+    'TargetInvestmentAuthorization',
+    'AdoptedInvestmentSettlementAuthorization',
+    'OpeningInvestmentDebt',
+    'OpeningInvestment',
+    'OpeningInvestmentReceivable',
+    'OpeningCooperationTrade',
+    'OpeningCooperation',
+    'CooperationOpeningSnapshot',
+    'PartialOpeningInvestment',
+    'PartialOpeningInvestmentReceivable',
+    'PartialOpeningCooperation',
+    'TargetInvestmentPosition',
+    'AccountingInvestmentPosition',
+    'BasisInvestmentPosition',
+    'AdoptedInvestmentIncomeReliefQuantity',
+    'AdoptedInvestmentIncomeVatQuantity',
+    'InvestmentEitTaxLot',
+    'InvestmentMarketEstimate',
+    'FactInvestmentMarketEstimate',
+    'PartialInvestmentMarketEstimate',
+    'PartialFactInvestmentMarketEstimate',
+    'TargetInvestmentMarketEstimate',
+    'AccountingInvestmentMarketEstimate',
+    'BasisInvestmentMarketEstimate',
+    'InvestmentMaturityIncome',
+    'AdoptedFinancialTransferTaxPositionQuantity',
+    'AdoptedFinancialTransferTaxAssessmentQuantity',
+    'PartnershipPreviouslyTaxedDistribution',
+    'PartnershipTaxInclusion',
+    'AdoptedPartnershipTaxInclusionQuantity',
+    'AdoptedOpeningInvestmentReceivableQuantity',
+    'TradeInvestmentTaxEvent',
+    'InvestmentOpeningTaxEvent',
+    'GovernmentBondEitTerms',
+    'InvestmentIncomeAdjustmentPool',
+    'InvestmentIncomeAdjustmentEvent',
+    'AdoptedInvestmentIncomeAdjustment',
+    'LegacyInvestmentIncomeValues',
+    'InvestmentIncomeValues',
+    'AdoptedInvestmentUnitNormalization',
+    'InvestmentAllocationState',
+    'InvestmentBondEntitlement',
+    'InvestmentUnitChangeBasis',
+    'PartialInvestmentUnitChangeBasis',
+    'FactInvestmentUnitChangeBasis',
+    'PartialFactInvestmentUnitChangeBasis',
+    'TargetInvestmentUnitChangeBasis',
+    'AccountingInvestmentUnitChangeBasis',
+    'BasisInvestmentUnitChangeBasis',
+    'AdoptedGovernmentBondInterestRealization',
+    'AdoptedInvestmentReliefVatAllocation',
+    'InvestmentInstrumentReference',
+    'OrdinaryVatAccountingQuantity',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

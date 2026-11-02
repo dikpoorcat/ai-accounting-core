@@ -136,6 +136,18 @@ class ResourceRepository:
     def current_metadata(self, business_ids):
         return self.current_heads(business_ids)
 
+    def authorization_uses(self, terms_ids):
+        self._refresh()
+        stored = self.base.authorization_uses(terms_ids)
+        return [row for row in stored if row["result_id"] not in self.shadowed] + [
+            row for row in self.heads.values()
+            if any(
+                item["type"] == "investment_settlement_authorization"
+                and item["authorization"]["terms_id"] in terms_ids
+                for item in json.loads(row["basis_json"])["adopted_quantities"]
+            )
+        ]
+
     def result(self, result_id):
         self._refresh()
         if result_id in self.heads:

@@ -51,6 +51,17 @@ def journal_key(body, row):
     )
 
 
+def bond_dimension_key(product, matures_on):
+    return order_key((product, matures_on))
+
+
+def bond_key(body, index):
+    product, maturity, _ = body["bonds"][index - 1]
+    return bond_dimension_key(product, maturity) + order_key(
+        (*target_key(body_head(body)), f"{index:019d}")
+    )
+
+
 def body_head(body):
     return body["source"] | {
         "generation": body["source"]["result_generation"],
@@ -440,6 +451,34 @@ class JournalStrategy:
         if type(raw) is not list or len(raw) != 2 or type(raw[0]) is not str:
             fail("storage_corrupt", "财务余额角色的维度摘要格式损坏。")
         return raw[0], Fold.from_record(raw[1])
+
+
+class BondStrategy(JournalStrategy):
+    """Debt book changes fold by product/maturity, with no history walk on reads."""
+
+    def leaf(self, entries):
+        dimension, result, mixed = None, Fold(), False
+        for entry in entries:
+            value = entry.value
+            if (
+                type(value) is not list
+                or len(value) != 2
+                or type(value[0]) is not str
+                or type(value[1]) is not int
+                or value[1] < 1
+            ):
+                fail("storage_corrupt", "债券账面投影的正式来源定位损坏。")
+            body = self.bodies.get_many((value[0],))[0]
+            if value[1] > len(body["bonds"]) or bond_key(body, value[1]) != entry.key:
+                fail("storage_corrupt", "债券账面投影与精确正式来源不一致。")
+            product, maturity, amount = body["bonds"][value[1] - 1]
+            actual = bond_dimension_key(product, maturity)
+            mixed |= dimension is not None and actual != dimension
+            if dimension is None:
+                dimension = actual
+            if not mixed:
+                result = result.then(Fold.one(amount))
+        return (dimension, result) if dimension is not None and not mixed else None
 
 
 class CashBalanceStrategy:

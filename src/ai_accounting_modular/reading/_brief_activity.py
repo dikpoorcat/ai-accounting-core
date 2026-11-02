@@ -37,6 +37,9 @@ class _RootContents:
     def opening(self, content):
         return self.shared.opening(content)
 
+    def opening_obligations(self, content):
+        return self.shared.opening_obligations(content)
+
 
 def _obligations(reader, scope, read, contents):
     """Bind progress to an actual obligation under the exact formal adoption."""

@@ -1,6 +1,6 @@
 """Actual declarations are authoritative facts, never synthetic payments."""
 
-from ._common import amount, fact_for, issue, plan_for, reject, total
+from ._common import amount, fact_for, issue, missing, plan_for, reject, total
 
 
 def declarations(fact, context, additional=()):
@@ -38,6 +38,20 @@ def check_actual(fact, context):
     if source["data"]["type"] != data["type"]:
         reject("实际申报税种与引用计提税种不一致。", "invalid_input")
     if data["type"] == "vat":
+        investment_parts = tuple(
+            key
+            for key in ("financial_transfer_vat_fen", "investment_interest_vat_fen")
+            if key in data
+        )
+        if investment_parts and len(investment_parts) != 2:
+            field = next(
+                key
+                for key in ("financial_transfer_vat_fen", "investment_interest_vat_fen")
+                if key not in data
+            )
+            missing(fact, "/data/" + field, "实际投资VAT须有同一来源的完整转让和利息组成。")
+        if total(amount(data[key]) for key in investment_parts) > amount(data["assessed_vat_fen"]):
+            reject("实际投资VAT组成不能超过同一申报的应纳VAT合计。", "invalid_input")
         if (data["start_month"], data["end_month"]) != (
             source["data"]["start_month"],
             source["data"]["end_month"],

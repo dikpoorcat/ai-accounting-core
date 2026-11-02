@@ -176,6 +176,13 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
 
 
 def evaluate(descriptions, context, ledger, correction_period):
+    try:
+        return _evaluate(descriptions, context, ledger, correction_period)
+    finally:
+        context.end_candidate()
+
+
+def _evaluate(descriptions, context, ledger, correction_period):
     context.begin_candidate(descriptions, correction_period)
     owners, edges, reasons = {}, {}, {}
     publications = [item for _, description in descriptions for item in description["publications"]]

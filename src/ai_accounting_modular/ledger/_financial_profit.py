@@ -1,16 +1,60 @@
 """Sparse integer contributions retain exact missing-meaning and overflow rules."""
 
-from ai_accounting_modular.contracts.public import parse_fen
+from ai_accounting_modular.contracts.public import parse_fen, validate_contract
 from ai_accounting_modular.ledger.reporting.public import profit_totals
 
 from ._balances import sum_amounts
 from ._financial_cells import known
 from ._journal_amounts import journal_amount
 from ._profit import has_unmapped_line, pretax_values
+from ._values import fail
 
 # Unknown contributions carry issue indexes, never an inferred zero amount.
 type _Amount = int | tuple[int, ...]
 _TARGET_VALUES = frozenset(("operations.other_income", "taxes.assessment"))
+
+
+def _new_vat(head, target):
+    return (
+        target["kind"] == "taxes.assessment"
+        and "payable_vat_fen" in target["values"]
+        and head["calculation_key"] == "taxes.assessment"
+        and head["calculation_revision"] >= 2
+    )
+
+
+def load_profit_inputs(selection, heads):
+    """Batch only selected VAT revisions that adopted the ordinary accounting split."""
+    targets = [head for head in heads if selection.kind(head) in _TARGET_VALUES]
+    selection.load_targets(targets)
+    selection.load_bases([head for head in targets if _new_vat(head, selection.target(head))])
+
+
+def _vat_exemption(selection, head, lines):
+    quantities = [
+        value
+        for value in selection.basis(head)["adopted_quantities"]
+        if value["type"] == "ordinary_vat_accounting"
+    ]
+    if len(quantities) != 1:
+        fail("storage_corrupt", "新版VAT正式结果必须有唯一的普通免税及舍入核算组成。")
+    quantity = quantities[0]
+    validate_contract("business-facts.schema.json", "OrdinaryVatAccountingQuantity", quantity)
+    exemption = parse_fen(quantity["exemption_income_fen"])
+    rounding = parse_fen(quantity["rounding_adjustment_fen"])
+    income = sum_amounts(
+        journal_amount(line["credit_fen"]) - journal_amount(line["debit_fen"])
+        for line in lines
+        if line["account_code"] in ("6301", "630101")
+    )
+    expense = sum_amounts(
+        journal_amount(line["debit_fen"]) - journal_amount(line["credit_fen"])
+        for line in lines
+        if line["account_code"] == "571105"
+    )
+    if income != sum_amounts((exemption, -min(rounding, 0))) or expense != max(rounding, 0):
+        fail("storage_corrupt", "普通VAT正式免税及舍入组成与同源分录不能对平。")
+    return exemption
 
 
 def _from_cell(cell) -> _Amount:
@@ -73,18 +117,29 @@ def _contribution(selection, head, lines, details, column):
         for line in lines
         if line["account_code"] == "571103"
     )
+    for detail, account in ((26, "571106"), (27, "571107")):
+        local[detail] = sum_amounts(
+            journal_amount(line["debit_fen"]) - journal_amount(line["credit_fen"])
+            for line in lines
+            if line["account_code"] == account
+        )
     if (
         target is not None
         and target["kind"] == "taxes.assessment"
         and "payable_vat_fen" in target["values"]
     ):
-        income = sum_amounts(
-            journal_amount(line["credit_fen"]) - journal_amount(line["debit_fen"])
-            for line in lines
-            if line["account_code"] in ("6301", "630101")
-        )
-        rounding = parse_fen(target["values"].get("rounding_adjustment_fen", "0"))
-        local[23] = sum_amounts((income, -max(-rounding, 0)))
+        if _new_vat(head, target):
+            local[23] = _vat_exemption(selection, head, lines)
+        else:
+            # Revision 1 adopted no ordinary-component detail. Preserve that
+            # historical rule for its exact head, including frozen predecessors.
+            income = sum_amounts(
+                journal_amount(line["credit_fen"]) - journal_amount(line["debit_fen"])
+                for line in lines
+                if line["account_code"] in ("6301", "630101")
+            )
+            rounding = parse_fen(target["values"].get("rounding_adjustment_fen", "0"))
+            local[23] = sum_amounts((income, -max(-rounding, 0)))
     if has_unmapped_line(lines):
         local[24] = _from_cell(
             selection.issues.unknown(
@@ -100,7 +155,7 @@ def profit(selection, first, last, column):
     coefficients = selection.flow(first, last)
     heads = [selection.heads[key] for key in coefficients]
     journals, details = selection.lines(heads), selection.report_details(heads)
-    selection.load_targets([head for head in heads if selection.kind(head) in _TARGET_VALUES])
+    load_profit_inputs(selection, heads)
     result = {
         line: _from_cell(cell) for line, cell in selection.prior("profit", first, last).items()
     }

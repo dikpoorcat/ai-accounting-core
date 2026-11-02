@@ -43,6 +43,7 @@ from . import (
     _read_obligation_directory,
     _read_origins,
     _read_positions,
+    _read_profit,
     _read_review,
 )
 from ._adoption import adopt as _adopt
@@ -113,6 +114,15 @@ from ._review_types import (
 from ._review_types import (
     ReviewSourceMetadata as ReviewSourceMetadata,
 )
+from ._settlement_authorization import (
+    investment_settlement_identity as investment_settlement_identity,
+)
+from ._settlement_authorization import (
+    settlement_purpose as settlement_purpose,
+)
+from ._settlement_authorization import (
+    validate_settlement_counterparty as validate_settlement_counterparty,
+)
 from ._snapshot import AdoptedBusinessVersion as AdoptedBusinessVersion
 from ._snapshot import LedgerSnapshot
 from ._snapshot import verify_snapshot as _verify_snapshot
@@ -175,6 +185,9 @@ from ._types import (
 )
 from ._types import (
     PositionTotal as PositionTotal,
+)
+from ._types import (
+    ProfitContribution as ProfitContribution,
 )
 from ._types import (
     ResourcePosition as ResourcePosition,
@@ -571,6 +584,12 @@ class Ledger:
         return _read_contents.query_adopted(
             scope, kinds, page, read_context, flow=True, business_ids=business_ids
         )
+
+    def profit_contributions(
+        self, scope: LedgerScope, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[ProfitContribution]:
+        """Selected PL20 and actual investment losses; includes frozen baseline deltas."""
+        return _read_profit.contributions(scope, page, read_context)
 
     def get_adopted_contents(
         self,

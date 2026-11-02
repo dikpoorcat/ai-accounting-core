@@ -62,10 +62,11 @@ def _totals(rows, equations, last_line):
         if issues:
             cell = {"state": "unestablished", "issue_indexes": sorted(issues)}
         else:
+            operands = tuple(
+                sign * parse_fen(working[source]["amount_fen"]) for source, sign in terms
+            )
             try:
-                value = sum_fen(
-                    sign * parse_fen(working[source]["amount_fen"]) for source, sign in terms
-                )
+                value = sum_fen(operands)
             except ValueError as error:
                 raise ContractError(
                     "invalid_input", f"报表第{line}行合计超出有符号64位整数分范围。"
@@ -107,8 +108,9 @@ def profit_totals_fen(rows: Mapping[int, int]) -> dict[int, int]:
         )
     result = {}
     for line, terms in _PROFIT.items():
+        operands = tuple(sign * working[source] for source, sign in terms)
         try:
-            working[line] = result[line] = sum_fen(sign * working[source] for source, sign in terms)
+            working[line] = result[line] = sum_fen(operands)
         except ValueError as error:
             raise ContractError(
                 "invalid_input", f"报表第{line}行合计超出有符号64位整数分范围。"

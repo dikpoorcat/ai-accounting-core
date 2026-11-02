@@ -13,11 +13,14 @@ from ._financial_projection_bodies import (
 )
 from ._financial_projection_fold import Fold
 from ._financial_projection_indexes import (
+    BondStrategy,
     CashBalanceStrategy,
     FlowStrategy,
     JournalStrategy,
     PlainStrategy,
     body_head,
+    bond_dimension_key,
+    bond_key,
     dimension_key,
     flow_entries,
     flow_source_used,
@@ -25,6 +28,7 @@ from ._financial_projection_indexes import (
     order_key,
     prefix_end,
 )
+from ._financial_projection_tax import TaxPositions
 from ._values import fail
 
 
@@ -62,22 +66,28 @@ class StockRole:
             "dimensions": Tree("financial-gl-dimensions/2", PlainStrategy(), store),
             "cash": Tree("financial-cash-before/1", CashBalanceStrategy(bodies), store),
             "resources": Tree("financial-controlled-resources/2", PlainStrategy(), store),
+            "bonds": Tree("financial-bond-book/1", BondStrategy(bodies), store),
+            "bond_balances": Tree("financial-bond-balances/1", PlainStrategy(), store),
         }
-        if saved is not None and set(saved) != {*self.trees, "supplements"}:
+        if saved is not None and set(saved) != {*self.trees, "supplements", "financial_tax"}:
             fail("storage_corrupt", "财务存量角色的根目录不完整。")
         self.roots = {
             name: tree.root(saved[name] if saved is not None else None)
             for name, tree in self.trees.items()
         }
         self.supplements = _counts(saved["supplements"] if saved is not None else {})
+        self.tax = TaxPositions(
+            store, bodies, saved["financial_tax"] if saved is not None else None
+        )
 
     def wire(self):
         return {name: _wire(root) for name, root in self.roots.items()} | {
-            "supplements": dict(self.supplements)
+            "supplements": dict(self.supplements),
+            "financial_tax": self.tax.wire(),
         }
 
     def root_ids(self):
-        return tuple(root.digest for root in self.roots.values() if root)
+        return (*tuple(root.digest for root in self.roots.values() if root), *self.tax.root_ids())
 
     def patch(self, changed_chains):
         selected = [
@@ -109,12 +119,15 @@ class StockRole:
         self.bodies.get_many(_atoms(head for pair in selected for head in pair))
         updates = {name: {} for name in self.trees}
         dimensions, parts = Counter(), {}
+        bond_dimensions = {}
+        tax_values = []
         for old, new in selected:
             for head, sign in ((old, -1), (new, 1)):
                 if head is None:
                     continue
                 atom = head["atom"]
                 body = self.bodies.get_many((atom,))[0]
+                tax_values.append((atom, body, sign))
                 _count_body(self.supplements, body, sign, bool(body["journal"]))
                 for row in body["journal"]:
                     key = journal_key(body, row)
@@ -130,11 +143,26 @@ class StockRole:
                     updates["resources"][key] = (
                         Entry(key, resource_projection(body)) if sign == 1 else None
                     )
+                for index, row in enumerate(body["bonds"], 1):
+                    key = bond_key(body, index)
+                    updates["bonds"][key] = Entry(key, [atom, index]) if sign == 1 else None
+                    bond_dimensions[bond_dimension_key(*row[:2])] = row[:2]
         # A replacement can change an amount or its economic order without
         # changing the number of rows. Rebuild each touched dimension from the
         # actual new journal range, never by subtracting unordered net amounts.
         journal = self.trees["journal"]
         self.roots["journal"] = journal.patch(self.roots["journal"], updates.pop("journal"))
+        bonds = self.trees["bonds"]
+        self.roots["bonds"] = bonds.patch(self.roots["bonds"], updates.pop("bonds"))
+        for key, parts_ in bond_dimensions.items():
+            summary = bonds.summary(self.roots["bonds"], first=key, last=prefix_end(key))
+            if summary is not None and summary[0] != key:
+                fail("storage_corrupt", "债券账面维度缺少对应的正式金额摘要。")
+            updates["bond_balances"][key] = (
+                Entry(key, [*parts_, summary[1].record()])
+                if summary is not None and summary[1].total
+                else None
+            )
         tree, keys = self.trees["dimensions"], tuple(dimensions)
         old_values = tree.get_many(self.roots["dimensions"], keys)
         for key, old in zip(keys, old_values, strict=True):
@@ -154,6 +182,7 @@ class StockRole:
             )
         for name, changes in updates.items():
             self.roots[name] = self.trees[name].patch(self.roots[name], changes)
+        self.tax.replace(tax_values)
 
     @staticmethod
     def _dimension(key, value):
@@ -201,6 +230,23 @@ class StockRole:
                 fail("storage_corrupt", "财务受控资源没有对应的正式选中来源。")
             result[head["result_id"]] = head
         return result
+
+    def bond_balances(self, opening):
+        values = {}
+        for product, maturity, amount in opening:
+            key = product, maturity
+            values[key] = values.get(key, 0) + amount
+        for entry in self.trees["bond_balances"].entries(self.roots["bond_balances"]):
+            value = entry.value
+            if (
+                type(value) is not list
+                or len(value) != 3
+                or bond_dimension_key(*value[:2]) != entry.key
+            ):
+                fail("storage_corrupt", "债券账面余额目录损坏。")
+            key = tuple(value[:2])
+            values[key] = Fold.from_record(value[2]).finish(values.get(key, 0))
+        return values
 
     def source_atoms(self):
         return tuple(

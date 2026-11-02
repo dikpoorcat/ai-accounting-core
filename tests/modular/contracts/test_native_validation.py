@@ -208,11 +208,11 @@ def test_all_fixed_design_examples_match_the_reference_without_schema_rewriting(
     module.validator = Compare
     module.check_examples()
     assert module.COUNTS == {
-        "valid_schema_examples": 191,
-        "rejected_schema_examples": 39,
+        "valid_schema_examples": 205,
+        "rejected_schema_examples": 41,
         "company_note_planned_checks": 12,
     }
-    assert observations.count(True) == 202 and observations.count(False) == 39
+    assert observations.count(True) == 216 and observations.count(False) == 41
 
 
 def test_json_invalid_types_are_rejected_before_native_conversion(monkeypatch):

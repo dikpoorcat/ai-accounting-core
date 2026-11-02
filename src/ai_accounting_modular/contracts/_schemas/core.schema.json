@@ -611,6 +611,8 @@
                   "type": "string",
                   "enum": [
                     "money_fund",
+                    "bank_wealth",
+                    "other_fund",
                     "equity",
                     "cooperation",
                     "bond",
@@ -2748,6 +2750,8 @@
                   "type": "string",
                   "enum": [
                     "money_fund",
+                    "bank_wealth",
+                    "other_fund",
                     "equity",
                     "cooperation",
                     "bond",
@@ -4403,6 +4407,8 @@
                   "type": "string",
                   "enum": [
                     "money_fund",
+                    "bank_wealth",
+                    "other_fund",
                     "equity",
                     "cooperation",
                     "bond",
@@ -6081,8 +6087,12 @@
     },
     "PaymentExportResult": {
       "oneOf": [
-        { "$ref": "#/$defs/PaymentExportStatus" },
-        { "$ref": "#/$defs/ExportSaved" }
+        {
+          "$ref": "#/$defs/PaymentExportStatus"
+        },
+        {
+          "$ref": "#/$defs/ExportSaved"
+        }
       ]
     },
     "PaymentExportStatus": {
@@ -6367,83 +6377,231 @@
         {
           "type": "object",
           "properties": {
-            "action": { "const": "generate" },
-            "company_id": { "$ref": "#/$defs/Id" },
-            "year": { "type": "integer", "minimum": 1, "maximum": 9999 },
-            "quarter": { "type": "integer", "minimum": 1, "maximum": 4 }
+            "action": {
+              "const": "generate"
+            },
+            "company_id": {
+              "$ref": "#/$defs/Id"
+            },
+            "year": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9999
+            },
+            "quarter": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
           },
-          "required": ["action", "company_id", "year", "quarter"],
+          "required": [
+            "action",
+            "company_id",
+            "year",
+            "quarter"
+          ],
           "additionalProperties": false
         },
-        { "$ref": "#/$defs/ExportSaveRequest" }
+        {
+          "$ref": "#/$defs/ExportSaveRequest"
+        }
       ]
     },
     "ExportSaveRequest": {
       "type": "object",
       "properties": {
-        "action": { "const": "save" },
-        "company_id": { "$ref": "#/$defs/Id" },
-        "task_id": { "$ref": "#/$defs/Id" },
-        "destination": { "const": "desktop" }
+        "action": {
+          "const": "save"
+        },
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "destination": {
+          "const": "desktop"
+        }
       },
-      "required": ["action", "company_id", "task_id", "destination"],
+      "required": [
+        "action",
+        "company_id",
+        "task_id",
+        "destination"
+      ],
       "additionalProperties": false
     },
     "ReportExportPreparation": {
       "type": "object",
       "properties": {
-        "company_id": { "$ref": "#/$defs/Id" },
-        "year": { "type": "integer", "minimum": 1, "maximum": 9999 },
-        "quarter": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "state": { "enum": ["preparing", "failed", "partial"] },
-        "reason": { "type": "string", "minLength": 1, "maxLength": 2000 },
-        "issues": { "type": "array", "items": { "$ref": "#/$defs/FactIssue" } },
-        "checks": { "type": "array", "items": { "$ref": "reporting.schema.json#/$defs/Check" } }
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "quarter": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "state": {
+          "enum": [
+            "preparing",
+            "failed",
+            "partial"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactIssue"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "reporting.schema.json#/$defs/Check"
+          }
+        }
       },
-      "required": ["company_id", "year", "quarter", "state"],
+      "required": [
+        "company_id",
+        "year",
+        "quarter",
+        "state"
+      ],
       "additionalProperties": false,
       "allOf": [
         {
-          "if": { "properties": { "state": { "const": "failed" } } },
-          "then": { "required": ["reason"] }
+          "if": {
+            "properties": {
+              "state": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
         },
         {
-          "if": { "properties": { "state": { "const": "partial" } } },
-          "then": { "required": ["issues"] }
+          "if": {
+            "properties": {
+              "state": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "issues"
+            ]
+          }
         }
       ]
     },
     "ReportExportTask": {
       "type": "object",
       "properties": {
-        "company_id": { "$ref": "#/$defs/Id" },
-        "year": { "type": "integer", "minimum": 1, "maximum": 9999 },
-        "quarter": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "state": { "enum": ["pending", "running", "succeeded", "failed", "expired"] },
-        "task": { "$ref": "#/$defs/TaskReceipt" }
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "quarter": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "running",
+            "succeeded",
+            "failed",
+            "expired"
+          ]
+        },
+        "task": {
+          "$ref": "#/$defs/TaskReceipt"
+        }
       },
-      "required": ["company_id", "year", "quarter", "state", "task"],
+      "required": [
+        "company_id",
+        "year",
+        "quarter",
+        "state",
+        "task"
+      ],
       "additionalProperties": false
     },
     "ExportSaved": {
       "type": "object",
       "properties": {
-        "company_id": { "$ref": "#/$defs/Id" },
-        "database_id": { "$ref": "#/$defs/Id" },
-        "task_id": { "$ref": "#/$defs/Id" },
-        "state": { "enum": ["copied", "reused"] },
-        "path": { "type": "string", "minLength": 1, "maxLength": 32767 },
-        "sha256": { "$ref": "#/$defs/Digest" },
-        "byte_size": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
+        "company_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "database_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "enum": [
+            "copied",
+            "reused"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32767
+        },
+        "sha256": {
+          "$ref": "#/$defs/Digest"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        }
       },
-      "required": ["company_id", "database_id", "task_id", "state", "path", "sha256", "byte_size"],
+      "required": [
+        "company_id",
+        "database_id",
+        "task_id",
+        "state",
+        "path",
+        "sha256",
+        "byte_size"
+      ],
       "additionalProperties": false
     },
     "ReportExportResult": {
       "oneOf": [
-        { "$ref": "#/$defs/ReportExportPreparation" },
-        { "$ref": "#/$defs/ReportExportTask" },
-        { "$ref": "#/$defs/ExportSaved" }
+        {
+          "$ref": "#/$defs/ReportExportPreparation"
+        },
+        {
+          "$ref": "#/$defs/ReportExportTask"
+        },
+        {
+          "$ref": "#/$defs/ExportSaved"
+        }
       ]
     },
     "ReviewRequest": {

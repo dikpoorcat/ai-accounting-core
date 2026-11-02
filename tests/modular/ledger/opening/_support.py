@@ -185,7 +185,19 @@ def result(app, company, item):
     )
 
 
-def assemble(tmp_path, *, start_period="2026-07", asset_accounting=None):
+def assemble(
+    tmp_path,
+    *,
+    start_period="2026-07",
+    asset_accounting=None,
+    investment_accounting=None,
+    operations=False,
+):
+    from ai_accounting_modular.domains.operations.public import create_operations
+    from ai_accounting_modular.domains.operations.public import (
+        repository_factory as operations_repository,
+    )
+
     catalog = tmp_path / "catalog.sqlite3"
     create_catalog(catalog, OwnerProfile(str(uuid4()), "合成负责人", "synthetic-hash"))
     storage = Storage(
@@ -199,6 +211,7 @@ def assemble(tmp_path, *, start_period="2026-07", asset_accounting=None):
             financing_repository(),
             assets_repository(),
             money_repository(),
+            *([operations_repository()] if operations else []),
         ],
     )
     company = str(uuid4())
@@ -220,11 +233,14 @@ def assemble(tmp_path, *, start_period="2026-07", asset_accounting=None):
         ledger=ledger,
         records=create_records(root_for=lambda read: storage.company_metadata(read).company_root),
         domains=[
-            create_opening(asset_accounting=asset_accounting),
+            create_opening(
+                asset_accounting=asset_accounting, investment_accounting=investment_accounting
+            ),
             create_financing(),
             create_investment(),
             create_assets(),
             money,
+            *([create_operations()] if operations else []),
         ],
         money=money,
     )

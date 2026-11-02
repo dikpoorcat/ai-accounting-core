@@ -108,6 +108,22 @@ def quarter_state(kernel):
         )
 
 
+def quarter_snapshot(kernel):
+    scope = _models.normalize(
+        {
+            "company_id": COMPANY,
+            "period_from": "2026-01",
+            "period_to": "2026-03",
+            "view": "as_posted",
+        }
+    )
+    with kernel.storage.read_unit(COMPANY) as read:
+        selected = kernel.ledger.financial_projection_request("snapshot", scope, read)
+        return kernel.ledger.read_financial_projection(
+            selected, read, _financial_projection.store(read)
+        ).value
+
+
 @pytest.mark.parametrize("mode", MODES)
 def test_prior_quarter_waits_for_final_real_commit_before_month_publication(
     prior_package, tmp_path, monkeypatch, mode
@@ -138,9 +154,9 @@ def test_prior_quarter_waits_for_final_real_commit_before_month_publication(
         original_pointer = pointer.read_bytes()
         original = quarter_state(kernel)
         assert original[0]["state"] == "ready" and original[2][0] is not None
-        assert loads_json(original[1]["payload_json"])["snapshot"]["profit_statement"]["32"][
-            "current"
-        ]["amount_fen"] == str(-prior_cost)
+        assert quarter_snapshot(kernel)["profit_statement"]["32"]["current"]["amount_fen"] == str(
+            -prior_cost
+        )
         moment, events = SubmissionMoment(), []
         monkeypatch.setattr(kernel.storage, "write_unit", moment.observe(kernel.storage.write_unit))
 
@@ -223,5 +239,9 @@ def test_prior_quarter_waits_for_final_real_commit_before_month_publication(
         )
         assert (
             current[1]["payload_json"] != original[1]["payload_json"] and current[2] != original[2]
+        )
+        assert (
+            quarter_snapshot(kernel)["profit_statement"]["32"]["current"]["amount_fen"]
+            == expected_profit
         )
     assert portable_cases._snapshot(baseline.company_root) == baseline.files

@@ -169,7 +169,7 @@ def inputs(contract_id, context, period, *, excluding_consumer=None):
                 if trade.quantity["contract_id"] != contract_id:
                     continue
                 trades.append(trade)
-                if fact["kind"] != "operations.overpayment":
+                if fact["kind"] not in {"operations.overpayment", "opening.package"}:
                     events.append(recognition_event(fact, trade))
     claims = defaultdict(list)
     for trade in trades:

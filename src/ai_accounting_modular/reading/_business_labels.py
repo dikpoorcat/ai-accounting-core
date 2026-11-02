@@ -100,6 +100,8 @@ def business_matter(
     values = target.get("values", {})
     if kind in {"investment.money_fund_purchase", "investment.money_fund_redemption"}:
         return {"fund_id": values["fund_id"]}
+    if kind.startswith("investment.") and "terms_id" in values:
+        return {"contract_id": values["terms_id"], "fund_id": values["product_id"]}
     if kind.startswith("investment.cooperation_") and "contract_id" in values:
         return {"contract_id": values["contract_id"]}
     if kind == "financing.loan_drawdown":
@@ -141,6 +143,21 @@ def business_matter(
 
 
 _KINDS = {
+    "investment.terms": ("investment_terms", "投资权利与条款"),
+    "investment.acquire": ("investment_acquire", "投资取得"),
+    "investment.income": ("investment_income", "投资收益"),
+    "investment.dispose": ("investment_dispose", "投资退出"),
+    "investment.capital_return": ("investment_capital_return", "投资本金返还"),
+    "investment.reinvest": ("investment_reinvest", "投资收益再投"),
+    "investment.unit_change": ("investment_unit_change", "投资份额变动"),
+    "investment.unit_change_basis": ("investment_unit_change_basis", "投资单位变换依据"),
+    "investment.loss": ("investment_loss", "投资实际损失"),
+    "investment.debt_interest": ("investment_debt_interest", "债券付息与摊销"),
+    "investment.holding_change": ("investment_holding_change", "投资持有安排变更"),
+    "investment.market_estimate": ("investment_market_estimate", "投资市场估值"),
+    "investment.position": ("investment_position", "投资持仓"),
+    "taxes.financial_transfer_basis": ("financial_transfer_vat", "金融商品转让税额核算"),
+    "taxes.partnership_allocation": ("partnership_allocation", "合伙投资所得分配依据"),
     "people.remuneration_tax": ("withholding", "薪酬个人所得税"),
     "operations.service_sale": ("service_sale", "服务业务款"),
     "operations.sale_return": ("sale_return", "销售退款"),
@@ -203,8 +220,19 @@ def business_label(
     kind, data = target["kind"], basis.get("input", {})
     light = isinstance(resource, ObligationFields | ObligationDirectoryItem)
     category = (resource.category if light else resource.value["category"]) if resource else None
+    if resource is not None and kind in {"investment.acquire", "investment.dispose"}:
+        slot = resource.reference["slot"]
+        if kind == "investment.acquire" and slot == "declared_income":
+            return BusinessLabel("acquired_declared_income", "取得前已宣告投资收益")
+        if kind == "investment.dispose" and slot == "income":
+            return BusinessLabel("investment_maturity_income", "到期独立投资收益")
     if category in _RESOURCE:
         return BusinessLabel(*_RESOURCE[category])
+    if (
+        kind == "taxes.financial_transfer_basis"
+        and target.get("values", {}).get("type") == "financial_transfer_position"
+    ):
+        return BusinessLabel("investment_monthly_vat", "金融投资月度增值税")
     if kind == "operations.overpayment":
         if resource is not None:
             return (

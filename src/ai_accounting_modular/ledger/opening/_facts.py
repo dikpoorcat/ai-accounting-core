@@ -14,6 +14,9 @@ _ROLES = {
     "payroll_payable": (("person_id", {"person"}), ("recipient_id", PARTIES)),
     "equity": (("holder_or_basis_id", PARTIES),),
     "money_fund": (("fund_id", {"investment_product"}), ("counterparty_id", PARTIES)),
+    "investment": (),
+    "investment_receivable": (("counterparty_id", PARTIES),),
+    "cooperation": (),
 }
 
 
@@ -59,6 +62,18 @@ def validate_fact(fact, context=None):
             key = (kind, data["equity_kind"], data["holder_or_basis_id"])
         elif kind == "money_fund":
             key = (kind, data["fund_id"], data["original_lot_reference"])
+        elif kind == "investment":
+            key = (kind, data["terms_id"], data["original_lot_reference"])
+        elif kind == "investment_receivable":
+            key = (
+                kind,
+                data["terms_id"],
+                data["income_kind"],
+                data["counterparty_id"],
+                data["original_business_reference"],
+            )
+        elif kind == "cooperation":
+            key = (kind, data["contract_id"])
         else:
             key = (
                 kind,
@@ -69,6 +84,35 @@ def validate_fact(fact, context=None):
         keys.append(key)
     if len(keys) != len(set(keys)):
         fail("同一真实期初余额、卡片、贷款或批次不能通过多个成员重复登记。", "invalid_input")
+    ordinary = {
+        (
+            "receivable" if member["data"]["nature"] == "customer_receivable" else "payable",
+            member["data"]["counterparty_id"],
+            member["data"]["original_business_reference"],
+        )
+        for member in members
+        if member["data"]["type"] == "obligation"
+        and member["data"]["nature"]
+        in {
+            "customer_receivable",
+            "supplier_service_payable",
+            "supplier_administration_payable",
+            "supplier_sales_payable",
+        }
+    }
+    for member in members:
+        if member["data"]["type"] == "cooperation" and any(
+            (
+                "receivable" if trade["side"] == "revenue" else "payable",
+                trade["counterparty_id"],
+                trade["original_business_reference"],
+            )
+            in ordinary
+            for trade in member["data"]["open_trades"]
+        ):
+            fail(
+                "合作期初未清款已包含在合作成员中，不能再用普通往来成员重复登记。", "invalid_input"
+            )
 
 
 def roles(fact):
@@ -76,6 +120,14 @@ def roles(fact):
         data = member["data"]
         for field, kinds in _ROLES[data["type"]]:
             yield index, field, data[field], kinds
+        if data["type"] == "cooperation":
+            for trade_index, trade in enumerate(data["open_trades"]):
+                yield (
+                    index,
+                    f"open_trades/{trade_index}/counterparty_id",
+                    trade["counterparty_id"],
+                    PARTIES,
+                )
 
 
 def validate_roles(fact, context):
@@ -111,6 +163,15 @@ def dependencies(fact):
             result[("business", data["contract_id"])] = edge(
                 fact["business_id"],
                 data["contract_id"],
+                kind="business",
+                mode="result",
+                relation="calculation",
+            )
+        elif data["type"] in {"investment", "investment_receivable", "cooperation"}:
+            reference = data["contract_id"] if data["type"] == "cooperation" else data["terms_id"]
+            result[("business", reference)] = edge(
+                fact["business_id"],
+                reference,
                 kind="business",
                 mode="result",
                 relation="calculation",

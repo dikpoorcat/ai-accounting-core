@@ -57,7 +57,7 @@ def _detail(line, amount=None, code="missing_detail"):
     )
 
 
-def _item(lines=(), details=(), *, target=None, sign=1):
+def _item(lines=(), details=(), *, target=None, sign=1, quantities=()):
     return {
         "lines": [
             {
@@ -70,6 +70,7 @@ def _item(lines=(), details=(), *, target=None, sign=1):
         "details": details,
         "target": target or _target(),
         "sign": sign,
+        "basis": {"adopted_quantities": list(quantities)},
     }
 
 
@@ -83,6 +84,8 @@ class _Selected:
                 "generation": 1,
                 "result_slot": "main",
                 "business_period": "2026-01",
+                "calculation_key": items[index]["target"]["kind"],
+                "calculation_revision": 1,
             }
             for index in range(len(items))
         }
@@ -111,6 +114,12 @@ class _Selected:
 
     def load_targets(self, heads):
         pass  # This arithmetic fixture already holds the actual validated Targets.
+
+    def load_bases(self, heads):
+        pass  # Each fixture explicitly supplies its exact adopted quantity.
+
+    def basis(self, head):
+        return self.items[head["result_id"]]["basis"]
 
     def profit_rows(self, head, lines):
         return profit_rows(lines)
@@ -150,6 +159,100 @@ def test_vat_rounding_detail_does_not_replace_main_income(rounding, expected):
     actual = _read(selected)
     assert actual[22] == known(8) and actual[23] == known(expected)
     assert actual[30] == known(8)
+
+
+@pytest.mark.parametrize("revision", [2, 3])
+@pytest.mark.parametrize(
+    "exemption,rounding,income,expense",
+    [(0, 0, 0, 0), (5, 0, 5, 0), (-2, 0, -2, 0), (5, -1, 6, 0), (5, 1, 5, 1)],
+)
+def test_vat_adopted_ordinary_components_are_authoritative_even_when_zero(
+    revision, exemption, rounding, income, expense
+):
+    selected = _Selected(
+        _item(
+            (("6301", -income), ("571105", expense)),
+            target=_target("taxes.assessment", rounding_adjustment_fen="-1"),
+            quantities=(
+                {
+                    "type": "ordinary_vat_accounting",
+                    "exemption_income_fen": str(exemption),
+                    "rounding_adjustment_fen": str(rounding),
+                },
+            ),
+        )
+    )
+    selected.heads["0"]["calculation_revision"] = revision
+    actual = _read(selected)
+    assert actual[22] == known(income) and actual[23] == known(exemption)
+    assert actual[24] == known(expense) and actual[30] == known(income - expense)
+
+
+@pytest.mark.parametrize("revision", [2, 3])
+def test_new_vat_revision_rejects_missing_formal_exemption_detail(revision):
+    selected = _Selected(_item(target=_target("taxes.assessment", rounding_adjustment_fen="-1")))
+    selected.heads["0"]["calculation_revision"] = revision
+    with pytest.raises(ContractError, match="唯一的普通免税及舍入核算组成") as error:
+        _read(selected)
+    assert error.value.code == "storage_corrupt"
+
+
+@pytest.mark.parametrize(
+    "quantities,income,expense,message",
+    [
+        (
+            [
+                {
+                    "type": "ordinary_vat_accounting",
+                    "exemption_income_fen": "0",
+                    "rounding_adjustment_fen": "0",
+                }
+            ]
+            * 2,
+            0,
+            0,
+            "唯一的普通免税及舍入核算组成",
+        ),
+        (
+            [
+                {
+                    "type": "ordinary_vat_accounting",
+                    "exemption_income_fen": "1",
+                    "rounding_adjustment_fen": "0",
+                }
+            ],
+            0,
+            0,
+            "与同源分录不能对平",
+        ),
+        (
+            [
+                {
+                    "type": "ordinary_vat_accounting",
+                    "exemption_income_fen": "0",
+                    "rounding_adjustment_fen": "1",
+                }
+            ],
+            0,
+            0,
+            "与同源分录不能对平",
+        ),
+    ],
+)
+def test_vat_ordinary_components_cannot_be_duplicated_or_disagree_with_the_journal(
+    quantities, income, expense, message
+):
+    selected = _Selected(
+        _item(
+            (("6301", -income), ("571105", expense)),
+            quantities=quantities,
+            target=_target("taxes.assessment"),
+        )
+    )
+    selected.heads["0"]["calculation_revision"] = 2
+    with pytest.raises(ContractError, match=message) as error:
+        _read(selected)
+    assert error.value.code == "storage_corrupt"
 
 
 def test_interest_fallback_and_overridden_details_keep_their_original_meanings():

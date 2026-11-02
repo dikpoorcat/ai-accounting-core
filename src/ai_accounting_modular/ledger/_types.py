@@ -268,6 +268,21 @@ class AdoptedValues:
 
 
 @dataclass(frozen=True)
+class ProfitContribution:
+    """PL20 and actual investment losses from one selected formal target and baseline."""
+
+    reference: ResultRef
+    source: ResultSourceRef
+    business_kind: str
+    investment_income_fen: int
+    actual_loss_fen: int
+    baseline_income_fen: int
+    baseline_actual_loss_fen: int
+    baseline_reference: ResultRef | None
+    baseline_source: ResultSourceRef | None
+
+
+@dataclass(frozen=True)
 class AdoptedContent:
     reference: ResultRef
     source: ResultSourceRef

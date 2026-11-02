@@ -23,6 +23,8 @@ from ._common import (
     result_for,
     total,
 )
+from ._investment_income import quarterly_reliefs
+from ._partnership import adopt_inclusions
 from ._policies import adopt_policy
 
 
@@ -277,8 +279,10 @@ def _computed(fact, context, plan):
     ):
         reject("共享税前利润期间与本次所得税累计期不一致。")
     value = amount(profit["amount_fen"])
+    exempt_income = quarterly_reliefs(fact, context, plan, f"{data['tax_year']:04d}-01", end)
+    prepayment_profit = max(0, value - exempt_income)
     loss = amount(details["loss_deduction_fen"])
-    if loss > max(0, value):
+    if loss > prepayment_profit:
         message = "所采用亏损扣除超过共享累计税前利润的正数部分，须核对原依据，不能自动削减。"
         reject(
             message,
@@ -293,7 +297,7 @@ def _computed(fact, context, plan):
                 )
             ],
         )
-    taxable = max(0, value) - loss
+    taxable = prepayment_profit - loss
     small = details["treatment"] == "small_low_profit"
     if small and taxable > amount(params["small_profit_limit_fen"]):
         message = "累计计税利润超过所采用小微政策上限，须核对适用依据，不能自动切换税率。"
@@ -321,7 +325,7 @@ def _computed(fact, context, plan):
             "profit_before_tax_fen": format_fen(value),
         }
     )
-    return {
+    values = {
         "cumulative_tax_fen": format_fen(multiply(taxable, fraction, rate)),
         "profit_before_tax_fen": format_fen(value),
         "loss_deduction_fen": format_fen(loss),
@@ -329,6 +333,9 @@ def _computed(fact, context, plan):
         "rate": rate,
         "taxable_fraction": fraction,
     }
+    if exempt_income:
+        values["investment_exempt_income_fen"] = format_fen(exempt_income)
+    return values
 
 
 def income_tax(fact, context):
@@ -358,6 +365,7 @@ def income_tax(fact, context):
     else:
         values = {"cumulative_tax_fen": data["cumulative_tax_fen"]}
         adopted = method
+    adopt_inclusions(fact, context, plan, actual)
     before = previous(fact, context)
     previous_amount = _carry(fact, context, plan) if before is None else 0
     if before is not None:

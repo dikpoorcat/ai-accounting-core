@@ -78,6 +78,17 @@ BUSINESS_GUIDES = (
             "financing.interest_period",
         ),
     ),
+    (
+        "金融投资",
+        (
+            "investment.terms", "investment.acquire", "investment.income",
+            "investment.dispose", "investment.capital_return", "investment.reinvest",
+            "investment.unit_change", "investment.loss", "investment.debt_interest",
+            "investment.holding_change",
+            "investment.market_estimate",
+            "investment.unit_change_basis",
+        ),
+    ),
     ("货币基金", ("investment.money_fund_purchase", "investment.money_fund_redemption")),
     (
         "合作项目投资",
@@ -114,6 +125,8 @@ BUSINESS_GUIDES = (
             "taxes.used_asset_vat_policy",
             "taxes.income_tax_policy",
             "taxes.prepayment_basis",
+            "taxes.financial_transfer_basis",
+            "taxes.partnership_allocation",
         ),
     ),
     ("期初与报表接续", ("opening.package", "reports.continuation")),
@@ -317,7 +330,7 @@ def guide_outputs(root, business_document):
     )
     business, sections = {}, {}
     for heading, kinds in BUSINESS_GUIDES:
-        level = "### " if heading in {"货币基金", "合作项目投资"} else "## "
+        level = "### " if heading in {"金融投资", "货币基金", "合作项目投资"} else "## "
         section = markdown_section(rules, level + heading)
         sections[heading] = page(heading, "05-business-rules.md", section)["text"]
         for kind in kinds:
