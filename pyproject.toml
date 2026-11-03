@@ -14,7 +14,7 @@ dependencies = [
   "argon2-cffi>=25.1,<26",
   "jsonschema>=4.25,<5",
   "jsonschema-rs==0.58.6",
-  "mcp>=1.13,<2",
+  "mcp>=1.13,<3",
   "openpyxl>=3.1,<4",
   "pydantic>=2.11,<2.13",
   "xlrd>=2.0.2,<3",
