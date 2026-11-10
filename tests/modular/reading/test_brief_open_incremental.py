@@ -25,6 +25,8 @@ from ai_accounting_modular.reading._open_store import NODES, SCOPE
 from ai_accounting_modular.reading._repository import ReadingRepository
 from tests.modular.acceptance.performance.ledger_variant import MODES, install_ledger_implementation
 from tests.modular.application._working_case import case as case
+from tests.modular.domains.people.test_people import case as payroll_case
+from tests.modular.domains.people.test_read_remuneration import add as add_payroll
 from tests.modular.domains.people.test_read_remuneration import bank_object
 
 from ._publication import CapturedState, assert_subscriptions, body
@@ -545,6 +547,53 @@ def test_closed_correction_uses_each_partys_actual_formal_identity_without_full_
     value = selected.items[0]
     assert value["party"] == "合成供应商" and value["outstanding_fen"] == "100000"
     assert value["current_status"] == "reversed" and value["current_outstanding_fen"] == "0"
+    matches_cold(case)
+
+
+def test_closed_project_labor_correction_refreshes_cached_economic_identity(case):
+    case.seed(expense=False)
+    labor = payroll_case("B17P")
+    add_payroll(case, labor)
+    assert case.close(case.check())["state"] == "closed"
+    publish(case)
+    member_id = labor["business_id"] + ":net_pay"
+
+    def selected_member():
+        with case.kernel.storage.read_unit(case.company) as read:
+            return collection_items(
+                _monthly.key(scope(case)),
+                _monthly.BRIEF_OPEN_ITEMS,
+                "open_members",
+                (member_id,),
+                read,
+            )[0]
+
+    original = selected_member()
+    assert original["current_status"] == "open"
+    assert int(original["current_outstanding_fen"]) > 0
+    changed = deepcopy(labor)
+    project_id = str(uuid4())
+    changed["data"]["destination"]["project_id"] = project_id
+    apply(
+        case,
+        mutations=[{"op": "replace", "expected_seq": 1, "fact": changed}],
+        objects=[
+            {
+                "object_id": project_id,
+                "kind": "project",
+                "name": "更正后的劳务项目",
+                "expected_seq": 0,
+                "data": {},
+            }
+        ],
+        correction_period="2026-02",
+    )
+    assert case.kernel.reading.run_pending(case.company)
+    corrected = selected_member()
+    assert corrected["source_amount_fen"] == original["source_amount_fen"]
+    assert corrected["outstanding_fen"] == original["outstanding_fen"]
+    assert corrected["current_status"] == "reversed"
+    assert corrected["current_outstanding_fen"] == "0"
     matches_cold(case)
 
 

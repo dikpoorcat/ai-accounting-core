@@ -52,7 +52,7 @@ test("group members append 20 then 500 then the tail without dropping paired vou
   }
 });
 function response(section, keys, more = false) {
-  return { data: { section, group_key: "group-a", collections: { members: { items: keys.map(key => section === "activity" ? { key, group_key: "group-a", subject_id: `s-${key}` } : { id: key, group_key: "group-a", subject_id: `s-${key}` }), page: { has_more: more, next_cursor: more ? "next" : null } }, vouchers: { items: keys.map(key => ({ voucher_version_id: `v-${key}` })), page: { has_more: false } } } } };
+  return { data: { section, group_key: "group-a", collections: { members: { items: keys.map(key => section === "activity" ? { key, group_key: "group-a", subject_id: `s-${key}`, amount_components: [] } : { id: key, group_key: "group-a", subject_id: `s-${key}` }), page: { has_more: more, next_cursor: more ? "next" : null } }, vouchers: { items: keys.map(key => ({ voucher_version_id: `v-${key}` })), page: { has_more: false } } } } };
 }
 test("groups read only on expansion and append bounded members without opening per-member progress", async () => {
   for (const section of ["activity", "open_items"]) {

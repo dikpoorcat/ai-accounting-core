@@ -27,33 +27,46 @@ _TITLES = {
     "tax": "代扣个人所得税",
 }
 _REMUNERATION = {
-    "wage": ("wage", "员工工资"),
-    "bonus": ("bonus", "员工奖金"),
-    "labor": ("labor", "劳务报酬"),
+    "wage": "员工工资",
+    "bonus": "员工奖金",
+    "labor": "劳务报酬",
 }
 
 
-def components(content):
-    """Use adopted final quantities, including frozen one-journal remuneration."""
+def components(content, phase):
+    """Read-only amounts under one business stage, never another accounting entry."""
     values = content.target["values"]
+    if content.target["kind"] == "people.remuneration_tax":
+        return ({"label": _TITLES["tax"], "amount_fen": values["additional_tax_fen"]},)
     result = []
-    for component, field, phase, label in _COMPONENTS:
-        if not parse_fen(values[field]):
+    for component, field, stage, _ in _COMPONENTS:
+        if stage != phase or not parse_fen(values[field]):
             continue
-        code, title = (
+        label = (
             _REMUNERATION[values["remuneration_type"]]
             if component == "remuneration"
-            else (component, _TITLES[component])
+            else _TITLES[component]
         )
-        result.append((component, phase, code, title, values[field], label))
-    if not result:
-        code, title = _REMUNERATION[values["remuneration_type"]]
-        result.append(("remuneration", "accrual", code, title, values["gross_fen"], "应发金额"))
-    return result
+        result.append({"label": label, "amount_fen": values[field]})
+    if not result and phase == "accrual":
+        result.append({"label": _REMUNERATION[values["remuneration_type"]], "amount_fen": "0"})
+    return tuple(result)
+
+
+def phases(content):
+    if content.target["kind"] == "people.remuneration_tax":
+        return ("deductions",)
+    return tuple(
+        phase
+        for phase in ("accrual", "deductions")
+        if parse_fen(amount(content, journal_key=phase)[0])
+    ) or ("accrual",)
 
 
 def amount(content, *, journal_key=None, component=None):
     values = content.target["values"]
+    if content.target["kind"] == "people.remuneration_tax":
+        return values["additional_tax_fen"], "代扣金额"
     if component == "net_pay":
         return values["net_fen"], (
             "劳务净额" if values["remuneration_type"] == "labor" else "工资净额"
@@ -73,30 +86,32 @@ def amount(content, *, journal_key=None, component=None):
 
 
 def title(content, *, journal_key=None, component=None):
-    if component == "remuneration":
-        return _REMUNERATION[content.target["values"]["remuneration_type"]][1]
     if component == "net_pay":
         return (
             "劳务净额" if content.target["values"]["remuneration_type"] == "labor" else "工资净额"
         )
     if component is not None:
         return _TITLES[component]
-    return "个人扣款" if journal_key == "deductions" else "薪酬计提"
+    return (
+        "个人代扣"
+        if journal_key == "deductions" or content.target["kind"] == "people.remuneration_tax"
+        else "薪酬计提"
+    )
 
 
 def slots(*, journal_key="main", component=None):
-    if component == "remuneration":
-        return ("net_pay", *_DEDUCTIONS)
     if component is not None:
         return (component,)
     return _DEDUCTIONS if journal_key == "deductions" else _SLOTS
 
 
 def component_from_scope(scope):
-    if "component" in scope:
-        return scope["component"]
-    entries = scope.get("obligations", ())
-    return entries[0].get("component") if len(entries) == 1 else None
+    return scope.get("component")
+
+
+def phase_from_scope(scope):
+    """A business stage stays specific even when its frozen physical journal is main."""
+    return scope.get("phase", scope.get("journal_key"))
 
 
 def select_header(entries, *, component=None):

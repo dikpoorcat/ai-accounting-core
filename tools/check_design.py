@@ -156,7 +156,7 @@ def check_contracts():
     assert set(dashboard) == expected, "看板合同与当前公开范围不一致"
     frozen = json.dumps(dashboard, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(frozen.encode("utf-8")).hexdigest() == (
-        "dfbb3f8040a766a82a010531d29c37cdb79e60d0f3e2500f6a3175793ff99fa1"
+        "c0cce3ebe0c9c323736859c56d51ab8a47276a1a41028373935d0ab4d72b6b2c"
     ), "当前看板合同被修改"
 
 
@@ -575,6 +575,7 @@ def check_sql():
         "voucher",
         voucher_id=uid(5),
         result_id=uid(4),
+        journal_key="main",
         role="original",
         period="2026-01",
         number=1,
@@ -821,6 +822,7 @@ def check_sql():
             "voucher",
             voucher_id=uid(21),
             result_id=uid(20),
+            journal_key="main",
             role="original",
             period="2026-02",
             number=1,
@@ -875,7 +877,7 @@ def check_links():
 def check_packaged_structure():
     """Current design DDL and packaged SQL describe the same complete baseline."""
     directory = ROOT.parents[1] / "src/ai_accounting_modular/storage/schema"
-    for kind, version in (("catalog", 1), ("company", 4)):
+    for kind, version in (("catalog", 1), ("company", 5)):
         contract = load(directory / f"{kind}.json")
         assert set(contract) == {"kind", "version", "objects", "fingerprint"}
         assert contract["kind"] == kind and contract["version"] == version

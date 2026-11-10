@@ -13,7 +13,7 @@ from . import _monthly, _reports, _requests
 __all__ = ["Dashboard", "HttpResponse", "create_dashboard"]
 LOCAL_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 _MONTH_PAGES = {
-    "/api/dashboard/brief": ("brief", 19),
+    "/api/dashboard/brief": ("brief", 20),
     "/api/dashboard/funds": ("funds", 12),
     "/api/dashboard/assets": ("assets", 10),
     "/api/dashboard/employees": ("employees", 13),
@@ -226,7 +226,7 @@ class Dashboard:
         if path == "/api/dashboard/brief-group":
             scope, query = _requests.brief_group(parameters)
             delivery = self.reading.detail("brief_group", scope, query)
-            return _validate("dashboard_brief_group", _monthly.response(delivery, 3, self.now()))
+            return _validate("dashboard_brief_group", _monthly.response(delivery, 4, self.now()))
         if path == "/api/dashboard/business-status":
             scope, query = _requests.business_status(parameters)
             delivery = self.reading.detail("business_status", scope, query)

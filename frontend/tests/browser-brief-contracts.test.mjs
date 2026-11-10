@@ -78,11 +78,11 @@ test("browser factory preserves empty-data semantics for all scopes", () => {
   }
 });
 
-test("group browser member seeds retain group3 and exact members plus vouchers", () => {
+test("group browser member seeds retain group4 and exact members plus vouchers", () => {
   const memberSamples = Object.values(samples).filter(sample => sample.command === "dashboard_brief_group");
   assert(memberSamples.length > 0);
   for (const { response } of memberSamples) {
-    assert.equal(response.schema_version, 3);
+    assert.equal(response.schema_version, 4);
     assert(validateDashboardBriefGroupResponse(response), JSON.stringify(validateDashboardBriefGroupResponse.errors));
     assert.deepEqual(Object.keys(response.data.collections).sort(), ["members", "vouchers"]);
   }

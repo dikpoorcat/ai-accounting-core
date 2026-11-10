@@ -192,7 +192,7 @@ def capture(reader, scope, selected, read):
         allowed = None
         if selected.detail is not None and selected.content.target["kind"] == "people.remuneration":
             allowed = _payroll_journals.slots(
-                journal_key=chosen.get("journal_key", "main"),
+                journal_key=_payroll_journals.phase_from_scope(chosen),
                 component=_payroll_journals.component_from_scope(chosen),
             )
         expected = {

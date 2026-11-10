@@ -124,6 +124,8 @@ class Descriptions:
 
 def part_references(body, part, cache):
     if not part.scope["allocations"]:
+        if body.target["kind"] == "people.remuneration" and part.phase == "deductions":
+            return ()
         if part.label.code != business_label(body).code:
             return ()
         reference = description_reference(body, part.label)

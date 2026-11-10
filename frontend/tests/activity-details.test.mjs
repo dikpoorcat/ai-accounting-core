@@ -10,7 +10,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
 const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
-const activity = (changes = {}) => ({ key: "occurrence", subject_id: "salary-business", voucher_version_id: "occurrence", group: "payroll", party: "张某", title: "工资", description: "9月工资", date: null, recognition: { period: "2026-09" }, state: "已入账", amount_label: "税前工资", amount_fen: "800000", ...changes });
+const activity = (changes = {}) => ({ key: "occurrence", subject_id: "salary-business", voucher_version_id: "occurrence", group: "payroll", party: "张某", title: "工资", description: "9月工资", date: null, recognition: { period: "2026-09" }, state: "已入账", amount_label: "税前工资", amount_fen: "800000", amount_components: [], ...changes });
 function scenario(items = [obligation(), obligation({ key: "tax", name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" })]) {
   const data = structuredClone(samples.business_status.response.data);
   data.identity.kind = "payroll";

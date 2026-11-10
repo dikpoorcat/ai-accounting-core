@@ -8,15 +8,33 @@ import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
 const contributionMember = (id, changes = {}) => ({ id, group_key: "employee", category_key: "payroll_payables", party: "甲员工", description: "个人社保", purpose: "社保缴费", date: null, recognition: { period: "2026-07", label: "2026-07 · 按月确认" }, subject_id: id, status: "open", current_status: "settled", source_amount_fen: "52500", paid_fen: "0", other_settled_fen: "0", outstanding_fen: "52500", current_outstanding_fen: "0", contribution_group_key: "employee-a", contribution_component: "employee_social", payroll_period: "2026-07", voucher_version_id: "exact-88", ...changes });
-async function renderMembers(server, members, { hasMore = false, expandedPart = "" } = {}) {
+async function renderMembers(server, members, { hasMore = false, expandedPart = "", section = "open_items" } = {}) {
   const { default: component } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] }); await router.push("/?company_id=a");
-  const data = { section: "open_items", group_key: "employee", collections: { members: { items: members, page: { has_more: hasMore } }, vouchers: { items: [] } } };
+  const data = { section, group_key: "employee", collections: { members: { items: members, page: { has_more: hasMore } }, vouchers: { items: [] } } };
   const wrapped = { ...component, setup(props, context) { const state = component.setup(props, context); state.data.value = data; state.expandedPart.value = expandedPart; return state; } };
   const voucher = (id, number) => ({ voucher_version_id: id, number, date: null, recognition: { label: "2026-07 · 按月确认" }, list_summary: "社保计提", state: "已入账", business_amount_label: "社保金额", business_amount_fen: "52500", business_amount_state: "known", lines: [] });
-  const app = createSSRApp(wrapped, { section: "open_items", groupKey: "employee", expanded: true, period: "2026-07", openSummary: { cutoff_period: "2026-07", current_cutoff_period: "2026-09", categories: [] }, direction: "payable", periodClosed: true, voucherIndex: new Map([["exact-88", voucher("exact-88", "88")], ["exact-89", voucher("exact-89", "89")]]) }); app.use(router);
+  const app = createSSRApp(wrapped, { section, groupKey: "employee", expanded: true, period: "2026-07", openSummary: section === "open_items" ? { cutoff_period: "2026-07", current_cutoff_period: "2026-09", categories: [] } : undefined, direction: "payable", periodClosed: true, voucherIndex: new Map([["exact-88", voucher("exact-88", "88")], ["exact-89", voucher("exact-89", "89")]]) }); app.use(router);
   return renderToString(app);
 }
+
+test("activity members display signed payroll composition with their existing voucher and unopened progress", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    const member = (key, title, amount, voucher, parts) => ({ key, group_key: "employee", subject_id: "wage", detail_scope_key: key, voucher_version_id: voucher, title, description: title, amount_fen: amount, amount_label: "业务金额", state: "已入账", party: "甲员工", date: null, recognition: { precision: "month", period: "2026-07", label: "按月确认" }, group: "people", amount_components: parts.map(([label, amount_fen]) => ({ label, amount_fen })) });
+    const rows = [
+      member("accrual", "薪酬计提", "233500", "exact-88", [["员工工资", "77500"], ["单位社保", "131000"], ["单位公积金", "25000"]]),
+      member("deductions", "个人代扣", "77500", "exact-89", [["个人社保", "52500"], ["个人公积金", "25000"]]),
+      member("reversal", "更正前", "-100", null, [["代扣个税", "-100"]]),
+      member("ordinary", "普通付款", "100", null, []),
+    ];
+    const html = await renderMembers(server, rows, { section: "activity" });
+    assert.equal((html.match(/class="activity-amount-components"/g) ?? []).length, 3);
+    for (const text of ["薪酬计提", "个人代扣", "员工工资", "单位社保", "单位公积金", "个人社保", "个人公积金", "¥2,335.00", "¥775.00", "¥1,310.00", "¥525.00", "−¥1.00", "凭证 88", "凭证 89"]) assert(html.includes(text), text);
+    assert.equal((html.match(/>业务进展<\/button>/g) ?? []).length, 4);
+    assert.doesNotMatch(html, /aria-expanded="true"|business-detail-panel|<details/);
+  } finally { await server.close(); }
+});
 
 test("monthly contribution table owns single records and compresses missing and settled components", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });

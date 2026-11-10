@@ -283,6 +283,13 @@
           "group": {
             "title": "Group",
             "type": "string"
+          },
+          "amount_components": {
+            "items": {
+              "$ref": "#/$defs/ActivityAmountComponent"
+            },
+            "title": "Amount Components",
+            "type": "array"
           }
         },
         "required": [
@@ -300,7 +307,8 @@
           "amount_label",
           "state",
           "party",
-          "group"
+          "group",
+          "amount_components"
         ],
         "title": "BriefActivityRow",
         "type": "object"
@@ -1685,7 +1693,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -1748,7 +1756,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -1811,7 +1819,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -1874,7 +1882,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -2961,6 +2969,28 @@
           "amount_fen"
         ],
         "title": "VoucherLineParty",
+        "type": "object"
+      },
+      "ActivityAmountComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "type": "string",
+            "x-fen-int64": true,
+            "title": "Amount Fen"
+          }
+        },
+        "required": [
+          "label",
+          "amount_fen"
+        ],
+        "title": "ActivityAmountComponent",
         "type": "object"
       }
     },
@@ -9208,6 +9238,13 @@
           "group": {
             "title": "Group",
             "type": "string"
+          },
+          "amount_components": {
+            "items": {
+              "$ref": "#/$defs/ActivityAmountComponent"
+            },
+            "title": "Amount Components",
+            "type": "array"
           }
         },
         "required": [
@@ -9225,7 +9262,8 @@
           "amount_label",
           "state",
           "party",
-          "group"
+          "group",
+          "amount_components"
         ],
         "title": "BriefActivityRow",
         "type": "object"
@@ -10610,7 +10648,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -10673,7 +10711,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -10736,7 +10774,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -10799,7 +10837,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 19,
+            "const": 20,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -11694,6 +11732,28 @@
         ],
         "title": "VoucherLineParty",
         "type": "object"
+      },
+      "ActivityAmountComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "type": "string",
+            "x-fen-int64": true,
+            "title": "Amount Fen"
+          }
+        },
+        "required": [
+          "label",
+          "amount_fen"
+        ],
+        "title": "ActivityAmountComponent",
+        "type": "object"
       }
     },
     "discriminator": {
@@ -11849,6 +11909,13 @@
           "group": {
             "title": "Group",
             "type": "string"
+          },
+          "amount_components": {
+            "items": {
+              "$ref": "#/$defs/ActivityAmountComponent"
+            },
+            "title": "Amount Components",
+            "type": "array"
           }
         },
         "required": [
@@ -11866,7 +11933,8 @@
           "amount_label",
           "state",
           "party",
-          "group"
+          "group",
+          "amount_components"
         ],
         "title": "BriefActivityRow",
         "type": "object"
@@ -12856,12 +12924,34 @@
         ],
         "title": "VoucherLineParty",
         "type": "object"
+      },
+      "ActivityAmountComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "type": "string",
+            "x-fen-int64": true,
+            "title": "Amount Fen"
+          }
+        },
+        "required": [
+          "label",
+          "amount_fen"
+        ],
+        "title": "ActivityAmountComponent",
+        "type": "object"
       }
     },
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 3,
+        "const": 4,
         "title": "Schema Version",
         "type": "integer"
       },

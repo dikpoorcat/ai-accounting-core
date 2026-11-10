@@ -138,7 +138,7 @@
   "brief": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -391,7 +391,7 @@
   "brief_activity": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -492,7 +492,7 @@
   "brief_open_items": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -541,7 +541,7 @@
   "brief_vouchers": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -759,7 +759,7 @@
   "brief_activity_members_0": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -814,7 +814,8 @@
                 "amount_label": "实际投入或借入金额",
                 "state": "已入账",
                 "party": "甲出资人",
-                "group": "financing_owner"
+                "group": "financing_owner",
+                "amount_components": []
               }
             ],
             "page": {
@@ -899,7 +900,7 @@
   "brief_activity_members_1": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -954,7 +955,8 @@
                 "amount_label": "实际收付款",
                 "state": "已入账",
                 "party": "合成办公用品商店",
-                "group": "expense_supplier"
+                "group": "expense_supplier",
+                "amount_components": []
               }
             ],
             "page": {
@@ -1039,7 +1041,7 @@
   "brief_activity_members_2": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1094,7 +1096,8 @@
                 "amount_label": "业务确认金额",
                 "state": "已入账",
                 "party": "合成办公用品商店",
-                "group": "expense_supplier"
+                "group": "expense_supplier",
+                "amount_components": []
               }
             ],
             "page": {
@@ -1179,7 +1182,7 @@
   "deferred_brief": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -6519,7 +6522,7 @@
   "brief_payroll_open_items": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0c072ca00bfd0b4a1b883368d596a9b72b9825bf855914a1094d2898ca07480d",
       "selected_period": {
         "key": "2026-01",
@@ -6614,7 +6617,7 @@
   "brief_payroll_members": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0c072ca00bfd0b4a1b883368d596a9b72b9825bf855914a1094d2898ca07480d",
       "selected_period": {
         "key": "2026-01",
@@ -7976,7 +7979,7 @@
   "external_brief": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "4b172c73823becbe47cb4d6c1831f2534c815b76b6cb81ffd881f30a0c7dd8de",
       "selected_period": {
         "key": "2026-01",
@@ -8292,7 +8295,7 @@
   "brief_matter_scopes": {
     "command": "dashboard_brief",
     "response": {
-      "schema_version": 19,
+      "schema_version": 20,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -8533,7 +8536,7 @@
   "brief_matter_members_0": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -8588,7 +8591,8 @@
                 "amount_label": "实际收付款",
                 "state": "已入账",
                 "party": "未提供姓名或名称",
-                "group": "payroll"
+                "group": "payroll",
+                "amount_components": []
               }
             ],
             "page": {
@@ -9223,7 +9227,7 @@
   "brief_matter_members_1": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -9278,7 +9282,8 @@
                 "amount_label": "实际收付款",
                 "state": "已入账",
                 "party": "未提供姓名或名称",
-                "group": "tax"
+                "group": "tax",
+                "amount_components": []
               }
             ],
             "page": {
@@ -9670,7 +9675,7 @@
   "brief_matter_members_2": {
     "command": "dashboard_brief_group",
     "response": {
-      "schema_version": 3,
+      "schema_version": 4,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -9725,7 +9730,8 @@
                 "amount_label": "实际收付款",
                 "state": "已入账",
                 "party": "未提供姓名或名称",
-                "group": "payroll"
+                "group": "payroll",
+                "amount_components": []
               }
             ],
             "page": {

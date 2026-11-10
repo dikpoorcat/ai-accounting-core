@@ -67,7 +67,7 @@ EVENT_KINDS = frozenset(
 
 def amount(content, *, journal_key=None, component=None):
     kind, values = content.target["kind"], content.target.get("values", {})
-    if kind == "people.remuneration":
+    if kind in {"people.remuneration", "people.remuneration_tax"}:
         value, label = _payroll_journals.amount(
             content, journal_key=journal_key, component=component
         )
@@ -97,8 +97,6 @@ def amount(content, *, journal_key=None, component=None):
             value, label = values["vat_fen"], "转入应交增值税金额"
         case "operations.pass_through" | "operations.reimbursement" | "operations.overpayment":
             value, label = values["amount_fen"], "业务金额"
-        case "people.remuneration_tax":
-            value, label = values["additional_tax_fen"], "转入应交个税金额"
         case "assets.project_cost" | "assets.project_release":
             value, label = values["amount_fen"], "成本金额"
         case "assets.acquisition":

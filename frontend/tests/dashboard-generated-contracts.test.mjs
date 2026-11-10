@@ -79,7 +79,7 @@ test("new page contracts keep detail rows only under collections", () => {
 
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
-    dashboard_context: 3, dashboard_brief: 19, dashboard_brief_group: 3, dashboard_funds: 12,
+    dashboard_context: 3, dashboard_brief: 20, dashboard_brief_group: 4, dashboard_funds: 12,
     dashboard_employees: 13, dashboard_assets: 10, dashboard_business_status: 10,
     dashboard_quarterly_report: 5,
   };
@@ -92,6 +92,50 @@ test("all non-context dashboards carry required read context and current schema 
       assert.equal(typeof sample.response.read_context.read_version, "string", name);
     }
   }
+});
+
+test("payroll amount components are required in members and focused rows, including brief delivery", () => {
+  const sample = Object.values(samples).find(item => item.command === "dashboard_brief_group" && item.response.data.section === "activity");
+  assert(sample);
+  function responses(parts) {
+    const group = structuredClone(sample.response), row = group.data.collections.members.items[0];
+    row.amount_components = parts;
+    const brief = structuredClone(samples.brief.response);
+    brief.data.focused_activity = structuredClone(row);
+    return [
+      [group, row, validators.validateDashboardBriefGroupResponse],
+      [brief, brief.data.focused_activity, validators.validateDashboardBriefResponse],
+      [{ schema_version: 6, company_id: brief.read_context.company_id, period: brief.selected_period.key, model_version: brief.snapshot_version, state: "ready", response: brief }, brief.data.focused_activity, validators.validateDashboardBriefDeliveryResponse],
+    ];
+  }
+  for (const parts of [[], [{ label: "员工工资", amount_fen: "77500" }, { label: "单位社保", amount_fen: "131000" }], [{ label: "代扣个税", amount_fen: "-100" }]]) {
+    for (const [response, , validate] of responses(parts)) assert(validate(response), JSON.stringify(validate.errors));
+  }
+  for (const mutate of [
+    row => { delete row.amount_components; },
+    row => { row.amount_components = null; },
+    row => { row.amount_components[0].amount_fen = 1; },
+    row => { row.amount_components[0].amount_fen = "01"; },
+    row => { row.amount_components[0].amount_fen = "9223372036854775808"; },
+    row => { row.amount_components[0].label = ""; },
+    row => { row.amount_components[0].hidden = "unexpected"; },
+  ]) {
+    for (const [response, row, validate] of responses([{ label: "员工工资", amount_fen: "77500" }])) {
+      mutate(row); assert.equal(validate(response), false);
+    }
+  }
+});
+
+test("brief20 and group4 reject their prior response versions while delivery keeps version6", () => {
+  const brief = structuredClone(samples.brief.response);
+  const group = structuredClone(Object.values(samples).find(item => item.command === "dashboard_brief_group").response);
+  const delivery = { schema_version: 6, company_id: brief.read_context.company_id, period: brief.selected_period.key, model_version: brief.snapshot_version, state: "ready", response: brief };
+  assert(validators.validateDashboardBriefDeliveryResponse(delivery));
+  brief.schema_version = 19;
+  assert.equal(validators.validateDashboardBriefResponse(brief), false);
+  assert.equal(validators.validateDashboardBriefDeliveryResponse(delivery), false);
+  group.schema_version = 3;
+  assert.equal(validators.validateDashboardBriefGroupResponse(group), false);
 });
 
 test("generated money validation accepts canonical int64 strings and rejects numbers", () => {

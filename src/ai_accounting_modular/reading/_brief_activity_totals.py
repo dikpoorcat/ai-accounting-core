@@ -229,7 +229,8 @@ def group_value(first, fold, order):
         "date_to": max(fold["dates"]) if fold["dates"] else None,
         "has_month_recognition": bool(fold["month"]),
     }
-    value["title"] = common_text(fold["descriptions"], first["title"])
+    if first["kind"] not in {"people.remuneration", "people.remuneration_tax"}:
+        value["title"] = common_text(fold["descriptions"], first["title"])
     return IndexItem("activity", value["group_key"], order, value, category=value["group"])
 
 

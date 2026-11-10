@@ -162,6 +162,7 @@ def test_mixed_payment_is_two_real_parts_and_one_exact_voucher(case, monkeypatch
         validate("BriefActivityRow", member)
         validate("OwnerBriefVoucher", actual)
         assert member["subject_id"] == paid["business_id"]
+        assert member["amount_components"] == []
         assert member["detail_scope_key"] == member["key"]
         assert member["voucher_version_id"] == actual["voucher_version_id"]
         assert actual["business_amount_fen"] == "1000" and len(actual["lines"]) == 3

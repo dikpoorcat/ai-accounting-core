@@ -218,7 +218,7 @@ test("real voucher all dispatches the known continuation before new DOM and reta
     }
   } finally { await server.close(); Object.assign(globalThis, saved); }
 });
-const member = (section, index) => ({ ...movement(index), key: `member-${index}`, id: `member-${index}`, detail_scope_key: section === "activity" ? `member-${index}` : null, voucher_version_id: `voucher-${index}`, group_key: "group-a", title: "付款", description: `记录 ${index}`, recognition: { period: "2026-01", label: "按月确认" }, state: "已入账", status: "open", outstanding_fen: "100", contribution_group_key: null });
+const member = (section, index) => ({ ...movement(index), key: `member-${index}`, id: `member-${index}`, detail_scope_key: section === "activity" ? `member-${index}` : null, amount_components: [], voucher_version_id: `voucher-${index}`, group_key: "group-a", title: "付款", description: `记录 ${index}`, recognition: { period: "2026-01", label: "按月确认" }, state: "已入账", status: "open", outstanding_fen: "100", contribution_group_key: null });
 function detailResponse(version, more = false) {
   const result = structuredClone(samples.business_status.response); result.snapshot_version = version;
   result.data.collections.settlement_events.page.has_more = more;

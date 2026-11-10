@@ -49,7 +49,7 @@ const rows = (start, count) => Array.from({ length: count }, (_, index) => ({
   asset: null, asset_members: [], lines: [],
 }));
 const response = (start, count, total = 45) => ({
-  schema_version: 19, scope: "overview", snapshot_version: "same-snapshot", read_context: { company_id: "a" },
+  schema_version: 20, scope: "overview", snapshot_version: "same-snapshot", read_context: { company_id: "a" },
   selected_period: { key: "2026-02" }, data: {
     month_state: "closed", owner_review_request: null,
     ...(start === 0 ? { financial_position: { assets_fen: "32100" }, workforce_cost: { has_activity: true, total_fen: "77700" }, long_term_assets: { net_fen: "12300", fixed_active_count: 2, intangible_active_count: 1 } } : {}),

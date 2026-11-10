@@ -53,7 +53,7 @@ def description_subjects(selected, settlements):
         if (
             selected.content is not None
             and selected.content.target["kind"] == "people.remuneration"
-            and selected.range.get("journal_key") == "deductions"
+            and _payroll_journals.phase_from_scope(selected.range) == "deductions"
         ):
             return ()
         if selected.content is not None and selected.range.get("purpose") not in {
@@ -84,7 +84,7 @@ def whole_note_reference(selected):
     is_part = selected.range.get("purpose") not in {
         None,
         business_label(content).code,
-    } or selected.range.get("journal_key") not in {None, "main"}
+    } or _payroll_journals.phase_from_scope(selected.range) not in {None, "main"}
     if is_part and content.target["kind"] == "people.remuneration":
         return content.reference
     if is_part or any(entry["producer"] != content.source for entry in entries):
@@ -180,10 +180,13 @@ def profiles(reader, selected, settlements, events, read, *, descriptions=None):
             if content.target["kind"] == "system.withdrawal"
             else business_label(content).title
         )
-        if selected.detail is not None and content.target["kind"] == "people.remuneration":
+        if selected.detail is not None and content.target["kind"] in {
+            "people.remuneration",
+            "people.remuneration_tax",
+        }:
             title = _payroll_journals.title(
                 content,
-                journal_key=selected.range.get("journal_key"),
+                journal_key=_payroll_journals.phase_from_scope(selected.range),
                 component=_payroll_journals.component_from_scope(selected.range),
             )
         own = whole_note_reference(selected)
@@ -192,7 +195,7 @@ def profiles(reader, selected, settlements, events, read, *, descriptions=None):
         if note:
             whole = selected.detail is None or (
                 selected.detail["key"].startswith("voucher:")
-                and selected.range.get("journal_key", "main") == "main"
+                and _payroll_journals.phase_from_scope(selected.range) in {None, "main"}
             )
             note_scope = "selected" if whole else "whole_business"
     purpose = None
@@ -231,7 +234,7 @@ def result(content, *, frozen=False, closing_period=None, scope=None):
         return None
     value = amount(
         content,
-        journal_key=scope.get("journal_key") if scope is not None else None,
+        journal_key=_payroll_journals.phase_from_scope(scope) if scope is not None else None,
         component=_payroll_journals.component_from_scope(scope) if scope is not None else None,
     )
     return {

@@ -12,7 +12,7 @@ export namespace DashboardBriefDeliveryContract {
     | DashboardBriefActivityResponse
     | DashboardBriefOpenResponse
     | DashboardBriefVoucherResponse;
-  export type SchemaVersion1 = 19;
+  export type SchemaVersion1 = 20;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -64,6 +64,9 @@ export namespace DashboardBriefDeliveryContract {
   export type State1 = string;
   export type Party = string;
   export type Group = string;
+  export type Label2 = string;
+  export type AmountFen1 = string;
+  export type AmountComponents = ActivityAmountComponent[];
   export type Key2 = string;
   export type GroupKey1 = string;
   export type Group1 = string;
@@ -72,7 +75,7 @@ export namespace DashboardBriefDeliveryContract {
   export type Title1 = string;
   export type MemberCount = number;
   export type VoucherCount = number;
-  export type AmountFen1 = string | null;
+  export type AmountFen2 = string | null;
   export type AmountLabel1 = string;
   export type State2 = string;
   export type DateFrom = string | null;
@@ -91,7 +94,7 @@ export namespace DashboardBriefDeliveryContract {
   export type Group2 = string;
   export type Summary = string;
   export type ListSummary = string;
-  export type AmountFen2 = string;
+  export type AmountFen3 = string;
   export type BusinessAmountFen = string | null;
   export type BusinessAmountLabel = string;
   export type BusinessAmountState = "known" | "not_applicable" | "unknown";
@@ -106,7 +109,7 @@ export namespace DashboardBriefDeliveryContract {
   export type Code1 = string | null;
   export type CalculationId = string;
   export type OwnerCalculationId = string;
-  export type AmountFen3 = string | null;
+  export type AmountFen4 = string | null;
   export type AmountLabel2 = string;
   export type LineStart = number | null;
   export type LineCount = number;
@@ -120,15 +123,15 @@ export namespace DashboardBriefDeliveryContract {
   export type SourceLabel = string;
   export type Id1 = string;
   export type Name2 = string;
-  export type AmountFen4 = string;
+  export type AmountFen5 = string;
   export type Parties = VoucherLineParty[];
   export type PartyState = "known" | "multiple" | "name_missing" | "not_applicable" | "unresolved";
   export type Lines = OwnerVoucherLine[];
   export type Key3 = string;
-  export type Label2 = string;
+  export type Label3 = string;
   export type EventCount = number;
   export type GroupCount1 = number;
-  export type Label3 = string;
+  export type Label4 = string;
   export type Count = number;
   export type TypeCounts = ActivityTypeCount[];
   export type ActivityGroups = BriefActivityGroup[];
@@ -152,7 +155,7 @@ export namespace DashboardBriefDeliveryContract {
   export type EquationValid = boolean | null;
   export type Complete1 = boolean;
   export type Message = string;
-  export type AmountFen5 = string;
+  export type AmountFen6 = string;
   export type Issues = BriefPositionNotice[];
   export type OpeningFen = string | null;
   export type InflowFen = string | null;
@@ -199,7 +202,7 @@ export namespace DashboardBriefDeliveryContract {
   export type TotalCount = number;
   export type Complete2 = boolean;
   export type Key4 = string;
-  export type Label4 = string;
+  export type Label5 = string;
   export type Direction = "receivable" | "payable";
   export type Unit = "笔";
   export type Count1 = number;
@@ -218,7 +221,7 @@ export namespace DashboardBriefDeliveryContract {
   export type Title3 = string;
   export type Object = string;
   export type Period2 = string | null;
-  export type AmountFen6 = string | null;
+  export type AmountFen7 = string | null;
   export type AmountStatus = "known" | "unknown" | "not_applicable";
   export type Deadline = string | null;
   export type Impact1 = string;
@@ -247,13 +250,13 @@ export namespace DashboardBriefDeliveryContract {
   export type Status4 = string;
   export type CurrentStatus = string | null;
   export type Items2 = BriefOpenDisplayGroup[];
-  export type SchemaVersion2 = 19;
+  export type SchemaVersion2 = 20;
   export type SnapshotVersion1 = string | null;
   export type Scope1 = "activity";
-  export type SchemaVersion3 = 19;
+  export type SchemaVersion3 = 20;
   export type SnapshotVersion2 = string | null;
   export type Scope2 = "open_items";
-  export type SchemaVersion4 = 19;
+  export type SchemaVersion4 = 20;
   export type SnapshotVersion3 = string | null;
   export type Scope3 = "vouchers";
   export type SchemaVersion5 = 6;
@@ -365,12 +368,17 @@ export namespace DashboardBriefDeliveryContract {
     state: State1;
     party: Party;
     group: Group;
+    amount_components: AmountComponents;
   }
   export interface Recognition {
     precision: Precision;
     period: Period1;
     date: Date1;
     label: Label1;
+  }
+  export interface ActivityAmountComponent {
+    label: Label2;
+    amount_fen: AmountFen1;
   }
   export interface BriefActivityDisplayGroup {
     key: Key2;
@@ -381,7 +389,7 @@ export namespace DashboardBriefDeliveryContract {
     title: Title1;
     member_count: MemberCount;
     voucher_count: VoucherCount;
-    amount_fen: AmountFen1;
+    amount_fen: AmountFen2;
     amount_label: AmountLabel1;
     state: State2;
     date_from: DateFrom;
@@ -402,7 +410,7 @@ export namespace DashboardBriefDeliveryContract {
     group: Group2;
     summary: Summary;
     list_summary: ListSummary;
-    amount_fen: AmountFen2;
+    amount_fen: AmountFen3;
     business_amount_fen: BusinessAmountFen;
     business_amount_label: BusinessAmountLabel;
     business_amount_state: BusinessAmountState;
@@ -424,7 +432,7 @@ export namespace DashboardBriefDeliveryContract {
     code: Code1;
     calculation_id: CalculationId;
     owner_calculation_id: OwnerCalculationId;
-    amount_fen: AmountFen3;
+    amount_fen: AmountFen4;
     amount_label: AmountLabel2;
     line_start: LineStart;
     line_count: LineCount;
@@ -444,17 +452,17 @@ export namespace DashboardBriefDeliveryContract {
   export interface VoucherLineParty {
     id: Id1;
     name: Name2;
-    amount_fen: AmountFen4;
+    amount_fen: AmountFen5;
   }
   export interface BriefActivityGroup {
     key: Key3;
-    label: Label2;
+    label: Label3;
     event_count: EventCount;
     group_count: GroupCount1;
     type_counts: TypeCounts;
   }
   export interface ActivityTypeCount {
-    label: Label3;
+    label: Label4;
     count: Count;
   }
   export interface BriefPosition {
@@ -485,7 +493,7 @@ export namespace DashboardBriefDeliveryContract {
   }
   export interface BriefPositionNotice {
     message: Message;
-    amount_fen?: AmountFen5;
+    amount_fen?: AmountFen6;
   }
   export interface BriefBankComposition {
     opening_fen: OpeningFen;
@@ -554,7 +562,7 @@ export namespace DashboardBriefDeliveryContract {
   }
   export interface BriefOpenCategory {
     key: Key4;
-    label: Label4;
+    label: Label5;
     direction: Direction;
     unit: Unit;
     count: Count1;
@@ -573,7 +581,7 @@ export namespace DashboardBriefDeliveryContract {
     title: Title3;
     object: Object;
     period: Period2;
-    amount_fen: AmountFen6;
+    amount_fen: AmountFen7;
     amount_status: AmountStatus;
     deadline: Deadline;
     impact: Impact1;

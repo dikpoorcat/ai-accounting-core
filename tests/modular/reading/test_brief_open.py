@@ -71,7 +71,7 @@ def members(case, snapshot, group_key, **query):
         "dashboard-response-v2.json",
         "dashboard_brief_group",
         {
-            "schema_version": 3,
+            "schema_version": 4,
             "snapshot_version": snapshot.version,
             "selected_period": snapshot.selected_period,
             "read_context": {

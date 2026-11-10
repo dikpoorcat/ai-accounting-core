@@ -27,7 +27,7 @@ async function harness(component, suppliedProps, exported) {
 }
 const tick = async () => { await Vue.nextTick(); await Promise.resolve(); };
 const page = (cursor = null) => ({ total_count: cursor ? 2 : 1, filtered_count: cursor ? 2 : 1, returned_count: 1, has_more: Boolean(cursor), next_cursor: cursor });
-const member = { key: "part-key", group_key: "batch-group", subject_id: "payment", voucher_version_id: "voucher-a", detail_scope_key: "part-key" };
+const member = { key: "part-key", group_key: "batch-group", subject_id: "payment", voucher_version_id: "voucher-a", detail_scope_key: "part-key", amount_components: [] };
 const groupResult = (keys = [member.key]) => ({ data: { section: "activity", group_key: "batch-group", collections: { members: { items: keys.map(key => ({ ...member, key, detail_scope_key: key })), page: page() }, vouchers: { items: [], page: page() } } } });
 const statusResult = () => ({ snapshot_version: "snapshot", data: { detail_scope: { key: "part-key", category: "payroll", voucher_version_id: "voucher-a", amount_fen: "100", amount_label: "实际付款" }, collections: { settlement_events: { items: [{ id: "first" }], page: page("next") } } } });
 

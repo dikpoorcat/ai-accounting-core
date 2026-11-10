@@ -37,6 +37,7 @@ class Part:
     phase: str
     batch: bool
     scope: dict
+    amount_components: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -288,19 +289,28 @@ def base_scope(content, *, direction=None, allocations=()):
 
 def parts(content, cache):
     kind, data = content.target["kind"], content.basis.get("input", {})
-    if kind == "people.remuneration":
-        return [
-            Part(
-                BusinessLabel(code, title),
-                value,
-                label,
-                (data["person_id"],),
-                phase,
-                False,
-                base_scope(content) | {"component": component},
+    if kind in {"people.remuneration", "people.remuneration_tax"}:
+        code, parties = business_label(content).code, business_parties(content, cache)
+        result = []
+        for phase in _payroll_journals.phases(content):
+            value = amount(content, journal_key=phase)
+            result.append(
+                Part(
+                    BusinessLabel(code, _payroll_journals.title(content, journal_key=phase)),
+                    value.amount_fen,
+                    value.label,
+                    parties,
+                    phase,
+                    False,
+                    base_scope(content)
+                    | {
+                        "phase": phase,
+                        "remuneration_type": content.target["values"]["remuneration_type"],
+                    },
+                    _payroll_journals.components(content, phase),
+                )
             )
-            for component, phase, code, title, value, label in _payroll_journals.components(content)
-        ]
+        return result
     if kind == "money.movement" and data["type"] in {"settlement", "payroll_reserve"}:
         direction = data.get("direction", "outflow")
         batch = data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve"
@@ -490,6 +500,11 @@ def rows(event, content, objects, *, prepared, obligations=(), own_funds_channel
                 "matter": part.scope["matter"],
                 "parties": list(part.parties),
                 "phase": part.phase,
+                **(
+                    {"remuneration_type": part.scope["remuneration_type"]}
+                    if "remuneration_type" in part.scope
+                    else {}
+                ),
                 "role": event.role if correction else "original",
                 "isolated": ident
                 if part.batch or not part.parties or part.label.code == "unknown"
@@ -503,7 +518,7 @@ def rows(event, content, objects, *, prepared, obligations=(), own_funds_channel
         selected_obligations = obligations
         if content.target["kind"] == "people.remuneration":
             allowed = _payroll_journals.slots(
-                journal_key=event.journal_key, component=part.scope.get("component")
+                journal_key=part.phase, component=part.scope.get("component")
             )
             selected_obligations = [
                 item for item in obligations if item["source"]["slot"] in allowed
@@ -546,6 +561,10 @@ def rows(event, content, objects, *, prepared, obligations=(), own_funds_channel
                     "description": title,
                     "amount_fen": signed(part.amount_fen, sign),
                     "amount_label": part.amount_label,
+                    "amount_components": [
+                        {"label": item["label"], "amount_fen": signed(item["amount_fen"], sign)}
+                        for item in part.amount_components
+                    ],
                     "state": state,
                     "party": party,
                     "group": group,

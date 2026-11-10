@@ -21,6 +21,7 @@ function briefForRequest(overview, requestUrl) {
 async function run(config) {
   const { chromium } = require(config.playwright_module);
   const { validateDashboardBriefResponse: validateBrief } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBrief.js")));
+  const { validateDashboardBriefDeliveryResponse: validateDelivery } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBriefDelivery.js")));
   const { validateDashboardBriefGroupResponse: validateGroup } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBriefGroup.js")));
   const { validateDashboardBusinessStatusResponse: validateStatus } = await import(pathToFileURL(path.join(__dirname, "../src/api/generated/dashboardBusinessStatus.js")));
   const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/dashboard-contracts.json"), "utf8"));
@@ -32,21 +33,37 @@ async function run(config) {
   let phase = "real", base, synthetic = null, memberTotal = 24, groupTotal = 1, categorySplit = null, openCategoryMode = false, batchMode = false;
   let holdFirst = false, holdContinuation = false, holdRootContinuation = false;
   const held = [], heldRoots = [];
-  page.on("request", request => { const url = new URL(request.url()); if (url.pathname.startsWith("/api/dashboard/")) requests.push(url); });
+  const briefRoute = url => ["/api/dashboard/brief", "/api/dashboard/brief/retry"].includes(url.pathname);
+  const requestUrl = request => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/dashboard/brief/retry") {
+      url.pathname = "/api/dashboard/brief";
+      for (const [key, value] of Object.entries(request.postDataJSON())) url.searchParams.set(key, String(value));
+    }
+    return url;
+  };
+  page.on("request", request => { const url = requestUrl(request); if (url.pathname.startsWith("/api/dashboard/")) requests.push(url); });
   page.on("pageerror", error => errors.push(error.message));
   const count = action => requests.filter(url => url.pathname === `/api/dashboard/${action}`).length;
   const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const reply = action => page.waitForResponse(response => new URL(response.url()).pathname === `/api/dashboard/${action}`);
+  const reply = action => page.waitForResponse(response => requestUrl(response.request()).pathname === `/api/dashboard/${action}`);
   const refresh = async () => { const pending = reply("brief"); await page.getByRole("button", { name: "刷新数据", exact: true }).click(); await pending; await page.waitForFunction(() => document.querySelector(".module-header")?.getAttribute("aria-busy") === "false"); await frames(); };
   const finishMembers = async row => { await row.locator(".member-row, .contribution-row").first().waitFor(); await row.locator(".group-members .dashboard-pagination").waitFor({ state: "hidden", timeout: 60000 }); await frames(); };
   const money = value => { if (value == null) return "待核对"; const number = BigInt(value), absolute = number < 0n ? -number : number; return `${number < 0n ? "−" : ""}¥${new Intl.NumberFormat("zh-CN").format(absolute / 100n)}.${String(absolute % 100n).padStart(2, "0")}`; };
   const fulfill = async (route, payload, validator) => {
     try {
-      if (validator === validateBrief) payload = briefForRequest(payload, route.request().url());
+      if (validator === validateBrief) payload = briefForRequest(payload, requestUrl(route.request()));
       if (!validator(payload)) {
         routeErrors.push({ phase, url: route.request().url(), message: "synthetic response failed generated validation", validation_errors: structuredClone(validator.errors) });
         await route.abort("failed").catch(() => {});
         return;
+      }
+      if (validator === validateBrief) {
+        const url = requestUrl(route.request());
+        if (!url.searchParams.has("section") && !url.searchParams.has("expected_version")) {
+          payload = { schema_version: 6, company_id: company, period: payload.selected_period?.key ?? null, model_version: payload.snapshot_version, state: "ready", response: payload };
+          assert(validateDelivery(payload), JSON.stringify(validateDelivery.errors));
+        }
       }
       await route.fulfill({ json: payload }).catch(() => {});
     } catch (error) {
@@ -90,7 +107,7 @@ async function run(config) {
       });
     }
     const address = new URL(config.ticket_url); address.searchParams.set("company_id", company); address.searchParams.set("period", period);
-    const first = reply("brief"); await page.goto(address.href); base = await (await first).json(); assert(validateBrief(base), JSON.stringify(validateBrief.errors));
+    const first = reply("brief"); await page.goto(address.href); const initial = await (await first).json(); base = initial.state === "ready" ? initial.response : initial; assert(validateBrief(base), JSON.stringify(validateBrief.errors));
     await page.locator(".activity-section").waitFor(); await frames();
     assert.equal(count("brief-group"), 0, "default overview does not read group members");
     assert.equal(count("business-status"), 0, "default overview does not read business progress");
@@ -177,7 +194,7 @@ async function run(config) {
       const length = Math.min(20, memberTotal - offset);
       result.data.collections.members.items = Array.from({ length }, (_, n) => {
         const index = offset + n;
-        return { ...activitySeed, key: `member-${key}-${index}`, group_key: key, subject_id: `subject-${key}-${index}`, voucher_version_id: `voucher-${key}-${index}`, voucher_number: index + 1, detail_scope_key: null, date: null, recognition: { ...activitySeed.recognition, period, date: null, precision: "month", label: `${period} · 按月确认` }, party: "同一对象", title: "代收代付", description: `每笔不同的真实用途 ${index + 1}`, state: "已入账", amount_fen: "100", amount_label: "代收金额", group: "funds" };
+        return { ...activitySeed, key: `member-${key}-${index}`, group_key: key, subject_id: `subject-${key}-${index}`, voucher_version_id: `voucher-${key}-${index}`, voucher_number: index + 1, detail_scope_key: `member-${key}-${index}`, date: null, recognition: { ...activitySeed.recognition, period, date: null, precision: "month", label: `${period} · 按月确认` }, party: "同一对象", title: "代收代付", description: `每笔不同的真实用途 ${index + 1}`, state: "已入账", amount_fen: "100", amount_label: "代收金额", amount_components: [], group: "funds" };
       });
       result.data.collections.members.page = { total_count: memberTotal, filtered_count: memberTotal, returned_count: length, has_more: offset + length < memberTotal, next_cursor: offset + length < memberTotal ? `members:${offset + length}` : null };
       result.data.collections.vouchers.items = result.data.collections.members.items.map((item, index) => ({ ...voucherSeed, voucher_version_id: item.voucher_version_id, subject_id: item.subject_id, number: String(offset + index + 1), date: null, recognition: item.recognition, business_amount_fen: "100", business_amount_label: "代收金额", amount_fen: "100", list_summary: item.description, summary: item.description, has_business_progress: false,
@@ -196,9 +213,9 @@ async function run(config) {
       delete synthetic.data.collections.vouchers;
       assert(validateBrief(synthetic), JSON.stringify(validateBrief.errors));
     }
-    await page.route("**/api/dashboard/brief?*", async route => {
+    await page.route(briefRoute, async route => {
       if (!synthetic) return route.continue();
-      const url = new URL(route.request().url());
+      const url = requestUrl(route.request());
       if (url.searchParams.get("section") === "open_items" && !openCategoryMode) return fulfill(route, synthetic, validateBrief);
       const cursor = url.searchParams.get("cursor"), offset = cursor?.startsWith("groups:") ? Number(cursor.slice(7)) : 0;
       if (offset && holdRootContinuation) { const payload = rootPage(offset); heldRoots.push(() => fulfill(route, payload, validateBrief)); return; }
@@ -216,7 +233,7 @@ async function run(config) {
       const url = new URL(route.request().url()), payload = structuredClone(fixtures.business_status.response);
       payload.read_context = structuredClone(base.read_context); payload.selected_period = structuredClone(base.selected_period); payload.snapshot_version = synthetic.snapshot_version;
       payload.data.identity.company_id = company; payload.data.identity.subject_id = url.searchParams.get("subject_id");
-      payload.data.detail_scope = null; payload.data.settlement_view = "current";
+      payload.data.detail_scope = { key: url.searchParams.get("detail_scope_key"), voucher_version_id: url.searchParams.get("voucher_version_id"), category: "funds", amount_fen: "100", amount_label: "代收金额" }; payload.data.settlement_view = "current";
       for (const collection of Object.values(payload.data.collections)) collection.page = { total_count: collection.items.length, filtered_count: collection.items.length, returned_count: collection.items.length, has_more: false, next_cursor: null };
       return fulfill(route, payload, validateStatus);
     });
@@ -387,8 +404,8 @@ async function run(config) {
     assert(validateBrief(scopeRoot), JSON.stringify(validateBrief.errors));
     const heldScope = [];
     let delayA = false, delayAPage = true;
-    await page.unroute("**/api/dashboard/brief?*"); await page.unroute("**/api/dashboard/brief-group?*");
-    await page.route("**/api/dashboard/brief?*", route => fulfill(route, scopeRoot, validateBrief));
+    await page.unroute(briefRoute); await page.unroute("**/api/dashboard/brief-group?*");
+    await page.route(briefRoute, route => fulfill(route, scopeRoot, validateBrief));
     await page.route("**/api/dashboard/brief-group?*", async route => {
       const url = new URL(route.request().url()), selected = scopeRows.find(item => item.member.group_key === url.searchParams.get("group_key"));
       if (!selected) { routeErrors.push({ phase, message: "unexpected sibling group request" }); return route.abort().catch(() => {}); }
@@ -401,10 +418,10 @@ async function run(config) {
     });
     await page.route("**/api/dashboard/business-status?*", async route => {
       const url = new URL(route.request().url()), selected = scopeRows.find(item => item.member.detail_scope_key === url.searchParams.get("detail_scope_key"));
-      if (!selected || url.searchParams.get("company_id") !== company || url.searchParams.get("period") !== period || url.searchParams.get("voucher_version_id") !== selected.member.voucher_version_id || url.searchParams.get("subject_id") !== selected.member.subject_id || url.searchParams.get("expected_version") !== scopeRoot.snapshot_version || url.searchParams.get("limit") !== "20") {
-        routeErrors.push({ phase, message: "sibling detail request lost exact member identity" }); return route.abort().catch(() => {});
-      }
       const offset = url.searchParams.get("cursor") ? 20 : 0;
+      if (!selected || url.searchParams.get("company_id") !== company || url.searchParams.get("period") !== period || url.searchParams.get("voucher_version_id") !== selected.member.voucher_version_id || url.searchParams.get("subject_id") !== selected.member.subject_id || url.searchParams.get("expected_version") !== (offset ? scopeRoot.snapshot_version : null) || url.searchParams.get("limit") !== (offset ? "500" : "20")) {
+        routeErrors.push({ phase, url: url.href, message: "sibling detail request lost exact member identity" }); return route.abort().catch(() => {});
+      }
       if (offset && (url.searchParams.get("cursor") !== `scope:${selected.member.key}:20` || url.searchParams.get("section") !== "settlement_events")) {
         routeErrors.push({ phase, message: "sibling continuation lost its member cursor" }); return route.abort().catch(() => {});
       }
@@ -452,10 +469,144 @@ async function run(config) {
     assert.equal(await scopeRow(0).locator(".business-detail-panel").count(), 0, "late A does not recreate a closed detail");
     checks.push("same voucher/category sibling scopes keep amounts, objects, related payments and cursors isolated; late A never overwrites B");
     await screenshot("brief-sibling-matter-scopes");
+
+    // One remuneration business presents its two actual journal stages. Component
+    // amounts are supplied by the response, while each preview keeps every line.
+    phase = "payroll journal stages";
+    const payrollStages = [
+      { key: "accrual", title: "薪酬计提", label: "计提金额", amount: "233500", components: [["员工工资", "77500"], ["单位社保", "131000"], ["单位公积金", "25000"]],
+        postings: [["560201", "管理费用—工资", "77500", "0"], ["221101", "应付职工薪酬—工资", "0", "77500"], ["560201", "管理费用—工资", "131000", "0"], ["221102", "应付职工薪酬—单位社保", "0", "131000"], ["560201", "管理费用—工资", "25000", "0"], ["221103", "应付职工薪酬—单位公积金", "0", "25000"]] },
+      { key: "deductions", title: "个人代扣", label: "代扣金额", amount: "77500", components: [["代扣个人社保", "52500"], ["代扣个人公积金", "25000"]],
+        postings: [["221101", "应付职工薪酬—工资", "52500", "0"], ["224102", "其他应付款—个人社保", "0", "52500"], ["221101", "应付职工薪酬—工资", "25000", "0"], ["224103", "其他应付款—个人公积金", "0", "25000"]] },
+    ].map((stage, index) => {
+      const member = { ...structuredClone(activitySeed), key: `payroll-${stage.key}`, group_key: `payroll-group-${stage.key}`, subject_id: "synthetic-payroll-business", detail_scope_key: `payroll-${stage.key}`, voucher_version_id: `payroll-voucher-${stage.key}`, voucher_number: 101 + index, date: null, recognition: { precision: "month", period, date: null, label: period }, group: "people", title: stage.title, description: stage.title, party: "合成薪酬员工（同一业务的两阶段）", amount_fen: stage.amount, amount_label: stage.label, amount_components: stage.components.map(([label, amount_fen]) => ({ label, amount_fen })) };
+      const voucher = { ...structuredClone(voucherSeed), voucher_version_id: member.voucher_version_id, subject_id: member.subject_id, number: String(member.voucher_number), date: null, recognition: member.recognition, type: stage.title, kind: "people.remuneration", group: "people", summary: `${stage.title} · 合成薪酬员工`, list_summary: stage.title, amount_fen: stage.amount, business_amount_fen: stage.amount, business_amount_label: stage.label, business_amount_state: "known", has_business_progress: true,
+        lines: stage.postings.map(([code, account, debit_fen, credit_fen], lineIndex) => ({ ...structuredClone(voucherSeed.lines[0]), line_number: lineIndex + 1, code, account, debit_fen, credit_fen, party: "", parties: [], party_state: "not_applicable", source_label: "" })) };
+      return { ...stage, member, voucher };
+    });
+    const payrollRoot = structuredClone(base);
+    payrollRoot.snapshot_version = "synthetic-payroll-stages";
+    payrollRoot.data.focused_activity = null; payrollRoot.data.focused_activity_group = null; payrollRoot.data.focused_voucher = null;
+    payrollRoot.data.group_count = 2; payrollRoot.data.activity_count = 2; payrollRoot.data.voucher_count = 2;
+    payrollRoot.data.activity_groups = [{ key: "people", label: "人员薪酬", event_count: 2, group_count: 2, type_counts: payrollStages.map(stage => ({ label: stage.title, count: 1 })) }];
+    payrollRoot.data.collections.activity = { items: payrollStages.map(({ member }) => ({ ...group(0), key: member.group_key, group_key: member.group_key, group: member.group, kind: "people.remuneration", title: member.title, party: member.party, member_count: 1, voucher_count: 1, amount_fen: member.amount_fen, amount_label: member.amount_label, is_batch: false })), page: completePage(2) };
+    delete payrollRoot.data.collections.vouchers;
+    assert(validateBrief(payrollRoot), JSON.stringify(validateBrief.errors));
+    await page.unroute(briefRoute); await page.unroute("**/api/dashboard/brief-group?*"); await page.unroute("**/api/dashboard/business-status?*");
+    await page.route(briefRoute, route => fulfill(route, payrollRoot, validateBrief));
+    await page.route("**/api/dashboard/brief-group?*", async route => {
+      const selected = payrollStages.find(stage => stage.member.group_key === new URL(route.request().url()).searchParams.get("group_key"));
+      if (!selected) { routeErrors.push({ phase, message: "unexpected payroll group request" }); return route.abort().catch(() => {}); }
+      const payload = structuredClone(memberSeed);
+      payload.read_context = structuredClone(base.read_context); payload.selected_period = structuredClone(base.selected_period); payload.snapshot_version = payrollRoot.snapshot_version;
+      payload.data.group_key = selected.member.group_key;
+      payload.data.collections.members = { items: [selected.member], page: completePage(1) };
+      payload.data.collections.vouchers = { items: [selected.voucher], page: completePage(1) };
+      await fulfill(route, payload, validateGroup);
+    });
+    await page.route("**/api/dashboard/business-status?*", async route => {
+      const url = new URL(route.request().url()), selected = payrollStages.find(stage => stage.member.detail_scope_key === url.searchParams.get("detail_scope_key"));
+      if (!selected || url.searchParams.get("voucher_version_id") !== selected.member.voucher_version_id || url.searchParams.get("subject_id") !== selected.member.subject_id || url.searchParams.get("company_id") !== company || url.searchParams.get("period") !== period || url.searchParams.has("expected_version") || url.searchParams.get("limit") !== "20") {
+        routeErrors.push({ phase, message: "payroll progress lost its selected journal stage" }); return route.abort().catch(() => {});
+      }
+      const payload = structuredClone(fixtures.business_status.response);
+      payload.read_context = structuredClone(base.read_context); payload.selected_period = structuredClone(base.selected_period); payload.snapshot_version = payrollRoot.snapshot_version;
+      payload.data.identity = { ...payload.data.identity, company_id: company, subject_id: selected.member.subject_id, kind: "people.remuneration" };
+      payload.data.period = period; payload.data.current_business_result = { amount_fen: selected.amount, amount_label: selected.label, posting_period: period };
+      payload.data.detail_scope = { key: selected.member.detail_scope_key, voucher_version_id: selected.member.voucher_version_id, category: "people", amount_fen: selected.amount, amount_label: selected.label };
+      payload.data.display_profiles.business.values = { ...payload.data.display_profiles.business.values, display_name: selected.title, purpose: null, note: null };
+      payload.data.display_profiles.counterparties = [];
+      payload.data.settlements.obligations = []; payload.data.current_followups.settlements.obligations = [];
+      payload.data.collections.settlement_events = { ...payload.data.collections.settlement_events, items: [], page: completePage(0) };
+      await fulfill(route, payload, validateStatus);
+    });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const payrollBefore = { groups: count("brief-group"), progress: count("business-status") };
+    await page.goto(scopeAddress.href); await page.locator(".activity-section .event-row").nth(1).waitFor(); await frames();
+    const payrollRow = index => page.locator(".activity-section .event-row").nth(index);
+    const assertPayrollVoucher = async stage => {
+      const voucher = page.locator("#selected-voucher"); await voucher.waitFor(); await frames();
+      assert((await voucher.locator(".voucher-reference").innerText()).includes(`凭证 ${stage.member.voucher_number}`));
+      assert.deepEqual(await voucher.locator("tbody .voucher-line-account strong").allTextContents(), stage.voucher.lines.map(line => line.account));
+      for (const [label, field] of [["借方", "debit_fen"], ["贷方", "credit_fen"]]) {
+        assert.deepEqual((await voucher.locator(`tbody td[data-label="${label}"]`).allTextContents()).map(text => text.trim()), stage.voucher.lines.map(line => BigInt(line[field]) ? money(line[field]) : "—"));
+      }
+    };
+    assert.equal(await page.locator(".activity-section .event-row").count(), 2, "payroll has exactly two main business stages");
+    assert.equal(await page.locator(".activity-amount-components").count(), 0, "collapsed payroll stages hide components");
+    assert.equal(count("brief-group"), payrollBefore.groups); assert.equal(count("business-status"), payrollBefore.progress);
+    for (const [index, stage] of payrollStages.entries()) {
+      assert.equal((await payrollRow(index).locator(".event-money b").textContent()).trim(), money(stage.amount));
+      assert((await payrollRow(index).locator(".event-matter").innerText()).includes(stage.title));
+      await payrollRow(index).focus(); await payrollRow(index).press("Enter"); await finishMembers(payrollRow(index));
+      const components = payrollRow(index).locator(".activity-amount-components");
+      assert.deepEqual(await components.locator("dt").allTextContents(), stage.components.map(([label]) => label));
+      assert.deepEqual(await components.locator("dd").allTextContents(), stage.components.map(([, amount]) => money(amount)));
+      assert.equal(count("business-status"), payrollBefore.progress, "component expansion never reads progress");
+      const localBefore = requests.length;
+      await payrollRow(index).locator(".event-voucher-button").hover();
+      const preview = payrollRow(index).getByRole("tooltip"); await preview.waitFor();
+      assert((await preview.innerText()).includes(`凭证 ${stage.member.voucher_number}`));
+      assert.deepEqual(await preview.locator(".lines > span").allTextContents(), stage.voucher.lines.map(line => `${line.account}${BigInt(line.debit_fen) ? "借 " + money(line.debit_fen) : "贷 " + money(line.credit_fen)}`));
+      await screenshot(`brief-payroll-${stage.key}-desktop-preview`);
+      await payrollRow(index).locator(".event-voucher-button").click(); await assertPayrollVoucher(stage);
+      assert.equal(requests.length, localBefore, "payroll hover and exact full voucher selection use the loaded journal only");
+      await page.getByRole("button", { name: "按业务", exact: true }).click(); await finishMembers(payrollRow(index));
+    }
+    checks.push("payroll has two main stages at 2335.00/775.00; expanded components match 775+1310+250 and 525+250; both exact previews retain all six/four journal lines locally");
+    for (const [index, stage] of payrollStages.entries()) {
+      if (await payrollRow(index).getAttribute("aria-expanded") !== "true") { await payrollRow(index).focus(); await payrollRow(index).press("Enter"); await finishMembers(payrollRow(index)); }
+      const before = count("business-status");
+      await payrollRow(index).getByRole("button", { name: "业务进展", exact: true }).click();
+      const panel = payrollRow(index).locator(".business-detail-panel"); await panel.waitFor(); await frames();
+      assert.equal(count("business-status"), before + 1, "each payroll stage reads progress only after its own manual selection");
+      assert((await panel.innerText()).includes(`本次${stage.label}`)); assert((await panel.innerText()).includes(money(stage.amount)));
+      const cachedBefore = { groups: count("brief-group"), progress: count("business-status") };
+      await payrollRow(index).focus(); await payrollRow(index).press("Space"); await payrollRow(index).press("Enter"); await finishMembers(payrollRow(index));
+      await assertClosedProgress(payrollRow(index));
+      assert.equal(count("brief-group"), cachedBefore.groups); assert.equal(count("business-status"), cachedBefore.progress);
+    }
+    checks.push("payroll stage progress preserves exact subject/scope/voucher identity and opens only manually; cached member reopening keeps progress closed");
+    for (const width of [375, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const [index, stage] of payrollStages.entries()) {
+        if (await payrollRow(index).getAttribute("aria-expanded") !== "true") { await payrollRow(index).focus(); await payrollRow(index).press("Enter"); await finishMembers(payrollRow(index)); }
+        const layout = await payrollRow(index).locator(".activity-amount-components").evaluate(node => ({ pageFits: document.documentElement.scrollWidth <= innerWidth + 1, fits: node.scrollWidth <= node.clientWidth + 1, wrapping: getComputedStyle(node).flexWrap, tops: [...node.children].map(child => child.getBoundingClientRect().top) }));
+        assert(layout.pageFits && layout.fits, `${width}px payroll ${stage.key} overflows horizontally`);
+        assert.equal(layout.wrapping, "wrap");
+        if (index === 0) assert(new Set(layout.tops).size > 1, `${width}px payroll components should wrap naturally`);
+        await screenshot(`brief-payroll-${stage.key}-mobile-${width}`);
+        const before = requests.length;
+        await payrollRow(index).locator(".event-voucher-button").click(); await assertPayrollVoucher(stage);
+        assert.equal(requests.length, before, "mobile payroll selection opens the exact loaded full journal locally");
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${width}px payroll voucher overflows horizontally`);
+        await screenshot(`brief-payroll-${stage.key}-mobile-${width}-voucher`);
+        await page.getByRole("button", { name: "按业务", exact: true }).click(); await finishMembers(payrollRow(index));
+      }
+    }
+    const refreshBefore = { groups: count("brief-group"), progress: count("business-status") };
+    for (const stage of payrollStages) {
+      stage.member.voucher_version_id += "-refreshed"; stage.member.voucher_number += 100;
+      stage.voucher.voucher_version_id = stage.member.voucher_version_id; stage.voucher.number = String(stage.member.voucher_number);
+    }
+    payrollRoot.snapshot_version += "-refreshed"; await refresh();
+    assert.equal(await page.locator(".activity-section .group-members").count(), 0);
+    assert.equal(count("brief-group"), refreshBefore.groups, "refresh closes payroll members without reading another group"); assert.equal(count("business-status"), refreshBefore.progress, "refresh never opens payroll progress");
+    await payrollRow(1).focus(); await payrollRow(1).press("Enter"); await finishMembers(payrollRow(1)); await assertClosedProgress(payrollRow(1));
+    assert.equal(count("brief-group"), refreshBefore.groups + 1, "refresh invalidates the previous payroll member/voucher cache");
+    assert.equal(count("business-status"), refreshBefore.progress, "refreshed payroll components do not restore or preload progress");
+    const refreshedLocal = requests.length;
+    await payrollRow(1).locator(".event-voucher-button").click(); await assertPayrollVoucher(payrollStages[1]);
+    assert.equal(requests.length, refreshedLocal, "refresh replaces the old voucher identity with the newly loaded complete journal");
+    await page.getByRole("button", { name: "按业务", exact: true }).click();
+    await payrollRow(1).getByRole("button", { name: "业务进展", exact: true }).click(); await payrollRow(1).locator(".business-detail-panel").waitFor(); await frames();
+    assert.equal(count("business-status"), refreshBefore.progress + 1, "manual progress after refresh reads the new payroll snapshot");
+    checks.push("payroll components wrap without horizontal overflow at 375px and 320px; refresh clears expanded members, vouchers and selected progress before a new exact read");
     assert.deepEqual(errors, []);
     assert.deepEqual(routeErrors, []);
     return { status: "passed", checks, growth, screenshots, page_errors: errors, route_errors: routeErrors };
   } catch (error) {
+    await screenshot("brief-groups-failed").catch(() => {});
     return { status: "failed", phase, message: error.message, checks, growth, screenshots, page_errors: errors, route_errors: routeErrors };
   } finally { await page.close(); await browser.close(); }
 }

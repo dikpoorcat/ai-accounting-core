@@ -56,6 +56,13 @@ def origin_fields(content):
     return content.target, content.basis
 
 
+def _remuneration_quantity(basis):
+    quantities = [item for item in basis["adopted_quantities"] if item["type"] == "remuneration"]
+    if len(quantities) != 1:
+        raise ContractError("storage_corrupt", "薪酬税款缺少唯一的原报酬组成。")
+    return quantities[0]
+
+
 def remuneration_identity(content):
     """The original payroll identity is retained by a later, independently adopted tax."""
     target, basis = origin_fields(content)
@@ -64,12 +71,7 @@ def remuneration_identity(content):
     values = target["values"]
     period = basis["period"]
     if target["kind"] == "people.remuneration_tax":
-        quantities = [
-            item for item in basis["adopted_quantities"] if item["type"] == "remuneration"
-        ]
-        if len(quantities) != 1:
-            raise ContractError("storage_corrupt", "薪酬税款缺少唯一的原报酬组成。")
-        period = quantities[0]["period"]
+        period = _remuneration_quantity(basis)["period"]
     return values["person_id"], period, values["remuneration_type"]
 
 
@@ -98,6 +100,16 @@ def business_matter(
     target, basis = origin_fields(content)
     kind, data = target["kind"], basis.get("input", {})
     values = target.get("values", {})
+    if kind == "people.remuneration":
+        destination = data.get("destination", {})
+        return (
+            {"project_id": destination["project_id"]}
+            if destination.get("type") == "project"
+            else {}
+        )
+    if kind == "people.remuneration_tax":
+        project = _remuneration_quantity(basis).get("project_id")
+        return {"project_id": project} if project is not None else {}
     if kind in {"investment.money_fund_purchase", "investment.money_fund_redemption"}:
         return {"fund_id": values["fund_id"]}
     if kind.startswith("investment.") and "terms_id" in values:
@@ -158,7 +170,7 @@ _KINDS = {
     "investment.position": ("investment_position", "投资持仓"),
     "taxes.financial_transfer_basis": ("financial_transfer_vat", "金融商品转让税额核算"),
     "taxes.partnership_allocation": ("partnership_allocation", "合伙投资所得分配依据"),
-    "people.remuneration_tax": ("withholding", "薪酬个人所得税"),
+    "people.remuneration_tax": ("withholding", "个人代扣"),
     "operations.service_sale": ("service_sale", "服务业务款"),
     "operations.sale_return": ("sale_return", "销售退款"),
     "operations.expense_recovery": ("expense_recovery", "费用退回款"),

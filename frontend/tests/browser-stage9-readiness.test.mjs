@@ -1750,8 +1750,8 @@ test("grouped brief reads bind member pages to group, snapshot and voucher assoc
   const page = { total_count: 1, filtered_count: 1, returned_count: 1, has_more: false, next_cursor: null };
   const selected = { id: "synthetic", period: "2016-12" }, snapshot = "snapshot";
   const target = new URL("https://synthetic.invalid/api/dashboard/brief-group?company_id=synthetic&period=2016-12&section=activity&group_key=group&expected_version=snapshot");
-  const payload = { schema_version: 3, read_context: { company_id: selected.id }, selected_period: { key: selected.period }, snapshot_version: snapshot,
-    data: { section: "activity", group_key: "group", collections: { members: { items: [{ key: "member", detail_scope_key: null, group_key: "group", voucher_version_id: null }], page }, vouchers: { items: [], page: { ...page, total_count: 0, filtered_count: 0, returned_count: 0 } } } } };
+  const payload = { schema_version: 4, read_context: { company_id: selected.id }, selected_period: { key: selected.period }, snapshot_version: snapshot,
+    data: { section: "activity", group_key: "group", collections: { members: { items: [{ key: "member", detail_scope_key: null, group_key: "group", voucher_version_id: null, amount_components: [] }], page }, vouchers: { items: [], page: { ...page, total_count: 0, filtered_count: 0, returned_count: 0 } } } } };
   assert.equal(verifyBriefGroup(payload, target, selected, snapshot), payload);
   for (const mutate of [p => { p.schema_version++; }, p => { p.snapshot_version = "other"; }, p => { p.data.group_key = "other"; }, p => { p.data.section = "open_items"; }, p => { p.data.collections.members.items[0].group_key = "other"; }, p => { p.data.collections.members.items[0].voucher_version_id = "missing"; }, p => { p.data.collections.members.page.returned_count = 0; }]) {
     const wrong = structuredClone(payload); mutate(wrong);

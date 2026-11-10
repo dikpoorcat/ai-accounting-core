@@ -51,6 +51,7 @@ def hydrate(reader, members, company_id, read, *, known_contents=()):
                     "business_period": content.reference["business_period"],
                     "posting_period": content.reference["posting_period"],
                     "kind": content.target["kind"],
+                    "component": meaning.component,
                     "direction": definition.direction,
                     "obligations": [
                         {

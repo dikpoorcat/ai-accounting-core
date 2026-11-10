@@ -7188,6 +7188,7 @@ class DashboardBriefDelivery__BriefActivityRow(TypedDict):
     state: str
     party: str
     group: str
+    amount_components: list[DashboardBriefDelivery__ActivityAmountComponent]
 
 class DashboardBriefDelivery__BriefBankComposition(TypedDict):
     opening_fen: str | None
@@ -7371,7 +7372,7 @@ class DashboardBriefDelivery__Collection_OwnerBriefVoucher_(TypedDict):
     page: DashboardBriefDelivery__CollectionPage
 
 class DashboardBriefDelivery__DashboardBriefActivityResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBriefDelivery__DashboardPeriod | None
     read_semantics: DashboardBriefDelivery__ReadSemantics
@@ -7380,7 +7381,7 @@ class DashboardBriefDelivery__DashboardBriefActivityResponse(TypedDict):
     data: DashboardBriefDelivery__BriefActivityData | None
 
 class DashboardBriefDelivery__DashboardBriefOpenResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBriefDelivery__DashboardPeriod | None
     read_semantics: DashboardBriefDelivery__ReadSemantics
@@ -7389,7 +7390,7 @@ class DashboardBriefDelivery__DashboardBriefOpenResponse(TypedDict):
     data: DashboardBriefDelivery__BriefOpenData | None
 
 class DashboardBriefDelivery__DashboardBriefOverviewResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBriefDelivery__DashboardPeriod | None
     read_semantics: DashboardBriefDelivery__ReadSemantics
@@ -7398,7 +7399,7 @@ class DashboardBriefDelivery__DashboardBriefOverviewResponse(TypedDict):
     data: DashboardBriefDelivery__BriefData | None
 
 class DashboardBriefDelivery__DashboardBriefVoucherResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBriefDelivery__DashboardPeriod | None
     read_semantics: DashboardBriefDelivery__ReadSemantics
@@ -7548,6 +7549,10 @@ class DashboardBriefDelivery__Recognition(TypedDict):
 class DashboardBriefDelivery__VoucherLineParty(TypedDict):
     id: str
     name: str
+    amount_fen: str
+
+class DashboardBriefDelivery__ActivityAmountComponent(TypedDict):
+    label: str
     amount_fen: str
 
 type DashboardBriefDeliveryWire = DashboardBriefDelivery__DashboardReady_Annotated_Union_DashboardBriefOverviewResponse__DashboardBriefActivityResponse__DashboardBriefOpenResponse__DashboardBriefVoucherResponse___FieldInfo_annotation_NoneType__required_True__discriminator__scope____ | DashboardBriefDelivery__DashboardPreparing | DashboardBriefDelivery__DashboardFailed
@@ -8438,6 +8443,7 @@ class DashboardBrief__BriefActivityRow(TypedDict):
     state: str
     party: str
     group: str
+    amount_components: list[DashboardBrief__ActivityAmountComponent]
 
 class DashboardBrief__BriefBankComposition(TypedDict):
     opening_fen: str | None
@@ -8621,7 +8627,7 @@ class DashboardBrief__Collection_OwnerBriefVoucher_(TypedDict):
     page: DashboardBrief__CollectionPage
 
 class DashboardBrief__DashboardBriefActivityResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBrief__DashboardPeriod | None
     read_semantics: DashboardBrief__ReadSemantics
@@ -8630,7 +8636,7 @@ class DashboardBrief__DashboardBriefActivityResponse(TypedDict):
     data: DashboardBrief__BriefActivityData | None
 
 class DashboardBrief__DashboardBriefOpenResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBrief__DashboardPeriod | None
     read_semantics: DashboardBrief__ReadSemantics
@@ -8639,7 +8645,7 @@ class DashboardBrief__DashboardBriefOpenResponse(TypedDict):
     data: DashboardBrief__BriefOpenData | None
 
 class DashboardBrief__DashboardBriefOverviewResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBrief__DashboardPeriod | None
     read_semantics: DashboardBrief__ReadSemantics
@@ -8648,7 +8654,7 @@ class DashboardBrief__DashboardBriefOverviewResponse(TypedDict):
     data: DashboardBrief__BriefData | None
 
 class DashboardBrief__DashboardBriefVoucherResponse(TypedDict):
-    schema_version: Literal[19]
+    schema_version: Literal[20]
     snapshot_version: str | None
     selected_period: DashboardBrief__DashboardPeriod | None
     read_semantics: DashboardBrief__ReadSemantics
@@ -8776,6 +8782,10 @@ class DashboardBrief__VoucherLineParty(TypedDict):
     name: str
     amount_fen: str
 
+class DashboardBrief__ActivityAmountComponent(TypedDict):
+    label: str
+    amount_fen: str
+
 type DashboardBriefWire = DashboardBrief__DashboardBriefOverviewResponse | DashboardBrief__DashboardBriefActivityResponse | DashboardBrief__DashboardBriefOpenResponse | DashboardBrief__DashboardBriefVoucherResponse
 
 class DashboardBriefGroup__BriefActivityMemberCollections(TypedDict):
@@ -8803,6 +8813,7 @@ class DashboardBriefGroup__BriefActivityRow(TypedDict):
     state: str
     party: str
     group: str
+    amount_components: list[DashboardBriefGroup__ActivityAmountComponent]
 
 class DashboardBriefGroup__BriefOpenItem(TypedDict):
     id: str
@@ -8947,8 +8958,12 @@ class DashboardBriefGroup__VoucherLineParty(TypedDict):
     name: str
     amount_fen: str
 
+class DashboardBriefGroup__ActivityAmountComponent(TypedDict):
+    label: str
+    amount_fen: str
+
 class DashboardBriefGroupWire(TypedDict):
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     snapshot_version: str | None
     selected_period: DashboardBriefGroup__DashboardPeriod | None
     read_semantics: DashboardBriefGroup__ReadSemantics

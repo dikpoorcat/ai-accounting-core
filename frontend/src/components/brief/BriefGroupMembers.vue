@@ -138,6 +138,9 @@ onBeforeUnmount(() => { mounted = false; cancel(); });
           <BriefVoucherPreview :voucher="item.voucher_version_id ? voucherIndex?.get(item.voucher_version_id) : undefined" :active="preview === item.key" @preview="value => preview = value ? item.key : preview === item.key ? '' : preview" @open="$emit('requestVoucher', $event)" />
           <button v-if="item.subject_id && item.detail_scope_key" type="button" :aria-expanded="selected === item.key" @click="toggle(item.key)">业务进展</button>
         </div>
+        <dl v-if="item.amount_components.length" class="activity-amount-components" aria-label="金额组成">
+          <div v-for="component in item.amount_components" :key="component.label"><dt>{{ component.label }}</dt><dd>{{ formatFen(component.amount_fen) }}</dd></div>
+        </dl>
         <BusinessStatusDetails v-if="item.subject_id && item.detail_scope_key && openedDetails.has(item.key)" :subject-id="item.subject_id" :period="period" :snapshot-version="snapshotVersion" :refresh-generation="refreshGeneration" :activity-context="item" :expanded="expanded && selected === item.key" hide-summary presentation="brief" @changed="$emit('changed')" />
       </li>
       <li v-for="item in ungroupedOpenMembers" :key="item.id">
@@ -159,6 +162,9 @@ li + li { border-top:1px solid var(--line); }
 .member-row > b { text-align:right; }
 small, .member-state:not(.activity-correction-state) { color:var(--muted); }
 .member-purpose { display:block; margin-top:3px; font-size:11px; overflow-wrap:anywhere; }
+.activity-amount-components { display:flex; flex-wrap:wrap; gap:6px 18px; margin:0 0 10px 112px; color:var(--muted); font-size:12px; }
+.activity-amount-components > div { display:flex; flex-wrap:wrap; gap:6px; }
+.activity-amount-components dt, .activity-amount-components dd { margin:0; overflow-wrap:anywhere; }
 button { border:0; background:transparent; color:var(--accent); font:inherit; padding:6px; cursor:pointer; }
 .contribution-summary { margin-bottom:12px; font-size:12px; }
 .contribution-summary p { margin:10px 0; color:var(--muted); }
@@ -173,6 +179,6 @@ button { border:0; background:transparent; color:var(--accent); font:inherit; pa
 .contribution-settled { color:var(--brief-green); }
 .contribution-part { display:flex; justify-content:space-between; gap:12px; padding:6px 0; }
 .highlighted { background:var(--accent-soft); }
-@media(max-width:1024px) { .member-row { grid-template-columns:minmax(0,1fr) auto auto; } .member-row > span:nth-child(2) { grid-column:1 / -1; grid-row:2; } .member-state { grid-column:1; } }
+@media(max-width:1024px) { .member-row { grid-template-columns:minmax(0,1fr) auto auto; } .member-row > span:nth-child(2) { grid-column:1 / -1; grid-row:2; } .member-state { grid-column:1; } .activity-amount-components { margin-left:0; } }
 @media(max-width:760px) { .contribution-summary table, .contribution-summary tbody, .contribution-summary tr { display:block; } .contribution-summary thead { display:none; } .contribution-summary tr { padding:8px 0; border-bottom:1px solid var(--line); } .contribution-summary th, .contribution-summary td { display:flex; flex-wrap:wrap; gap:4px 12px; justify-content:space-between; padding:4px 0; border:0; } .contribution-summary th small, .contribution-summary td small { width:100%; } .contribution-summary td[data-label]::before { content:attr(data-label); color:var(--muted); } .contribution-summary .contribution-actions { justify-content:flex-end; } .contribution-summary .contribution-detail-row > td { display:block; } .contribution-actions button { min-height:44px; } .member-row { gap:6px; } .member-row > * { min-width:0; overflow-wrap:anywhere; } }
 </style>
