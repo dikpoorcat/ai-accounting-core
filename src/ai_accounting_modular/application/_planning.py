@@ -123,6 +123,7 @@ def collect_changes(changes, changed_objects, context, registry, handoffs):
         )
         if len(included) != participant_count:
             continue
+        context.set_recalculation_roots(explicit, notified)
         descriptions = describe(grouped, context)
         missing = sorted(included - loaded)
         for offset in range(0, len(missing), 500):

@@ -133,6 +133,18 @@ class InvestmentProduct:
 
 
 @dataclass(frozen=True)
+class InvestmentPositions:
+    """Owner positions and month amounts, without professional tax explanations."""
+
+    version: str
+    closing_cost: AmountCell
+    products: tuple[InvestmentProduct, ...]
+    cooperation_positions: tuple[CooperationPosition, ...]
+    issues: tuple[FactIssue, ...]
+    inputs: ReadInputs
+
+
+@dataclass(frozen=True)
 class InvestmentActivity:
     version: str
     opening_cost: AmountCell

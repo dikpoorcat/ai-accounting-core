@@ -114,8 +114,11 @@ def query_adopted(
     result_slots=(),
     source_refs=(),
     economic_from=None,
+    investment_holdings=False,
 ):
     selected = scope_selection(scope, read)
+    if investment_holdings:
+        result_slots = ("position:" + scope["period_to"],)
     kinds = bounded(kinds, "text")
     business_ids, result_slots = bounded(business_ids), bounded(result_slots, "Slot")
     source_refs = bounded(source_refs, "BusinessRef")
@@ -132,8 +135,12 @@ def query_adopted(
     if economic_from is not None:
         where += " AND r.business_period>=?"
         args = (*args, economic_from)
+    if investment_holdings:
+        where = repo.investment_holdings_where(where)
     identities = repo.read_identity_rows(table, where, args)
     collection = "adopted_values" if flow else "adopted_targets" if targets else "adopted_directory"
+    if investment_holdings:
+        collection = "investment_holdings"
     identity = version(
         read,
         collection,

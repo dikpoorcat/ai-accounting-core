@@ -1,8 +1,10 @@
 """One row per sourced holding, with legacy monetary funds kept separate."""
 
 from collections import defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
 
+from ai_accounting_modular.contracts.public import ResultSourceRef
 from ai_accounting_modular.ledger.opening.public import (
     OpeningInvestmentReference,
     opening_obligation_references,
@@ -13,6 +15,14 @@ from ._common import amount, fail, total
 from ._investment_events import EVENT_KINDS
 from ._investment_read_sources import source_contents
 from ._read_types import InvestmentProduct
+
+
+@dataclass(frozen=True)
+class PendingIncome:
+    accrued: dict[str, int]
+    receipts: dict[str, int]
+    terms_sources: tuple[ResultSourceRef, ...]
+    producer_ids: tuple[str, ...]
 
 
 def known(value):
@@ -30,7 +40,7 @@ def pending_income(ledger, scope, selected, read, cache):
         direction="receivable",
         include_settled=False,
     )
-    positions = ledger.capture_obligation_positions(query, read, selection=selected).items
+    positions = ledger.capture_obligation_resources(query, read, selection=selected)
     bodies = source_contents(ledger, [item.definition.source for item in positions], read, cache)
     pending, receipts, terms_sources = defaultdict(int), defaultdict(int), []
     for item in positions:
@@ -62,7 +72,12 @@ def pending_income(ledger, scope, selected, read, cache):
         receipts[terms_id] += item.amounts.remaining_fen
         if item.definition.value["account_code"] in {"1131", "1132"}:
             pending[terms_id] += item.amounts.remaining_fen
-    return pending, terms_sources, receipts
+    return PendingIncome(
+        pending,
+        receipts,
+        tuple(terms_sources),
+        tuple(sorted({item.definition.reference["business_id"] for item in positions})),
+    )
 
 
 def activity_descriptors(ledger, identifiers, sources, read, cache):

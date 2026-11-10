@@ -102,6 +102,7 @@ class SubmissionContext:
         self._objects = {obj["object_id"]: obj for obj in objects}
         self._facts = dict(facts or {})
         self._changed_business_ids = frozenset(changed_business_ids)
+        self._recalculation_roots = None
         self._plans = {}
         self._slots = {}
         self._fact_cache = {}
@@ -138,6 +139,21 @@ class SubmissionContext:
     @property
     def changed_business_ids(self):
         return self._changed_business_ids
+
+    def set_recalculation_roots(self, explicit, notified):
+        """Share the planner's existing sets, without another invalidation model."""
+        self._recalculation_roots = explicit, notified
+
+    def result_requires_recalculation(self, business_id, result_slot):
+        if self._recalculation_roots is None:
+            raise ContractError(
+                "invalid_operation", "本单尚未发布数值重算责任，不能判断旧结果稳定。"
+            )
+        validate_contract(
+            "core.schema.json", "BusinessRef", {"business_id": business_id, "slot": result_slot}
+        )
+        explicit, notified = self._recalculation_roots
+        return business_id in explicit or (business_id, result_slot) in notified
 
     def select_results(self, pending_slots, references, complete_slots):
         self.pending_slots = frozenset(pending_slots)

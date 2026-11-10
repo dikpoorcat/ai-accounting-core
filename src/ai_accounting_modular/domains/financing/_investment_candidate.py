@@ -62,8 +62,13 @@ def inputs(terms_fact, adopted, context):
         seed = None
         if refs:
             (expected,) = context.require_result_sources(refs)
-            if context.is_result_pending(terms_id, refs[0]["slot"]):
-                fail("接续位置也在本单重算，不能把它当成保留状态。", "dependency_conflict")
+            if context.is_result_pending(terms_id, refs[0]["slot"]) or context.is_result_pending(
+                terms_id, "main"
+            ):
+                fail(
+                    "接续位置或其采用条款也在本单重算，不能把它当成保留状态。",
+                    "dependency_conflict",
+                )
             previous = context.get_result(terms_id, refs[0]["slot"])
             value = previous.target["values"]
             if (

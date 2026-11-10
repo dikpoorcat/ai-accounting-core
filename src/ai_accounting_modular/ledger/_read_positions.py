@@ -152,19 +152,30 @@ def _definitions(rows, kind):
     )
 
 
-def capture_cost_directory(query, read, selection=None):
-    """Only selected costs and their uses; no unrequested whole-company statistics."""
-    selected = _selection(query, read, selection, "cost")
+def _capture_resources(query, read, selection, kind):
+    selected = _selection(query, read, selection, kind)
     try:
-        raw = read.repository("ledger").read_cost_directory_rows(query, selected)
+        repository = read.repository("ledger")
+        raw = (
+            repository.read_obligation_resource_rows(query, selected)
+            if kind == "obligation"
+            else repository.read_cost_directory_rows(query, selected)
+        )
     except OperationalError as error:
         if "integer overflow" in str(error):
-            fail("invalid_input", "所选成本使用金额超出64位整数分范围。")
+            fail("invalid_input", "所选资源使用金额超出64位整数分范围。")
         raise
-    rows = [(row, _amounts(row, "cost")) for row in raw]
-    return _definitions(
-        [item for item in rows if query.include_consumed or item[1].remaining_fen != 0], "cost"
-    )
+    return _definitions([(row, _amounts(row, kind)) for row in raw], kind)
+
+
+def capture_cost_directory(query, read, selection=None):
+    """Only selected costs and their uses; no unrequested whole-company statistics."""
+    return _capture_resources(query, read, selection, "cost")
+
+
+def capture_obligation_resources(query, read, selection=None):
+    """Only selected obligations and their uses, without whole-company statistics."""
+    return _capture_resources(query, read, selection, "obligation")
 
 
 def capture_positions(query, read, selection=None, *, kind):

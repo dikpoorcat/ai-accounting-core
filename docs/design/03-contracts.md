@@ -204,7 +204,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `merge_review_obligations` / `merge_review_settlements` / `merge_review_movements` | 合并同次读取已捕获的目录，保留原筛选条件、完整依据及稳定分页；纯内存去重，不再读取原范围或重算余额。义务必须采用同一经济截止月，资金由Money同名端口转交Ledger。 |
 | `get_review_sources(sources, read)` | 最多500个精确ResultSourceRef，一次核对实际采用身份、代次及内容依据，逐个返回ReviewSourceMetadata：正式ResultRef、原精确source及其source_locations。只读本页正式头和来源定位，不重复查头，也不装载完整Basis或原件。 |
 | `financial_summary(scope, read)` | FinancialSummary 含版本、范围、全部损益收入/费用/净利润、资产/负债（含流动与非流动）/权益/资本/留存利润、银行/现金/平台，以及固定和无形资产各自原价/累计/净值及长期资产合计；每项为 AmountCell，附具体问题及采用来源。共用三表选择与余额，不以主营收入或税前利润替代完整结果。 |
-| `profit_contributions(scope, page, read)` | 有界分页返回正式5111投资收益及571106—571108实际损失的精确生产结果、必要基线与分录贡献，与报表共用同一选择。投资不从业务事件另算净收益；正式行存在但净额为零的生产结果仍保留其组成。 |
+| `profit_contributions(scope, page, read, *, business_kinds=())` | 有界分页返回正式5111投资收益及571106—571108实际损失的精确生产结果、必要基线与分录贡献，与报表共用同一选择。business_kinds 在身份、版本、分页和分录装载前限定实际业务类型，默认仍为完整专业范围；冻结更正及撤去按原业务类型保留基线差额。投资不从业务事件另算净收益；正式行存在但净额为零的生产结果仍保留其组成。 |
 | `financial_balances(scope, names, read)` | FinancialBalances 只返回所选受控余额字段的 values、问题、必要来源、范围及版本。可选银行／现金／平台，以及固定资产、无形资产和长期资产的原价／累计／净值；字段与 `financial_summary_inputs(names)` 共用唯一科目声明。资产模块一次取9个资产余额，不读取完整损益和三表。 |
 | `account_balances(keys, period, read, selection=...)` | 最多500个 AccountBalanceKey(account_code, object_id?)；对象省略表示该科目全部对象。返回每项有据月初/月末余额、首个正式记账月、问题及必要来源。current 使用最终有效事实；as_posted 的 as_of 必须等于所查月份，月初沿用上月正式余额。1101 与基金身份按同一口径读取成本，不从购买事实累计反推。余额读取按实际账户行定位业务，再选择正式有效凭证；完整核验期初，保留无凭证采用的凭证继承和相抵为零的实际贡献。 |
 | `query_obligation_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别/方向及 include_settled。纳入以前月份截至该月的完整义务及清偿，返回 PositionPage。 |
@@ -213,12 +213,14 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `get_obligation_origins(locators, read)` | 按精确 ResultRef 返回 AdoptedOriginProjection 或完整 AdoptedContent。费用、服务销售、销售退回、费用收回、代收代付及三种实际付款使用有限投影，严校声明的 kind、冻结业务身份、付款类型及完整 adopted_quantities；工资备用金同时核对备用金费用。其余复杂类型保留完整正文及摘要核验。投影不证明未返回的正文，不能冒充完整 AdoptedContent；消费者核对精确来源并只使用声明字段，凭证展开等完整读取仍沿原入口。轻目录可在同次捕获中附带这些来源，避免逐资源重复读取。 |
 | `query_cost_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别及 include_consumed。已耗尽来源仍有正式身份，不因剩余为零从完整目录消失；页面可以明确筛掉。 |
 | `capture_cost_directory(query, read, selection=...)` | 使用同一 CostPositionQuery，一次返回全部匹配的 ResourcePosition 元组，不计算其他类别的统计。按正式选中的业务、对象和类别先定位成本来源，再读取这些来源的实际消耗；include_consumed 控制是否列出已耗尽来源。金额、精确来源和采用规则与完整位置查询一致，缺失返回空元组。基金和项目只需各自成本时使用此入口。 |
+| `capture_obligation_resources(query, read, selection=...)` | 使用同一 ObligationPositionQuery，只返回所选义务的完整 ResourcePosition 元组，不计算全公司统计；类别、方向、具体身份和是否已结清在返回资源前筛选。保留原科目、正式来源及全部清偿分量，供投资待收等按资源取数；需要全范围统计时继续使用 capture_obligation_positions。 |
 | `get_obligation_positions(cutoff_period, read, business_ids=(), references=(), selection=...)`、`get_cost_positions(...)` | 按各最多500个已知业务身份或BusinessRef资源键，完整返回其正式资源和截至该月的实际使用量；不计算全公司统计、不分页，缺失保持空而不是补零。SQL在聚合前限定来源键，仍按current/as_posted选择实际采用；调用方核对返回的精确来源。 |
 | `query_settlement_events(query, page, read, selection=...)` | 明确发生月份范围，可按原义务、原义务业务种类、消费业务、真实资金身份及处理分量筛选。source_business_kinds 按所选正式义务的原 kind 过滤，不取当前事实标签。返回 ResourceUse 和仅在实际付款时对应的 FundMovement。实际分配取 use 金额，不能用整笔混合付款冒充本项金额。 |
 | `query_business_settlements(query, page, read, selection=...)` | 必须有source_refs、consumer_business_ids或movement_ids中的至少一种已知身份；这些身份及期间界定完整计数和版本范围，components/source_business_kinds再在范围内筛选。复用同一实际清偿查询，无关业务变化不使本范围游标过期；需要发现身份及全公司统计时使用上一项宽查询。 |
 | `query_voucher_directory(scope, kinds, page, read, business_ids=..., roles=...)` | 按正式采用月份及凭证号提供窄目录，包含精确结果引用、凭证身份、摘要、角色及冲正关联。current 同样保留正式入账历史，不按当前目标丢掉必要原凭证。`get_vouchers(locators, read)` 只批量读取指定页的完整分录，定位含 voucher_id/result_id/generation。 |
 | `query_adopted_values(scope, kinds, page, read, business_ids=...)` | 返回精确引用、正式来源、原业务种类、Target 及有效 baselineTarget；可按业务身份缩小读取范围，版本和游标绑定完整筛选。current 按经济月最终目标，as_posted 按采用月目标与基线表达发生差额。baseline_reference 与 baseline_target 同有同无，可按旧精确引用补读必要 Basis，不能把新日期或对象套到旧负项。退休结果按原业务种类过滤，资产与基金共用此选择。 |
 | `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=(), source_refs=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。source_refs按至多500个公开业务／结果槽，沿已有正式依据引用索引筛选消费者，覆盖无凭证零结果及冻结历史，不用当前关系代替正式采用。供人员名单和相关后续结果取数；不是按采用月展开的发生额。 |
+| `query_investment_holdings(scope, page, read)` | 按正式采用和所选月位置槽，在身份、版本、分页及目标装载前排除月初、月末成本与数量均为零的位置，保留零成本正份额；缺失或未知字段继续交给原合同核验，不按零处理。返回原 AdoptedTarget，不在账本重算投资持仓。当月活动和尾款涉及的零位置由投资模块按精确业务身份补读。 |
 | `get_adopted_sources(sources, read)`、`account_names(codes)` | 前者按最多500个精确ResultSourceRef核对身份、代次及内容摘要，只返回正式目录头；可定位消费者实际采用的较早冻结来源，不用当前头替代。后者无需数据库，返回受控科目的唯一中文名称，不由看板另抄科目表。 |
 | `period_closure(period, read)` | 只读取指定月份的关账状态、实际覆盖关账月、冻结范围和头摘要，不读取整套三表；完整冻结报告另由财务报告入口核验和提供。 |
 | `get_effective_voucher_directory(refs, read)` | 按最多500个精确ResultRef定位完整目标实际采用的凭证头；无新增凭证的正式采用沿必要基线继承，撤去或无替代冲正停止继承。每项返回完整有效凭证头元组，无凭证为空元组；每张含 journal_key 及实际凭证所属 ResultRef；不取历史Basis、分录或凭证增量。冷生成可只存引用，展开实际页时再读取完整凭证。 |
@@ -254,11 +256,12 @@ base 遵守 FinancialProjectionReader：提供 header_json 和按输入顺序返
 | `money.query_movements(scope, query, page, read)` | 查询可选账户，None 明确表示全公司；返回 ReadPage、稳定资金身份、正式采用、账户、真实日、方向、金额、交易方及精确清偿分项。整笔资金和各义务分配分别表达。普通收付、工资组合及抵销在Basis保存实际采用义务的公开引用、科目、方向、原金额及收款人；读取实际分项沿消费时的采用量，不从后来被改写的来源猜收款人。 |
 | `money.query_statement_rows(scope, query, page, read)` | 按可选账户及 bank/platform 类型返回正式原行、稳定行身份、资料位置、原文及真实匹配组。冻结金额和日期从所选正式 Basis 取得；当前原行文字只补充已核对的同一行，不替换冻结数据。 |
 | `investment.money_fund_activity(scope, read)` | 一次返回完整产品、确认／清偿事件和整公司／逐基金汇总，包含有源期初、正式成本、申购确认、赎回成本和确认损益。成本由 ledger 余额及成本结果提供；实际付款和到账由正式清偿提供。所有 AmountCell 的缺项索引都指向同一 issues 问题池。 |
-| `investment.investment_activity(scope, read)` | 完整专业投资活动：按持仓身份返回数量、账面金额、收益、确认与实际收付、公司及产品税费调整，并与正式总账收益和损失核对。零成本存续份额、未清权利及本月清仓尾款保留；没有库存的收益或收款记录不补造零持仓。资金页按精确持仓身份消费这些正式结果，合作权益、代管资金和双方待补单列，不混入金融投资合计。 |
+| `investment.investment_activity(scope, read)` | 完整专业投资活动：按持仓身份返回数量、账面金额、收益、确认与实际收付、公司及产品税费调整，并与正式总账收益和损失核对。税费归属、精确来源及冻结兼容核验由此入口完整保留。 |
+| `investment.investment_positions(scope, read)` | 资金展示所需的正式投资位置、未扣投资增值税的确认收益、实际损失、实际收付和未清权利；与完整专业读取共用非税结果及产品组装，不读取投资税调整或公司净投资收益。按当月正式存续持仓、当月活动和未清权利选择后，才装载必要产品身份与正文；零成本正份额、月初余额、当月退出及跨月最后到账不遗漏。合作权益、代管资金和双方待补单列，不混入金融投资合计。未知余额仍为未知，没有库存的收益或收款记录不补造零持仓。 |
 | `investment.query_money_fund_events(scope, page, read)` | 返回有界确认与实际清偿事件，包含稳定事件键、基金、业务、精确采用、经济月、采用月及可空真实日。闭期更正的新旧分腿分别读取自身 Target/Basis，不把确认收益再次当作到账收益。 |
 | `investment.cooperation_positions(scope, read, contract_ids=())` | 返回截至明确月每合同最近有效正式位置、实际采用合同中的经营者和项目、代管金额及双方应补、状态和精确来源。只读取既有正式结果，不重算、不造普通义务；静月沿最近位置接续，as_of_period保留真实原月。所选月的历史采用与当前最终事实分别读取，应补减少不等于实际付款。 |
 
-这些入口生成完整月度组件，reading 从已形成的组件筛选、计数和分页；续页不重新枚举历史业务。生成完整金额时须读完实际相关的窄分页，不能用首20项代表全月。投资实际收付取原义务的真实清偿分配额，分别标明取得付款、退出款、本金及独立收益到账。
+这些入口生成完整月度组件，reading 从已形成的组件筛选、计数和分页；续页不重新枚举历史业务。生成完整金额时须读完实际相关的窄分页，不能用首20项代表全月。投资实际收付取原义务的真实清偿分配额，分别标明取得付款、退出款、本金及独立收益到账。资金位置读取在 SQL 返回前筛除已耗尽成本和无关零持仓，避免随后装载它们的产品身份、逐基金余额及正文；判定剩余成本仍需汇总所选范围的历史消耗，1101 整科目余额仍需累计核验，不能把减少正文装载等同于消除所有历史读取。
 
 `EvaluationContext.investment_tax_events(period_from, period_to, *, kinds=None)`只允许已声明事实范围和实际生产结果依赖的计算读取，返回正式InvestmentTaxEventView：冻结交易量、精确ResultSourceRef、核算月、可知实际日和同一结果内的事件索引。VAT默认读取完整税源；所得税优惠可以明确选择实际可能产生优惠的种类，不因无关旧事实缺项阻断。期初从已采用InvestmentLot转换有源税务起点，未知VAT买入价及所得税税基保持未知；旧货基确实参与所需税务计算而缺少必要依据时，不推定免税或会计成本即税基。税域计算独立税库存及期间结果，ledger、三表和申报准备复用它们，不由AI提交三套计算成本。
 
@@ -303,6 +306,8 @@ Dependency 仍指向真实承担的结果槽。result 依赖指生产结果槽�
 每份业务责任必须声明 `natural_key`：确有自然唯一性时填写稳定键，否则为 null。应用统一检查最终责任集合，包含被连带重算的业务；同单互换唯一键合法，未参与的业务不能被挤掉。不得以姓名、数组顺序或资料行位置猜键。
 
 EvaluationContext 提供当前事实、对象和已求值结果，以及显式关系集合 `related_facts/related_facts_many`、指定 kind/月范围 `facts_in_scope`。集合读取叠加本单新建、更正和撤去，不扫描私有 JSON 猜关系。依赖的 fact 边采用事实，result 与 balance 边参与求值拓扑，use 声明被余额读取等待的槽；collection 边订阅集合增删，scope 订阅指定业务种类及月份，calendar/work 订阅已进入的工作月份。重复依赖按同一身份合并通知范围，不改变业务本身的核算范围。
+
+`result_requires_recalculation(business_id, result_slot)` 在描述阶段只读应用当前已知的重算根：该业务由本单显式要求完整重算，或该精确槽已收到数值通知。它复用规划器的同一责任来源，不代表最终 pending 全集；纯日历描述通知不算数值根。应用在每轮描述前提供该信息，未提供时调用会拒绝；投资据此选择可保留的持仓起点，实际候选仍核验精确来源及起点不在本单重算中。
 
 collection依赖可填notify_effect=result或description，省略为result。description只通知重新核对完整责任和依赖目录，不把未变化的既有槽当作金额变化；其他依赖不能使用该标记。相同依赖合并时result优先，纯目录通知不参与数值输入签名。应用仍重算新增槽、数值依赖变化及实际受影响的下游。
 

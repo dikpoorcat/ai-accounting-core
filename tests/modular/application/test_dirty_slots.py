@@ -5,7 +5,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-from ai_accounting_modular.contracts.public import content_digest
+from ai_accounting_modular.application._changes import classify
+from ai_accounting_modular.application._context import DomainRegistry, SubmissionContext
+from ai_accounting_modular.application._planning import collect_changes
+from ai_accounting_modular.contracts.public import ContractError, content_digest
 
 from .test_publications import Candidate as BaseCandidate
 from .test_publications import Owner as BaseOwner
@@ -101,6 +104,95 @@ class Owner(BaseOwner):
             previous = context.get_result(business_id, "earlier")
             assert previous.target["values"]["amount_fen"] == "100"
         return super().evaluate_slot(business_id, slot, context)
+
+
+def test_recalculation_roots_are_unavailable_before_publication_and_share_planner_state(system):
+    storage, company = system
+    with storage.read_unit(company) as read:
+        context = SubmissionContext(read, None, None, None, None, evaluation_period_to="2026-01")
+        assert context.pending_slots == frozenset()
+        with pytest.raises(ContractError) as error:
+            context.result_requires_recalculation(identity(1), "main")
+        assert error.value.code == "invalid_operation"
+        explicit, notified = set(), set()
+        context.set_recalculation_roots(explicit, notified)
+        assert not context.result_requires_recalculation(identity(1), "main")
+        explicit.add(identity(1))
+        assert context.result_requires_recalculation(identity(1), "earlier")
+        notified.add((identity(2), "later"))
+        assert context.result_requires_recalculation(identity(2), "later")
+        assert not context.result_requires_recalculation(identity(2), "main")
+        with pytest.raises(ContractError) as error:
+            context.result_requires_recalculation("invalid-id", "main")
+        assert error.value.code == "invalid_input"
+
+
+@pytest.mark.parametrize(
+    "cause,roots,pending",
+    [
+        ("explicit", (True, True, True), {"main", "earlier", "new"}),
+        ("object", (True, False, False), {"main", "new"}),
+        ("calendar", (False, False, False), {"new"}),
+    ],
+)
+def test_declaration_roots_distinguish_whole_business_exact_slot_and_description_only(
+    system, cause, roots, pending
+):
+    current, slots = fact(90), ("main", "earlier", "new")
+    if cause == "calendar":
+        dependencies = [watch(90, calendar=True)]
+    elif cause == "object":
+        dependencies = [
+            {
+                **direct(90, 99),
+                "producer_kind": "object",
+                "read_mode": "fact",
+                "relation_kind": "identity",
+            }
+        ]
+    else:
+        dependencies = []
+    seed(system, [current], dependencies=dependencies)
+    observed = []
+
+    class ObservedOwner(BaseOwner):
+        def describe_change(self, changes, context):
+            observed.append(
+                tuple(context.result_requires_recalculation(identity(90), slot) for slot in slots)
+            )
+            assert context.changed_business_ids == frozenset()
+            return super().describe_change(changes, context)
+
+    owner = ObservedOwner(
+        [current], {identity(90): {"slots": list(slots), "dependencies": dependencies}}
+    )
+    ledger = Ledger([posting(current, slot) for slot in slots[:2]])
+    storage, company = system
+    with storage.write_unit(company) as unit:
+        before = unit.repository("application").heads((identity(90),))[identity(90)]
+        changes = (
+            [classify({"op": "create", "expected_seq": 0, "fact": current}, before)]
+            if cause == "explicit"
+            else []
+        )
+        registry = DomainRegistry([owner])
+        context = SubmissionContext(
+            unit,
+            registry,
+            None,
+            ledger,
+            None,
+            facts={identity(90): current} if changes else {},
+            evaluation_period_to="2026-02",
+            previous_period_to="2026-01",
+        )
+        collect_changes(
+            changes, (identity(99),) if cause == "object" else (), context, registry, {}
+        )
+        assert observed and all(value == roots for value in observed)
+        assert context.pending_slots == frozenset((identity(90), slot) for slot in pending)
+        # Newly discovered work is pending even though it was not a known root.
+        assert context.result_requires_recalculation(identity(90), "new") is (cause == "explicit")
 
 
 def test_result_notification_recalculates_only_its_slot_and_reads_retained_predecessor(

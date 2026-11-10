@@ -400,6 +400,16 @@ class Ledger:
         """Complete filtered costs, retaining the wide query's full-scope totals."""
         return _read_positions.capture_positions(query, read_context, selection, kind="cost")
 
+    def capture_obligation_resources(
+        self,
+        query: ObligationPositionQuery,
+        read_context: ReadContext,
+        *,
+        selection: QuerySelection | None = None,
+    ) -> tuple[ResourcePosition, ...]:
+        """Selected complete obligations, without unrequested whole-company totals."""
+        return _read_positions.capture_obligation_resources(query, read_context, selection)
+
     def capture_cost_directory(
         self,
         query: CostPositionQuery,
@@ -545,6 +555,19 @@ class Ledger:
             source_refs=source_refs,
         )
 
+    def query_investment_holdings(
+        self, scope: LedgerScope, page: PageQuery, read_context: ReadContext
+    ) -> ReadPage[AdoptedTarget]:
+        """Month-end position targets, excluding only explicit zero holdings."""
+        return _read_contents.query_adopted(
+            scope,
+            ("investment.position",),
+            page,
+            read_context,
+            targets=True,
+            investment_holdings=True,
+        )
+
     def query_adopted_values(
         self,
         scope: LedgerScope,
@@ -559,10 +582,15 @@ class Ledger:
         )
 
     def profit_contributions(
-        self, scope: LedgerScope, page: PageQuery, read_context: ReadContext
+        self,
+        scope: LedgerScope,
+        page: PageQuery,
+        read_context: ReadContext,
+        *,
+        business_kinds: tuple[str, ...] = (),
     ) -> ReadPage[ProfitContribution]:
         """Selected PL20 and actual investment losses; includes frozen baseline deltas."""
-        return _read_profit.contributions(scope, page, read_context)
+        return _read_profit.contributions(scope, page, read_context, business_kinds=business_kinds)
 
     def get_adopted_contents(
         self,

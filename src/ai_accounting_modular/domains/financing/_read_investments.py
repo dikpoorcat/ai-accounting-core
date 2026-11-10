@@ -1,159 +1,143 @@
-"""Compose formal positions, month flows, real cash and pending income rights."""
+"""Public professional activity and owner positions share sourced month components."""
 
 from dataclasses import asdict
 
 from ai_accounting_modular.contracts.public import ReadInputs, content_digest
 
 from ._common import fail, total
-from ._investment_events import EVENT_KINDS
-from ._investment_read_cash import cash_events, with_product_cash
-from ._investment_read_flows import flows
-from ._investment_read_holdings import activity_descriptors, add, pending_income, products
-from ._investment_read_income import TAX_KINDS, income
+from ._investment_read_components import compose
+from ._investment_read_holdings import pending_income
+from ._investment_read_income import TAX_KINDS, income, recognized_income
 from ._read_funds import _pages, _scope
-from ._read_types import InvestmentActivity
+from ._read_funds import activity as legacy_activity
+from ._read_funds import positions as legacy_positions
+from ._read_types import InvestmentActivity, InvestmentPositions
+
+
+def _version(scope, read, value):
+    return content_digest({"database_id": read.database_id, "scope": scope, **value})
+
+
+def _expected(scope, version):
+    if scope.get("expected_head", version) != version:
+        fail("投资范围已经变化，请重新读取。", "snapshot_changed")
 
 
 def activity(owner, scope, read):
     normalized, selected = _scope(scope, read)
-    normalized.pop("expected_head", None)
-    legacy = owner.money_fund_activity(normalized, read)
     ledger, cache = owner._ledger, {}
-    positions = list(
-        _pages(
-            lambda page: ledger.query_adopted_targets(
-                normalized,
-                ("investment.position",),
-                page,
-                read,
-                result_slots=("position:" + normalized["period_to"],),
-            )
-        )
-    )
     profits, adjustments, gross, vat, net, actual_loss = income(ledger, normalized, read, cache)
-    events, by_terms = flows(ledger, normalized, read, cache, profits)
-    cash = cash_events(ledger, normalized, selected, read, cache)
-    pending, pending_sources, receipts = pending_income(ledger, normalized, selected, read, cache)
-    holdings = {
-        item.target["values"]["terms_id"]: item.target["values"]
-        for item in positions
-        if item.target["kind"] == "investment.position"
-    }
-    related_terms = {
-        item.terms_id for item in (*events, *cash, *adjustments) if item.terms_id is not None
-    } | {key for key, value in receipts.items() if value and not key.startswith("legacy:")}
-    missing = related_terms - holdings.keys()
-    if missing:
-        holdings.update(activity_descriptors(ledger, missing, pending_sources, read, cache))
-    for item in (*events, *cash, *adjustments):
-        if item.terms_id is None:
-            continue
-        product_id = item.product_id if hasattr(item, "product_id") else item.fund_id
-        if holdings[item.terms_id]["product_id"] != product_id:
-            fail("投资活动与正式月度持仓的产品身份不一致。", "storage_corrupt")
-    identifiers = sorted({value["product_id"] for value in holdings.values()})
-    names = {}
-    for offset in range(0, len(identifiers), 500):
-        names.update(
-            (item["object_id"], item["name"])
-            for item in owner._identity.get_batch(identifiers[offset : offset + 500], read)
-        )
-    output, extra_opening, extra_closing = products(
-        legacy, holdings, by_terms, names, pending, receipts, related_terms
-    )
-    if total(item.investment_income_fen for item in output) != gross:
-        fail("投资产品确认收益与正式总账贡献不能对平。", "storage_corrupt")
-    if total(item.actual_loss_fen for item in output) != actual_loss:
-        fail("投资产品实际损失与正式总账贡献不能对平。", "storage_corrupt")
-    combined = tuple(
-        sorted(
-            [*legacy.events, *events, *cash],
-            key=lambda item: (item.period, item.actual_on or "", item.business_id, item.event_id),
+    pending = pending_income(ledger, normalized, selected, read, cache)
+    legacy = legacy_activity(owner, normalized, read, cache=cache)
+    rows = _pages(
+        lambda page: ledger.query_adopted_targets(
+            normalized,
+            ("investment.position",),
+            page,
+            read,
+            result_slots=("position:" + normalized["period_to"],),
         )
     )
-    payments_fen = total(
-        (
-            legacy.actual_payments_fen,
-            total(item.settlement_fen for item in cash if item.kind == "acquisition_payment"),
-        )
+    result = compose(
+        owner,
+        normalized,
+        selected,
+        read,
+        cache,
+        profits=profits,
+        gross=gross,
+        actual_loss=actual_loss,
+        position_rows=rows,
+        legacy=legacy,
+        pending_income=pending,
+        adjustments=adjustments,
     )
-    receipts_fen = total(
-        (
-            legacy.actual_receipts_fen,
-            total(item.settlement_fen for item in cash if item.kind != "acquisition_payment"),
-        )
-    )
-    output = with_product_cash(
-        output, combined, payments_fen=payments_fen, receipts_fen=receipts_fen
-    )
-    cooperation = owner.cooperation_positions(normalized, read)
-    inputs = legacy.inputs.merge(
-        cooperation.inputs,
+    inputs = result.inputs.merge(
         ReadInputs(
-            result_kinds=("investment.position", "opening.package"),
-            posted_result_kinds=tuple(sorted(EVENT_KINDS | set(TAX_KINDS))),
+            posted_result_kinds=TAX_KINDS,
             business_result_kinds=TAX_KINDS if normalized["view"] == "current" else (),
-            account_codes=(
-                "1101",
-                "1131",
-                "1132",
-                "149901",
-                "1501",
-                "1511",
-                "189902",
-                "5111",
-                "571106",
-                "571107",
-                "571108",
-            ),
-            obligation_categories=("investment",),
-            business_ids=tuple(
-                sorted(
-                    {item.business_id for item in (*combined, *adjustments)}
-                    | set(holdings)
-                    | {body.reference["business_id"] for body in cache.values()}
-                )
-            ),
-            object_ids=tuple(identifiers),
-        ),
+            account_codes=("5111", "571106", "571107", "571108"),
+            business_ids=tuple(sorted({body.reference["business_id"] for body in cache.values()})),
+        )
     )
-    opening, closing = (
-        add(legacy.opening_cost, extra_opening),
-        add(legacy.closing_cost, extra_closing),
-    )
-    version = content_digest(
+    version = _version(
+        normalized,
+        read,
         {
-            "database_id": read.database_id,
-            "scope": normalized,
-            "products": [asdict(item) for item in output],
-            "events": [asdict(item) for item in combined],
+            "products": [asdict(item) for item in result.products],
+            "events": [asdict(item) for item in result.events],
             "income_adjustments": [asdict(item) for item in adjustments],
             "income": [gross, vat, net, actual_loss],
-            "cooperation": [asdict(item) for item in cooperation.positions],
-            "opening": opening,
-            "closing": closing,
-            "issues": list(legacy.issues),
-        }
+            "cooperation": [asdict(item) for item in result.cooperation],
+            "opening": result.opening,
+            "closing": result.closing,
+            "issues": list(result.issues),
+        },
     )
-    if scope.get("expected_head", version) != version:
-        fail("投资范围已经变化，请重新读取。", "snapshot_changed")
+    _expected(scope, version)
     return InvestmentActivity(
         version,
-        opening,
-        closing,
-        total(item.subscription_cost_fen for item in output),
-        total(item.redemption_cost_fen for item in output),
+        result.opening,
+        result.closing,
+        total(item.subscription_cost_fen for item in result.products),
+        total(item.redemption_cost_fen for item in result.products),
         net,
-        payments_fen,
-        receipts_fen,
-        len(combined) + len(adjustments),
-        output,
-        combined,
-        legacy.issues,
+        result.payments_fen,
+        result.receipts_fen,
+        len(result.events) + len(adjustments),
+        result.products,
+        result.events,
+        result.issues,
         inputs,
-        cooperation.positions,
+        result.cooperation,
         gross,
         vat,
         actual_loss,
         adjustments,
+    )
+
+
+def positions(owner, scope, read):
+    normalized, selected = _scope(scope, read)
+    ledger, cache = owner._ledger, {}
+    profits, gross, actual_loss = recognized_income(ledger, normalized, read, cache)
+    pending = pending_income(ledger, normalized, selected, read, cache)
+    legacy_ids = tuple(
+        key.removeprefix("legacy:")
+        for key, value in pending.receipts.items()
+        if value and key.startswith("legacy:")
+    )
+    legacy = legacy_positions(owner, normalized, selected, read, cache, fund_ids=legacy_ids)
+    rows = _pages(lambda page: ledger.query_investment_holdings(normalized, page, read))
+    result = compose(
+        owner,
+        normalized,
+        selected,
+        read,
+        cache,
+        profits=profits,
+        gross=gross,
+        actual_loss=actual_loss,
+        position_rows=rows,
+        legacy=legacy,
+        pending_income=pending,
+    )
+    version = _version(
+        normalized,
+        read,
+        {
+            "products": [asdict(item) for item in result.products],
+            "cooperation": [asdict(item) for item in result.cooperation],
+            "closing": result.closing,
+            "issues": list(result.issues),
+        },
+    )
+    _expected(scope, version)
+    return InvestmentPositions(
+        version,
+        result.closing,
+        result.products,
+        result.cooperation,
+        result.issues,
+        result.inputs,
     )

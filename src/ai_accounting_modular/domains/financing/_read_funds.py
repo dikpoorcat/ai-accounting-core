@@ -206,15 +206,12 @@ def _settlements(ledger, scope, selected, read, cache):
                 movement.value["movement_id"],
             )
         )
-    return events
+    return events, tuple(business_ids)
 
 
-def _events(owner, scope, read):
-    normalized, selected = _scope(scope, read)
-    contents = {}
-    events = _confirmations(owner._ledger, normalized, read, contents) + _settlements(
-        owner._ledger, normalized, selected, read, contents
-    )
+def _month_events(owner, normalized, selected, read, contents):
+    settlements, producer_ids = _settlements(owner._ledger, normalized, selected, read, contents)
+    events = _confirmations(owner._ledger, normalized, read, contents) + settlements
     events.sort(
         key=lambda item: (
             item.period,
@@ -224,7 +221,15 @@ def _events(owner, scope, read):
             item.event_id,
         )
     )
-    return normalized, selected, events
+    return events, producer_ids
+
+
+def _events(owner, scope, read, cache=None):
+    normalized, selected = _scope(scope, read)
+    events, producer_ids = _month_events(
+        owner, normalized, selected, read, {} if cache is None else cache
+    )
+    return normalized, selected, events, producer_ids
 
 
 def _version(scope, read, collection, value):
@@ -246,7 +251,7 @@ def _version(scope, read, collection, value):
 def query_events(owner, scope, page, read):
     if not isinstance(page, PageQuery):
         fail("基金事件分页须使用共同 PageQuery。", "invalid_input")
-    _, _, events = _events(owner, scope, read)
+    _, _, events, _ = _events(owner, scope, read)
     identity = _version(scope, read, "money_fund_events", [asdict(item) for item in events])
     if page.expected_version is not None and page.expected_version != identity:
         fail("基金事件版本已变化，请从第一页读取。", "snapshot_changed")
@@ -299,13 +304,30 @@ def _balance_cell(cell, local_issues, issues, indexes):
     return {**cell, "issue_indexes": sorted(set(selected))}
 
 
-def activity(owner, scope, read):
-    _, selected, events = _events(owner, scope, read)
+def activity(owner, scope, read, *, cache=None):
+    _, selected, events, producer_ids = _events(owner, scope, read, cache)
     cost_query = CostPositionQuery(
         scope["period_to"], categories=_COST_CATEGORIES, include_consumed=True
     )
     costs = owner._ledger.capture_cost_directory(cost_query, read, selection=selected)
-    fund_ids = {item.fund_id for item in events}
+    return _build_activity(owner, scope, selected, read, events, costs, producer_ids)
+
+
+def positions(owner, scope, selected, read, cache, *, fund_ids=()):
+    """Select surviving legacy costs and month rights before product balances and names."""
+    events, producer_ids = _month_events(owner, scope, selected, read, cache)
+    costs = owner._ledger.capture_cost_directory(
+        CostPositionQuery(scope["period_to"], categories=_COST_CATEGORIES, include_consumed=False),
+        read,
+        selection=selected,
+    )
+    return _build_activity(
+        owner, scope, selected, read, events, costs, producer_ids, fund_ids=fund_ids
+    )
+
+
+def _build_activity(owner, scope, selected, read, events, costs, producer_ids, *, fund_ids=()):
+    fund_ids = set(fund_ids) | {item.fund_id for item in events}
     fund_ids.update(item.definition.value["object_id"] for item in costs)
     ids = sorted(fund_ids)
     objects = {}
@@ -371,10 +393,17 @@ def activity(owner, scope, read):
         tuple(issues),
         ReadInputs(
             result_kinds=("opening.package",),
-            posted_result_kinds=KINDS,
+            posted_result_kinds=KINDS if scope["view"] == "as_posted" else (),
+            business_result_kinds=KINDS if scope["view"] == "current" else (),
             account_codes=(_ACCOUNT,),
             cost_categories=_COST_CATEGORIES,
-            business_ids=tuple(sorted({event.business_id for event in events})),
+            business_ids=tuple(
+                sorted(
+                    {event.business_id for event in events}
+                    | set(producer_ids)
+                    | {item.definition.reference["business_id"] for item in costs}
+                )
+            ),
             object_ids=tuple(ids),
         ),
     )

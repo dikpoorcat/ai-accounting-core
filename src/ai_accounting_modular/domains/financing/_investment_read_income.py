@@ -3,8 +3,9 @@
 from dataclasses import replace
 
 from ._common import amount, fail, total
+from ._investment_events import EVENT_KINDS
 from ._investment_read_sources import source_contents
-from ._read_funds import _contents, _pages
+from ._read_funds import KINDS, _contents, _pages
 from ._read_types import InvestmentIncomeAdjustment
 
 TAX_KINDS = ("taxes.financial_transfer_basis", "taxes.assessment")
@@ -49,8 +50,14 @@ def _origin(quantity, ledger, read, cache):
     return quantity["terms_id"], quantity["product_id"], key
 
 
-def income(ledger, scope, read, cache):
-    contributions = list(_pages(lambda page: ledger.profit_contributions(scope, page, read)))
+def _contributions(ledger, scope, read, cache, *, business_kinds=()):
+    contributions = list(
+        _pages(
+            lambda page: ledger.profit_contributions(
+                scope, page, read, business_kinds=business_kinds
+            )
+        )
+    )
     bodies = _contents(
         ledger,
         [
@@ -62,6 +69,43 @@ def income(ledger, scope, read, cache):
         read,
         cache,
     )
+    for row in contributions:
+        if bodies[row.reference["result_id"]].source != row.source or (
+            row.baseline_reference is not None
+            and bodies[row.baseline_reference["result_id"]].source != row.baseline_source
+        ):
+            fail("投资收益贡献与精确正式正文的来源不一致。", "storage_corrupt")
+    return contributions, bodies
+
+
+def recognized_income(ledger, scope, read, cache):
+    """Only formal financial-investment contributions; tax is a separate business output."""
+    kinds = EVENT_KINDS | set(KINDS)
+    contributions, bodies = _contributions(
+        ledger, scope, read, cache, business_kinds=tuple(sorted(kinds))
+    )
+    profits, recognized, losses = {}, [], []
+    for row in contributions:
+        for sign, ref, value, loss in (
+            (1, row.reference, row.investment_income_fen, row.actual_loss_fen),
+            (-1, row.baseline_reference, row.baseline_income_fen, row.baseline_actual_loss_fen),
+        ):
+            if ref is None:
+                continue
+            target = bodies[ref["result_id"]].target
+            if target["kind"] == "system.withdrawal":
+                if value or loss:
+                    fail("已退出的投资目标仍含有效损益凭证。", "storage_corrupt")
+            elif target["kind"] not in kinds:
+                fail("金融投资收益贡献包含其他业务的正式来源。", "storage_corrupt")
+            profits[ref["result_id"]] = value, loss
+            recognized.append(sign * value)
+            losses.append(sign * loss)
+    return profits, total(recognized), total(losses)
+
+
+def income(ledger, scope, read, cache):
+    contributions, bodies = _contributions(ledger, scope, read, cache)
     source_contents(
         ledger,
         [
@@ -78,11 +122,6 @@ def income(ledger, scope, read, cache):
     profits, groups = {}, {}
     recognized, losses, net = [], [], []
     for row in contributions:
-        if bodies[row.reference["result_id"]].source != row.source or (
-            row.baseline_reference is not None
-            and bodies[row.baseline_reference["result_id"]].source != row.baseline_source
-        ):
-            fail("投资收益贡献与精确正式正文的来源不一致。", "storage_corrupt")
         net.extend((row.investment_income_fen, -row.baseline_income_fen))
         for sign, ref, value, loss in (
             (1, row.reference, row.investment_income_fen, row.actual_loss_fen),

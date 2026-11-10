@@ -63,8 +63,8 @@ _BALANCE_MATCH = (
 
 
 class ReadRepository:
-    def read_profit_scope(self, scope, selection, accounts):
-        table, where, args = self.read_result_scope(scope, (), selection, flow=True)
+    def read_profit_scope(self, scope, selection, accounts, business_kinds=()):
+        table, where, args = self.read_result_scope(scope, business_kinds, selection, flow=True)
         # An unchanged journal may belong to an earlier formal-only head. Search
         # only versions of each already month-selected slot, never all bodies.
         where += (
@@ -75,6 +75,20 @@ class ReadRepository:
             "AND l.account_code IN (SELECT value FROM json_each(?)))"
         )
         return table, where, (*args, canonical_json(list(accounts)))
+
+    @staticmethod
+    def investment_holdings_where(where):
+        # Formal positions normalize zero to text '0'. Preserve missing, null,
+        # noncanonical or invalid values for the ordinary target-contract check.
+        zero_fields = ("opening_cost_fen", "closing_cost_fen", "quantity")
+        explicit_zero = " AND ".join(
+            f"json_type(r.target_json,'$.values.{field}')='text' "
+            f"AND json_extract(r.target_json,'$.values.{field}')='0'"
+            for field in zero_fields
+        )
+        return (
+            where + " AND r.target_state<>'withdrawn' AND NOT COALESCE((" + explicit_zero + "),0)"
+        )
 
     def read_profit_lines(self, voucher_ids, accounts):
         return [
@@ -371,6 +385,19 @@ class ReadRepository:
             business_ids=query.business_ids,
             categories=query.categories,
             object_ids=query.object_ids,
+            remaining_only=not query.include_consumed,
+        )
+
+    def read_obligation_resource_rows(self, query, selection):
+        return self._position_rows(
+            "obligation",
+            query.cutoff_period,
+            selection,
+            business_ids=query.business_ids,
+            categories=query.categories,
+            party_ids=query.party_ids,
+            direction=query.direction,
+            remaining_only=not query.include_settled,
         )
 
     def read_obligation_cutoff_candidates(self, previous, cutoff):
@@ -461,6 +488,7 @@ class ReadRepository:
         party_ids=(),
         obligation_from=None,
         obligation_to=None,
+        remaining_only=False,
     ):
         table = "obligation" if kind == "obligation" else "cost_lot"
         predicate, source_args = selected("r", selection.as_of)
@@ -550,6 +578,10 @@ class ReadRepository:
                 "AND x.source_public_slot=d.public_slot "
             )
             args = (cutoff, *use_args, *settlement_args, cutoff, *use_args, *relation_args)
+            remaining = (
+                "d.amount_fen-COALESCE(s.money,0)-COALESCE(s.agency,0)"
+                "-COALESCE(s.offset,0)-COALESCE(x.transferred,0)+COALESCE(x.excess,0)"
+            )
         else:
             consumption_keys, consumption_args = _resource_keys(
                 "c.source_business_id", "c.source_public_slot", business_ids, references
@@ -574,6 +606,7 @@ class ReadRepository:
                 "AND s.source_public_slot=d.public_slot "
             )
             args = (cutoff, *use_args, *consumption_args)
+            remaining = "d.amount_fen-COALESCE(s.consumed,0)"
         if candidate:
             sql = "WITH " + candidate + sql.removeprefix("WITH ")
             args = (*candidate_args, *args)
@@ -596,6 +629,9 @@ class ReadRepository:
         sql += head + ",r.business_period AS owner_business_period "
         sql += f"FROM {table} d JOIN adopted_result r ON r.result_id=d.result_id " + joins
         sql += f"WHERE r.business_period<=? AND {predicate} AND {source_keys} "
+        if remaining_only:
+            # Keep overflow anomalies for checked integer arithmetic in _amounts.
+            sql += f"AND (typeof({remaining})<>'integer' OR {remaining}<>0) "
         if not directory:
             sql += "ORDER BY r.business_id,d.public_slot"
         return [

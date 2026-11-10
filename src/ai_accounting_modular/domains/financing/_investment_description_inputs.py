@@ -13,8 +13,9 @@ from ._investment_seed import change_index, choose_seed
 
 
 class DescriptionInputs:
-    def __init__(self, context):
+    def __init__(self, context, changes):
         self._context, self._holdings, self._uses = context, {}, {}
+        self._responsibilities = changes
         self._period_facts = {}
         self._legacy_dependencies, self._existing_slots, self._seeds = {}, {}, {}
         self._changes = None
@@ -25,7 +26,7 @@ class DescriptionInputs:
     def holding(self, terms_id):
         if terms_id not in self._holdings:
             if self._changes is None:
-                self._changes = change_index(self._context)
+                self._changes = change_index(self._context, self._responsibilities)
             seed = choose_seed(self._context.get_fact(terms_id), self._context, self._changes)
             self._seeds[terms_id] = seed
             first = (
@@ -62,9 +63,7 @@ class DescriptionInputs:
             grouped = {}
             for fact in self.investment_facts(terms_id):
                 grouped.setdefault(fact["period"], []).append(fact)
-            self._period_facts[terms_id] = {
-                month: tuple(facts) for month, facts in grouped.items()
-            }
+            self._period_facts[terms_id] = {month: tuple(facts) for month, facts in grouped.items()}
         return self._period_facts[terms_id].get(period, ())
 
     def investment_openings(self, terms_id):

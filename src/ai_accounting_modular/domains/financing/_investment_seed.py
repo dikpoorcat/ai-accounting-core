@@ -24,27 +24,43 @@ class Seed:
     values: dict
 
 
-def change_index(context):
-    ids = tuple(sorted(context.changed_business_ids))
+def change_index(context, responsibilities):
+    # An existing inventory event has only its main result. If application
+    # notifications included it for recalculation, replay must cover its month
+    # even when its business fact did not change. Terms have many month slots;
+    # their description-only calendar membership does not invalidate the prefix.
+    recalculated = {
+        row["business_id"]
+        for row in responsibilities
+        if (row.get("fact") or {}).get("kind") in POSITION_KINDS
+    }
+    ids = tuple(sorted(context.changed_business_ids | recalculated))
     facts = {key: context.get_fact(key) for key in ids}
     old_periods = {
         row["business_id"]: row["business_period"]
-        for row in context.current_result_refs(ids)
+        for offset in range(0, len(ids), 500)
+        for row in context.current_result_refs(ids[offset : offset + 500])
         if row["result_slot"] == "main"
     }
     old_holdings = {}
-    for edge in context.current_dependencies(ids):
-        if (
-            edge["producer_kind"] == "business"
-            and edge["read_mode"] == "result"
-            and (edge["relation_kind"] == "calculation" and edge["producer_public_slot"] == "main")
-        ):
-            old_holdings.setdefault(edge["consumer_business_id"], set()).add(edge["producer_id"])
+    for offset in range(0, len(ids), 500):
+        for edge in context.current_dependencies(ids[offset : offset + 500]):
+            if (
+                edge["producer_kind"] == "business"
+                and edge["read_mode"] == "result"
+                and edge["relation_kind"] == "calculation"
+                and edge["producer_public_slot"] == "main"
+            ):
+                old_holdings.setdefault(edge["consumer_business_id"], set()).add(
+                    edge["producer_id"]
+                )
     return ChangeIndex(facts, old_periods, old_holdings)
 
 
 def choose_seed(terms_fact, context, changes):
     terms_id = terms_fact["business_id"]
+    if context.result_requires_recalculation(terms_id, "main"):
+        return None
     first = max(terms_fact["period"], context.read_context.start_period)
     affected = []
     for business_id, fact in changes.facts.items():
@@ -75,6 +91,7 @@ def choose_seed(terms_fact, context, changes):
         for row in context.current_result_refs((terms_id,))
         if row["result_slot"].startswith("position:")
         and first <= row["result_slot"].removeprefix("position:") < cutoff
+        and not context.result_requires_recalculation(terms_id, row["result_slot"])
     ]
     if not candidates:
         return None

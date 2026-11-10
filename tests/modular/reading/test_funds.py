@@ -176,6 +176,7 @@ def test_actual_company_account_and_mixed_investment_cash_are_distinct(case, mon
 
     for owner, method in (
         (case.kernel.money, "account_activity"),
+        (case.kernel.reading.investment, "investment_positions"),
         (case.kernel.reading.investment, "money_fund_activity"),
         (case.kernel.ledger, "account_balances"),
         (case.kernel.identity, "get_batch"),
@@ -367,13 +368,13 @@ def test_501_sources_keep_full_professional_totals_and_lean_hot_pages(case, monk
     ]
     apply(case, paid)
     calls = []
-    original = case.kernel.reading.investment.money_fund_activity
+    original = case.kernel.reading.investment.investment_positions
 
     def tracked(*args):
         calls.append(1)
         return original(*args)
 
-    monkeypatch.setattr(case.kernel.reading.investment, "money_fund_activity", tracked)
+    monkeypatch.setattr(case.kernel.reading.investment, "investment_positions", tracked)
     capture(case)
     assert len(calls) == 1
     initial = page(case)["data"]
@@ -382,7 +383,7 @@ def test_501_sources_keep_full_professional_totals_and_lean_hot_pages(case, monk
     activity = investment_activity(case)
     assert activity.subscription_cost_fen == activity.actual_payments_fen == 501
     assert len(activity.events) == len({item.event_id for item in activity.events}) == 1002
-    assert len(calls) == 2
+    assert len(calls) == 1
     hot = page(case, section="investment_products")["data"]["collections"]["investment_products"]
     assert hot == initial["collections"]["investment_products"]
-    assert len(calls) == 2
+    assert len(calls) == 1

@@ -10,19 +10,21 @@ from ._journal_amounts import journal_amount
 from ._planning import stored_source_reference
 from ._profit import profit_rows
 from ._read_contents import reference
-from ._read_support import after_key, cursor, scope_selection, version
+from ._read_support import after_key, bounded, cursor, scope_selection, version
 from ._types import ProfitContribution
 from ._values import fail
 
 ACCOUNTS = ("5111", "571106", "571107", "571108")
 
 
-def contributions(scope, page, read):
+def contributions(scope, page, read, *, business_kinds=()):
     selected = scope_selection(scope, read)
+    business_kinds = bounded(business_kinds, "text")
     repo = read.repository("ledger")
-    table, where, args = repo.read_profit_scope(scope, selected, ACCOUNTS)
+    table, where, args = repo.read_profit_scope(scope, selected, ACCOUNTS, business_kinds)
     identities = repo.read_identity_rows(table, where, args)
     query = {key: value for key, value in scope.items() if key != "expected_head"}
+    query["business_kinds"] = business_kinds
     identity = version(read, "profit_contributions", query, selected, identities)
     if scope.get("expected_head", identity) != identity:
         fail("snapshot_changed", "投资损益的正式采用范围已经变化，请重新读取。")

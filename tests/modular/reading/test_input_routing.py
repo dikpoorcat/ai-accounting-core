@@ -68,6 +68,7 @@ def test_paid_source_meaning_and_sparse_display_refresh_funds_without_other_owne
     with monkeypatch.context() as patch:
         for owner, method in (
             (case.kernel.money, "account_activity"),
+            (case.kernel.reading.investment, "investment_positions"),
             (case.kernel.reading.investment, "money_fund_activity"),
             (case.kernel.reading.people, "remuneration_activity"),
             (case.kernel.reading.assets, "asset_activity"),

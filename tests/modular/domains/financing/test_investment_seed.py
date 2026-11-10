@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+import pytest
+
 from ai_accounting_modular.application._context import SubmissionContext
 from ai_accounting_modular.domains.financing import _investment_position
 from ai_accounting_modular.domains.financing.public import create_investment
@@ -12,6 +14,7 @@ from tests.modular.ledger.opening._support import (
     get,
     opening,
     replace,
+    request,
 )
 from tests.modular.ledger.opening.test_investment_cutover import (
     equity,
@@ -100,6 +103,31 @@ def test_opening_replacement_and_calendar_advance_cannot_reuse_stale_seed(tmp_pa
     assert actual.get("completion") == "complete", actual
     august = _position(app, company, terms, "2026-08")["target"]["values"]
     assert august["opening_cost_fen"] == august["closing_cost_fen"] == "1200"
+
+
+@pytest.mark.parametrize("explicit_retry", [False, True])
+def test_opening_prefix_distinguishes_calendar_membership_from_explicit_terms_retry(
+    tmp_path, explicit_retry
+):
+    app, company, product, terms, _, package = _initial(tmp_path)
+    initial = submit(app, company, terms, package, products=[(product, "other_fund")])
+    assert initial.get("completion") == "complete", initial
+    facts = (terms, _income(terms)) if explicit_retry else (_income(terms),)
+    response = app.accounting_apply(request(company, *facts))
+    assert response.get("completion") == "complete", response.get("message", response)
+    august = _position(app, company, terms, "2026-08")
+    values = august["target"]["values"]
+    assert values["opening_cost_fen"] == values["closing_cost_fen"] == "1000"
+    assert values["quantity"] == "10"
+    # Calendar membership can reuse July. An explicit same-fact retry owns every
+    # old slot, so its opening prefix must be declared and adopted afresh.
+    assert (
+        any(
+            source["business_id"] == package["business_id"]
+            for source in august["basis"]["source_results"]
+        )
+        is explicit_retry
+    )
 
 
 def test_each_memo_hit_guards_the_exact_seed_declared_for_that_slot(tmp_path, monkeypatch):

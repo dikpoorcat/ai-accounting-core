@@ -61,7 +61,7 @@ class IndexedDescription(DescriptionInputs):
     """Exercise the production month router with an independently counted input."""
 
     def __init__(self, context, facts):
-        super().__init__(context)
+        super().__init__(context, ())
         self.facts = facts
 
     def holding(self, terms_id):

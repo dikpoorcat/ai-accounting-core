@@ -364,6 +364,17 @@ class EvaluationContext(Protocol):
         """
         ...
 
+    def result_requires_recalculation(self, business_id: str, result_slot: str) -> bool:
+        """Read this declaration round's already known numerical recalculation roots.
+
+        True means an explicit whole-business request or a numerical notification
+        for this exact slot. False is not the final candidate's pending decision:
+        later declarations and propagation can discover more work. The application
+        publishes these roots before each description; reading them before that
+        point is invalid, rather than evidence that an old result is stable.
+        """
+        ...
+
     def get_fact(self, business_id: str) -> Fact | None:
         """Use the submission's correct current fact before the persisted fact."""
         ...

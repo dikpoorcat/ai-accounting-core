@@ -184,6 +184,72 @@ def test_directory_only_hydrates_matching_rows_and_never_reads_formal_bodies(sto
         assert "c.source_business_id,c.source_public_slot" in statements[0][0]
 
 
+@pytest.mark.parametrize("include_consumed,expected", [(True, 10), (False, 9)])
+def test_consumed_filter_runs_before_sql_rows_and_resource_construction(
+    store, monkeypatch, include_consumed, expected
+):
+    ledger, _ = mixed(store)
+    amounts, constructed = _read_positions._amounts, []
+
+    def observed(row, kind):
+        constructed.append(row["public_slot"])
+        return amounts(row, kind)
+
+    monkeypatch.setattr(_read_positions, "_amounts", observed)
+    with store.read_unit(COMPANY) as read:
+        session = read.repository("ledger")._session
+        fetch, returned = session.fetchall, []
+
+        def rows(sql, args=()):
+            values = fetch(sql, args)
+            returned.append(len(values))
+            return values
+
+        monkeypatch.setattr(session, "fetchall", rows)
+        actual = ledger.capture_cost_directory(
+            CostPositionQuery(
+                "2026-01", categories=("project",), include_consumed=include_consumed
+            ),
+            read,
+        )
+        assert returned == [expected]
+        assert len(actual) == len(constructed) == expected
+        assert sum(item.amounts.remaining_fen for item in actual) == 540
+
+
+@pytest.mark.parametrize("count", [1, 5])
+def test_fully_consumed_history_returns_no_sql_rows_but_remains_in_complete_default(
+    store, monkeypatch, count
+):
+    ledger = create_ledger()
+    seed_payment(store)
+    source, consumer = split_resources(count)
+    for consumption in consumer["plans"][0]["cost_consumptions"]:
+        consumption["amount_fen"] = "100"
+    with store.write_unit(COMPANY) as unit:
+        adopt_declared(ledger, [source, consumer], unit)
+    with store.read_unit(COMPANY) as read:
+        session = read.repository("ledger")._session
+        fetch, returned = session.fetchall, []
+
+        def rows(sql, args=()):
+            values = fetch(sql, args)
+            returned.append(len(values))
+            return values
+
+        monkeypatch.setattr(session, "fetchall", rows)
+        assert (
+            ledger.capture_cost_directory(
+                CostPositionQuery("2026-02", include_consumed=False), read
+            )
+            == ()
+        )
+        assert returned == [0]
+        complete = ledger.capture_cost_directory(CostPositionQuery("2026-02"), read)
+        assert returned == [0, count] and len(complete) == count
+        assert all(item.amounts.remaining_fen == 0 for item in complete)
+
+
 @pytest.mark.parametrize(
     "query",
     [

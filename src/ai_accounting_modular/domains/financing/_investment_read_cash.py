@@ -126,7 +126,7 @@ def cash_events(ledger, scope, selected, read, cache):
                 values["terms_id"],
             )
         )
-    return events
+    return events, tuple(sorted({item.reference["business_id"] for item in definitions}))
 
 
 def with_product_cash(products, events, *, payments_fen, receipts_fen):

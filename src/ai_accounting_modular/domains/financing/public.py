@@ -48,6 +48,7 @@ from ._read_funds import activity as fund_activity
 from ._read_funds import query_events as fund_events
 from ._read_types import CooperationPosition as CooperationPosition
 from ._read_types import CooperationPositions as CooperationPositions
+from ._read_types import InvestmentPositions as InvestmentPositions
 from ._read_types import MoneyFundActivity as MoneyFundActivity
 from ._read_types import MoneyFundEvent as MoneyFundEvent
 from ._read_types import MoneyFundProduct as MoneyFundProduct
@@ -102,7 +103,7 @@ class _FactOwner:
         if self.family == "investment":
             from ._investment_description_inputs import DescriptionInputs
 
-            context = DescriptionInputs(context)
+            context = DescriptionInputs(context, changes)
         businesses, edges, published = [], [], []
         for change in changes:
             business_id = change.get("business_id") or change["fact"]["business_id"]
@@ -302,6 +303,15 @@ class Investment(_FactOwner):
         if self._ledger is None or self._identity is None:
             fail("投资活动读取未装配正式账务和产品端口。", "unsupported_business")
         return activity(self, scope, read_context)
+
+    def investment_positions(
+        self, scope: LedgerScope, read_context: ReadContext
+    ) -> InvestmentPositions:
+        from ._read_investments import positions
+
+        if self._ledger is None or self._identity is None:
+            fail("投资持仓读取未装配正式账务和产品端口。", "unsupported_business")
+        return positions(self, scope, read_context)
 
     def money_fund_activity(
         self, scope: LedgerScope, read_context: ReadContext

@@ -41,7 +41,7 @@ def data(case, month):
     return response
 
 
-def test_professional_income_uses_5111_and_lean_funds_refresh_new_tax_source(case):
+def test_professional_tax_changes_do_not_invalidate_unchanged_funds(case):
     values = tax_setup(case, defer_tax=True)
     before = data(case, "2026-07")
     assert investment_activity(case, "2026-07").investment_income_fen == 102000
@@ -49,8 +49,9 @@ def test_professional_income_uses_5111_and_lean_funds_refresh_new_tax_source(cas
     apply(case, values[-1])
     with case.kernel.storage.read_unit(case.company) as read:
         saved = read.repository("reading").state(_monthly.key(selection(case, "2026-07")), "funds")
-    assert saved["state"] == "preparing"
-    response = data(case, "2026-07")
+    assert saved["state"] == "ready"
+    response = page(case, "2026-07")["data"]
+    assert response == before
     formal = investment_activity(case, "2026-07")
     assert formal.recognized_income_fen == 102000
     assert formal.vat_adjustment_fen == -2000
@@ -124,7 +125,7 @@ def test_cross_period_transfer_credit_stays_in_company_pool(case):
     assert tax.product_id is None
 
 
-def test_tax_only_interest_adjustment_retains_original_product_without_stock_or_receivable(case):
+def test_tax_only_interest_adjustment_keeps_professional_origin_without_funds_record(case):
     initialize(case)
     agreement, _, _, policy, surtax, basis = inputs()
     product = str(uuid4())
@@ -175,15 +176,16 @@ def test_tax_only_interest_adjustment_retains_original_product_without_stock_or_
         _sources(value, case.source_id)
     apply(case, *values)
     response = data(case, "2026-09")
-    (product_row,) = response["collections"]["investment_products"]["items"]
-    assert product_row["fund_id"] == product
-    assert product_row["recognized_income_fen"] == "0"
-    assert product_row["actual_payments_fen"] == product_row["actual_receipts_fen"] == "0"
-    assert product_row["closing_cost_fen"] is None
-    assert product_row["activity_only"] is True
-    assert product_row["pending_receipts_fen"] == "0"
+    assert response["collections"]["investment_products"]["items"] == []
+    assert response["investments"] == {"closing_cost_fen": "0"}
     formal = investment_activity(case, "2026-09")
-    assert formal.products[0].investment_income_fen == 0
+    (product_row,) = [row for row in formal.products if row.terms_id == agreement["business_id"]]
+    assert product_row.fund_id == product
+    assert product_row.investment_income_fen == 0
+    assert product_row.actual_payments_fen == product_row.actual_receipts_fen == 0
+    assert product_row.closing_cost is None
+    assert product_row.activity_only is True
+    assert product_row.pending_receipts_fen == 0
     (tax,) = formal.income_adjustments
     assert tax.attribution == "event"
     assert tax.product_id == product
@@ -201,8 +203,11 @@ def test_missing_tax_explanation_is_only_compatible_with_old_frozen_result(
         old.setattr(_financial_transfer, "check_effects", lambda *args: None)
         values = tax_setup(case)
     if not frozen:
+        response = data(case, "2026-07")
+        (product,) = response["collections"]["investment_products"]["items"]
+        assert product["recognized_income_fen"] == "102000"
         with pytest.raises(ContractError, match="归属量") as error:
-            data(case, "2026-07")
+            investment_activity(case, "2026-07")
         assert error.value.code == "storage_corrupt"
         return
     with case.kernel.storage.write_unit(case.company) as unit:

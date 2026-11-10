@@ -19,7 +19,7 @@ COLLECTIONS = ("accounts", "movements", "statements", "investment_products")
 
 def prepare(reader, scope, read):
     activity = reader.money.account_activity(scope, read)
-    funds = reader.investment.investment_activity(scope, read)
+    funds = reader.investment.investment_positions(scope, read)
     balances = _funds_accounts.positions(reader.ledger, activity.accounts, scope["period_to"], read)
     objects = _funds_items.identities(reader, activity, read)
     cards = _funds_accounts.cards(activity, balances, objects)
@@ -84,7 +84,7 @@ def prepare(reader, scope, read):
                 business_ids=tuple(
                     sorted({entry.reference["business_id"] for entry in sources.entries.values()})
                 ),
-                object_ids=tuple(sorted(objects)),
+                object_ids=tuple(sorted(set(objects) | set(project_objects))),
                 current_business_ids=tuple(
                     sorted(set(business_ids) | {value[9:] for value in sources.descriptions.scopes})
                 ),
