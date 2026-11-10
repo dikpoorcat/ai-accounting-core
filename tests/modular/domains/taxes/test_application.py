@@ -194,7 +194,9 @@ def test_real_same_unit_vat_sources_and_later_new_publisher_recalculate_aggregat
     assert created["completion"] == "complete", created
     updated = main(app, company_id, current)
     assert updated["target"]["values"]["payable_vat_fen"] == "3300"
-    assert updated["reference"]["voucher_number"] == original["reference"]["voucher_number"]
+    assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in updated["vouchers"]} == {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in original["vouchers"]
+    }
     assert sum(row["type"] == "tax_sale" for row in updated["basis"]["adopted_quantities"]) == 2
 
 

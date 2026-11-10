@@ -9,6 +9,7 @@ from ai_accounting_modular.ledger.public import (
 
 from . import _brief_vouchers as vouchers
 from . import _brief_vouchers_display as display
+from . import _payroll_journals
 from ._brief_activity_parts import parts
 from ._brief_activity_sources import Contents, same_reference
 from ._brief_open_sources import batches
@@ -26,7 +27,7 @@ _SIMPLE = frozenset(
 )
 
 
-def _entries(reader, references, read, origins, known_vouchers):
+def _entries(reader, references, read, origins, known_vouchers, components):
     """Reuse only an exact selected head; an inherited entry keeps its real owner."""
     known_vouchers = {} if known_vouchers is None else known_vouchers
     requested, found = {}, {}
@@ -41,18 +42,25 @@ def _entries(reader, references, read, origins, known_vouchers):
             if (
                 origin is None
                 or not same_reference(origin.reference, ref)
-                or (entry is not None and not isinstance(entry, VoucherDirectoryEntry))
+                or not isinstance(entry, tuple)
+                or any(not isinstance(item, VoucherDirectoryEntry) for item in entry)
             ):
                 raise ContractError("storage_corrupt", "复用凭证目录与精确正式来源不一致。")
             found[identity] = entry
     missing = [ref for identity, ref in requested.items() if identity not in found]
     actual = vouchers.effective_headers(reader, missing, read)
     found.update((ref["result_id"], entry) for ref, entry in zip(missing, actual, strict=True))
-    return tuple(found[ref["result_id"]] for ref in references)
+    return tuple(
+        _payroll_journals.select_header(found[ref["result_id"]], component=component)
+        for ref, component in zip(references, components, strict=True)
+    )
 
 
-def capture(reader, references, read, *, known_origins=(), known_vouchers=None):
+def capture(reader, references, read, *, known_origins=(), known_vouchers=None, components=None):
     references = tuple(references)
+    components = (None,) * len(references) if components is None else tuple(components)
+    if len(components) != len(references):
+        raise ContractError("invalid_input", "凭证阶段选择须与正式来源逐项对应。")
     origins = {}
     for origin in known_origins:
         ref, source = origin.reference, origin.source
@@ -66,7 +74,7 @@ def capture(reader, references, read, *, known_origins=(), known_vouchers=None):
         ):
             raise ContractError("storage_corrupt", "复用显示来源的精确定位或完整身份相互冲突。")
         origins[ref["result_id"]] = origin
-    entries = _entries(reader, references, read, origins, known_vouchers)
+    entries = _entries(reader, references, read, origins, known_vouchers, components)
     owners = {}
     for entry in entries:
         if entry is None:
@@ -86,21 +94,35 @@ def capture(reader, references, read, *, known_origins=(), known_vouchers=None):
         origins.update((origin.reference["result_id"], origin) for origin in actual)
     cache = Contents(reader.ledger, read)
     cache.reuse(origin for origin in origins.values() if isinstance(origin, AdoptedContent))
-    raw, unique = [], set()
+    cache.load(
+        ref
+        for identity, ref in owners.items()
+        if not (
+            isinstance(origins[identity], AdoptedOriginProjection)
+            and origins[identity].target_fields["kind"] in _SIMPLE
+        )
+    )
+    raw, unique, prepared = [], set(), {}
     for entry in entries:
         if entry is None:
             continue
         identity = vouchers.token(vouchers.locator(entry))
         if identity in unique:
             continue
-        origin = origins[entry.result["result_id"]]
-        if isinstance(origin, AdoptedOriginProjection) and origin.target_fields["kind"] in _SIMPLE:
-            parties, cards = display.party_ids(origin, (), cache), []
-        else:
-            cache.load((entry.result,))
-            origin = cache.get(entry.result)
-            parties = display.party_ids(origin, parts(origin, cache), cache)
-            cards = vouchers.assets(origin)
+        owner = entry.result["result_id"]
+        if owner not in prepared:
+            origin = origins[owner]
+            if (
+                isinstance(origin, AdoptedOriginProjection)
+                and origin.target_fields["kind"] in _SIMPLE
+            ):
+                parties, cards = display.party_ids(origin, (), cache), []
+            else:
+                origin = cache.get(entry.result)
+                parties = display.party_ids(origin, parts(origin, cache), cache)
+                cards = vouchers.assets(origin)
+            prepared[owner] = parties, cards
+        parties, cards = prepared[owner]
         unique.add(identity)
         raw.append({"token": identity, "party_ids": parties, "assets": cards})
     bound = {item["token"]: item for item in display.bind(reader, raw, read)}

@@ -221,8 +221,7 @@ class LedgerRepository(ReadRepository):
     def result_references(self, business_ids, *, as_of=None):
         fields = (
             "r.business_id,r.result_slot,r.result_id,r.generation,r.business_period,"
-            "r.posting_period,r.state,r.baseline_result_id,"
-            "v.voucher_id,v.number AS voucher_number"
+            "r.posting_period,r.state,r.baseline_result_id"
         )
         if as_of is None:
             sql = (
@@ -239,8 +238,6 @@ class LedgerRepository(ReadRepository):
             )
             args = [as_of, as_of]
         sql += (
-            "LEFT JOIN voucher v ON v.result_id=r.result_id "
-            "AND v.role IN ('original','replacement') "
             "WHERE r.business_id IN (SELECT value FROM json_each(?))"
             + boundary
             + " ORDER BY r.business_id,r.result_slot,r.posting_period"
@@ -752,21 +749,20 @@ class LedgerRepository(ReadRepository):
         self._session.execute("DELETE FROM adopted_result WHERE result_id=?", (row["result_id"],))
 
     def write_vouchers(self, result_id, period, specifications):
-        existing = {v["role"]: v for v in self.vouchers([result_id])}
-        wanted = {role for role, _, _ in specifications}
-        for role, voucher in existing.items():
-            if role not in wanted:
+        existing = {(v["journal_key"], v["role"]): v for v in self.vouchers([result_id])}
+        wanted = {(key, role) for key, role, _, _, _ in specifications}
+        for identity, voucher in existing.items():
+            if identity not in wanted:
                 self._session.execute(
                     "UPDATE voucher SET sealed=0 WHERE voucher_id=?", (voucher["voucher_id"],)
                 )
                 self._session.execute(
                     "DELETE FROM voucher WHERE voucher_id=?", (voucher["voucher_id"],)
                 )
-        for role, lines, reverses in specifications:
-            old = existing.get(role)
+        for journal_key, role, summary, lines, reverses in specifications:
+            old = existing.get((journal_key, role))
             voucher_id = old["voucher_id"] if old else str(uuid4())
             number = old["number"] if old and old["period"] == period else self._reserve(period)
-            summary = lines[0]["summary"]
             if old:
                 self._session.execute(
                     "UPDATE voucher SET sealed=0 WHERE voucher_id=?", (voucher_id,)
@@ -779,8 +775,9 @@ class LedgerRepository(ReadRepository):
                 )
             else:
                 self._session.execute(
-                    "INSERT INTO voucher VALUES(?,?,?,?,?,?,?,0)",
-                    (voucher_id, result_id, role, period, number, summary, reverses),
+                    "INSERT INTO voucher(voucher_id,result_id,journal_key,role,period,number,"
+                    "summary,reverses_voucher_id,sealed) VALUES(?,?,?,?,?,?,?,?,0)",
+                    (voucher_id, result_id, journal_key, role, period, number, summary, reverses),
                 )
             self._session.executemany(
                 "INSERT INTO voucher_line VALUES(?,?,?,?,?,?,?,?)",

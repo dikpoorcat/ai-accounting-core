@@ -282,16 +282,17 @@ def _body(selection, head, lines, details, funds, resources, bonds, financial_ta
         "business_period": head["business_period"],
         "posting_period": head["posting_period"],
         "baseline_result_id": head["baseline_result_id"],
+        # These derived ordinals span the group; formal line_no stays local to each voucher.
         "journal": [
             [
-                row["line_no"],
+                ordinal,
                 row["account_code"],
                 row.get("party_id"),
                 row.get("object_id"),
                 journal_amount(row["debit_fen"]),
                 journal_amount(row["credit_fen"]),
             ]
-            for row in lines
+            for ordinal, row in enumerate(lines, 1)
         ],
         "has_report_details": bool(details),
         "profit": {str(line): amount(value) for line, value in profit.items() if value != 0},

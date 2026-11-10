@@ -77,7 +77,9 @@ def test_contract_rate_change_recalculates_drawdown_basis_and_interest_without_n
     assert actual["completion"] == "complete", actual
     after = result(app, company, interest)
     assert after["target"]["values"]["interest_fen"] == "6200"
-    assert after["reference"]["voucher_number"] == before_interest["reference"]["voucher_number"]
+    assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in after["vouchers"]} == {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in before_interest["vouchers"]
+    }
     assert movements(app, company) == before_money
 
 

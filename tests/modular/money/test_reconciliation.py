@@ -162,7 +162,7 @@ def test_complete_group_can_match_one_to_many_or_many_to_one_without_splitting_m
         }
     ]
     plan = validate(ReconciliationContext(ids, [statement, check], actual), check)
-    assert plan["lines"] == plan["fund_movements"] == plan["settlements"] == []
+    assert plan["journals"] == plan["fund_movements"] == plan["settlements"] == []
     assert plan["target"]["values"]["difference_fen"] == "0"
     assert plan["target"]["values"]["closing_fen"] == "300"
 

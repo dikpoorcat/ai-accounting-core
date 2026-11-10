@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, posting_lines
 from ai_accounting_modular.money.public import create_money
 
 from .conftest import Context, objects, payable, payment
@@ -42,7 +42,7 @@ def evaluate(ids, fact, *extra):
 def test_original_bank_rows_do_not_book_another_payment(ids):
     fact = original(ids)
     plan = evaluate(ids, fact)
-    assert plan["lines"] == plan["fund_movements"] == plan["settlements"] == []
+    assert plan["journals"] == plan["fund_movements"] == plan["settlements"] == []
     assert plan["target"]["values"] == {
         "funds_account_id": ids["bank"],
         "opening_fen": "100000",
@@ -88,7 +88,7 @@ def test_platform_actual_money_consumes_original_rows_once(ids):
     plan = evaluate(ids, fact, source)
     assert len(plan["fund_movements"]) == 1
     assert plan["fund_movements"][0]["amount_fen"] == "100000"
-    assert plan["lines"][-1]["account_code"] == "1012"
+    assert posting_lines(plan)[-1]["account_code"] == "1012"
     assert source["data"]["rows"][0]["source"] in plan["basis"]["source_locations"]
     copied = deepcopy(fact)
     copied["business_id"] = str(uuid4())
@@ -128,7 +128,7 @@ def test_internal_reserve_platform_rows_have_no_company_cash_effect(ids):
         },
     }
     plan = evaluate(ids, fact, source)
-    assert plan["fund_movements"] == plan["lines"] == []
+    assert plan["fund_movements"] == plan["journals"] == []
     assert plan["target"]["values"]["company_money_effect_fen"] == "0"
     moved = payment(ids, account="platform")
     moved["business_id"] = str(uuid4())

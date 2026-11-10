@@ -1,4 +1,4 @@
-"""One balanced outcome contains the full remuneration and payable components."""
+"""One complete outcome contains remuneration journals and payable components."""
 
 from copy import deepcopy
 
@@ -142,7 +142,7 @@ def remuneration(fact, context):
     if tax_basis:
         values["tax_period"] = tax_basis["tax_period"]
     plan = plan_for(fact, context, values, accounting_input=_accounting_input(data))
-    plan["calculation_revision"] = plan["rule_refs"][0]["revision"] = 2
+    plan["calculation_revision"] = plan["rule_refs"][0]["revision"] = 3
     plan["rule_refs"][0]["official_urls"].append(_APPENDIX_URL)
     if tax_basis:
         use_location(plan, context, tax_basis["source"])

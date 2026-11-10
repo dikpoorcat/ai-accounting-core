@@ -88,8 +88,8 @@ def test_real_bonus_january_result_can_have_february_tax_and_january_payment(sto
         paid = payment["plans"][0]
         payment["businesses"][0]["fact"]["data"].pop("counterparty_id")
         paid["basis"]["input"]["allocations"][0]["source"]["slot"] = "tax"
-        paid["lines"][0].update(account_code="222103")
-        paid["lines"][0].pop("party_id")
+        paid["journals"][0]["lines"][0].update(account_code="222103")
+        paid["journals"][0]["lines"][0].pop("party_id")
         paid["settlements"][0]["source"]["slot"] = "tax"
         paid["fund_movements"][0].pop("party_id")
         paid["fund_movements"][0]["cashflow_parts"][0]["category"] = "tax_payments"
@@ -181,31 +181,37 @@ def _opening(person, fund):
             "policies": [],
             "source_locations": [],
         },
-        lines=[
+        journals=[
             {
-                "line_no": 1,
-                "account_code": "1101",
-                "debit_fen": "100000",
-                "credit_fen": "0",
-                "object_id": fund,
+                "journal_key": "main",
                 "summary": "原批次基金成本",
-            },
-            {
-                "line_no": 2,
-                "account_code": "222103",
-                "debit_fen": "0",
-                "credit_fen": "10000",
-                "party_id": SUPPLIER,
-                "summary": "开账前十二月税款",
-            },
-            {
-                "line_no": 3,
-                "account_code": "221101",
-                "debit_fen": "0",
-                "credit_fen": "90000",
-                "party_id": person,
-                "summary": "开账前十二月净薪",
-            },
+                "lines": [
+                    {
+                        "line_no": 1,
+                        "account_code": "1101",
+                        "debit_fen": "100000",
+                        "credit_fen": "0",
+                        "object_id": fund,
+                        "summary": "原批次基金成本",
+                    },
+                    {
+                        "line_no": 2,
+                        "account_code": "222103",
+                        "debit_fen": "0",
+                        "credit_fen": "10000",
+                        "party_id": SUPPLIER,
+                        "summary": "开账前十二月税款",
+                    },
+                    {
+                        "line_no": 3,
+                        "account_code": "221101",
+                        "debit_fen": "0",
+                        "credit_fen": "90000",
+                        "party_id": person,
+                        "summary": "开账前十二月净薪",
+                    },
+                ],
+            }
         ],
         cost_lots=[
             {
@@ -323,30 +329,36 @@ def test_opening_cost_consumption_uses_boundary_and_its_own_known_day(store):
                 "official_urls": [],
             }
         ],
-        lines=[
+        journals=[
             {
-                "line_no": 1,
-                "account_code": "1221",
-                "debit_fen": "25000",
-                "credit_fen": "0",
-                "party_id": SUPPLIER,
+                "journal_key": "main",
                 "summary": "基金赎回应收",
-            },
-            {
-                "line_no": 2,
-                "account_code": "1101",
-                "debit_fen": "0",
-                "credit_fen": "20000",
-                "object_id": fund,
-                "summary": "消耗原批次成本",
-            },
-            {
-                "line_no": 3,
-                "account_code": "5111",
-                "debit_fen": "0",
-                "credit_fen": "5000",
-                "summary": "本次基金收益",
-            },
+                "lines": [
+                    {
+                        "line_no": 1,
+                        "account_code": "1221",
+                        "debit_fen": "25000",
+                        "credit_fen": "0",
+                        "party_id": SUPPLIER,
+                        "summary": "基金赎回应收",
+                    },
+                    {
+                        "line_no": 2,
+                        "account_code": "1101",
+                        "debit_fen": "0",
+                        "credit_fen": "20000",
+                        "object_id": fund,
+                        "summary": "消耗原批次成本",
+                    },
+                    {
+                        "line_no": 3,
+                        "account_code": "5111",
+                        "debit_fen": "0",
+                        "credit_fen": "5000",
+                        "summary": "本次基金收益",
+                    },
+                ],
+            }
         ],
         cost_consumptions=[
             {

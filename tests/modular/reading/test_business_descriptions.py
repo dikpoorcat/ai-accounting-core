@@ -250,6 +250,29 @@ def test_payroll_components_keep_their_own_meaning_under_whole_business_prose(ca
     assert "整月工资核对说明" not in str(activity(case))
     whole = progress(case, wage["business_id"])["data"]["display_profiles"]["business"]["values"]
     assert whole["purpose"] is None and whole["note"] is None
+    for row in activity(case)["items"]:
+        if not row["title"].startswith("代扣"):
+            continue
+        member = group(case, row["key"])["members"]["items"][0]
+        detail = progress(
+            case,
+            wage["business_id"],
+            detail_scope_key=member["detail_scope_key"],
+            voucher_version_id=member["voucher_version_id"],
+        )["data"]["display_profiles"]["business"]["values"]
+        assert detail["display_name"] == row["title"] and detail["purpose"] is None
+        assert detail["note"] == "整月工资核对说明" and detail["note_scope"] == "whole_business"
+    for voucher in vouchers(case)["items"]:
+        if voucher["subject_id"] != wage["business_id"]:
+            continue
+        detail = progress(
+            case,
+            wage["business_id"],
+            detail_scope_key="voucher:" + voucher["voucher_version_id"],
+            voucher_version_id=voucher["voucher_version_id"],
+        )["data"]["display_profiles"]["business"]["values"]
+        assert detail["purpose"] is None
+        assert detail["note"] == "整月工资核对说明" and detail["note_scope"] == "whole_business"
     cash = next(value for value in activity(case)["items"] if value["group"] == "cash")
     assert cash["title"] == "支付个人承担社保费"
     member = group(case, cash["key"])["members"]["items"][0]
@@ -413,11 +436,44 @@ def test_labor_specific_purpose_follows_net_payment_but_not_withholding(case):
     note(case, paid["business_id"], "本单付清翻译费")
     capture(case)
     funds_capture(case)
-    assert {row["title"] for row in activity(case)["items"]} == {"翻译服务费", "支付翻译服务费"}
-    ordinary = next(
+    assert {row["title"] for row in activity(case)["items"]} == {
+        "翻译服务费",
+        "支付翻译服务费",
+        "代扣个人所得税",
+    }
+    payroll_vouchers = [
         row for row in vouchers(case)["items"] if row["subject_id"] == labor["business_id"]
-    )
+    ]
+    ordinary = next(row for row in payroll_vouchers if row["business_amount_label"] == "计提金额")
     assert ordinary["type"] == "劳务报酬" and ordinary["list_summary"] == "翻译服务费"
+    accrued = progress(
+        case,
+        labor["business_id"],
+        detail_scope_key="voucher:" + ordinary["voucher_version_id"],
+        voucher_version_id=ordinary["voucher_version_id"],
+    )["data"]["display_profiles"]["business"]["values"]
+    assert accrued["purpose"] == "翻译服务费"
+    withheld = next(row for row in payroll_vouchers if row["business_amount_label"] == "代扣金额")
+    assert withheld["type"] == withheld["list_summary"] == "代扣个人所得税"
+    tax_progress = progress(
+        case,
+        labor["business_id"],
+        detail_scope_key="voucher:" + withheld["voucher_version_id"],
+        voucher_version_id=withheld["voucher_version_id"],
+    )["data"]["display_profiles"]["business"]["values"]
+    assert tax_progress["display_name"] == "个人扣款" and tax_progress["purpose"] is None
+    assert tax_progress["note"] == "翻译服务费"
+    assert tax_progress["note_scope"] == "whole_business"
+    tax_row = next(row for row in activity(case)["items"] if row["title"] == "代扣个人所得税")
+    tax_member = group(case, tax_row["key"])["members"]["items"][0]
+    tax_part = progress(
+        case,
+        labor["business_id"],
+        detail_scope_key=tax_member["detail_scope_key"],
+        voucher_version_id=tax_member["voucher_version_id"],
+    )["data"]["display_profiles"]["business"]["values"]
+    assert tax_part["display_name"] == "代扣个人所得税" and tax_part["purpose"] is None
+    assert tax_part["note"] == "翻译服务费" and tax_part["note_scope"] == "whole_business"
     movement = funds_page(case)["data"]["collections"]["movements"]["items"][0]
     assert movement["list_summary"] == "支付翻译服务费"
     snapshot = publish(case)

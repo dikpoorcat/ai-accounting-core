@@ -29,6 +29,7 @@ from ._fact_sources import (
     partial_fact_source_ids,
     partial_fact_source_paths,
 )
+from ._journals import append_journal_line, posting_lines
 from ._projection_validation import validate_contract_items
 from ._read_inputs import ReadInputs
 from ._read_queries import PageQuery, QuerySelection, ReadPage, query_selection
@@ -92,6 +93,8 @@ __all__ = [
     "UnitOfWork",
     "query_selection",
     "ContractError",
+    "append_journal_line",
+    "posting_lines",
     "FactAnalysis",
     "FactDocumentPart",
     "analyze_fact",

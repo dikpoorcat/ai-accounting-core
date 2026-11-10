@@ -13,7 +13,7 @@ from . import _brief_open_inputs as inputs
 from . import _brief_open_members as member_rows
 from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
-from . import _brief_vouchers, _monthly
+from . import _brief_vouchers, _monthly, _payroll_journals
 from ._business_descriptions import Descriptions, description_reference
 from ._business_labels import business_label
 from ._collections import CollectionFilter, IndexItem, wire_page
@@ -51,6 +51,7 @@ def bind_displays(reader, members, captured, read):
         read,
         known_origins=captured.contents.values(),
         known_vouchers=captured.selected_vouchers,
+        components=[member.get("_locator", {}).get("slot") for member in members],
     )
 
 
@@ -164,6 +165,9 @@ def members(reader, snapshot, read, query):
         [item["_detail_scope"]["reference"] for item in hydrated],
         read,
         known_contents=contents,
+        components=[
+            _payroll_journals.component_from_scope(item["_detail_scope"]) for item in hydrated
+        ],
     )
     values, unique = [], {}
     for item, descriptor in zip(hydrated, descriptors, strict=True):

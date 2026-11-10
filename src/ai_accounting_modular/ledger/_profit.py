@@ -5,6 +5,7 @@ from collections import defaultdict
 from ai_accounting_modular.contracts.public import (
     checked_fen,
     content_digest,
+    posting_lines,
     schema_document,
 )
 from ai_accounting_modular.ledger.reporting.public import profit_totals_fen
@@ -96,7 +97,7 @@ def pretax_basis_digest(first, last, start, slices, prior, source, kind, *, view
 
 
 def has_pretax_effect(plan):
-    return any(amount for row, amount in profit_rows(plan["lines"]).items() if row != 31)
+    return any(amount for row, amount in profit_rows(posting_lines(plan)).items() if row != 31)
 
 
 def is_profit_account(code):

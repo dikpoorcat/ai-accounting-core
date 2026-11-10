@@ -6,6 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    append_journal_line,
     checked_fen,
     fact_source_paths,
     format_fen,
@@ -170,7 +171,7 @@ def plan_for(fact, context, values):
         },
     }
     for name in (
-        "lines",
+        "journals",
         "obligations",
         "settlements",
         "obligation_reclassifications",
@@ -220,14 +221,14 @@ def line(plan, account, value, *, debit=False, summary="税费采用"):
         return
     if value < 0:
         reject("受控分录金额不能为负。", "invalid_input")
-    plan["lines"].append(
+    return append_journal_line(
+        plan,
         {
-            "line_no": len(plan["lines"]) + 1,
             "account_code": account,
             "debit_fen": format_fen(value if debit else 0),
             "credit_fen": format_fen(0 if debit else value),
             "summary": summary,
-        }
+        },
     )
 
 

@@ -231,7 +231,9 @@ def test_replacing_the_whole_opening_source_rebinds_asset_and_explicit_continuat
     assert saved["completion"] == "complete", saved
     after = result(app, company, disposed)
     assert after["target"] == before["target"]
-    assert after["reference"]["voucher_number"] == before["reference"]["voucher_number"]
+    assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in after["vouchers"]} == {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in before["vouchers"]
+    }
     assert {source["business_id"] for source in after["basis"]["source_results"]} == {
         successor["business_id"]
     }

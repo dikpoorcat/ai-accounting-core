@@ -16,7 +16,7 @@ def capture(repo, selected_ids, headers, references):
     selected = target_vouchers(
         repo, [headers[identity] for identity in selected_ids], headers_only=True
     )
-    owners = {voucher["result_id"] for voucher in selected.values() if voucher is not None}
+    owners = {voucher["result_id"] for journals in selected.values() for voucher in journals}
     owner_refs = dict(references)
     needed = owners - owner_refs.keys()
     if needed:
@@ -30,16 +30,18 @@ def capture(repo, selected_ids, headers, references):
         checked, _ = source_headers(actual.values())
         owner_refs.update((entry.reference["result_id"], entry.reference) for entry in checked)
     return {
-        identity: None
-        if voucher is None
-        else VoucherDirectoryEntry(
-            voucher["voucher_id"],
-            voucher["period"],
-            voucher["number"],
-            voucher["role"],
-            voucher["summary"],
-            dict(owner_refs[voucher["result_id"]]),
-            voucher["reverses_voucher_id"],
+        identity: tuple(
+            VoucherDirectoryEntry(
+                voucher["voucher_id"],
+                voucher["journal_key"],
+                voucher["period"],
+                voucher["number"],
+                voucher["role"],
+                voucher["summary"],
+                dict(owner_refs[voucher["result_id"]]),
+                voucher["reverses_voucher_id"],
+            )
+            for voucher in journals
         )
-        for identity, voucher in selected.items()
+        for identity, journals in selected.items()
     }

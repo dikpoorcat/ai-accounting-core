@@ -90,7 +90,7 @@ def test_unknown_issue_is_accounting_state_but_repeat_is_idempotent(store):
 def test_failed_adoption_rolls_back_unknown_detail_and_prior_write(store):
     ledger = create_ledger()
     invalid = change(detail(), seq=1)
-    invalid["plans"][0]["lines"][1]["credit_fen"] = "999"
+    invalid["plans"][0]["journals"][0]["lines"][1]["credit_fen"] = "999"
     with pytest.raises(ContractError, match="借贷不平衡"):
         with store.write_unit(COMPANY) as uow:
             adopt_declared(ledger, [change(detail())], uow)

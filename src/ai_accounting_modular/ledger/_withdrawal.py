@@ -67,7 +67,7 @@ def retirement_plan(repo, old, explanation):
         **{
             name: []
             for name in (
-                "lines",
+                "journals",
                 "obligations",
                 "settlements",
                 "obligation_reclassifications",

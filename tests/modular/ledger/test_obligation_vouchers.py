@@ -89,7 +89,7 @@ def test_selected_only_map_does_not_resolve_a_current_only_correction(store, mon
     assert len(actual.sources) == len(actual.origins) == 2
     assert set(actual.selected_vouchers) == {january["reference"]["result_id"]}
     assert set(seen) == set(actual.selected_vouchers)
-    assert next(iter(actual.selected_vouchers.values())).period == "2026-01"
+    assert next(iter(actual.selected_vouchers.values()))[0].period == "2026-01"
 
 
 def test_inherited_voucher_retains_its_independently_checked_frozen_owner(store):
@@ -109,7 +109,7 @@ def test_inherited_voucher_retains_its_independently_checked_frozen_owner(store)
         actual = ledger.capture_obligation_directory(query("2026-02", include_vouchers=True), read)
     assert set(actual.selected_vouchers) == {february["reference"]["result_id"]}
     assert next(iter(actual.selected_vouchers.values())) == expected
-    assert expected.result["result_id"] == january["reference"]["result_id"]
+    assert expected[0].result["result_id"] == january["reference"]["result_id"]
     assert set(actual.origins) == {source.source["result_id"] for source in actual.sources}
     assert january["reference"]["result_id"] not in actual.origins
 
@@ -161,13 +161,13 @@ def test_retirement_never_borrows_a_baseline_voucher_after_its_reversal(store, r
             corrected = withdrawal(ledger.get_result_source(BUSINESS, "main", unit))
         else:
             corrected = expense("0", seq=1)
-            corrected["plans"][0].update(lines=[], obligations=[])
+            corrected["plans"][0].update(journals=[], obligations=[])
             corrected["plans"][0]["basis"]["input"].pop("report_details")
         adopt_declared(ledger, [corrected], unit, correction_period="2026-02")
     latest = result(store)
     assert [row["role"] for row in latest["vouchers"]] == ["reversal"]
     with store.read_unit(COMPANY) as read:
-        assert ledger.get_effective_voucher_directory([latest["reference"]], read) == (None,)
+        assert ledger.get_effective_voucher_directory([latest["reference"]], read) == ((),)
         assert (
             ledger.capture_obligation_directory(
                 query("2026-02", include_vouchers=True), read
@@ -225,13 +225,13 @@ def test_a_selected_unjournaled_target_is_explicit_none_not_an_absent_key(store)
     # The shared trusted-plan contract also supports formal targets without a
     # journal. The resolver must use the actual stored journal relation.
     change = expense()
-    change["plans"][0]["lines"] = []
+    change["plans"][0]["journals"] = []
     with store.write_unit(COMPANY) as unit:
         adopt_declared(ledger, [change], unit)
     with store.read_unit(COMPANY) as read:
         actual = ledger.capture_obligation_directory(query(include_vouchers=True), read)
     assert len(actual.selected) == 1
-    assert actual.selected_vouchers == {actual.sources[0].source["result_id"]: None}
+    assert actual.selected_vouchers == {actual.sources[0].source["result_id"]: ()}
 
 
 @pytest.mark.parametrize("flag", [0, 1, None, "true"])

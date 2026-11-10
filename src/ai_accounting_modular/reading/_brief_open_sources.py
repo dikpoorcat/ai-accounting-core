@@ -51,7 +51,7 @@ class OpenSnapshot:
     current_cutoff: str
     complete: bool
     withdrawn: set[tuple[str, str]]
-    selected_vouchers: dict[str, VoucherDirectoryEntry | None]
+    selected_vouchers: dict[str, tuple[VoucherDirectoryEntry, ...]]
 
 
 def _withdrawn(reader, scope, references, cutoff, read):

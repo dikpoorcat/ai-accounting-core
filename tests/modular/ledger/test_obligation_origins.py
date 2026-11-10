@@ -89,7 +89,7 @@ def test_exact_origins_preserve_frozen_and_current_and_can_locate_effective_owne
     february = locator(store, ledger, month="2026-02")
     with store.read_unit(COMPANY) as read:
         headers = ledger.get_effective_voucher_directory([february], read)
-        older = ledger.get_obligation_origins([headers[0].result], read)[0]
+        older = ledger.get_obligation_origins([headers[0][0].result], read)[0]
         actual = ledger.get_obligation_origins([january, february], read)
         all_bodies = ledger.get_adopted_contents([january, february], read)
     assert older.reference == january
@@ -240,7 +240,7 @@ def test_same_read_requeries_after_a_write_and_never_reuses_a_prior_acceptance(s
         plan["basis"]["input"]["expense_class"] = "sales"
         plan["basis"]["input"]["report_details"] = [{"code": "sales_other", "amount_fen": "80000"}]
         plan["target"]["values"]["expense_or_income_class"] = "sales"
-        plan["lines"][0]["account_code"] = "5601"
+        plan["journals"][0]["lines"][0]["account_code"] = "5601"
         adopt_declared(ledger, [changed], unit)
         second = ledger.capture_obligation_directory(query(), unit)
     assert (

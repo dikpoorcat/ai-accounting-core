@@ -142,7 +142,7 @@ def test_public_card_and_months_use_one_source_with_exact_tail_and_no_previous_b
             accumulated
         }
     assert not any(slot == "depreciation:2026-06" for _, slot in context.reads)
-    assert context.plans[item["business_id"], "main"]["lines"] == []
+    assert context.plans[item["business_id"], "main"]["journals"] == []
     assert all(
         not plan["fund_movements"] and not plan["cost_lots"] for plan in context.plans.values()
     )
@@ -299,10 +299,13 @@ def test_same_unit_cross_owner_disposal_truncates_only_its_card_and_replacement_
     after = results(app, company, item)
     assert after["depreciation:2026-07"]["target"]["values"]["total_amount_fen"] == "7666"
     assert results(app, company, disposed)["main"]["target"]["values"]["gain_loss_fen"] == "-4335"
-    assert (
-        after["depreciation:2026-07"]["reference"]["voucher_number"]
-        == before["depreciation:2026-07"]["reference"]["voucher_number"]
-    )
+    assert {
+        v["journal_key"]: (v["voucher_id"], v["number"])
+        for v in after["depreciation:2026-07"]["vouchers"]
+    } == {
+        v["journal_key"]: (v["voucher_id"], v["number"])
+        for v in before["depreciation:2026-07"]["vouchers"]
+    }
 
 
 @pytest.mark.parametrize("operation", ["withdraw", "remove_card"])

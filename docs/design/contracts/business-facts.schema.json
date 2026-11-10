@@ -20542,13 +20542,6 @@
         "basis": {
           "$ref": "#/$defs/AdoptedBasis"
         },
-        "lines": {
-          "type": "array",
-          "items": {
-            "$ref": "core.schema.json#/$defs/Line"
-          },
-          "minItems": 0
-        },
         "obligations": {
           "type": "array",
           "items": {
@@ -20611,6 +20604,13 @@
             "$ref": "#/$defs/ReportContribution"
           },
           "minItems": 0
+        },
+        "journals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PostingJournal"
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -20622,7 +20622,7 @@
         "rule_refs",
         "target",
         "basis",
-        "lines",
+        "journals",
         "obligations",
         "settlements",
         "obligation_reclassifications",
@@ -20655,9 +20655,6 @@
           },
           "then": {
             "properties": {
-              "lines": {
-                "maxItems": 0
-              },
               "obligations": {
                 "maxItems": 0
               },
@@ -20683,6 +20680,9 @@
                 "maxItems": 0
               },
               "report_contributions": {
+                "maxItems": 0
+              },
+              "journals": {
                 "maxItems": 0
               }
             }
@@ -33094,6 +33094,32 @@
         "exemption_income_fen",
         "rounding_adjustment_fen"
       ]
+    },
+    "PostingJournal": {
+      "type": "object",
+      "properties": {
+        "journal_key": {
+          "$ref": "core.schema.json#/$defs/Slot"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "core.schema.json#/$defs/Line"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "journal_key",
+        "summary",
+        "lines"
+      ],
+      "additionalProperties": false
     }
   }
 }

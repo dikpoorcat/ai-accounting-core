@@ -186,16 +186,18 @@ class Selection:
         missing = [head for head in heads if head["result_id"] not in self._lines]
         if missing:
             journals = target_vouchers(self.repo, missing, headers_only=True)
-            ids = {row["voucher_id"] for row in journals.values() if row is not None}
+            ids = {row["voucher_id"] for values in journals.values() for row in values}
             grouped = defaultdict(list)
             for row in self.repo.financial_lines(ids) if ids else ():
                 grouped[row["voucher_id"]].append(row)
-            for head_id, voucher in journals.items():
-                self._lines[head_id] = (
-                    sorted(grouped[voucher["voucher_id"]], key=lambda row: row["line_no"])
-                    if voucher
-                    else []
-                )
+            for head_id, values in journals.items():
+                self._lines[head_id] = [
+                    line
+                    for voucher in values
+                    for line in sorted(
+                        grouped[voucher["voucher_id"]], key=lambda row: row["line_no"]
+                    )
+                ]
         for head in heads:
             if self._lines[head["result_id"]]:
                 self.source(head)

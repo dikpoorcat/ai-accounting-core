@@ -330,7 +330,7 @@ def test_structure_export_is_complete_and_detached_from_its_single_packaged_sour
         "objects",
     }
     assert contract["format_family"] == "ai-accounting-modular/1"
-    assert contract["kind"] == "company" and contract["version"] == 4
+    assert contract["kind"] == "company" and contract["version"] == 5
     assert all(
         set(item) == {"owner", "type", "name", "table", "sql"} for item in contract["objects"]
     )
@@ -341,6 +341,18 @@ def test_structure_export_is_complete_and_detached_from_its_single_packaged_sour
     contract["fingerprint"] = "f" * 64
     assert company_structure_contract() == original
     assert verify_database(company.database_path).structure_fingerprint == original["fingerprint"]
+
+
+def test_earlier_company_version_is_rejected_without_relabelling_or_rewriting(company):
+    with closing(sqlite3.connect(company.database_path)) as connection:
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute("UPDATE system_meta SET schema_version=4")
+        connection.commit()
+    before = company.database_path.read_bytes()
+    with pytest.raises(ContractError) as error:
+        verify_database(company.database_path)
+    assert error.value.code == "storage_corrupt"
+    assert company.database_path.read_bytes() == before
 
 
 @pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])

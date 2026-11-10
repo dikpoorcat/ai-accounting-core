@@ -89,7 +89,7 @@ def test_contract_main_evaluates_without_reading_project_members_or_work_months(
     result = create_investment().evaluate_slot(agreement["business_id"], "main", ContractContext())
     assert result["target"]["kind"] == "investment.cooperation_contract"
     assert result["target"]["values"]["company_initial_commitment_fen"] == "100"
-    assert result["lines"] == []
+    assert result["journals"] == []
 
 
 def test_december_addition_retains_january_to_november_and_does_not_replay_closed_sources(tmp_path):

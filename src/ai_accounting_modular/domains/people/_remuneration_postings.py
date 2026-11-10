@@ -1,4 +1,4 @@
-"""Gross accruals and deductions retain turnover without creating extra payable resources."""
+"""Separate balanced accrual and deduction journals from one complete payroll result."""
 
 from ai_accounting_modular.contracts.public import parse_fen
 
@@ -32,27 +32,25 @@ def post_remuneration(plan):
         (parse_fen(values["employee_housing_fen"]), "个人公积金", "224103"),
         (parse_fen(values["tax_fen"]), "个人所得税", "222103"),
     )
-    # Ledger bounds both sides of a voucher, including turnover that later clears.
-    total((parse_fen(values["cost_fen"]), *(amount for amount, _, _ in deductions)))
+    # Each physical voucher has its own int64 turnover bound.
+    total(amount for amount, _, _ in accruals)
+    total(amount for amount, _, _ in deductions)
+    accrual_summary = "、".join(label for amount, label, _ in accruals if amount) + "计提"
+    deduction_summary = "代扣" + "、".join(label for amount, label, _ in deductions if amount)
+    accrual = {"journal_key": "accrual", "journal_summary": accrual_summary}
+    deduction = {"journal_key": "deductions", "journal_summary": deduction_summary}
     for amount, label, account in accruals:
         summary = "计提" + label
-        line(plan, cost_account, amount, debit=True, summary=summary, **cost_identity)
+        line(plan, cost_account, amount, debit=True, summary=summary, **cost_identity, **accrual)
         line(
             plan,
             account,
             amount,
             party=person if account == payable_account else None,
             summary=summary,
+            **accrual,
         )
     for amount, label, account in deductions:
         summary = "代扣" + label
-        line(plan, payable_account, amount, debit=True, party=person, summary=summary)
-        line(plan, account, amount, summary=summary)
-
-    if plan["lines"]:
-        # The ledger derives the voucher header from its first physical line.
-        components = [label for amount, label, _ in accruals if amount]
-        topic = "、".join(components) + "计提"
-        if any(amount for amount, _, _ in deductions):
-            topic += "及代扣"
-        plan["lines"][0]["summary"] = topic + "：" + plan["lines"][0]["summary"]
+        line(plan, payable_account, amount, debit=True, party=person, summary=summary, **deduction)
+        line(plan, account, amount, summary=summary, **deduction)

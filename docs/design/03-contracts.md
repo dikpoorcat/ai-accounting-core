@@ -208,7 +208,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `financial_balances(scope, names, read)` | FinancialBalances 只返回所选受控余额字段的 values、问题、必要来源、范围及版本。可选银行／现金／平台，以及固定资产、无形资产和长期资产的原价／累计／净值；字段与 `financial_summary_inputs(names)` 共用唯一科目声明。资产模块一次取9个资产余额，不读取完整损益和三表。 |
 | `account_balances(keys, period, read, selection=...)` | 最多500个 AccountBalanceKey(account_code, object_id?)；对象省略表示该科目全部对象。返回每项有据月初/月末余额、首个正式记账月、问题及必要来源。current 使用最终有效事实；as_posted 的 as_of 必须等于所查月份，月初沿用上月正式余额。1101 与基金身份按同一口径读取成本，不从购买事实累计反推。余额读取按实际账户行定位业务，再选择正式有效凭证；完整核验期初，保留无凭证采用的凭证继承和相抵为零的实际贡献。 |
 | `query_obligation_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别/方向及 include_settled。纳入以前月份截至该月的完整义务及清偿，返回 PositionPage。 |
-| `capture_obligation_directory(query, read)` | 轻目录返回所选口径的全部未结义务及其当前精确匹配、整数分 PositionAmounts 和去重的正式来源。query 明确两个经济截止月及 include_origins，selected_view 默认为 as_posted，也可选 current；可按业务、类别和方向限定。include_vouchers 默认 False；启用后 selected_vouchers 只按选中项的唯一 result_id 返回实际有效凭证或明确的 None，未请求为 None，空选择为 {}；继承凭证保留真实 owner，不扩大 sources/origins。None 业务范围表示全部，空元组表示空范围。当前匹配可已结清或不存在；需要发现全部当前未结项时必须选择 current。此口不提供旧 PositionPage 的全公司统计、版本或排序。 |
+| `capture_obligation_directory(query, read)` | 轻目录返回所选口径的全部未结义务及其当前精确匹配、整数分 PositionAmounts 和去重的正式来源。query 明确两个经济截止月及 include_origins，selected_view 默认为 as_posted，也可选 current；可按业务、类别和方向限定。include_vouchers 默认 False；启用后 selected_vouchers 只按选中项的唯一 result_id 返回完整有效凭证元组，无凭证为空元组，未请求为 None，空选择为 {}；继承凭证保留真实 owner，不扩大 sources/origins。None 业务范围表示全部，空元组表示空范围。当前匹配可已结清或不存在；需要发现全部当前未结项时必须选择 current。此口不提供旧 PositionPage 的全公司统计、版本或排序。 |
 | `obligation_cutoff_candidates(previous_cutoff_period, cutoff_period, read)` | 要求建账月≤前截止月<后截止月；在同一读取中比较两个截止月实际 as_posted 选中结果，返回不可变 ObligationCutoffCandidates，其中 business_ids 为完整、去重并排序的候选业务超集，含变化义务及清偿、转移和重分类实际涉及的来源／目标业务。仅读采用头和资源引用，不读取 Basis／Target 正文或重算金额；不是已删除历史的变更日志，也不能证明另一事务中旧索引仍有效。 |
 | `get_obligation_origins(locators, read)` | 按精确 ResultRef 返回 AdoptedOriginProjection 或完整 AdoptedContent。费用、服务销售、销售退回、费用收回、代收代付及三种实际付款使用有限投影，严校声明的 kind、冻结业务身份、付款类型及完整 adopted_quantities；工资备用金同时核对备用金费用。其余复杂类型保留完整正文及摘要核验。投影不证明未返回的正文，不能冒充完整 AdoptedContent；消费者核对精确来源并只使用声明字段，凭证展开等完整读取仍沿原入口。轻目录可在同次捕获中附带这些来源，避免逐资源重复读取。 |
 | `query_cost_positions(query, page, read, selection=...)` | query 含 cutoff_period 月末、可选业务/对象/类别及 include_consumed。已耗尽来源仍有正式身份，不因剩余为零从完整目录消失；页面可以明确筛掉。 |
@@ -221,7 +221,7 @@ expected_head核对同公司、同范围、同读取口径的实际结果，不�
 | `query_adopted_targets(scope, kinds, page, read, *, business_ids=(), result_slots=(), source_refs=())` | 按与正式目录相同的截止选择，返回每个业务／槽的一项完整Target及精确引用和来源；只读取本页Target，不读取历史Basis或凭证明细。source_refs按至多500个公开业务／结果槽，沿已有正式依据引用索引筛选消费者，覆盖无凭证零结果及冻结历史，不用当前关系代替正式采用。供人员名单和相关后续结果取数；不是按采用月展开的发生额。 |
 | `get_adopted_sources(sources, read)`、`account_names(codes)` | 前者按最多500个精确ResultSourceRef核对身份、代次及内容摘要，只返回正式目录头；可定位消费者实际采用的较早冻结来源，不用当前头替代。后者无需数据库，返回受控科目的唯一中文名称，不由看板另抄科目表。 |
 | `period_closure(period, read)` | 只读取指定月份的关账状态、实际覆盖关账月、冻结范围和头摘要，不读取整套三表；完整冻结报告另由财务报告入口核验和提供。 |
-| `get_effective_voucher_directory(refs, read)` | 按最多500个精确ResultRef定位完整目标实际采用的凭证头；无新增凭证的正式采用沿必要基线继承，撤去或无替代冲正停止继承。每项返回实际凭证所属ResultRef及凭证头，或明确null；不取历史Basis、分录或凭证增量。冷生成可只存引用，展开实际页时再读取完整凭证。 |
+| `get_effective_voucher_directory(refs, read)` | 按最多500个精确ResultRef定位完整目标实际采用的凭证头；无新增凭证的正式采用沿必要基线继承，撤去或无替代冲正停止继承。每项返回完整有效凭证头元组，无凭证为空元组；每张含 journal_key 及实际凭证所属 ResultRef；不取历史Basis、分录或凭证增量。冷生成可只存引用，展开实际页时再读取完整凭证。 |
 | `query_adopted_directory(scope, kinds, page, read, business_ids=..., result_slots=...)` | 返回月末所选正式结果的窄目录，包含无凭证结果和退休结果。`get_adopted_contents(locators, read)` 按最多500个精确 ResultRef 返回 source/target/basis，不附凭证或全部资源。 |
 | `fund_movements(account_id, from, to, read, selection=...)` | 账户为 None 时明确取全公司。按真实发生月份、实际日及稳定 movement_id 返回真实资金定义；正式冲正、替代凭证不制造第二次资金。 |
 
@@ -286,7 +286,7 @@ roster按截至所选月的正式Target保留人员和员工／劳务类别，�
 
 整公司离线办理复用同一核算执行流程，进程内完整输入和结果不伪装成一次有界的 AI 请求或回执。单次 AI 请求仍执行其批量与字节限制；标准资料按文档自身合同核验，一笔事务处理全部对象及业务，不能因每 500 项一次提交而留下半本账。离线完整问题集合逐项返回，顶层给简明原因，不把大量来源身份拼成长句，也不因输出项数截断遗漏问题。
 
-`PostingPlan` 只由领域程序产生，字段包括 business_id、result_slot、accounting_period、rule_refs、受控 lines、obligations、settlements、obligation_reclassifications、cost_lots/consumptions、资金与税务/报表分类结果、agency_proofs、引用依据。每次还声明该业务的完整结果槽集合；未再产生的旧槽必须明确退出，不能遗留旧义务。公开资源键由 business_id+slot 稳定定位，不随 result_id 或计算序号改变；有清偿/消耗/冻结必要引用时不能静默删除。AI 接口不接收计划，科目和方向由固定业务规则选择，只有内部完整平衡的计划才能采用。
+`PostingPlan` 只由领域程序产生，字段包括 business_id、result_slot、accounting_period、rule_refs、受控 journals、obligations、settlements、obligation_reclassifications、cost_lots/consumptions、资金与税务/报表分类结果、agency_proofs、引用依据。journals 是唯一分录表示，每项包含稳定 journal_key、独立 summary 和局部连续编号的非空 lines；各张独立平衡，无分录时用空集合。普通结果使用 main，薪酬使用 accrual 和 deductions。ResultRef 不携带代表凭证；正式凭证及其精确定位包含实际所有者身份，按结果解析返回完整有效凭证组。每次还声明该业务的完整结果槽集合；未再产生的旧槽必须明确退出，不能遗留旧义务。公开资源键由 business_id+slot 稳定定位，不随 result_id 或计算序号改变；有清偿/消耗/冻结必要引用时不能静默删除。AI 接口不接收计划，科目和方向由固定业务规则选择，只有内部完整平衡的计划才能采用。
 
 `ChangePlan.retained_results`使用完整ResultRef声明沿用的当前正式结果，仅用于事实未变的recalculate责任。plans与retained_results互斥，其并集必须等于complete_result_slots；新增、替换、恢复及分类交接不能靠保留引用跳过计算。保留引用须与当前头完全相同，不能拿冻结基线冒充当前头。ledger在采用及事务末再次核对，允许本单把原开放头正常冻结；不为保留槽重造PostingPlan或清掉其资源。新采用来源须引用本单新结果或当前正式头，只有本消费者必要冻结依据中已采用的精确引用可以继承。
 

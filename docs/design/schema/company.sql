@@ -6,7 +6,7 @@ CREATE TABLE "system_meta" (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),
  database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),
- schema_version INTEGER NOT NULL CHECK(schema_version=4),
+ schema_version INTEGER NOT NULL CHECK(schema_version=5),
  structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),
  global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)
 ) STRICT;
@@ -370,6 +370,7 @@ CREATE INDEX result_basis_ref_reverse ON result_basis_ref(producer_business_id,p
 CREATE TABLE voucher (
 voucher_id TEXT PRIMARY KEY CHECK(length(voucher_id)=36),
  result_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,
+ journal_key TEXT NOT NULL CHECK(length(journal_key) BETWEEN 1 AND 100),
  role TEXT NOT NULL CHECK(role IN ('original','reversal','replacement','reclassification','closing')),
  period TEXT NOT NULL,
  number INTEGER NOT NULL CHECK(number>=1),
@@ -377,7 +378,7 @@ voucher_id TEXT PRIMARY KEY CHECK(length(voucher_id)=36),
  reverses_voucher_id TEXT REFERENCES voucher(voucher_id),
  sealed INTEGER NOT NULL DEFAULT 0 CHECK(sealed IN (0,1)),
  UNIQUE(period,number),
- UNIQUE(result_id,role)
+ UNIQUE(result_id,journal_key,role)
 ) STRICT;
 
 -- owner: ledger

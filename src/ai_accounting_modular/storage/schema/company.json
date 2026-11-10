@@ -1,5 +1,5 @@
 {
-  "fingerprint": "e030254dc0bc191993520b988f68cbc4033701d0dec154dc9a6044a6f93321b1",
+  "fingerprint": "14d027c1bad018578e16a2c81cec81e82f8c4fd9de3e125992c8f269036de05f",
   "kind": "company",
   "objects": [
     {
@@ -425,7 +425,7 @@
     {
       "name": "voucher",
       "owner": "ledger",
-      "sql": "CREATE TABLE voucher (\nvoucher_id TEXT PRIMARY KEY CHECK(length(voucher_id)=36),\n result_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,\n role TEXT NOT NULL CHECK(role IN ('original','reversal','replacement','reclassification','closing')),\n period TEXT NOT NULL,\n number INTEGER NOT NULL CHECK(number>=1),\n summary TEXT NOT NULL,\n reverses_voucher_id TEXT REFERENCES voucher(voucher_id),\n sealed INTEGER NOT NULL DEFAULT 0 CHECK(sealed IN (0,1)),\n UNIQUE(period,number),\n UNIQUE(result_id,role)\n) STRICT",
+      "sql": "CREATE TABLE voucher (\nvoucher_id TEXT PRIMARY KEY CHECK(length(voucher_id)=36),\n result_id TEXT NOT NULL REFERENCES adopted_result(result_id) ON DELETE RESTRICT,\n journal_key TEXT NOT NULL CHECK(length(journal_key) BETWEEN 1 AND 100),\n role TEXT NOT NULL CHECK(role IN ('original','reversal','replacement','reclassification','closing')),\n period TEXT NOT NULL,\n number INTEGER NOT NULL CHECK(number>=1),\n summary TEXT NOT NULL,\n reverses_voucher_id TEXT REFERENCES voucher(voucher_id),\n sealed INTEGER NOT NULL DEFAULT 0 CHECK(sealed IN (0,1)),\n UNIQUE(period,number),\n UNIQUE(result_id,journal_key,role)\n) STRICT",
       "table": "voucher",
       "type": "table"
     },
@@ -1034,10 +1034,10 @@
     {
       "name": "system_meta",
       "owner": "storage",
-      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=4),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
+      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=5),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
       "table": "system_meta",
       "type": "table"
     }
   ],
-  "version": 4
+  "version": 5
 }

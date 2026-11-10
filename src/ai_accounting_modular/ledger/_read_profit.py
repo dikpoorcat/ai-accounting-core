@@ -39,13 +39,13 @@ def contributions(scope, page, read):
     if not baseline_ids <= heads.keys():
         fail("storage_corrupt", "投资损益的正式基线不存在。")
     journals = target_vouchers(repo, list(heads.values()), headers_only=True)
-    voucher_ids = {row["voucher_id"] for row in journals.values() if row is not None}
+    voucher_ids = {row["voucher_id"] for values in journals.values() for row in values}
     lines = defaultdict(list)
     for row in repo.read_profit_lines(voucher_ids, ACCOUNTS):
         lines[row["voucher_id"]].append(row)
     amounts = {}
-    for key, journal in journals.items():
-        own = lines[journal["voucher_id"]] if journal is not None else ()
+    for key, values in journals.items():
+        own = [line for journal in values for line in lines[journal["voucher_id"]]]
         amounts[key] = (
             profit_rows(own).get(20, 0),
             sum_amounts(

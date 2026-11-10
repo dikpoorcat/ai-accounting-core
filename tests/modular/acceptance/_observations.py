@@ -77,7 +77,17 @@ def normalized(snapshot, business_id=None):
         generation=main.get("generation"),
         correction_result_id=main.get("result_id") if main.get("baseline_result_id") else None,
         baseline_result_id=main.get("baseline_result_id"),
-        voucher={"number": main.get("voucher_number")},
+        voucher={
+            "number": next(
+                (
+                    v["number"]
+                    for v in current_vouchers
+                    if v["role"] in ("original", "replacement")
+                    and v["journal_key"] in ("main", "accrual")
+                ),
+                None,
+            )
+        },
         current_target_fen=result.get("target", {}).get("values", {}).get("amount_fen"),
         frozen_original_fen=originals[0]["target"]["values"].get("amount_fen")
         if originals
@@ -175,7 +185,18 @@ def normalized(snapshot, business_id=None):
         observed["a"] = dict(
             result_id=ref.get("result_id"),
             generation=ref.get("generation"),
-            voucher={"number": ref.get("voucher_number")},
+            voucher={
+                "number": next(
+                    (
+                        v["number"]
+                        for r in results
+                        if r["reference"]["result_id"] == ref.get("result_id")
+                        for v in r["vouchers"]
+                        if v["role"] in ("original", "replacement") and v["journal_key"] == "main"
+                    ),
+                    None,
+                )
+            },
         )
     return observed
 

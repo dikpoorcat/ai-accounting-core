@@ -2,6 +2,7 @@
 
 import pytest
 
+from ai_accounting_modular.contracts.public import posting_lines
 from ai_accounting_modular.domains.taxes.public import create_taxes
 from tests.modular.domains.financing._support import (
     COUNTERPARTY,
@@ -64,9 +65,9 @@ def test_financial_rounding_never_reduces_the_ordinary_exemption_subline(actual)
     )
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert result["target"]["values"]["rounding_adjustment_fen"] == "-1"
-    assert not any(row["account_code"] == "6301" for row in result["lines"])
+    assert not any(row["account_code"] == "6301" for row in posting_lines(result))
     assert any(
-        row["account_code"] == "5111" and row["credit_fen"] == "1" for row in result["lines"]
+        row["account_code"] == "5111" and row["credit_fen"] == "1" for row in posting_lines(result)
     )
     assert exemption_component(result) == {
         "type": "ordinary_vat_accounting",
@@ -89,7 +90,7 @@ def test_ordinary_rounding_gain_stays_income_but_is_not_exemption_income():
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert result["target"]["values"]["rounding_adjustment_fen"] == "-1"
     assert any(
-        row["account_code"] == "6301" and row["credit_fen"] == "1" for row in result["lines"]
+        row["account_code"] == "6301" and row["credit_fen"] == "1" for row in posting_lines(result)
     )
     assert exemption_component(result) == {
         "type": "ordinary_vat_accounting",

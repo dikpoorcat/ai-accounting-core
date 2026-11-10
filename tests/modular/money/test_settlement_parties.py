@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, PageQuery
+from ai_accounting_modular.contracts.public import ContractError, PageQuery, posting_lines
 from ai_accounting_modular.money.public import MovementQuery, create_money
 
 from .conftest import Context, objects, payable, payment
@@ -25,7 +25,7 @@ def test_evidenced_actual_party_does_not_rewrite_unknown_source_attribution(ids)
     context = Context([fact], objects=objects(ids), obligations=[obligation])
     plan = create_money().evaluate_slot(fact["business_id"], "main", context)
     assert plan["fund_movements"][0]["party_id"] == ids["party"]
-    assert "party_id" not in plan["lines"][0]
+    assert "party_id" not in posting_lines(plan)[0]
     assert "party_id" not in plan["basis"]["adopted_quantities"][0]
     assert context.obligations[ids["expense"], "primary"] == obligation
 
@@ -43,8 +43,8 @@ def test_one_individual_payment_can_cover_matching_known_and_unknown_obligations
     context = Context([fact], objects=objects(ids), obligations=[payable(ids), anonymous])
     plan = create_money().evaluate_slot(fact["business_id"], "main", context)
     assert plan["fund_movements"][0]["party_id"] == ids["party"]
-    assert plan["lines"][0]["party_id"] == ids["party"]
-    assert "party_id" not in plan["lines"][1]
+    assert posting_lines(plan)[0]["party_id"] == ids["party"]
+    assert "party_id" not in posting_lines(plan)[1]
 
 
 def test_explicit_allocation_recipient_must_match_actual_party_even_for_unknown_source(ids):

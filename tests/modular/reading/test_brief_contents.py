@@ -114,7 +114,7 @@ def test_inherited_voucher_loads_its_missing_frozen_body_and_never_uses_the_new_
         assert calls == {
             (original_body.reference["result_id"], original_body.reference["generation"]): 1
         }
-        header = _brief_vouchers.effective_headers(case.kernel.reading, refs, read)[0]
+        (header,) = _brief_vouchers.effective_headers(case.kernel.reading, refs, read)[0]
         frozen_body = case.kernel.ledger.get_adopted_contents((header.result,), read)[0]
         calls.clear()
         complete = _brief_vouchers.descriptors_for_references(

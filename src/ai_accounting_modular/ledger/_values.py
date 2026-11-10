@@ -60,7 +60,9 @@ def check_plan(plan: dict) -> None:
         fail("invalid_input", "正式目标与采用依据的业务类型必须一致。")
     if plan["basis"]["period"] != plan["accounting_period"]:
         fail("invalid_input", "采用依据月份与计划核算月份不一致。")
-    check_lines(plan["lines"])
+    unique((journal["journal_key"] for journal in plan["journals"]), "完整结果内凭证键不能重复。")
+    for journal in plan["journals"]:
+        check_lines(journal["lines"])
     for name in ("obligations", "cost_lots"):
         unique((item["slot"] for item in plan[name]), "一份完整结果内公开资源槽不能重复。")
         for item in plan[name]:
@@ -100,7 +102,7 @@ def check_bookkeeping_period(plan: dict, start_period: str) -> None:
     if plan["accounting_period"] >= start_period:
         return
     collections = (
-        "lines",
+        "journals",
         "obligations",
         "settlements",
         "obligation_reclassifications",

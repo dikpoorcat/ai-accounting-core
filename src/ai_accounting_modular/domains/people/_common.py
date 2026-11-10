@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    append_journal_line,
     checked_fen,
     format_fen,
     sum_fen,
@@ -72,7 +73,7 @@ def plan_for(fact, context, values, *, accounting_input=None):
         },
     }
     for name in (
-        "lines",
+        "journals",
         "obligations",
         "settlements",
         "obligation_reclassifications",
@@ -98,11 +99,21 @@ def use_location(plan, context, locator):
         plan["basis"]["source_locations"].append(deepcopy(locator))
 
 
-def line(plan, account, amount, *, summary, debit=False, party=None, object_id=None):
+def line(
+    plan,
+    account,
+    amount,
+    *,
+    summary,
+    debit=False,
+    party=None,
+    object_id=None,
+    journal_key="main",
+    journal_summary=None,
+):
     if not amount:
         return
     value = {
-        "line_no": len(plan["lines"]) + 1,
         "account_code": account,
         "debit_fen": format_fen(amount if debit else 0),
         "credit_fen": format_fen(0 if debit else amount),
@@ -112,7 +123,7 @@ def line(plan, account, amount, *, summary, debit=False, party=None, object_id=N
         value["party_id"] = party
     if object_id is not None:
         value["object_id"] = object_id
-    plan["lines"].append(value)
+    return append_journal_line(plan, value, journal_key=journal_key, summary=journal_summary)
 
 
 def obligation(plan, slot, account, amount, *, category, party=None, period=None, cashflow=None):

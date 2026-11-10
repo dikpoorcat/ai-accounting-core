@@ -140,15 +140,18 @@ def test_real_wage_same_unit_sources_and_open_correction_preserve_number(assembl
     original = get(app, company_id, wage["business_id"])["businesses"][0]
     assert original["results"][0]["target"]["values"]["net_fen"] == "830000"
     original_ref = original["results"][0]["reference"]
-    assert original_ref["voucher_number"] == 1
+    assert original["results"][0]["vouchers"][0]["number"] == 1
     wage["data"]["gross_fen"] = "1100000"
     changed = app.accounting_apply(replacement(company_id, wage))
     assert changed["completion"] == "complete", changed
     current = get(app, company_id, wage["business_id"])["businesses"][0]
     assert current["results"][0]["target"]["values"]["net_fen"] == "930000"
-    assert current["results"][0]["reference"]["voucher_number"] == original_ref["voucher_number"]
+    assert (
+        current["results"][0]["vouchers"][0]["number"]
+        == original["results"][0]["vouchers"][0]["number"]
+    )
     assert current["results"][0]["reference"]["result_id"] == original_ref["result_id"]
-    assert len(current["results"][0]["vouchers"]) == 1
+    assert len(current["results"][0]["vouchers"]) == 2
     assert "830000" not in json.dumps(current)
     assert app.accounting_apply(submitted)["error"] == "conflict"
     assert app.accounting_apply(replacement(company_id, wage, seq=1))["accounting"] == "unchanged"
@@ -187,7 +190,7 @@ def test_actual_assessment_change_recalculates_dependent_wage_without_second_cos
     values = state["results"][0]["target"]["values"]
     assert values["net_fen"] == "840000"
     assert values["cost_fen"] == "1230000"
-    assert len(state["results"][0]["vouchers"]) == 1
+    assert len(state["results"][0]["vouchers"]) == 2
 
 
 def test_unused_estimation_base_change_keeps_adopted_actual_wage_and_voucher(assembled):
@@ -237,8 +240,8 @@ def test_labor_reclassification_and_standard_documents_keep_only_current_fact(as
     assert result["completion"] == "complete", result
     current = get(app, company_id, labor["business_id"])["businesses"][0]
     assert (
-        current["results"][0]["reference"]["voucher_number"]
-        == first["results"][0]["reference"]["voucher_number"]
+        current["results"][0]["vouchers"][0]["number"]
+        == first["results"][0]["vouchers"][0]["number"]
     )
     assert current["results"][0]["target"]["values"]["cost_fen"] == "100000"
     with app.storage.read_unit(company_id) as read:

@@ -98,7 +98,7 @@ def evaluate(fact, context):
         **{
             name: []
             for name in (
-                "lines",
+                "journals",
                 "obligations",
                 "settlements",
                 "obligation_reclassifications",

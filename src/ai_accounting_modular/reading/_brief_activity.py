@@ -11,7 +11,7 @@ from . import _brief_activity_index as index
 from . import _brief_vouchers, _brief_vouchers_display
 from . import _business_descriptions as descriptions
 from ._brief_activity_amounts import EVENT_KINDS
-from ._brief_activity_parts import ActivityEvent, parts, rows, semantic
+from ._brief_activity_parts import ActivityEvent, for_journal, parts, rows, semantic
 from ._brief_activity_sources import Contents, identities, pages
 from ._business_labels import remuneration_identity
 from ._collections import IndexItem
@@ -88,8 +88,11 @@ def _reversed_entries(reader, read, directory, chosen):
     refs = [chosen[entry.voucher_id] for entry in reversed_entries]
     actual = _brief_vouchers.effective_headers(reader, refs, read)
     found = {}
-    for entry, original in zip(reversed_entries, actual, strict=True):
-        if original is None or original.voucher_id != entry.reverses_voucher_id:
+    for entry, originals in zip(reversed_entries, actual, strict=True):
+        original = next(
+            (item for item in originals if item.voucher_id == entry.reverses_voucher_id), None
+        )
+        if original is None or original.journal_key != entry.journal_key:
             raise ContractError("storage_corrupt", "冲正凭证与原正式采用的有效凭证不一致。")
         found[original.voucher_id] = original
     return found
@@ -115,6 +118,7 @@ def _events(directory, unjournaled, chosen, cache, prepared):
                         entry.role,
                         entry.number,
                         _brief_vouchers.token(_brief_vouchers.locator(entry)),
+                        entry.journal_key,
                     ),
                     body,
                 )
@@ -237,7 +241,10 @@ def capture(reader, scope, read, *, business_ids=()):
             ref
             for event, body in events
             if event.role != "reversal"
-            for part in prepared[body.reference["result_id"], body.reference["generation"]]
+            for part in for_journal(
+                prepared[body.reference["result_id"], body.reference["generation"]],
+                event.journal_key,
+            )
             for ref in descriptions.part_references(body, part, cache)
         ),
         read,
@@ -257,19 +264,20 @@ def capture(reader, scope, read, *, business_ids=()):
     members, raw_vouchers, by_voucher = [], [], {}
     note_scopes = defaultdict(set)
     for event, body in events:
+        event_parts = for_journal(
+            prepared[body.reference["result_id"], body.reference["generation"]], event.journal_key
+        )
         actual = rows(
             event,
             body,
             objects,
-            prepared=prepared[body.reference["result_id"], body.reference["generation"]],
+            prepared=event_parts,
             obligations=obligations.get(body.source["result_id"], ()),
             own_funds_channel=channels.get(
                 (body.reference["result_id"], body.reference["generation"])
             ),
         )
-        for member, part in zip(
-            actual, prepared[body.reference["result_id"], body.reference["generation"]], strict=True
-        ):
+        for member, part in zip(actual, event_parts, strict=True):
             text, scopes = descriptions.part_display(body, part, cache, prose, event.role)
             member["row"]["description"] = text
             note_scopes[body.reference["business_id"]].update(scopes)

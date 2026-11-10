@@ -17,7 +17,10 @@ from ai_accounting_modular.ledger._repository import LedgerRepository
 from ai_accounting_modular.ledger.public import create_ledger
 
 
-@pytest.mark.parametrize("damage", ["journal", "obligation", "report_detail", "balanced_accounts"])
+@pytest.mark.parametrize(
+    "damage",
+    ["journal", "obligation", "report_detail", "balanced_accounts", "journal_key", "header"],
+)
 def test_individually_legal_remaining_rows_cannot_hide_missing_or_changed_outputs(store, damage):
     ledger = create_ledger()
     save(store, ledger, [detailed_expense(detail(amount="1000"))])
@@ -31,8 +34,12 @@ def test_individually_legal_remaining_rows_cannot_hide_missing_or_changed_output
             connection.execute("DELETE FROM obligation")
         elif damage == "report_detail":
             connection.execute("DELETE FROM result_report_contribution")
-        else:
+        elif damage == "balanced_accounts":
             connection.execute("UPDATE voucher_line SET account_code='540101' WHERE line_no=1")
+        elif damage == "journal_key":
+            connection.execute("UPDATE voucher SET journal_key='changed'")
+        else:
+            connection.execute("UPDATE voucher SET summary='已被改动的凭证摘要'")
 
     _tamper(store, mutate)
     with pytest.raises(ContractError, match="正式输出不完整") as error:
@@ -150,14 +157,7 @@ def test_damaged_saved_journal_cannot_be_frozen_as_an_empty_valid_report(store, 
     assert error.value.code == "storage_corrupt"
     with store.read_unit(COMPANY) as read:
         assert read.head == before_head and ledger.closed_through(read) is None
-        assert ledger.get_result_refs([BUSINESS], read) == tuple(
-            {
-                key: value
-                for key, value in ref.items()
-                if key not in {"voucher_id", "voucher_number"}
-            }
-            for ref in before_refs
-        )
+        assert ledger.get_result_refs([BUSINESS], read) == before_refs
         assert all(row["state"] == "open" for row in read.repository("ledger").current_heads())
 
 

@@ -21,8 +21,13 @@ def other_income(fact, context):
         {"amount_fen": data["amount_fen"], "expense_or_income_class": data["income_kind"]},
         adopt_effective_on=True,
     )
-    line(plan, _ACCOUNT_CODES[account["kind"]], debit=total, summary="收到属于公司的款项")
-    plan["lines"][-1]["object_id"] = data["funds_account_id"]
+    line(
+        plan,
+        _ACCOUNT_CODES[account["kind"]],
+        debit=total,
+        object_id=data["funds_account_id"],
+        summary="收到属于公司的款项",
+    )
     income_account, summary = _INCOME_LINES[data["income_kind"]]
     line(plan, income_account, credit=total, summary=summary)
     movement = {

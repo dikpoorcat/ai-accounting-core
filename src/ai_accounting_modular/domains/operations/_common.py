@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    append_journal_line,
     checked_fen,
     format_fen,
     parse_fen,
@@ -79,11 +80,10 @@ def issue(fact, field, message, *, precision=()):
     }
 
 
-def line(plan, account, *, debit=0, credit=0, party=None, summary="经营业务"):
+def line(plan, account, *, debit=0, credit=0, party=None, object_id=None, summary="经营业务"):
     if not debit and not credit:
         return
     value = {
-        "line_no": len(plan["lines"]) + 1,
         "account_code": account,
         "debit_fen": format_fen(debit),
         "credit_fen": format_fen(credit),
@@ -91,7 +91,9 @@ def line(plan, account, *, debit=0, credit=0, party=None, summary="经营业务"
     }
     if party:
         value["party_id"] = party
-    plan["lines"].append(value)
+    if object_id is not None:
+        value["object_id"] = object_id
+    return append_journal_line(plan, value)
 
 
 def obligation(
@@ -159,7 +161,7 @@ def base_plan(fact, context, values, *, adopt_effective_on=False):
         "basis": basis,
     }
     for name in (
-        "lines",
+        "journals",
         "obligations",
         "settlements",
         "obligation_reclassifications",

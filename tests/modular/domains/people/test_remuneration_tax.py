@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, posting_lines
 from ai_accounting_modular.domains.people.public import create_people
 
 from .test_application import assembled_with_money as assembled_with_money
@@ -86,15 +86,19 @@ def test_target_uses_initial_adopted_component_and_creates_only_the_difference(
     assert values["additional_tax_fen"] == expected
     assert result["fund_movements"] == result["settlements"] == result["cost_lots"] == []
     assert all(
-        line["account_code"] not in {"560201", "560101", "540101"} for line in result["lines"]
+        line["account_code"] not in {"560201", "560101", "540101"} for line in posting_lines(result)
     )
     if expected == "0":
         assert (
-            result["lines"] == result["obligations"] == result["obligation_reclassifications"] == []
+            posting_lines(result)
+            == result["obligations"]
+            == result["obligation_reclassifications"]
+            == []
         )
     else:
         assert [
-            (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in result["lines"]
+            (row["account_code"], row["debit_fen"], row["credit_fen"])
+            for row in posting_lines(result)
         ] == [("221101", expected, "0"), ("222103", "0", expected)]
         assert result["obligations"][0]["slot"] == "tax"
         assert result["obligation_reclassifications"][0]["source"] == {
@@ -119,8 +123,8 @@ def test_bonus_and_labor_split_their_existing_payable_without_another_cost(name,
     original = case(name)
     result = plan(goal(original), original)
     assert result["target"]["values"]["remuneration_type"] == original["data"]["type"]
-    assert result["lines"][0]["account_code"] == account
-    assert result["lines"][0]["debit_fen"] == "20000"
+    assert posting_lines(result)[0]["account_code"] == account
+    assert posting_lines(result)[0]["debit_fen"] == "20000"
     assert result["cost_lots"] == result["report_contributions"] == []
 
 

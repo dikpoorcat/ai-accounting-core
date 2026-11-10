@@ -158,9 +158,14 @@ def detail(reader, scope, query):
             "as_of": datetime.now(UTC).date().isoformat(),
             "latest_source": {"period": latest_period, "deleted": deleted},
             "closure": _closure(closure),
-            "current_business_result": display.result(current),
+            "current_business_result": display.result(
+                current, scope=selected.range if selected.detail is not None else None
+            ),
             "frozen_adoption": display.result(
-                selected.content, frozen=True, closing_period=old_closure.closing_period
+                selected.content,
+                frozen=True,
+                closing_period=old_closure.closing_period,
+                scope=selected.range if selected.detail is not None else None,
             )
             if old_closure is not None and old_closure.state == "closed"
             else None,

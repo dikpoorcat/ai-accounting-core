@@ -27,7 +27,7 @@ class BalanceSelection(Selection):
         if missing:
             journals = target_vouchers(self.repo, missing, headers_only=True)
             grouped = defaultdict(list)
-            ids = {row["voucher_id"] for row in journals.values() if row is not None}
+            ids = {row["voucher_id"] for values in journals.values() for row in values}
             for row in self.repo.read_balance_lines(self.keys, ids) if ids else ():
                 grouped[row["voucher_id"]].append(
                     {
@@ -36,12 +36,14 @@ class BalanceSelection(Selection):
                         "credit_fen": format_fen(row["credit_fen"]),
                     }
                 )
-            for head_id, voucher in journals.items():
-                self._lines[head_id] = (
-                    sorted(grouped[voucher["voucher_id"]], key=lambda row: row["line_no"])
-                    if voucher
-                    else []
-                )
+            for head_id, values in journals.items():
+                self._lines[head_id] = [
+                    line
+                    for voucher in values
+                    for line in sorted(
+                        grouped[voucher["voucher_id"]], key=lambda row: row["line_no"]
+                    )
+                ]
         for head in heads:
             if self._lines[head["result_id"]]:
                 self.source(head)

@@ -59,7 +59,7 @@ def split_resources(count=31):
     ]
     plan["basis"]["input"] = deepcopy(fact["data"])
     plan["target"]["values"].update(amount_fen=amount, settled_fen=amount)
-    for line in plan["lines"]:
+    for line in plan["journals"][0]["lines"]:
         for side in ("debit_fen", "credit_fen"):
             if line[side] != "0":
                 line[side] = amount

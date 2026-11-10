@@ -283,8 +283,11 @@ def test_closed_management_correction_keeps_wage_refs_and_frozen_amounts(case):
     open_result = original[0]
     original = book.get(wage["business_id"])["businesses"][0]["results"]
     assert original[0]["target"] == open_result["target"]
-    for field in ("result_id", "generation", "voucher_id", "voucher_number"):
+    for field in ("result_id", "generation"):
         assert original[0]["reference"][field] == open_result["reference"][field]
+    assert original[0]["vouchers"] == [
+        dict(v, result=original[0]["reference"]) for v in open_result["vouchers"]
+    ]
     with book.kernel.storage.read_unit(book.company, view="as_posted", as_of="2026-01") as read:
         frozen = book.app.ledger.get_results([wage["business_id"]], read)
     final = deepcopy(timeline)

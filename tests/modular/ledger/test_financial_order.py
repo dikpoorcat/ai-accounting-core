@@ -203,7 +203,7 @@ def test_nullable_dimensions_and_party_fold_are_stable_not_first_seen_order(
         (THIRD, "2026-03", -1, SUPPLIER),
     ):
         change = journal(business, [("2202", amount), ("3001", -amount)], period=month)
-        row = change["plans"][0]["lines"][0]
+        row = change["plans"][0]["journals"][0]["lines"][0]
         row["party_id"] = SUPPLIER
         if obj is not None:
             row["object_id"] = obj

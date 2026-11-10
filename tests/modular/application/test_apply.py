@@ -48,7 +48,10 @@ def test_expense_real_chain_preserves_voucher_number_and_removes_old_body(assemb
     assert len(current["results"]) == 1
     reference = current["results"][0]["reference"]
     assert reference["result_id"] == result_ref["result_id"]
-    assert reference["voucher_number"] == result_ref["voucher_number"]
+    assert (
+        current["results"][0]["vouchers"][0]["number"]
+        == original["results"][0]["vouchers"][0]["number"]
+    )
     assert reference["generation"] == result_ref["generation"] + 1
     assert len(current["results"][0]["vouchers"]) == 1
     lines = current["results"][0]["vouchers"][0]["lines"]

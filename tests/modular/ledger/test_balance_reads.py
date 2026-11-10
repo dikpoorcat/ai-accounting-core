@@ -34,7 +34,7 @@ def _compare(ledger, read, keys, period, monkeypatch, selection=None):
 
 def _bank_journal(business_id, amount, *, period="2026-01", object_id=BANK, seq=0):
     change = journal(business_id, [("1002", amount), ("3001", -amount)], period=period)
-    change["plans"][0]["lines"][0]["object_id"] = object_id
+    change["plans"][0]["journals"][0]["lines"][0]["object_id"] = object_id
     responsibility = change["businesses"][0]
     responsibility.update(expected_seq=seq, op="replace" if seq else "create")
     return change
@@ -117,7 +117,7 @@ def test_candidates_include_later_journals_but_respect_selected_account_and_obje
             (second, BANK),
         )
     changed = _bank_journal(movement, 45, object_id=second, seq=1)
-    changed["plans"][0]["lines"][0]["account_code"] = "1101"
+    changed["plans"][0]["journals"][0]["lines"][0]["account_code"] = "1101"
     save(store, ledger, [changed], correction="2026-03")
     keys = (AccountBalanceKey("1002", BANK), AccountBalanceKey("1101", second))
     with store.read_unit(COMPANY) as read:
@@ -151,7 +151,7 @@ def test_empty_corrected_target_ends_inheritance_without_borrowing_old_lines(sto
     ledger = create_ledger()
     save(store, ledger, [origin("0"), expense("30")], freeze="2026-01")
     corrected = expense("0", seq=1)
-    corrected["plans"][0].update(lines=[], obligations=[])
+    corrected["plans"][0].update(journals=[], obligations=[])
     corrected["plans"][0]["basis"]["input"].pop("report_details")
     save(store, ledger, [corrected], correction="2026-02")
     with store.read_unit(COMPANY) as read:
@@ -167,7 +167,7 @@ def test_open_replacement_removes_old_account_lines_and_old_first_recorded(store
     movement = str(uuid4())
     save(store, ledger, [origin("0"), _bank_journal(movement, 30)])
     changed = _bank_journal(movement, 45, seq=1)
-    changed["plans"][0]["lines"][0]["account_code"] = "1101"
+    changed["plans"][0]["journals"][0]["lines"][0]["account_code"] = "1101"
     save(store, ledger, [changed])
     with store.read_unit(COMPANY) as read:
         actual = _compare(

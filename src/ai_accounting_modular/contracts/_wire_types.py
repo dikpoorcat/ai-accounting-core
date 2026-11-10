@@ -88,8 +88,6 @@ class ResultRef(TypedDict):
     posting_period: Month
     state: Literal['open', 'frozen']
     baseline_result_id: NotRequired[Id]
-    voucher_id: NotRequired[Id]
-    voucher_number: NotRequired[int]
     result_slot: Slot
 
 class BusinessState(TypedDict):
@@ -350,6 +348,7 @@ class Voucher(TypedDict):
     summary: str
     reverses_voucher_id: NotRequired[Id]
     lines: list[Line]
+    journal_key: Slot
 
 class ResultView(TypedDict):
     reference: ResultRef
@@ -4681,7 +4680,6 @@ class PostingPlan(TypedDict):
     rule_refs: list[CalculationRuleRef]
     target: ResultTarget
     basis: AdoptedBasis
-    lines: list[Line]
     obligations: list[Obligation]
     settlements: list[Settlement]
     obligation_reclassifications: list[ObligationReclassification]
@@ -4691,6 +4689,7 @@ class PostingPlan(TypedDict):
     agency_proofs: list[AgencyProof]
     tax_sales: list[TaxSale]
     report_contributions: list[ReportContribution]
+    journals: list[PostingJournal]
 
 class BusinessChangeResponsibility(TypedDict):
     business_id: Id
@@ -6760,6 +6759,11 @@ class OrdinaryVatAccountingQuantity(TypedDict):
     type: Literal['ordinary_vat_accounting']
     exemption_income_fen: Fen
     rounding_adjustment_fen: Fen
+
+class PostingJournal(TypedDict):
+    journal_key: Slot
+    summary: str
+    lines: list[Line]
 
 type AccountCode = Literal['1001', '1002', '1012', '1101', '1122', '1123', '1131', '1132', '1221', '122105', '122106', '122107', '149901', '1501', '1511', '1601', '1602', '1604', '1701', '1702', '189901', '189902', '2001', '2202', '2203', '221101', '221102', '221103', '222101', '222102', '222103', '222104', '222106', '222107', '2231', '2241', '224101', '224102', '224103', '224104', '224105', '224106', '2501', '3001', '3002', '3101', '3104', '4301', '5001', '5111', '5401', '540101', '540102', '540103', '540104', '5403', '5601', '560101', '560102', '560103', '560104', '5602', '560201', '560202', '560203', '560204', '5603', '560301', '571101', '571102', '571103', '571104', '571105', '571106', '571107', '571108', '5801', '6301', '630101']
 
@@ -12947,6 +12951,7 @@ __all__ = [
     'AdoptedInvestmentReliefVatAllocation',
     'InvestmentInstrumentReference',
     'OrdinaryVatAccountingQuantity',
+    'PostingJournal',
     'AccountCode',
     'KnownAmount',
     'UnestablishedAmount',

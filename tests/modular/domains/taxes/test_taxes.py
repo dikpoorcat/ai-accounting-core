@@ -5,7 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, validate_contract
+from ai_accounting_modular.contracts.public import (
+    ContractError,
+    EvaluatedSlot,
+    posting_lines,
+    validate_contract,
+)
 from ai_accounting_modular.domains.taxes._credits import selected_rows
 from ai_accounting_modular.domains.taxes.public import create_taxes
 
@@ -59,7 +64,7 @@ def test_all_four_policy_variants_are_strict_sourced_no_voucher():
     ]
     for row in rows:
         result = evaluate(row)
-        assert result["lines"] == result["tax_sales"] == []
+        assert result["journals"] == result["tax_sales"] == []
         assert result["target"]["values"]["policy_version"] == "synthetic-1"
         assert result["basis"]["input"] == row["data"]
         assert result["rule_refs"][0]["official_urls"]
@@ -114,7 +119,7 @@ def test_nominal_reduction_is_a_filing_display_not_a_second_gain():
     assert {
         key: values["filing_fields"][key] for key in ("row_15_fen", "row_16_fen", "row_20_fen")
     } == {"row_15_fen": "3000", "row_16_fen": "2000", "row_20_fen": "1000"}
-    assert result["lines"] == []
+    assert result["journals"] == []
 
 
 @pytest.mark.parametrize(
@@ -140,7 +145,7 @@ def test_period_rounding_is_separate_from_exemption():
     )
     assert result["target"]["values"]["rounding_adjustment_fen"] == "1"
     assert [
-        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in result["lines"]
+        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in posting_lines(result)
     ] == [("571105", "1", "0"), ("222101", "0", "1")]
 
 
@@ -166,7 +171,7 @@ def test_negative_return_and_actual_zero_keep_vat_debit_without_fake_expense_cla
     assert metrics["accrued_vat_fen"] == "-300"
     assert metrics["payable_vat_fen"] == "0"
     assert "rounding_adjustment_fen" not in metrics and "relief_fen" not in metrics
-    assert result["lines"] == result["fund_movements"] == []
+    assert result["journals"] == result["fund_movements"] == []
     assert [(row["slot"], row["amount_fen"]) for row in result["obligations"]] == [
         ("vat", "0"),
         ("surtax", "0"),
@@ -181,7 +186,7 @@ def test_actual_declared_amounts_and_unknown_rows_are_never_filled_from_referenc
     assert values["payable_vat_fen"] == "900" and values["surtax_fen"] == "6"
     assert values["rounding_adjustment_fen"] == "0"
     assert "row_1_fen" not in values["filing_fields"]
-    assert not any(row["account_code"] == "571105" for row in result["lines"])
+    assert not any(row["account_code"] == "571105" for row in posting_lines(result))
 
 
 @pytest.mark.parametrize("payable", ["900", "0"])
@@ -215,7 +220,7 @@ def test_actual_zero_can_adopt_proven_or_explicit_exemption_without_fake_roundin
     assert result["target"]["values"]["relief_fen"] == "600"
     assert "rounding_adjustment_fen" not in result["target"]["values"]
     assert [
-        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in result["lines"]
+        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in posting_lines(result)
     ] == [("222101", "600", "0"), ("6301", "0", "600")]
 
 
@@ -536,7 +541,7 @@ def test_phased_prepaid_service_taxes_all_received_at_earlier_contract_or_first_
     assert len(segments) == 1
     assert segments[0]["tax_period"] == "2026-02" and segments[0]["tax_on"] == "2026-02-10"
     assert segments[0]["ranges"] == [{"from_fen": "0", "to_fen": "103000"}]
-    assert plan["tax_sales"] == plan["lines"] == []
+    assert plan["tax_sales"] == plan["journals"] == []
 
 
 def test_actual_payroll_is_precise_sourced_allocation_without_computing_personal_tax():
@@ -577,7 +582,7 @@ def test_actual_payroll_is_precise_sourced_allocation_without_computing_personal
         "2026-02",
     )
     result = evaluate(declared, remuneration)
-    assert result["lines"] == result["obligations"] == result["tax_sales"] == []
+    assert result["journals"] == result["obligations"] == result["tax_sales"] == []
     assert result["target"]["values"]["tax_period_end"] == "2026-01"
     assert "source" not in result["basis"]["input"]["rows"][0]
     row["allocations"][0]["tax_fen"] = "99"

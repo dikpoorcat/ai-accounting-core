@@ -243,34 +243,6 @@ def repository_factory():
     return RepositoryFactory(module_schema("ledger"), LedgerRepository)
 
 
-def _reference(row, repo, vouchers=None):
-    value = {
-        key: row[key]
-        for key in (
-            "business_id",
-            "result_slot",
-            "result_id",
-            "generation",
-            "business_period",
-            "posting_period",
-            "state",
-        )
-    }
-    if row["baseline_result_id"] is not None:
-        value["baseline_result_id"] = row["baseline_result_id"]
-    original = next(
-        (
-            v
-            for v in (repo.vouchers([row["result_id"]]) if vouchers is None else vouchers)
-            if v["role"] in ("original", "replacement")
-        ),
-        None,
-    )
-    if original:
-        value.update(voucher_id=original["voucher_id"], voucher_number=original["number"])
-    return value
-
-
 def _exact_row(repo, result_id, generation, *, mismatch_code="snapshot_changed"):
     row = repo.result(result_id)
     if row is None:
@@ -280,11 +252,12 @@ def _exact_row(repo, result_id, generation, *, mismatch_code="snapshot_changed")
     return row
 
 
-def _voucher_wire(voucher, row, repo, reference=None):
+def _voucher_wire(voucher, reference):
     value = {
         key: voucher[key]
         for key in (
             "voucher_id",
+            "journal_key",
             "period",
             "number",
             "role",
@@ -292,7 +265,7 @@ def _voucher_wire(voucher, row, repo, reference=None):
             "lines",
         )
     }
-    value["result"] = reference if reference is not None else _reference(row, repo)
+    value["result"] = reference
     if voucher["reverses_voucher_id"] is not None:
         value["reverses_voucher_id"] = voucher["reverses_voucher_id"]
     return value
@@ -624,8 +597,8 @@ class Ledger:
         self,
         locators: Sequence[ResultRef],
         read_context: ReadContext,
-    ) -> tuple[VoucherDirectoryEntry | None, ...]:
-        """Locate each target's real journal, following formal-only baseline inheritance."""
+    ) -> tuple[tuple[VoucherDirectoryEntry, ...], ...]:
+        """Locate each complete effective journal group and its actual owners."""
         return _read_contents.get_effective_voucher_directory(locators, read_context)
 
     def get_vouchers(
@@ -888,12 +861,12 @@ class Ledger:
         views = []
         for row in heads:
             owned_vouchers = grouped[row["result_id"]]
-            ref = _reference(row, repo, owned_vouchers)
+            ref = _read_contents.reference(row)
             view = {
                 "reference": ref,
                 "target": json.loads(row["target_json"]),
                 "basis": json.loads(row["basis_json"]),
-                "vouchers": [_voucher_wire(v, row, repo, ref) for v in owned_vouchers],
+                "vouchers": [_voucher_wire(v, ref) for v in owned_vouchers],
             }
             validate_contract("core.schema.json", "ResultView", view)
             views.append(view)

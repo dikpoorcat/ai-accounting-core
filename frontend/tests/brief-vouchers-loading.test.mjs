@@ -68,6 +68,29 @@ const voucherPage = (start, count, total = 45) => {
   return result;
 };
 
+test("one payroll keeps both precise phase vouchers in the preview index", async () => {
+  const h = await harness();
+  try {
+    h.response.value = response(0, 0, 2);
+    const phases = rows(0, 2).map((row, index) => ({
+      ...row, subject_id: "same-payroll",
+      business_amount_label: index ? "代扣金额" : "计提金额",
+      business_amount_fen: index ? "100000" : "690000",
+    }));
+    h.addVouchers(phases);
+    assert.equal(h.voucherPreviewIndex.value.size, 2);
+    for (const phase of phases) {
+      assert.equal(h.voucherPreviewIndex.value.get(phase.voucher_version_id), phase);
+      await h.openVoucher(phase.voucher_version_id);
+      assert.equal(h.response.value.data.focused_voucher.voucher_version_id, phase.voucher_version_id);
+      assert.equal(h.response.value.data.focused_voucher.business_amount_fen, phase.business_amount_fen);
+    }
+    assert.equal(h.calls.length, 0, "already indexed phases need no brief refetch");
+    h.invalidateRequests();
+    assert.equal(h.voucherPreviewIndex.value.size, 0);
+  } finally { h.close(); }
+});
+
 test("manual vouchers use 20 while all uses 500 and preserves the exact tail", async () => {
   const h = await harness();
   try {

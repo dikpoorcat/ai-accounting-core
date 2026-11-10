@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
     EvaluatedSlot,
     ResourceDefinition,
     content_digest,
+    posting_lines,
     validate_contract,
 )
 from ai_accounting_modular.domains.assets.public import create_assets
@@ -172,9 +173,10 @@ class Context:
 def evaluate(fact, *sources, period_to="2026-05", slot="main"):
     context = Context(*sources, fact, period_to=period_to)
     plan = create_assets().evaluate_slot(fact["business_id"], slot, context)
-    assert sum(int(row["debit_fen"]) for row in plan["lines"]) == sum(
-        int(row["credit_fen"]) for row in plan["lines"]
-    )
+    for journal in plan["journals"]:
+        assert sum(int(row["debit_fen"]) for row in journal["lines"]) == sum(
+            int(row["credit_fen"]) for row in journal["lines"]
+        )
     return plan
 
 
@@ -189,7 +191,7 @@ def test_published_examples(name):
             assert plan["target"]["values"][key] == value
     if name == "B20R":
         assert [row["amount_fen"] for row in plan["obligations"]] == ["12000", "18000"]
-        assert sum(int(row["debit_fen"]) for row in plan["lines"]) == 30000
+        assert sum(int(row["debit_fen"]) for row in posting_lines(plan)) == 30000
         assert len(plan["cost_lots"]) == 2
     assert plan["fund_movements"] == []
 
@@ -277,14 +279,14 @@ def test_project_completion_never_creates_second_supplier_debt():
     plan = evaluate(acquired, cost)
     assert plan["obligations"] == []
     assert plan["cost_consumptions"][0]["amount_fen"] == "100000"
-    assert plan["lines"][1]["account_code"] == "189901"
+    assert posting_lines(plan)[1]["account_code"] == "189901"
 
 
 def test_internal_development_release_uses_development_cost_not_inventory():
     cost, released = case("B18"), case("B19")
     cost["data"]["project_nature"] = "internal_development"
     plan = evaluate(released, cost)
-    assert plan["lines"][1]["account_code"] == "4301"
+    assert posting_lines(plan)[1]["account_code"] == "4301"
 
 
 def test_wrong_project_and_duplicate_cost_source_rejected():
@@ -389,7 +391,7 @@ def test_unactivated_scrap_consumes_pending_cost_instead_of_faking_activation():
     assert plan["target"]["values"]["accumulated_fen"] == "0"
     assert plan["target"]["values"]["gain_loss_fen"] == "-10001"
     assert plan["cost_consumptions"][0]["amount_fen"] == "10001"
-    assert {row["account_code"] for row in plan["lines"]} == {"1604", "571101"}
+    assert {row["account_code"] for row in posting_lines(plan)} == {"1604", "571101"}
 
 
 def test_description_uses_own_submission_overlay_and_only_entered_calendar_months():
@@ -438,10 +440,13 @@ def test_two_cards_are_details_under_one_grouped_monthly_journal():
         batch["data"]["assets"][0]["asset_id"]: "3333",
         batch["data"]["assets"][1]["asset_id"]: "6666",
     }
-    assert len(plan["lines"]) == 2
-    assert [row["debit_fen"] for row in plan["lines"]] == ["9999", "0"]
+    (journal,) = plan["journals"]
+    assert journal["journal_key"] == "main"
+    assert journal["summary"] == "资产及项目核算"
+    assert len(journal["lines"]) == 2
+    assert [row["debit_fen"] for row in journal["lines"]] == ["9999", "0"]
     main = evaluate(enabled, batch)
-    assert len(main["lines"]) == 2
+    assert len(posting_lines(main)) == 2
     assert len(main["basis"]["adopted_quantities"]) == 2
     assert all(item["type"] == "asset_card" for item in main["basis"]["adopted_quantities"])
 
@@ -540,8 +545,8 @@ def test_one_large_source_is_read_by_identity_batches_and_never_once_per_card():
     assert len(plan["cost_consumptions"]) == 501
     assert len(plan["basis"]["adopted_quantities"]) == 501
     assert len(plan["basis"]["source_results"]) == 1
-    assert len(plan["lines"]) == 2
-    assert plan["lines"][0]["debit_fen"] == "50100"
+    assert len(posting_lines(plan)) == 2
+    assert posting_lines(plan)[0]["debit_fen"] == "50100"
     # This guards the shared-source workload, not a wall-clock race on a busy CI host.
     assert len(context.result_reads) <= 3
     assert len(context.relation_reads) <= 4

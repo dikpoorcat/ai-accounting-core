@@ -35,8 +35,8 @@ def _basis_values(basis):
     return values
 
 
-def target_voucher(repo, row):
-    return target_vouchers(repo, [row])[row["result_id"]] if row is not None else None
+def target_journals(repo, row):
+    return target_vouchers(repo, [row])[row["result_id"]] if row is not None else ()
 
 
 def target_vouchers(repo, heads, *, headers_only=False):
@@ -64,24 +64,32 @@ def target_vouchers(repo, heads, *, headers_only=False):
                 fail("storage_corrupt", "完整正式目标的凭证基线不存在或形成循环。")
             seen.add((head_id, result_id))
             row, vouchers = rows[result_id], grouped[result_id]
-            own = next((v for v in vouchers if v["role"] in ("original", "replacement")), None)
+            own = tuple(
+                sorted(
+                    (v for v in vouchers if v["role"] in ("original", "replacement")),
+                    key=lambda voucher: voucher["journal_key"],
+                )
+            )
             if row["target_state"] == "withdrawn":
-                result[head_id] = None
-            elif own is not None:
+                result[head_id] = ()
+            elif own:
                 result[head_id] = own
             elif (
                 any(v["role"] == "reversal" for v in vouchers) or row["baseline_result_id"] is None
             ):
-                result[head_id] = None
+                result[head_id] = ()
             else:
                 following[head_id] = row["baseline_result_id"]
         pending = following
     return result
 
 
-def target_lines(repo, row):
-    voucher = target_voucher(repo, row)
-    return voucher["lines"] if voucher else []
+def journal_specs(journals):
+    """Discard physical identities while retaining complete canonical journal content."""
+    return [
+        {key: journal[key] for key in ("journal_key", "summary", "lines")}
+        for journal in sorted(journals, key=lambda journal: journal["journal_key"])
+    ]
 
 
 def _line_totals(lines):
@@ -93,8 +101,10 @@ def _line_totals(lines):
     return sorted(([list(key), value] for key, value in grouped.items()), key=canonical_json)
 
 
-def same_journal(existing_lines, planned_lines):
-    return _line_totals(existing_lines) == _line_totals(planned_lines)
+def same_journals(existing, planned):
+    return {journal["journal_key"]: _line_totals(journal["lines"]) for journal in existing} == {
+        journal["journal_key"]: _line_totals(journal["lines"]) for journal in planned
+    }
 
 
 def _formal_children(table, rows, *, frozen):
@@ -116,7 +126,7 @@ def same_formal_output(repo, row, plan):
         row["target_digest"] != content_digest(plan["target"])
         or row["business_period"] != plan["accounting_period"]
         or _basis_values(json.loads(row["basis_json"])) != _basis_values(plan["basis"])
-        or not same_journal(target_lines(repo, row), plan["lines"])
+        or not same_journals(target_journals(repo, row), plan["journals"])
     ):
         return False
     for table, desired in resource_rows(row["result_id"], plan).items():

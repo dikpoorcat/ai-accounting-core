@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    append_journal_line,
     checked_fen,
     format_fen,
     parse_fen,
@@ -14,7 +15,7 @@ STANDARD_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878
 APPENDIX_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf"
 ACCOUNTS = {"bank_account": "1002", "cash_account": "1001", "platform_account": "1012"}
 PLAN_ARRAYS = (
-    "lines",
+    "journals",
     "obligations",
     "settlements",
     "obligation_reclassifications",
@@ -112,7 +113,6 @@ def line(plan, account, *, debit=0, credit=0, party=None, object_id=None, summar
     if not debit and not credit:
         return
     value = {
-        "line_no": len(plan["lines"]) + 1,
         "account_code": account,
         "debit_fen": format_fen(checked(debit)),
         "credit_fen": format_fen(checked(credit)),
@@ -121,7 +121,7 @@ def line(plan, account, *, debit=0, credit=0, party=None, object_id=None, summar
     for key, item in (("party_id", party), ("object_id", object_id)):
         if item is not None:
             value[key] = item
-    plan["lines"].append(value)
+    return append_journal_line(plan, value)
 
 
 def obligation(plan, slot, party, direction, value, account, category, cashflow, *, due_on=None):

@@ -65,7 +65,7 @@ def test_clean_result_is_not_hydrated_replaced_or_retired_while_another_result_c
     after = result(store, RECOVERY)
     assert after["target"]["values"]["amount_fen"] == "40000"
     assert after["reference"]["generation"] == other["reference"]["generation"] + 1
-    assert after["reference"]["voucher_number"] == other["reference"]["voucher_number"]
+    assert after["vouchers"][0]["number"] == other["vouchers"][0]["number"]
 
 
 def test_retained_publisher_is_ready_before_any_new_plan_is_staged(store):
@@ -90,7 +90,6 @@ def test_retained_publisher_is_ready_before_any_new_plan_is_staged(store):
         {"business_period": "2026-02"},
         {"posting_period": "2026-02"},
         {"state": "frozen"},
-        {"voucher_number": 999},
     ],
 )
 def test_forged_or_old_reference_cannot_be_retained_by_candidate_or_adoption(store, patch):

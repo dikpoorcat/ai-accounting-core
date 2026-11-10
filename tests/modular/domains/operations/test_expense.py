@@ -10,6 +10,7 @@ from ai_accounting_modular.contracts.public import (
     ResourceDefinition,
     ResourceState,
     ResourceWindow,
+    posting_lines,
     validate_contract,
 )
 from ai_accounting_modular.domains.operations.public import create_operations, repository_factory
@@ -254,7 +255,7 @@ def other_fact(kind, data, *, effective_on=None):
 def test_expense_uses_real_company_transaction_and_preserves_voucher_number(store):
     original = fact(report_details=[{"code": "management_research", "amount_fen": "100000"}])
     plan = apply(store, original)
-    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in plan["lines"]] == [
+    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in posting_lines(plan)] == [
         ("5602", "100000", "0"),
         ("2202", "0", "100000"),
     ]
@@ -273,7 +274,9 @@ def test_expense_uses_real_company_transaction_and_preserves_voucher_number(stor
     apply(store, fact("80000"), seq=1)
     with store.read_unit(COMPANY) as unit:
         after = create_ledger().get_results([BUSINESS], unit)[0]
-        assert after["reference"]["voucher_number"] == before["reference"]["voucher_number"]
+        assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in after["vouchers"]} == {
+            v["journal_key"]: (v["voucher_id"], v["number"]) for v in before["vouchers"]
+        }
         assert create_operations().export_current([BUSINESS], unit) == (fact("80000"),)
         assert "100000" not in str(after)
         assert after["target"]["values"]["report_detail_state"] == "unestablished"
@@ -387,7 +390,7 @@ def test_acceptance_transfers_existing_debt_without_second_cost_or_fictional_dat
         },
     )
     plan = apply(store, current)
-    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in plan["lines"]] == [
+    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in posting_lines(plan)] == [
         ("2202", "60000", "0"),
         ("2241", "0", "60000"),
     ]
@@ -556,7 +559,7 @@ def test_zero_expense_has_no_unknown_report_detail_or_remaining_cost_line():
     plan = create_operations().evaluate_slot(BUSINESS, "main", Context(None, current))
     assert plan["target"]["values"]["report_detail_state"] == "known"
     assert plan["report_contributions"] == []
-    assert plan["lines"] == []
+    assert plan["journals"] == []
     assert plan["obligations"][0]["amount_fen"] == "0"
 
 
@@ -572,7 +575,7 @@ def test_service_sale_splits_exact_tax_and_does_not_create_money():
         "current_tax_vat_fen": "3000",
         "deferred_vat_fen": "0",
     }
-    assert [(x["account_code"], x["credit_fen"]) for x in plan["lines"]] == [
+    assert [(x["account_code"], x["credit_fen"]) for x in posting_lines(plan)] == [
         ("1122", "0"),
         ("5001", "100000"),
         ("222101", "3000"),
@@ -604,8 +607,8 @@ def test_reduced_service_rate_and_explicit_waiver_keep_gross_net_tax_consistent(
         base,
         base,
     )
-    assert sum(int(row["credit_fen"]) for row in plan["lines"]) == int(gross)
-    assert all(row["account_code"] != "630101" for row in plan["lines"])
+    assert sum(int(row["credit_fen"]) for row in posting_lines(plan)) == int(gross)
+    assert all(row["account_code"] != "630101" for row in posting_lines(plan))
 
 
 def test_future_tax_point_is_frozen_without_entering_current_tax_sales():
@@ -634,7 +637,7 @@ def test_pass_through_is_not_income_and_refund_cannot_exceed_actual_receipts(sto
         "pass_through", {"payer_id": PARTY, "beneficiary_id": BENEFICIARY, "amount_fen": "100000"}
     )
     plan = apply(store, current)
-    assert {x["account_code"] for x in plan["lines"]} == {"122105", "224105"}
+    assert {x["account_code"] for x in posting_lines(plan)} == {"122105", "224105"}
     assert {x["slot"] for x in plan["obligations"]} == {"collection", "remittance"}
     assert plan["fund_movements"] == []
     returned = other_fact(
@@ -1120,7 +1123,9 @@ def test_taxed_advance_fulfillment_and_refund_split_once_and_exhaust_original_va
     )
     assert int(negative["vat_fen"]) <= 0
     for plan in plans:
-        assert sum(int(row["debit_fen"]) - int(row["credit_fen"]) for row in plan["lines"]) == 0
+        assert (
+            sum(int(row["debit_fen"]) - int(row["credit_fen"]) for row in posting_lines(plan)) == 0
+        )
         adopted = next(
             item for item in plan["basis"]["adopted_quantities"] if item["type"] == "tax_sale"
         )

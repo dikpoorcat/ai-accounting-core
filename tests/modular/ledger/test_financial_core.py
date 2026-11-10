@@ -190,14 +190,18 @@ def test_stable_cash_adoption_deltas_not_three_actual_receipts(store):
     changed = deepcopy(first)
     changed["businesses"][0].update(expected_seq=1, op="replace")
     plan = changed["plans"][0]
-    plan["lines"][0]["debit_fen"] = plan["lines"][1]["credit_fen"] = "90000"
+    plan["journals"][0]["lines"][0]["debit_fen"] = plan["journals"][0]["lines"][1]["credit_fen"] = (
+        "90000"
+    )
     plan["fund_movements"][0]["amount_fen"] = "90000"
     plan["fund_movements"][0]["cashflow_parts"][0]["amount_fen"] = "90000"
     save(store, ledger, [changed], freeze="2026-02", correction="2026-02")
     changed = deepcopy(changed)
     changed["businesses"][0]["expected_seq"] = 2
     plan = changed["plans"][0]
-    plan["lines"][0]["debit_fen"] = plan["lines"][1]["credit_fen"] = "80000"
+    plan["journals"][0]["lines"][0]["debit_fen"] = plan["journals"][0]["lines"][1]["credit_fen"] = (
+        "80000"
+    )
     plan["fund_movements"][0]["amount_fen"] = "80000"
     plan["fund_movements"][0]["cashflow_parts"][0]["amount_fen"] = "80000"
     save(store, ledger, [changed], correction="2026-03")
@@ -331,11 +335,11 @@ def test_fixed_numeric_mapping_oracles(case, store):
                 inflow=False,
             )
         )
-        changes[1]["plans"][0]["lines"][0]["party_id"] = SUPPLIER
+        changes[1]["plans"][0]["journals"][0]["lines"][0]["party_id"] = SUPPLIER
         changes.append(
             journal(FEE, [("122106", 20000), ("1122", -20000), ("5401", 6000), ("122106", -6000)])
         )
-        for line in changes[2]["plans"][0]["lines"]:
+        for line in changes[2]["plans"][0]["journals"][0]["lines"]:
             if line["account_code"] in ("122106", "1122"):
                 line["party_id"] = SUPPLIER
         expected = {
@@ -371,7 +375,7 @@ def test_fixed_numeric_mapping_oracles(case, store):
         }
     else:
         item = journal(SALE, [("222101", 500), ("222106", -100), ("1221", 200), ("3001", -600)])
-        item["plans"][0]["lines"][2]["party_id"] = SUPPLIER
+        item["plans"][0]["journals"][0]["lines"][2]["party_id"] = SUPPLIER
         changes.append(item)
         expected = {
             ("balance_sheet", 36, "ending"): "-400",
@@ -396,7 +400,7 @@ def test_r02_party_balances_do_not_net_different_creditors(store):
     change = journal(
         SALE, [("1122", 10000), ("1122", -3000), ("2202", 2000), ("2202", -7000), ("3001", -2000)]
     )
-    for line, party in zip(change["plans"][0]["lines"][:4], parties, strict=True):
+    for line, party in zip(change["plans"][0]["journals"][0]["lines"][:4], parties, strict=True):
         line["party_id"] = party
     save(store, ledger, [origin(), change])
     actual = report(store, ledger)
@@ -472,8 +476,8 @@ def test_same_transaction_explicit_scope_reads_both_views_without_changing_defau
     save(store, ledger, [origin(), original], freeze="2026-01")
     changed = deepcopy(original)
     changed["businesses"][0].update(expected_seq=1, op="replace")
-    changed["plans"][0]["lines"][0]["debit_fen"] = "900"
-    changed["plans"][0]["lines"][1]["credit_fen"] = "900"
+    changed["plans"][0]["journals"][0]["lines"][0]["debit_fen"] = "900"
+    changed["plans"][0]["journals"][0]["lines"][1]["credit_fen"] = "900"
     movement = changed["plans"][0]["fund_movements"][0]
     movement["amount_fen"] = movement["cashflow_parts"][0]["amount_fen"] = "900"
     save(store, ledger, [changed], correction="2026-02")

@@ -274,7 +274,9 @@ def test_replacement_preserves_occurrence_and_voucher_number_and_withdrawal_remo
     assert response["completion"] == "complete", response
     with storage.read_unit(company) as read:
         current = ledger.get_results([ids["business"]], read)[0]
-        assert current["reference"]["voucher_number"] == old["reference"]["voucher_number"]
+        assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in current["vouchers"]} == {
+            v["journal_key"]: (v["voucher_id"], v["number"]) for v in old["vouchers"]
+        }
         assert (
             money.query_movements(
                 {

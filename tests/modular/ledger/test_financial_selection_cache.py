@@ -90,7 +90,7 @@ def test_hundred_heads_three_source_passes_verify_once_and_decode_target_once(mo
     def actual_journals(repo, requested, *, headers_only):
         assert headers_only
         journals.append(tuple(head["result_id"] for head in requested))
-        return {head["result_id"]: {"voucher_id": head["result_id"]} for head in requested}
+        return {head["result_id"]: ({"voucher_id": head["result_id"]},) for head in requested}
 
     monkeypatch.setattr(financial, "stored_source_reference", actual_source)
     monkeypatch.setattr(financial.json, "loads", actual_decode)

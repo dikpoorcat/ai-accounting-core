@@ -182,8 +182,12 @@ def test_open_cost_change_recalculates_card_and_preserves_original_voucher_numbe
     after = result_by_slot(app, company_id, enabled["business_id"])
     assert after["depreciation:2026-02"]["target"]["values"]["total_amount_fen"] == "4333"
     assert after["depreciation:2026-04"]["target"]["values"]["total_amount_fen"] == "4334"
-    assert {slot: item["reference"]["voucher_number"] for slot, item in after.items()} == {
-        slot: item["reference"]["voucher_number"] for slot, item in before.items()
+    assert {
+        slot: {v["journal_key"]: (v["voucher_id"], v["number"]) for v in item["vouchers"]}
+        for slot, item in after.items()
+    } == {
+        slot: {v["journal_key"]: (v["voucher_id"], v["number"]) for v in item["vouchers"]}
+        for slot, item in before.items()
     }
 
 
@@ -336,7 +340,9 @@ def test_501_card_source_is_atomic_and_reloads_the_next_candidate_after_cost_cha
     assert len(result["target"]["values"]["assets"]) == 501
     assert len(result["basis"]["adopted_quantities"]) == 501
     assert result["vouchers"][0]["lines"][0]["debit_fen"] == "50100"
-    original_number = result["reference"]["voucher_number"]
+    original_journals = {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in result["vouchers"]
+    }
     batch["data"]["assets"][0]["cost_fen"] = "200"
     batch["data"]["total_cost_fen"] = "50200"
     batch["data"]["creditors"][0]["amount_fen"] = "50200"
@@ -344,7 +350,9 @@ def test_501_card_source_is_atomic_and_reloads_the_next_candidate_after_cost_cha
     assert changed["completion"] == "complete", changed
     current = result_by_slot(app, company_id, enabled["business_id"])["main"]
     assert current["vouchers"][0]["lines"][0]["debit_fen"] == "50200"
-    assert current["reference"]["voucher_number"] == original_number
+    assert {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in current["vouchers"]
+    } == original_journals
     assert (
         next(
             item["cost_fen"]

@@ -13,6 +13,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     EvaluatedSlot,
     canonical_json,
+    posting_lines,
     validate_contract,
 )
 from ai_accounting_modular.domains.people.public import create_people
@@ -110,11 +111,11 @@ def test_published_business_examples(name):
     for field, value in expected.get("values_subset", {}).items():
         assert plan["target"]["values"][field] == value
     if expected.get("no_voucher"):
-        assert plan["lines"] == []
+        assert posting_lines(plan) == []
     if "obligation_slots" in expected:
         assert [item["slot"] for item in plan["obligations"]] == expected["obligation_slots"]
-    assert sum(int(item["debit_fen"]) for item in plan["lines"]) == sum(
-        int(item["credit_fen"]) for item in plan["lines"]
+    assert sum(int(item["debit_fen"]) for item in posting_lines(plan)) == sum(
+        int(item["credit_fen"]) for item in posting_lines(plan)
     )
 
 
@@ -138,7 +139,7 @@ def test_no_participation_does_not_require_fake_policies_or_bases():
         "0",
         "0",
     ]
-    assert [item["account_code"] for item in plan["lines"]] == ["560201", "221101"]
+    assert [item["account_code"] for item in posting_lines(plan)] == ["560201", "221101"]
     assert "effective_on" not in plan["basis"]
 
 
@@ -461,7 +462,7 @@ def test_shortfall_allocation_is_stable_across_actual_and_policy_item_order(mode
             ]
         assert evaluate(shuffled_actual if mode == "actual" else shuffled_policy) == source_baseline
         result = evaluate(fact, employment, shuffled_actual, shuffled_policy)
-        for field in ("target", "lines", "obligations"):
+        for field in ("target", "journals", "obligations"):
             assert result[field] == baseline[field]
         for field in ("adopted_quantities", "policies"):
             assert result["basis"][field] == baseline["basis"][field]
@@ -492,7 +493,7 @@ def test_labor_deduction_replaces_same_gross_cost_and_project_cost_is_public():
     assert [item["amount_fen"] for item in before["obligations"]] == ["100000"]
     assert [item["amount_fen"] for item in after["obligations"]] == ["90000", "10000"]
     project = evaluate(case("B17P"))
-    assert project["lines"][0]["account_code"] == "189901"
+    assert posting_lines(project)[0]["account_code"] == "189901"
     assert project["cost_lots"][0]["amount_fen"] == "100000"
     assert project["obligations"][0]["cashflow_weights"] == [
         {"category": "asset_acquisition", "weight": "1"}

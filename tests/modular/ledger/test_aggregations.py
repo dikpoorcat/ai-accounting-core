@@ -63,7 +63,7 @@ def journal(business_id, entries, *, period="2026-01", publishes=True):
     change = at_period(expense("1000", business_id=business_id), period)
     plan = change["plans"][0]
     plan["obligations"] = []
-    plan["lines"] = [
+    lines = [
         {
             "line_no": index,
             "account_code": account,
@@ -73,6 +73,9 @@ def journal(business_id, entries, *, period="2026-01", publishes=True):
         }
         for index, (account, amount) in enumerate(entries, 1)
     ]
+    plan["journals"] = (
+        [{"journal_key": "main", "summary": "独立账务数字", "lines": lines}] if lines else []
+    )
     if not publishes:
         change["publications"] = []
     return change
@@ -347,7 +350,7 @@ def opening(business_id, period, basis):
     change["businesses"][0]["fact"] = fact
     change["domain"] = "opening"
     plan = change["plans"][0]
-    plan.update(calculation_key="opening.package", lines=[], obligations=[])
+    plan.update(calculation_key="opening.package", journals=[], obligations=[])
     plan["target"] = {
         "kind": "opening.package",
         "result_slot": "main",

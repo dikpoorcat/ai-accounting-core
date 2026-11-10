@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import posting_lines
 
 from .test_people import PERSON, case, evaluate, no_contributions
 from .test_read_remuneration import wage_with_actuals
@@ -14,11 +14,19 @@ MAX_FEN = 9223372036854775807
 
 
 def assert_journal(plan, expected, turnover):
-    lines = plan["lines"]
+    lines = posting_lines(plan)
     assert Counter(
         (line["account_code"], line["debit_fen"], line["credit_fen"]) for line in lines
     ) == Counter(expected)
-    assert [line["line_no"] for line in lines] == list(range(1, len(lines) + 1))
+    assert "lines" not in plan
+    for journal in plan["journals"]:
+        assert journal["summary"]
+        assert [row["line_no"] for row in journal["lines"]] == list(
+            range(1, len(journal["lines"]) + 1)
+        )
+        assert sum(int(row["debit_fen"]) for row in journal["lines"]) == sum(
+            int(row["credit_fen"]) for row in journal["lines"]
+        )
     assert all((int(line["debit_fen"]) > 0) != (int(line["credit_fen"]) > 0) for line in lines)
     assert sum(int(line["debit_fen"]) for line in lines) == turnover
     assert sum(int(line["credit_fen"]) for line in lines) == turnover
@@ -78,18 +86,21 @@ def test_complete_wage_accruals_and_deductions_keep_their_own_lines(destination,
         "employer_social": ("60000", "221102"),
         "employer_housing": ("30000", "221103"),
     }
-    wage_lines = [line for line in plan["lines"] if line["account_code"] == "221101"]
+    wage_lines = [line for line in posting_lines(plan) if line["account_code"] == "221101"]
     assert all(line["party_id"] == PERSON for line in wage_lines)
-    assert any("计提" in line["summary"] for line in plan["lines"])
-    assert any("代扣" in line["summary"] for line in plan["lines"])
+    assert any("计提" in line["summary"] for line in posting_lines(plan))
+    assert any("代扣" in line["summary"] for line in posting_lines(plan))
     assert len({line["summary"] for line in wage_lines}) >= 3
-    assert all(
-        label in plan["lines"][0]["summary"]
-        for label in ("工资", "单位社保", "单位公积金", "计提", "代扣")
-    )
+    assert [
+        (j["journal_key"], sum(int(r["debit_fen"]) for r in j["lines"])) for j in plan["journals"]
+    ] == [("accrual", 690000), ("deductions", 100000)]
+    assert plan["journals"][0]["summary"] == "工资、单位社保、单位公积金计提"
+    assert plan["journals"][1]["summary"] == "代扣个人社保、个人公积金、个人所得税"
     assert plan["cost_lots"] == []
     assert all(
-        line["party_id"] == PERSON for line in plan["lines"] if line["account_code"] == cost_account
+        line["party_id"] == PERSON
+        for line in posting_lines(plan)
+        if line["account_code"] == cost_account
     )
 
 
@@ -185,14 +196,14 @@ def test_bonus_and_labor_keep_gross_accrual_before_initial_tax_deduction(
     }
     assert all(
         line["party_id"] == fact["data"]["person_id"]
-        for line in plan["lines"]
+        for line in posting_lines(plan)
         if line["account_code"] == payable_account
     )
     if name == "B17P":
         project_id = fact["data"]["destination"]["project_id"]
         assert all(
             line["object_id"] == project_id
-            for line in plan["lines"]
+            for line in posting_lines(plan)
             if line["account_code"] == cost_account
         )
         assert [(lot["slot"], lot["amount_fen"]) for lot in plan["cost_lots"]] == [
@@ -219,10 +230,10 @@ def test_remuneration_rule_revision_preserves_adopted_contribution_policy_source
     plan = evaluate(wage, case("B14"), policy, actual)
 
     assert plan["calculation_key"] == "people.remuneration"
-    assert plan["calculation_revision"] == 2
+    assert plan["calculation_revision"] == 3
     assert len(plan["rule_refs"]) == 1
     rule = plan["rule_refs"][0]
-    assert (rule["key"], rule["revision"]) == ("people.remuneration", 2)
+    assert (rule["key"], rule["revision"]) == ("people.remuneration", 3)
     assert rule["policy_business_ids"] == [policy["business_id"]]
     assert set(rule["official_urls"]) == {
         "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf",
@@ -240,27 +251,31 @@ def test_remuneration_rule_revision_preserves_adopted_contribution_policy_source
     ]
 
 
-@pytest.mark.parametrize("gross,accepted", [(MAX_FEN - 1, True), (MAX_FEN, False)])
-def test_expanded_journal_turnover_has_an_explicit_int64_boundary(gross, accepted):
+@pytest.mark.parametrize("gross", [MAX_FEN - 1, MAX_FEN])
+def test_each_voucher_has_its_own_int64_boundary(gross):
     wage = case("B17Z")
     wage["data"]["gross_fen"] = str(gross)
     wage["data"]["tax_basis"] = deepcopy(case("B17B")["data"]["tax_basis"])
     wage["data"]["tax_basis"]["tax_fen"] = "1"
-    if not accepted:
-        with pytest.raises(ContractError) as error:
-            evaluate(wage, no_contributions())
-        assert error.value.code == "invalid_input"
-        return
-
     plan = evaluate(wage, no_contributions())
     assert_journal(
         plan,
         [
-            ("560201", "9223372036854775806", "0"),
-            ("221101", "0", "9223372036854775806"),
+            ("560201", str(gross), "0"),
+            ("221101", "0", str(gross)),
             ("221101", "1", "0"),
             ("222103", "0", "1"),
         ],
-        MAX_FEN,
+        gross + 1,
     )
-    assert plan["target"]["values"]["net_fen"] == "9223372036854775805"
+    assert plan["target"]["values"]["net_fen"] == str(gross - 1)
+
+
+def test_all_zero_payroll_has_no_empty_phase_voucher():
+    wage = case("B17Z")
+    wage["data"]["gross_fen"] = "0"
+    wage["data"].pop("tax_basis", None)
+    plan = evaluate(wage, no_contributions())
+    assert plan["journals"] == []
+    assert plan["target"]["values"]["cost_fen"] == "0"
+    assert obligations(plan)["net_pay"] == ("0", "221101")

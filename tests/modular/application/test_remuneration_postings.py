@@ -39,7 +39,16 @@ def postings(lines):
     )
 
 
-def assert_complete_payroll(lines, gross=600000):
+def assert_complete_payroll(vouchers, gross=600000):
+    by_key = {v["journal_key"]: v for v in vouchers}
+    assert set(by_key) == {"accrual", "deductions"}
+    assert sum(int(r["debit_fen"]) for r in by_key["accrual"]["lines"]) == gross + 90000
+    assert sum(int(r["debit_fen"]) for r in by_key["deductions"]["lines"]) == 100000
+    for voucher in vouchers:
+        rows = voucher["lines"]
+        assert [row["line_no"] for row in rows] == list(range(1, len(rows) + 1))
+        assert sum(int(r["debit_fen"]) for r in rows) == sum(int(r["credit_fen"]) for r in rows)
+    lines = [row for v in vouchers for row in v["lines"]]
     assert postings(lines) == Counter(
         (
             ("560201", gross, 0, PERSON),
@@ -56,7 +65,6 @@ def assert_complete_payroll(lines, gross=600000):
             ("222103", 0, 30000, None),
         )
     )
-    assert [row["line_no"] for row in lines] == list(range(1, 13))
 
 
 def obligations(book, wage, period):
@@ -102,8 +110,8 @@ def test_persisted_gross_and_deductions_keep_net_slots_and_open_voucher_number(c
     wage, employment, actual = wage_with_actuals()
     add(case, wage, employment, actual)
     original = result(case, wage)
-    assert_complete_payroll(original["vouchers"][0]["lines"])
-    assert_revision(case, wage, 2)
+    assert_complete_payroll(original["vouchers"])
+    assert_revision(case, wage, 3)
     assert {
         slot: (item.amount_fen, item.remaining_fen)
         for slot, item in obligations(case, wage, "2026-01").items()
@@ -124,11 +132,13 @@ def test_persisted_gross_and_deductions_keep_net_slots_and_open_voucher_number(c
     changed["data"]["gross_fen"] = "650000"
     correct(case, changed)
     corrected = result(case, wage)
-    assert_complete_payroll(corrected["vouchers"][0]["lines"], 650000)
-    for key in ("voucher_id", "voucher_number", "result_id"):
-        assert corrected["reference"][key] == original["reference"][key]
+    assert_complete_payroll(corrected["vouchers"], 650000)
+    assert corrected["reference"]["result_id"] == original["reference"]["result_id"]
     assert corrected["reference"]["generation"] == original["reference"]["generation"] + 1
-    assert len(corrected["vouchers"]) == 1
+    assert len(corrected["vouchers"]) == 2
+    assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in corrected["vouchers"]} == {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in original["vouchers"]
+    }
     assert query(agent, case, wage, "2026-01")["items"][0]["payable_fen"] == "550000"
     assert correct(case, changed)["accounting"] == "unchanged"
     assert result(case, wage) == corrected
@@ -186,7 +196,7 @@ def legacy_net_calculator(calculator):
     def evaluate(fact, context):
         plan = calculator(fact, context)
         assert fact["data"]["gross_fen"] == "600000"
-        # Reproduce this synthetic revision-1 journal, not a revision-2 journal
+        # Reproduce this synthetic revision-1 journal, not a revision-3 journal
         # relabelled as old. Only the test installation uses this calculator.
         old = (
             ("560201", "690000", "0", PERSON),
@@ -197,7 +207,7 @@ def legacy_net_calculator(calculator):
             ("221102", "0", "60000", None),
             ("221103", "0", "30000", None),
         )
-        plan["lines"] = [
+        lines = [
             {
                 "line_no": index,
                 "account_code": account,
@@ -208,6 +218,7 @@ def legacy_net_calculator(calculator):
             }
             for index, (account, debit, credit, person) in enumerate(old, 1)
         ]
+        plan["journals"] = [{"journal_key": "main", "summary": "职工薪酬", "lines": lines}]
         plan["calculation_revision"] = 1
         plan["rule_refs"][0].update(revision=1, official_urls=[])
         return plan
@@ -233,7 +244,7 @@ def test_frozen_payroll_keeps_its_old_journal_until_explicit_correction(
                 legacy_net_calculator(people._CALCULATORS["people.remuneration"]),
             )
         add(case, wage, employment, actual)
-    assert_revision(case, wage, 1 if legacy else 2)
+    assert_revision(case, wage, 1 if legacy else 3)
     checked = case.check()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
@@ -246,7 +257,7 @@ def test_frozen_payroll_keeps_its_old_journal_until_explicit_correction(
             for row in old_voucher["lines"]
         )
     else:
-        assert_complete_payroll(old_voucher["lines"])
+        assert_complete_payroll(original["vouchers"])
     original_report, original_summary = financial(case, "2026-01")
 
     def no_recalculation(*_args):
@@ -263,21 +274,24 @@ def test_frozen_payroll_keeps_its_old_journal_until_explicit_correction(
     changed["data"]["gross_fen"] = gross
     correct(case, changed, period="2026-02")
     current = result(case, wage)
-    assert_revision(case, changed, 2)
+    assert_revision(case, changed, 3)
     assert current["reference"]["business_period"] == "2026-01"
     assert current["reference"]["posting_period"] == "2026-02"
     assert current["reference"]["baseline_result_id"] == original["reference"]["result_id"]
-    reversal, replacement = (
-        next(v for v in current["vouchers"] if v["role"] == role)
-        for role in ("reversal", "replacement")
-    )
-    assert len(current["vouchers"]) == 2
-    assert reversal["reverses_voucher_id"] == old_voucher["voucher_id"]
-    assert reversal["lines"] == [
-        dict(row, debit_fen=row["credit_fen"], credit_fen=row["debit_fen"])
-        for row in old_voucher["lines"]
-    ]
-    assert_complete_payroll(replacement["lines"], int(gross))
+    reversals = [v for v in current["vouchers"] if v["role"] == "reversal"]
+    replacements = [v for v in current["vouchers"] if v["role"] == "replacement"]
+    assert len(reversals) == len(original["vouchers"])
+    assert len(current["vouchers"]) == (3 if legacy else 4)
+    for reversal in reversals:
+        source = next(
+            v for v in original["vouchers"] if v["voucher_id"] == reversal["reverses_voucher_id"]
+        )
+        assert reversal["journal_key"] == source["journal_key"]
+        assert reversal["lines"] == [
+            dict(row, debit_fen=row["credit_fen"], credit_fen=row["debit_fen"])
+            for row in source["lines"]
+        ]
+    assert_complete_payroll(replacements, int(gross))
     exact = result(
         case,
         wage,

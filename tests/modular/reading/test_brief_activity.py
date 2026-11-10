@@ -363,16 +363,22 @@ def test_social_components_stay_separate_and_wage_is_gross_not_debit_total(case)
         assert actual["component"] == (
             "employee_social" if "个人" in item["title"] else "employer_social"
         )
-    wage_voucher = next(
-        item for item in vouchers(case)["items"] if item["kind"] == "people.remuneration"
-    )
-    assert wage_voucher["business_amount_fen"] == "1000000"
-    assert wage_voucher["amount_fen"] == "1420000"
-    wage_lines = [line for line in wage_voucher["lines"] if line["code"] == "221101"]
-    assert sum(int(line["credit_fen"]) for line in wage_lines) == 1000000
-    assert sum(int(line["debit_fen"]) for line in wage_lines) == 170000
-    assert any("代扣" in line["source_label"] for line in wage_lines)
-    validate("OwnerBriefVoucher", wage_voucher)
+    wage_vouchers = {
+        item["business_amount_label"]: item
+        for item in vouchers(case)["items"]
+        if item["kind"] == "people.remuneration"
+    }
+    assert set(wage_vouchers) == {"计提金额", "代扣金额"}
+    accrual, deduction = wage_vouchers["计提金额"], wage_vouchers["代扣金额"]
+    assert accrual["business_amount_fen"] == accrual["amount_fen"] == "1250000"
+    assert deduction["business_amount_fen"] == deduction["amount_fen"] == "170000"
+    accrued = [line for line in accrual["lines"] if line["code"] == "221101"]
+    deducted = [line for line in deduction["lines"] if line["code"] == "221101"]
+    assert sum(int(line["credit_fen"]) for line in accrued) == 1000000
+    assert sum(int(line["debit_fen"]) for line in deducted) == 170000
+    assert any("代扣" in line["source_label"] for line in deducted)
+    validate("OwnerBriefVoucher", accrual)
+    validate("OwnerBriefVoucher", deduction)
 
 
 def test_real_consumption_has_its_own_basis_without_a_fictitious_input(case):

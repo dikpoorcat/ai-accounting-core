@@ -38,7 +38,7 @@ def test_current_payable_does_not_create_tax_zero_payment_or_change_accounting(n
     fact["data"]["disbursement_basis"] = current_payable()
     validate_contract("business-facts.schema.json", "PartialFact", fact)
     after = evaluate(fact, no_contributions())
-    for field in ("target", "lines", "obligations", "settlements", "fund_movements"):
+    for field in ("target", "journals", "obligations", "settlements", "fund_movements"):
         assert after[field] == before[field]
     assert after["target"]["values"]["tax_state"] == "not_withheld_not_filed"
     assert "tax_period" not in after["target"]["values"]
@@ -80,7 +80,7 @@ def test_open_correction_confirms_current_payable_and_can_remove_arrangement(cas
     after = get(case.app, case.company, fact["business_id"])["businesses"][0]["results"][0]
     assert after["target"] == before["target"]
     assert after["reference"]["result_id"] == before["reference"]["result_id"]
-    assert after["reference"]["voucher_number"] == before["reference"]["voucher_number"]
+    assert after["vouchers"][0]["number"] == before["vouchers"][0]["number"]
     assert len(after["vouchers"]) == 1
 
     fact["data"].pop("disbursement_basis")

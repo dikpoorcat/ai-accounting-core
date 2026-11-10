@@ -106,12 +106,10 @@ class AggregateJoinLedgerRepository(LedgerRepository):
         table, args = _selected_table(as_of, business_ids)
         fields = (
             "r.business_id,r.result_slot,r.result_id,r.generation,r.business_period,"
-            "r.posting_period,r.state,r.baseline_result_id,"
-            "v.voucher_id,v.number AS voucher_number"
+            "r.posting_period,r.state,r.baseline_result_id"
         )
         rows = self._session.fetchall(
-            f"SELECT {fields} FROM {table} LEFT JOIN voucher v ON v.result_id=r.result_id "
-            "AND v.role IN ('original','replacement') "
+            f"SELECT {fields} FROM {table} "
             "WHERE r.business_id IN (SELECT value FROM json_each(?)) "
             "ORDER BY r.business_id,r.result_slot,r.posting_period",
             (*args, canonical_json(list(business_ids))),

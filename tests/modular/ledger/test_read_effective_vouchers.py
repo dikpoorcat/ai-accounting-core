@@ -33,14 +33,10 @@ def test_effective_header_follows_formal_only_heads_and_stops_at_withdrawal(stor
             [january["reference"], february["reference"], march["reference"]], read
         )
     assert headers[0] == headers[1]
-    assert headers[0].voucher_id == january["vouchers"][0]["voucher_id"]
-    assert headers[0].result == {
-        key: value
-        for key, value in january["reference"].items()
-        if key not in {"voucher_id", "voucher_number"}
-    }
-    assert headers[0].period == "2026-01" and headers[0].role == "original"
-    assert headers[2] is None
+    assert headers[0][0].voucher_id == january["vouchers"][0]["voucher_id"]
+    assert headers[0][0].result == january["reference"]
+    assert headers[0][0].period == "2026-01" and headers[0][0].role == "original"
+    assert headers[2] == ()
 
 
 def test_effective_header_rejects_an_open_replaced_generation(store):

@@ -5,6 +5,7 @@ from uuid import UUID, uuid5
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    append_journal_line,
     checked_fen,
     format_fen,
     parse_fen,
@@ -15,7 +16,7 @@ from ai_accounting_modular.contracts.public import (
 ACCOUNT_CODES = {"bank_account": "1002", "cash_account": "1001", "platform_account": "1012"}
 PARTY_KINDS = {"person", "organization"}
 PLAN_ARRAYS = (
-    "lines",
+    "journals",
     "obligations",
     "settlements",
     "obligation_reclassifications",
@@ -99,7 +100,6 @@ def line(plan, code, *, debit=0, credit=0, party=None, object_id=None, summary="
     checked_fen(debit)
     checked_fen(credit)
     value = {
-        "line_no": len(plan["lines"]) + 1,
         "account_code": code,
         "debit_fen": format_fen(debit),
         "credit_fen": format_fen(credit),
@@ -109,7 +109,7 @@ def line(plan, code, *, debit=0, credit=0, party=None, object_id=None, summary="
         value["party_id"] = party
     if object_id is not None:
         value["object_id"] = object_id
-    plan["lines"].append(value)
+    return append_journal_line(plan, value)
 
 
 def source_locations(fact):

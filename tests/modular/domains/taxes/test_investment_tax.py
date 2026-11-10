@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot
+from ai_accounting_modular.contracts.public import ContractError, EvaluatedSlot, posting_lines
 from ai_accounting_modular.domains.taxes._financial_transfer import validate_bases
 from ai_accounting_modular.domains.taxes._investment_tax_math import (
     inventory_month,
@@ -296,11 +296,11 @@ def test_monthly_vat_exists_without_return_and_full_return_does_not_post_twice()
         basis()["business_id"], "financial_transfer:2026-07", context
     )
     assert [
-        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in monthly["lines"]
+        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in posting_lines(monthly)
     ] == [("5111", "2000", "0"), ("222107", "0", "2000")]
     context.facts[current["business_id"]] = current
     return_plan = create_taxes().evaluate_slot(current["business_id"], "main", context)
-    assert return_plan["lines"] == []
+    assert return_plan["journals"] == []
     assert return_plan["target"]["values"]["payable_vat_fen"] == "2000"
     assert [
         (row["slot"], row["account_code"], row["amount_fen"]) for row in return_plan["obligations"]
@@ -539,7 +539,7 @@ def test_partnership_allocation_preserves_retained_income_and_never_offsets_own_
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert result["target"]["values"]["annual_adjustment_fen"] == expected
     assert result["target"]["values"]["allocated_taxable_income_fen"] == allocated
-    assert result["lines"] == []
+    assert result["journals"] == []
 
 
 def test_listed_dividend_twelve_month_boundary_clamps_leap_day_to_month_end():

@@ -5,6 +5,7 @@ from copy import deepcopy
 from ai_accounting_modular.contracts.public import (
     ContractError,
     YearMonth,
+    append_journal_line,
     checked_fen,
     format_fen,
     sum_fen,
@@ -120,7 +121,7 @@ def new_plan(business_id, kind, period, slot="main"):
         "rule_refs": [{"key": kind, "revision": 1, "policy_business_ids": [], "official_urls": []}],
     }
     for name in (
-        "lines",
+        "journals",
         "obligations",
         "settlements",
         "obligation_reclassifications",
@@ -143,7 +144,6 @@ def line(plan, account, amount, *, debit=False, party=None, object_id=None):
     if not amount:
         return
     row = {
-        "line_no": len(plan["lines"]) + 1,
         "account_code": account,
         "debit_fen": format_fen(amount if debit else 0),
         "credit_fen": format_fen(0 if debit else amount),
@@ -153,7 +153,7 @@ def line(plan, account, amount, *, debit=False, party=None, object_id=None):
         row["party_id"] = party
     if object_id is not None:
         row["object_id"] = object_id
-    plan["lines"].append(row)
+    return append_journal_line(plan, row)
 
 
 def obligation(plan, slot, party, amount, *, account="2202", direction="payable"):
@@ -217,22 +217,25 @@ def finalize_plan(plan):
     """Deduplicate source bindings and aggregate equal journal dimensions once."""
     refs = {tuple(sorted(ref.items())): ref for ref in plan["basis"]["source_results"]}
     plan["basis"]["source_results"] = list(refs.values())
-    grouped = {}
-    for row in plan["lines"]:
-        side = "debit_fen" if row["debit_fen"] != "0" else "credit_fen"
-        key = row["account_code"], row.get("party_id"), row.get("object_id"), side
-        if key not in grouped:
-            grouped[key] = deepcopy(row)
-        else:
-            grouped[key][side] = format_fen(
-                total(
-                    (
-                        int(grouped[key][side]),
-                        int(row[side]),
+    for journal in plan["journals"]:
+        grouped = {}
+        for row in journal["lines"]:
+            side = "debit_fen" if row["debit_fen"] != "0" else "credit_fen"
+            key = row["account_code"], row.get("party_id"), row.get("object_id"), side
+            if key not in grouped:
+                grouped[key] = deepcopy(row)
+            else:
+                grouped[key][side] = format_fen(
+                    total(
+                        (
+                            int(grouped[key][side]),
+                            int(row[side]),
+                        )
                     )
                 )
-            )
-    plan["lines"] = [dict(row, line_no=index) for index, row in enumerate(grouped.values(), 1)]
+        journal["lines"] = [
+            dict(row, line_no=index) for index, row in enumerate(grouped.values(), 1)
+        ]
 
 
 def cost_definition(fact, context, ref, *, object_id, category):

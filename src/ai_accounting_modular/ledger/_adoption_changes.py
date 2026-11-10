@@ -3,7 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
-from ai_accounting_modular.contracts.public import loads_json
+from ai_accounting_modular.contracts.public import loads_json, posting_lines
 
 from ._formal_output import _line_totals, target_vouchers
 
@@ -74,8 +74,9 @@ def describe_changes(repo, retired, proposed, old_by_key):
     )
 
 
-def _describe(old, plan, posting_period, journal, previous):
-    old_lines, new_lines = journal["lines"] if journal else [], plan["lines"] if plan else []
+def _describe(old, plan, posting_period, journals, previous):
+    old_lines = [line for journal in journals or () for line in journal["lines"]]
+    new_lines = posting_lines(plan) if plan else []
     period_changed = bool(old and plan and old["business_period"] != plan["accounting_period"])
     old_totals = {tuple(key): value for key, value in _line_totals(old_lines)}
     new_totals = {tuple(key): value for key, value in _line_totals(new_lines)}

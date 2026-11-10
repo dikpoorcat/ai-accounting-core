@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, posting_lines
 from ai_accounting_modular.money.public import create_money, stable_occurrence_id
 
 from .conftest import Context, objects, payable, payment
@@ -20,7 +20,7 @@ def evaluate(ids, fact=None, obligation=None, extra=()):
 def test_real_expense_payment_clears_debt_and_never_books_expense_twice(ids):
     plan = evaluate(ids)
     assert [
-        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in plan["lines"]
+        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in posting_lines(plan)
     ] == [("2202", "100000", "0"), ("1002", "0", "100000")]
     assert plan["obligations"] == []
     assert plan["settlements"][0]["amount_fen"] == "100000"
@@ -96,7 +96,7 @@ def test_expense_refund_is_real_inflow_against_a_receivable(ids):
     ob["direction"], ob["account_code"] = "receivable", "1221"
     plan = evaluate(ids, fact, ob)
     assert [
-        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in plan["lines"]
+        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in posting_lines(plan)
     ] == [("1221", "0", "100000"), ("1002", "100000", "0")]
     assert plan["fund_movements"][0]["direction"] == "inflow"
 
@@ -186,7 +186,7 @@ def test_physical_transfer_has_two_stable_sides_and_no_external_cashflow(ids):
         },
     }
     plan = evaluate(ids, fact)
-    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in plan["lines"]] == [
+    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in posting_lines(plan)] == [
         ("1001", "2345", "0"),
         ("1002", "0", "2345"),
     ]
@@ -208,7 +208,7 @@ def test_managed_reserve_return_reverses_expense_without_inventing_another_balan
         "amount_fen": "40000",
     }
     plan = evaluate(ids, fact)
-    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in plan["lines"]] == [
+    assert [(x["account_code"], x["debit_fen"], x["credit_fen"]) for x in posting_lines(plan)] == [
         ("5602", "0", "40000"),
         ("1002", "40000", "0"),
     ]

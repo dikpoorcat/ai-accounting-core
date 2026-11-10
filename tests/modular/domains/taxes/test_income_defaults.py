@@ -56,7 +56,7 @@ def test_defaults_are_independent_and_only_normalize_adopted_input(
     adopted = evaluate(current, basis, params)
     adopted_basis = evaluate(basis)
     assert adopted["target"] == explicit["target"]
-    assert adopted["lines"] == explicit["lines"]
+    assert adopted["journals"] == explicit["journals"]
     assert adopted["target"]["values"]["cumulative_tax_fen"] == "100000"
     assert adopted["basis"]["input"]["method"] == "computed_provision"
     assert adopted_basis["basis"]["input"]["collection_method"] == "actual_profit"

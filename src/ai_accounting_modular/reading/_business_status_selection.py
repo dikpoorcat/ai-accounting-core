@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.ledger.public import AdoptedContent
 
-from . import _brief_open_members, _brief_vouchers, _monthly
-from ._brief_activity_parts import parts
+from . import _brief_open_members, _brief_vouchers, _monthly, _payroll_journals
+from ._brief_activity_parts import for_journal, parts
 from ._brief_activity_sources import Contents, pages
 from ._collections import CollectionFilter, collection_page
 
@@ -54,7 +54,10 @@ def _member(reader, scope, query, read, cache):
         cache.reuse(contents)
         item = hydrated[0]
         selected = item["_detail_scope"]
-        header = _brief_vouchers.effective_headers(reader, [selected["reference"]], read)[0]
+        headers = _brief_vouchers.effective_headers(reader, [selected["reference"]], read)[0]
+        header = _payroll_journals.select_header(
+            headers, component=_payroll_journals.component_from_scope(selected)
+        )
         expected = "" if header is None else _brief_vouchers.token(_brief_vouchers.locator(header))
         amount = item["source_amount_fen"]
         title = "原应收" if selected["direction"] == "receivable" else "原应付"
@@ -69,6 +72,7 @@ def _member(reader, scope, query, read, cache):
             "reference": item["reference"],
             "voucher": expected,
             "voucher_role": "reversal" if template["state"] == "冲正" else "original",
+            "journal_key": item["journal_key"],
         }
         amount, title, category = (
             template["business_amount_fen"],
@@ -93,15 +97,16 @@ def _member(reader, scope, query, read, cache):
     }
 
 
-def _whole(content, cache):
+def _whole(content, cache, *, journal_key=None):
     if content is None or content.target["kind"] == "system.withdrawal":
         return {}
-    prepared = parts(content, cache)
+    prepared = for_journal(parts(content, cache), journal_key or "main")
     return {
         "reference": content.reference,
         "source": content.source,
         "allocations": [entry for part in prepared for entry in part.scope["allocations"]],
         "obligations": [],
+        "journal_key": journal_key,
     }
 
 
@@ -130,7 +135,9 @@ def select(reader, scope, query, read):
         cache.load([selected["reference"]])
         content = cache.get(selected["reference"])
         if query["detail_scope_key"].startswith("voucher:"):
-            selected = _whole(content, cache) | {"voucher_role": selected["voucher_role"]}
+            selected = _whole(content, cache, journal_key=selected["journal_key"]) | {
+                "voucher_role": selected["voucher_role"]
+            }
         kind = content.target["kind"]
     else:
         selected_scope = dict(scope) | {"period_from": read.start_period}

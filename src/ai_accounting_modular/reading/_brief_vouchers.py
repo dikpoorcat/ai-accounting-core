@@ -12,10 +12,10 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.ledger.public import VoucherLocator
 
-from . import _brief_vouchers_display, _monthly
+from . import _brief_vouchers_display, _monthly, _payroll_journals
 from . import _business_descriptions as descriptions
 from ._brief_activity_amounts import amount, recognition, signed
-from ._brief_activity_parts import category, parts
+from ._brief_activity_parts import category, for_journal, parts
 from ._brief_activity_sources import Contents, same_reference
 from ._business_labels import business_label
 from ._collections import CollectionFilter, wire_page
@@ -74,7 +74,7 @@ def assets(content):
 
 
 def descriptor(entry, content, members, *, reverses=None, party_ids=()):
-    label, value = business_label(content), amount(content)
+    label, value = business_label(content), amount(content, journal_key=entry.journal_key)
     titles = list(dict.fromkeys(item["row"]["description"] for item in members))
     summary = "、".join(titles) or label.title
     type_title = "、".join(dict.fromkeys(item["row"]["title"] for item in members)) or label.title
@@ -99,6 +99,7 @@ def descriptor(entry, content, members, *, reverses=None, party_ids=()):
     return {
         "locator": locator(entry),
         "reference": content.reference,
+        "journal_key": entry.journal_key,
         "party_ids": list(party_ids),
         "template": {
             "number": str(entry.number),
@@ -252,15 +253,25 @@ def effective_headers(reader, references, read):
     return tuple(found[ref["result_id"]] for ref in references)
 
 
-def descriptors_for_references(reader, references, read, *, known_contents=()):
+def descriptors_for_references(reader, references, read, *, known_contents=(), components=None):
     """Per-input nullable descriptor, using ledger's exact effective journal inheritance."""
-    entries = effective_headers(reader, references, read)
+    groups = effective_headers(reader, references, read)
+    components = (None,) * len(groups) if components is None else tuple(components)
+    if len(components) != len(groups):
+        raise ContractError("invalid_input", "凭证阶段选择须与正式来源逐项对应。")
+    entries = tuple(
+        _payroll_journals.select_header(group, component=component)
+        for group, component in zip(groups, components, strict=True)
+    )
     cache = Contents(reader.ledger, read)
     cache.reuse(known_contents)
     cache.load([entry.result for entry in entries if entry is not None])
     unique = {token(locator(entry)): entry for entry in entries if entry is not None}
+    contents = {entry.result["result_id"]: cache.get(entry.result) for entry in unique.values()}
+    all_parts = {identity: parts(body, cache) for identity, body in contents.items()}
     prepared = {
-        identity: parts(cache.get(entry.result), cache) for identity, entry in unique.items()
+        identity: for_journal(all_parts[entry.result["result_id"]], entry.journal_key)
+        for identity, entry in unique.items()
     }
     prose = descriptions.Descriptions(
         reader,

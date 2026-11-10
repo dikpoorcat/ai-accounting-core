@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from ai_accounting_modular.contracts.public import ContractError, posting_lines, validate_contract
 from ai_accounting_modular.domains.taxes._investment_tax_math import inventory_month, tax_on_gross
 from ai_accounting_modular.domains.taxes.public import create_taxes
 
@@ -150,7 +150,7 @@ def test_actual_components_use_actual_ordinary_residual_not_reference(reference_
     obligations = {row["slot"]: row["amount_fen"] for row in result["obligations"]}
     assert obligations["vat"] == "90" and obligations["financial_transfer_vat"] == "20"
     assert result["target"]["values"]["payable_vat_fen"] == "110"
-    assert not any(row["account_code"] == "571105" for row in result["lines"])
+    assert not any(row["account_code"] == "571105" for row in posting_lines(result))
 
 
 def test_bare_actual_residual_still_needs_true_ordinary_book_reconciliation_reason():
@@ -409,7 +409,7 @@ def test_actual_component_rounding_requires_a_matching_supported_reference(refer
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert result["target"]["values"]["rounding_adjustment_fen"] == "1"
     assert result["target"]["values"]["relief_fen"] == "0"
-    assert [(row["account_code"], row["debit_fen"]) for row in result["lines"]] == [
+    assert [(row["account_code"], row["debit_fen"]) for row in posting_lines(result)] == [
         ("571105", "1"),
         ("222101", "0"),
     ]
@@ -444,7 +444,7 @@ def test_whole_period_actual_relief_survives_a_reference_error_without_fake_roun
     assert metrics["adopted_basis"] == "actual"
     assert metrics["relief_fen"] == "20"
     assert "rounding_adjustment_fen" not in metrics
-    assert not any(row["account_code"] in {"6301", "571105"} for row in result["lines"])
+    assert not any(row["account_code"] in {"6301", "571105"} for row in posting_lines(result))
     assert any(
         row["code"] == "unsupported_calculation" and row["blocking_scope"] == "none"
         for row in metrics["filing_issues"]
@@ -482,5 +482,5 @@ def test_actual_exemption_capacity_does_not_net_away_a_proven_investment_compone
         row["direction"] == "payable" and row["amount_fen"] == "0" for row in result["obligations"]
     )
     assert [
-        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in result["lines"]
+        (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in posting_lines(result)
     ] == [("5111", "0", "20"), ("222107", "20", "0")]

@@ -17,9 +17,8 @@ from ai_accounting_modular.reading import (
 from ai_accounting_modular.reading._collections import collection_items
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.people.test_application import replacement
-from tests.modular.domains.people.test_people import case as business_case
-from tests.modular.domains.people.test_people import declaration, no_contributions
-from tests.modular.domains.people.test_read_remuneration import add
+from tests.modular.domains.people.test_people import declaration
+from tests.modular.domains.people.test_read_remuneration import add, wage_with_actuals
 from tests.modular.reading._support import source
 
 from .test_brief_contents import scope
@@ -94,7 +93,7 @@ def test_selected_frozen_journal_is_not_replaced_by_its_future_current_adoption(
         assert posted.source["result_id"] != current.source["result_id"]
         assert set(captured.selected_vouchers) == {posted.source["result_id"]}
         assert (
-            captured.selected_vouchers[posted.source["result_id"]].result["result_id"]
+            captured.selected_vouchers[posted.source["result_id"]][0].result["result_id"]
             == posted.source["result_id"]
         )
         expected = external_model(case, selected, read, monkeypatch)
@@ -113,7 +112,7 @@ def test_selected_frozen_journal_is_not_replaced_by_its_future_current_adoption(
     assert (value["outstanding_fen"], value["current_outstanding_fen"]) == ("100000", "80000")
 
 
-def test_no_journal_is_a_known_none_not_an_absent_lookup(case, monkeypatch):
+def test_no_journal_is_a_known_empty_collection_not_an_absent_lookup(case, monkeypatch):
     package = {
         "business_id": str(uuid4()),
         "kind": "opening.package",
@@ -155,7 +154,7 @@ def test_no_journal_is_a_known_none_not_an_absent_lookup(case, monkeypatch):
         selected = scope(case)
         captured = _brief_open_sources.capture(case.kernel.reading, selected, read)
         assert len(captured.selected) == 2
-        assert list(captured.selected_vouchers.values()) == [None]
+        assert list(captured.selected_vouchers.values()) == [()]
         expected = external_model(case, selected, read, monkeypatch)
         monkeypatch.setattr(case.kernel.ledger, "get_effective_voucher_directory", forbidden)
         assert _brief_open.prepare(case.kernel.reading, selected, read) == expected
@@ -163,13 +162,13 @@ def test_no_journal_is_a_known_none_not_an_absent_lookup(case, monkeypatch):
 
 def test_inherited_journal_still_loads_its_exact_old_owner_origin_once(case, monkeypatch):
     case.seed(expense=False)
-    wage = business_case("B17Z")
-    add(case, no_contributions(), wage)
+    wage, employment, actual = wage_with_actuals()
+    add(case, wage, employment, actual)
     with case.kernel.storage.read_unit(case.company) as read:
         initial = _brief_open_sources.capture(case.kernel.reading, scope(case), read)
         old = next(iter(initial.contents.values())).reference
     assert case.close(case.check())["state"] == "closed"
-    declared, reference = declaration(wage, "0")
+    declared, reference = declaration(wage, "30000")
     wage["data"]["tax_basis"]["pooled_source"] = reference
     wire = replacement(case.company, wage)
     wire["correction_period"] = "2026-02"
@@ -180,9 +179,16 @@ def test_inherited_journal_still_loads_its_exact_old_owner_origin_once(case, mon
         expected = external_model(case, selected, read, monkeypatch)
         captured = _brief_open_sources.capture(case.kernel.reading, selected, read)
         assert old["result_id"] not in captured.contents
-        assert {entry.result["result_id"] for entry in captured.selected_vouchers.values()} == {
-            old["result_id"]
-        }
+        assert {
+            entry.result["result_id"]
+            for entries in captured.selected_vouchers.values()
+            for entry in entries
+        } == {old["result_id"]}
+        assert {
+            entry.journal_key
+            for entries in captured.selected_vouchers.values()
+            for entry in entries
+        } == {"accrual", "deductions"}
         get, calls = case.kernel.ledger.get_obligation_origins, Counter()
 
         def observed(references, actual_read):

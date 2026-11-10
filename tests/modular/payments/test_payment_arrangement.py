@@ -245,9 +245,13 @@ def test_adopting_contribution_feedback_replaces_estimates_and_expires_file_with
         result = case.get(wage["business_id"])["businesses"][0]
         values = result["results"][0]["target"]["values"]
         assert values["net_fen"] == "880000" and values["cost_fen"] == "1220000"
-        assert result["state"]["results"][0]["voucher_id"] == original["state"]["results"][0][
-            "voucher_id"
-        ]
+        assert {
+            v["journal_key"]: (v["voucher_id"], v["number"])
+            for v in result["results"][0]["vouchers"]
+        } == {
+            v["journal_key"]: (v["voucher_id"], v["number"])
+            for v in original["results"][0]["vouchers"]
+        }
         assert any(
             source["business_id"] == actual["business_id"]
             for source in result["results"][0]["basis"]["source_results"]

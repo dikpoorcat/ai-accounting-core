@@ -26,7 +26,7 @@ def formal_activation(case, business_id):
         if item["target"]["result_slot"] == "main"
     )
     with case.kernel.storage.read_unit(case.company) as read:
-        (entry,) = case.kernel.ledger.get_effective_voucher_directory((reference,), read)
+        ((entry,),) = case.kernel.ledger.get_effective_voucher_directory((reference,), read)
         (voucher,) = case.kernel.ledger.get_vouchers(
             (
                 VoucherLocator(

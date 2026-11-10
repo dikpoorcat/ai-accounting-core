@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from test_expense import Context, other_fact, sale_fact, vat_context
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, posting_lines
 from ai_accounting_modular.domains.operations._advances import _inherit_resolution
 from ai_accounting_modular.domains.operations._tax_lifecycle import future_months, resolution
 from ai_accounting_modular.domains.operations.public import create_operations
@@ -82,7 +82,7 @@ def test_customer_prepayment_does_not_become_revenue_or_tax_due(with_vat):
     assert plan["target"]["values"]["vat_fen"] == "0"
     assert plan["tax_sales"] == []
     assert plan["basis"]["input"]["tax_status"] == "not_due"
-    assert "5001" not in {row["account_code"] for row in plan["lines"]}
+    assert "5001" not in {row["account_code"] for row in posting_lines(plan)}
     assert current == before
 
 

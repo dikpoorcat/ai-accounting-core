@@ -186,7 +186,7 @@ class ObligationDirectory:
     """Complete selected open items; current contains only their exact resource matches.
 
     Current matches can be settled. Optional selected_vouchers contains exactly selected source
-    IDs, each mapped to its effective journal or None. Historical journal owners do not add
+    IDs, each mapped to its complete effective journal tuple. Historical journal owners do not add
     obligation sources or origins. No pagination, ordering or whole-scope totals are promised.
     """
 
@@ -194,7 +194,7 @@ class ObligationDirectory:
     current: tuple[ObligationDirectoryItem, ...]
     sources: tuple[ObligationDirectorySource, ...]
     origins: dict[str, AdoptedOriginProjection | AdoptedContent] | None
-    selected_vouchers: dict[str, VoucherDirectoryEntry | None] | None = None
+    selected_vouchers: dict[str, tuple[VoucherDirectoryEntry, ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +234,7 @@ class VoucherLocator:
 @dataclass(frozen=True)
 class VoucherDirectoryEntry:
     voucher_id: str
+    journal_key: str
     period: str
     number: int
     role: str

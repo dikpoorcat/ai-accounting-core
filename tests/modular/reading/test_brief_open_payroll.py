@@ -16,7 +16,7 @@ from tests.modular.domains.people.test_read_remuneration import (
 from .test_brief_open import members, page, publish
 
 
-def test_wage_contribution_pairs_are_per_person_month_and_share_exact_complete_voucher(case):
+def test_wage_contribution_pairs_are_per_person_month_with_exact_phase_vouchers(case):
     case.seed(expense=False)
     wage, employment, actual = wage_with_actuals()
     labor = business_case("B17P")
@@ -40,10 +40,14 @@ def test_wage_contribution_pairs_are_per_person_month_and_share_exact_complete_v
     assert set(parts) == {"employee_social", "employer_social"}
     assert {row["payroll_period"] for row in parts.values()} == {"2026-01"}
     assert len({row["contribution_group_key"] for row in parts.values()}) == 1
-    assert len(detail["vouchers"]["items"]) == 1
-    assert {row["voucher_version_id"] for row in parts.values()} == {
-        detail["vouchers"]["items"][0]["voucher_version_id"]
-    }
+    assert len(detail["vouchers"]["items"]) == 2
+    by_phase = {row["business_amount_label"]: row for row in detail["vouchers"]["items"]}
+    assert (
+        parts["employee_social"]["voucher_version_id"] == by_phase["代扣金额"]["voucher_version_id"]
+    )
+    assert (
+        parts["employer_social"]["voucher_version_id"] == by_phase["计提金额"]["voucher_version_id"]
+    )
     assert parts["employee_social"]["outstanding_fen"] == "50000"
     assert parts["employee_social"]["current_outstanding_fen"] == "20000"
     assert parts["employer_social"]["current_outstanding_fen"] == "60000"

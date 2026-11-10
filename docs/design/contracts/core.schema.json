@@ -1101,14 +1101,6 @@
         "baseline_result_id": {
           "$ref": "#/$defs/Id"
         },
-        "voucher_id": {
-          "$ref": "#/$defs/Id"
-        },
-        "voucher_number": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9223372036854775807
-        },
         "result_slot": {
           "$ref": "#/$defs/Slot"
         }
@@ -3594,8 +3586,10 @@
           "items": {
             "$ref": "#/$defs/Line"
           },
-          "minItems": 1,
-          "maxItems": 10000
+          "minItems": 1
+        },
+        "journal_key": {
+          "$ref": "#/$defs/Slot"
         }
       },
       "required": [
@@ -3605,7 +3599,8 @@
         "number",
         "role",
         "summary",
-        "lines"
+        "lines",
+        "journal_key"
       ],
       "additionalProperties": false
     },
@@ -3626,8 +3621,7 @@
           "items": {
             "$ref": "#/$defs/Voucher"
           },
-          "minItems": 0,
-          "maxItems": 10
+          "minItems": 0
         }
       },
       "required": [

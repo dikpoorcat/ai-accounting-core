@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+from ai_accounting_modular.contracts.public import posting_lines
+
 from ._common import amount, reject, total
 from ._investment_tax_math import event_key
 
@@ -45,7 +47,7 @@ def interest_effects(plan, views, allocations):
 def check_effects(plan):
     posted = total(
         amount(row["credit_fen"]) - amount(row["debit_fen"])
-        for row in plan["lines"]
+        for row in posting_lines(plan)
         if row["account_code"] == "5111"
     )
     explained = total(

@@ -11,6 +11,7 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.money.public import counterparty_meaning
 
+from . import _payroll_journals
 from ._brief_activity_amounts import amount, recognition, signed
 from ._business_labels import (
     BusinessLabel,
@@ -44,6 +45,7 @@ class ActivityEvent:
     role: str
     voucher_number: int
     voucher_token: str
+    journal_key: str = "main"
 
 
 _COMPONENTS = {
@@ -286,6 +288,19 @@ def base_scope(content, *, direction=None, allocations=()):
 
 def parts(content, cache):
     kind, data = content.target["kind"], content.basis.get("input", {})
+    if kind == "people.remuneration":
+        return [
+            Part(
+                BusinessLabel(code, title),
+                value,
+                label,
+                (data["person_id"],),
+                phase,
+                False,
+                base_scope(content) | {"component": component},
+            )
+            for component, phase, code, title, value, label in _payroll_journals.components(content)
+        ]
     if kind == "money.movement" and data["type"] in {"settlement", "payroll_reserve"}:
         direction = data.get("direction", "outflow")
         batch = data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve"
@@ -375,6 +390,10 @@ def parts(content, cache):
             base_scope(content, direction=phase if phase in {"inflow", "outflow"} else None),
         )
     ]
+
+
+def for_journal(prepared, journal_key):
+    return [part for part in prepared if journal_key == "main" or part.phase == journal_key]
 
 
 def category(kind, phase, role):
@@ -481,15 +500,24 @@ def rows(event, content, objects, *, prepared, obligations=(), own_funds_channel
             "冲正原业务 · " if event.role == "reversal" else "更正原业务 · " if correction else ""
         ) + part.label.title
         rec = recognition(content)
+        selected_obligations = obligations
+        if content.target["kind"] == "people.remuneration":
+            allowed = _payroll_journals.slots(
+                journal_key=event.journal_key, component=part.scope.get("component")
+            )
+            selected_obligations = [
+                item for item in obligations if item["source"]["slot"] in allowed
+            ]
         actual_scope = dict(part.scope) | {
             "voucher": token,
             "voucher_role": event.role,
             "sign": sign,
             "part": index,
             "purpose": part.label.code,
-            "obligations": list(obligations),
+            "journal_key": event.journal_key,
+            "obligations": list(selected_obligations),
         }
-        progress = bool(part.scope["allocations"] or obligations) and not content.target[
+        progress = bool(part.scope["allocations"] or selected_obligations) and not content.target[
             "kind"
         ].startswith(("investment.cooperation_", "opening.", "reports."))
         if part.batch:

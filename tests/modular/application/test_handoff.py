@@ -199,8 +199,8 @@ def test_real_bidirectional_handoff_keeps_one_seq_number_primary_and_actual_mone
     assert after["fact"] == target
     original, final = before["results"][0], after["results"][0]
     assert final["reference"]["result_id"] == original["reference"]["result_id"]
-    assert final["reference"]["voucher_id"] == original["reference"]["voucher_id"]
-    assert final["reference"]["voucher_number"] == original["reference"]["voucher_number"]
+    assert final["vouchers"][0]["voucher_id"] == original["vouchers"][0]["voucher_id"]
+    assert final["vouchers"][0]["number"] == original["vouchers"][0]["number"]
     assert {item["source_id"] for item in after["sources"]} == set(current["evidence_ids"])
     with app.storage.read_unit(company) as read:
         assert body_owner(app, old_kind).export_current([current["business_id"]], read) == ()

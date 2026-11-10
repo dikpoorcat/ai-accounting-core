@@ -15,7 +15,7 @@ def test_actual_declaration_tax_period_is_independent_of_initial_remuneration_co
     context = Context(original, actual)
     result = create_taxes().evaluate_slot(actual["business_id"], "main", context)
     assert result["target"]["values"]["tax_period_end"] == period
-    assert result["lines"] == result["obligations"] == result["fund_movements"] == []
+    assert result["journals"] == result["obligations"] == result["fund_movements"] == []
 
 
 def test_later_declaration_still_cannot_relabel_wages_as_bonus():

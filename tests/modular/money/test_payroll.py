@@ -98,7 +98,12 @@ def test_one_real_gross_bank_payment_settles_complete_net_group_and_known_reserv
         assert [
             (row["account_code"], row["debit_fen"], row["credit_fen"]) for row in voucher["lines"]
         ] == [("221101", "830000", "0"), ("5602", "170000", "0"), ("1002", "0", "1000000")]
-        assert ledger.query_vouchers(LedgerQuery(), read).total == 2
+        wage_result = ledger.get_results([wage["business_id"]], read)[0]
+        assert {journal["journal_key"] for journal in wage_result["vouchers"]} == {
+            "accrual",
+            "deductions",
+        }
+        assert ledger.query_vouchers(LedgerQuery(), read).total == 3
 
 
 @pytest.mark.parametrize("fault", ["partial", "wrong_gross", "return_month", "return_date"])

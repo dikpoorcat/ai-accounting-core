@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from ai_accounting_modular.contracts.public import content_digest, validate_contract
 
-from ._formal_output import same_formal_output, target_lines
+from ._formal_output import journal_specs, same_formal_output, target_journals
 from ._values import fail
 
 
@@ -136,7 +136,7 @@ def bind_plan(plan, uow, correction_period=None):
             old["basis_digest"] == content_digest(plan["basis"])
             and old["calculation_key"] == plan["calculation_key"]
             and old["calculation_revision"] == plan["calculation_revision"]
-            and target_lines(repo, old) == plan["lines"]
+            and journal_specs(target_journals(repo, old)) == journal_specs(plan["journals"])
         )
     if unchanged:
         identity = PreparedResult(

@@ -8,7 +8,7 @@ from ai_accounting_modular.ledger.opening.public import (
     opening_payroll_references,
 )
 
-from . import _brief_open_positions, _brief_open_rows, _brief_open_sources
+from . import _brief_open_positions, _brief_open_rows, _brief_open_sources, _payroll_journals
 from ._context import last_period
 
 
@@ -189,11 +189,18 @@ def capture(reader, scope, selected, read):
                 read,
                 references,
             )
+        allowed = None
+        if selected.detail is not None and selected.content.target["kind"] == "people.remuneration":
+            allowed = _payroll_journals.slots(
+                journal_key=chosen.get("journal_key", "main"),
+                component=_payroll_journals.component_from_scope(chosen),
+            )
         expected = {
             key(item.definition.reference): selected.content.source
             for item in candidates
             if item.definition.reference["business_id"] == subject
             and item.definition.source == selected.content.source
+            and (allowed is None or item.definition.reference["slot"] in allowed)
         }
     if expected:
 

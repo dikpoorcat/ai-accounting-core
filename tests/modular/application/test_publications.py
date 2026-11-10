@@ -122,22 +122,28 @@ def posting(current, slot):
             "policies": [],
             "source_locations": [],
         },
-        "lines": [
+        "journals": [
             {
-                "line_no": 1,
-                "account_code": "5602",
-                "debit_fen": amount,
-                "credit_fen": "0",
+                "journal_key": "main",
                 "summary": "合成应用调度样例",
-            },
-            {
-                "line_no": 2,
-                "account_code": "2202",
-                "debit_fen": "0",
-                "credit_fen": amount,
-                "party_id": identity(999),
-                "summary": "合成应用调度样例",
-            },
+                "lines": [
+                    {
+                        "line_no": 1,
+                        "account_code": "5602",
+                        "debit_fen": amount,
+                        "credit_fen": "0",
+                        "summary": "合成应用调度样例",
+                    },
+                    {
+                        "line_no": 2,
+                        "account_code": "2202",
+                        "debit_fen": "0",
+                        "credit_fen": amount,
+                        "party_id": identity(999),
+                        "summary": "合成应用调度样例",
+                    },
+                ],
+            }
         ],
     }
     for key in (

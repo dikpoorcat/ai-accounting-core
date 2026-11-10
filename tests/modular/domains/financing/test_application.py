@@ -128,7 +128,9 @@ def test_new_repayment_recalculates_interest_then_replacement_reaches_same_money
     assert changed["completion"] == "complete", changed
     after = result(app, company, interest)
     assert after["target"]["values"]["interest_fen"] == "2300"
-    assert after["reference"]["voucher_number"] == before["reference"]["voucher_number"]
+    assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in after["vouchers"]} == {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in before["vouchers"]
+    }
     assert (
         result(app, company, paid)["reference"]["result_id"]
         == money_before["reference"]["result_id"]
@@ -151,7 +153,9 @@ def test_purchase_correction_recalculates_gain_keeps_real_receipt_and_numbers(as
     assert changed["completion"] == "complete", changed
     after = result(app, company, redeemed)
     assert after["target"]["values"]["gain_loss_fen"] == "4000"
-    assert after["reference"]["voucher_number"] == before["reference"]["voucher_number"]
+    assert {v["journal_key"]: (v["voucher_id"], v["number"]) for v in after["vouchers"]} == {
+        v["journal_key"]: (v["voucher_id"], v["number"]) for v in before["vouchers"]
+    }
     money_after = result(app, company, received)
     assert money_after["target"] == money_before["target"]
     assert money_after["reference"]["result_id"] == money_before["reference"]["result_id"]

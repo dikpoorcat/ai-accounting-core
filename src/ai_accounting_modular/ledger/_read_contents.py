@@ -236,6 +236,7 @@ def query_voucher_directory(scope, kinds, page, read, *, business_ids=(), roles=
     items = tuple(
         VoucherDirectoryEntry(
             row["voucher_id"],
+            row["journal_key"],
             row["period"],
             row["number"],
             row["role"],
@@ -286,7 +287,10 @@ def get_vouchers(locators, read):
             fail("not_found", "指定正式凭证不存在。")
         if row["result_id"] != locator.result_id or head["generation"] != locator.generation:
             fail("snapshot_changed", "指定开放凭证已经变化，请重新读取。")
-        value = {key: row[key] for key in ("voucher_id", "period", "number", "role", "summary")}
+        value = {
+            key: row[key]
+            for key in ("voucher_id", "journal_key", "period", "number", "role", "summary")
+        }
         value.update(result=reference(head), lines=lines[locator.voucher_id])
         if row["reverses_voucher_id"] is not None:
             value["reverses_voucher_id"] = row["reverses_voucher_id"]

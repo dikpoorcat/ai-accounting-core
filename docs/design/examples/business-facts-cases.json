@@ -6838,26 +6838,6 @@
             }
           ]
         },
-        "lines": [
-          {
-            "line_no": 1,
-            "account_code": "122106",
-            "debit_fen": "10000000",
-            "credit_fen": "0",
-            "party_id": "91000000-0000-4000-8000-000000000004",
-            "object_id": "91000000-0000-4000-8000-000000000003",
-            "summary": "合成合作明确经济事项"
-          },
-          {
-            "line_no": 2,
-            "account_code": "1002",
-            "debit_fen": "0",
-            "credit_fen": "10000000",
-            "party_id": "91000000-0000-4000-8000-000000000004",
-            "object_id": "91000000-0000-4000-8000-000000000005",
-            "summary": "合成合作明确经济事项"
-          }
-        ],
         "obligations": [],
         "settlements": [],
         "obligation_reclassifications": [],
@@ -6882,7 +6862,33 @@
         ],
         "agency_proofs": [],
         "tax_sales": [],
-        "report_contributions": []
+        "report_contributions": [],
+        "journals": [
+          {
+            "journal_key": "main",
+            "summary": "合成合作明确经济事项",
+            "lines": [
+              {
+                "line_no": 1,
+                "account_code": "122106",
+                "debit_fen": "10000000",
+                "credit_fen": "0",
+                "party_id": "91000000-0000-4000-8000-000000000004",
+                "object_id": "91000000-0000-4000-8000-000000000003",
+                "summary": "合成合作明确经济事项"
+              },
+              {
+                "line_no": 2,
+                "account_code": "1002",
+                "debit_fen": "0",
+                "credit_fen": "10000000",
+                "party_id": "91000000-0000-4000-8000-000000000004",
+                "object_id": "91000000-0000-4000-8000-000000000005",
+                "summary": "合成合作明确经济事项"
+              }
+            ]
+          }
+        ]
       },
       "agent_collection": {
         "business_id": "91000000-0000-4000-8000-000000000104",
@@ -7004,26 +7010,6 @@
             }
           ]
         },
-        "lines": [
-          {
-            "line_no": 1,
-            "account_code": "122106",
-            "debit_fen": "2000000",
-            "credit_fen": "0",
-            "party_id": "91000000-0000-4000-8000-000000000004",
-            "object_id": "91000000-0000-4000-8000-000000000003",
-            "summary": "合成合作明确经济事项"
-          },
-          {
-            "line_no": 2,
-            "account_code": "1122",
-            "debit_fen": "0",
-            "credit_fen": "2000000",
-            "party_id": "91000000-0000-4000-8000-000000000006",
-            "object_id": "91000000-0000-4000-8000-000000000003",
-            "summary": "合成合作明确经济事项"
-          }
-        ],
         "obligations": [],
         "settlements": [
           {
@@ -7065,7 +7051,33 @@
           }
         ],
         "tax_sales": [],
-        "report_contributions": []
+        "report_contributions": [],
+        "journals": [
+          {
+            "journal_key": "main",
+            "summary": "合成合作明确经济事项",
+            "lines": [
+              {
+                "line_no": 1,
+                "account_code": "122106",
+                "debit_fen": "2000000",
+                "credit_fen": "0",
+                "party_id": "91000000-0000-4000-8000-000000000004",
+                "object_id": "91000000-0000-4000-8000-000000000003",
+                "summary": "合成合作明确经济事项"
+              },
+              {
+                "line_no": 2,
+                "account_code": "1122",
+                "debit_fen": "0",
+                "credit_fen": "2000000",
+                "party_id": "91000000-0000-4000-8000-000000000006",
+                "object_id": "91000000-0000-4000-8000-000000000003",
+                "summary": "合成合作明确经济事项"
+              }
+            ]
+          }
+        ]
       },
       "february_position_before_operator_topup": {
         "business_id": "91000000-0000-4000-8000-000000000100",
@@ -7238,26 +7250,6 @@
             }
           ]
         },
-        "lines": [
-          {
-            "line_no": 1,
-            "account_code": "122107",
-            "debit_fen": "400000",
-            "credit_fen": "0",
-            "party_id": "91000000-0000-4000-8000-000000000004",
-            "object_id": "91000000-0000-4000-8000-000000000003",
-            "summary": "合作经营者应补增加4000元"
-          },
-          {
-            "line_no": 2,
-            "account_code": "122106",
-            "debit_fen": "0",
-            "credit_fen": "400000",
-            "party_id": "91000000-0000-4000-8000-000000000004",
-            "object_id": "91000000-0000-4000-8000-000000000003",
-            "summary": "合作代管资金重分类为经营者应补4000元"
-          }
-        ],
         "obligations": [],
         "settlements": [],
         "obligation_reclassifications": [],
@@ -7266,7 +7258,33 @@
         "fund_movements": [],
         "agency_proofs": [],
         "tax_sales": [],
-        "report_contributions": []
+        "report_contributions": [],
+        "journals": [
+          {
+            "journal_key": "main",
+            "summary": "合作经营者应补增加4000元",
+            "lines": [
+              {
+                "line_no": 1,
+                "account_code": "122107",
+                "debit_fen": "400000",
+                "credit_fen": "0",
+                "party_id": "91000000-0000-4000-8000-000000000004",
+                "object_id": "91000000-0000-4000-8000-000000000003",
+                "summary": "合作经营者应补增加4000元"
+              },
+              {
+                "line_no": 2,
+                "account_code": "122106",
+                "debit_fen": "0",
+                "credit_fen": "400000",
+                "party_id": "91000000-0000-4000-8000-000000000004",
+                "object_id": "91000000-0000-4000-8000-000000000003",
+                "summary": "合作代管资金重分类为经营者应补4000元"
+              }
+            ]
+          }
+        ]
       },
       "checks": [
         "agency plan无公司FundMovement，proof总额恰等于对原贸易的agency清偿，原客户方向一致",

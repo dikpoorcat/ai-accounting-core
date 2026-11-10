@@ -8,7 +8,7 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 
 from ._adoption_changes import describe_changes
 from ._balances import unique_movements, validate_capacities
-from ._formal_output import same_journal, target_voucher
+from ._formal_output import same_journals, target_journals
 from ._planning import PlannedAdoption, bind_plan, check_source_references
 from ._publications import Publications
 from ._resource_promises import ResourceUses
@@ -203,24 +203,34 @@ def adopt(change_plans, uow, correction_period, explanation=None):
             continue
         plan, result_id = item.plan, item.result_id
         baseline_id, posting_period = item.baseline_result_id, item.posting_period
-        specs = []
+        specs, journals, role = [], plan["journals"], "original"
         if baseline_id:
+            role = "replacement"
             baseline = repo.result(baseline_id)
-            original = target_voucher(repo, baseline)
-            baseline_lines = original["lines"] if original else []
-            if baseline["business_period"] != plan["accounting_period"] or not same_journal(
-                baseline_lines, plan["lines"]
+            originals = target_journals(repo, baseline)
+            if baseline["business_period"] == plan["accounting_period"] and same_journals(
+                originals, plan["journals"]
             ):
-                if original:
+                journals = ()
+            else:
+                for original in originals:
                     reversal = [
                         dict(line, debit_fen=line["credit_fen"], credit_fen=line["debit_fen"])
                         for line in original["lines"]
                     ]
-                    specs.append(("reversal", reversal, original["voucher_id"]))
-                if plan["lines"]:
-                    specs.append(("replacement", plan["lines"], None))
-        elif plan["lines"]:
-            specs.append(("original", plan["lines"], None))
+                    specs.append(
+                        (
+                            original["journal_key"],
+                            "reversal",
+                            original["summary"],
+                            reversal,
+                            original["voucher_id"],
+                        )
+                    )
+        specs.extend(
+            (journal["journal_key"], role, journal["summary"], journal["lines"], None)
+            for journal in journals
+        )
         repo.clear_children(result_id)
         repo.save_head(
             plan,

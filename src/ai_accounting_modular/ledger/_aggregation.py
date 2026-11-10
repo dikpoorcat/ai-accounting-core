@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     TaxSaleView,
     format_fen,
     parse_fen,
+    posting_lines,
     validate_contract,
 )
 from ai_accounting_modular.ledger.opening.public import is_zero_origin
@@ -127,9 +128,9 @@ def pre_tax(repo, plans, period_from, period_to, start_period):
     for head in heads:
         key = head["business_id"], head["result_slot"]
         lines = (
-            plans[key]["lines"]
+            posting_lines(plans[key])
             if head["result_id"] in repo.heads
-            else (journals[head["result_id"]] or {}).get("lines", [])
+            else [line for journal in journals[head["result_id"]] for line in journal["lines"]]
         )
         if has_unmapped_line(lines):
             fail("storage_corrupt", "正式发生包含未映射的非零科目，不能将其作为零损益取数。")

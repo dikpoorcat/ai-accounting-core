@@ -240,22 +240,28 @@ def expense(amount="100000", *, seq=0, business_id=BUSINESS):
             "policies": [],
             "source_locations": [],
         },
-        "lines": [
+        "journals": [
             {
-                "line_no": 1,
-                "account_code": "5602",
-                "debit_fen": amount,
-                "credit_fen": "0",
+                "journal_key": "main",
                 "summary": "合成管理费用",
-            },
-            {
-                "line_no": 2,
-                "account_code": "2202",
-                "debit_fen": "0",
-                "credit_fen": amount,
-                "party_id": SUPPLIER,
-                "summary": "合成管理费用",
-            },
+                "lines": [
+                    {
+                        "line_no": 1,
+                        "account_code": "5602",
+                        "debit_fen": amount,
+                        "credit_fen": "0",
+                        "summary": "合成管理费用",
+                    },
+                    {
+                        "line_no": 2,
+                        "account_code": "2202",
+                        "debit_fen": "0",
+                        "credit_fen": amount,
+                        "party_id": SUPPLIER,
+                        "summary": "合成管理费用",
+                    },
+                ],
+            }
         ],
         "obligations": [
             {
@@ -330,7 +336,7 @@ def test_open_replace_keeps_identity_and_number_and_removes_old_payload(store):
 def test_invalid_plan_rolls_back_entire_transaction(store):
     ledger = create_ledger()
     bad = expense("90000", seq=1)
-    bad["plans"][0]["lines"][1]["credit_fen"] = "89999"
+    bad["plans"][0]["journals"][0]["lines"][1]["credit_fen"] = "89999"
     with pytest.raises(ContractError) as error:
         with store.write_unit(COMPANY) as uow:
             adopt_declared(ledger, [expense()], uow)
@@ -343,7 +349,7 @@ def test_invalid_plan_rolls_back_entire_transaction(store):
 def test_caught_plan_failure_still_cannot_commit_partial_unit(store):
     ledger = create_ledger()
     invalid = expense("90000", seq=1)
-    invalid["plans"][0]["lines"][1]["credit_fen"] = "1"
+    invalid["plans"][0]["journals"][0]["lines"][1]["credit_fen"] = "1"
     with pytest.raises(ContractError) as rejected:
         with store.write_unit(COMPANY) as uow:
             adopt_declared(ledger, [expense()], uow)
@@ -461,7 +467,7 @@ def test_no_voucher_result_is_formally_adopted(store):
             "policies": [],
             "source_locations": [],
         },
-        lines=[],
+        journals=[],
         obligations=[],
     )
     # Synthetic business identity is independent of the zero-package fixture ID.
@@ -564,23 +570,29 @@ def payment():
             "source_locations": [],
         },
         obligations=[],
-        lines=[
+        journals=[
             {
-                "line_no": 1,
-                "account_code": "2202",
-                "debit_fen": "100000",
-                "credit_fen": "0",
-                "party_id": SUPPLIER,
+                "journal_key": "main",
                 "summary": "真实付费",
-            },
-            {
-                "line_no": 2,
-                "account_code": "1002",
-                "debit_fen": "0",
-                "credit_fen": "100000",
-                "object_id": BANK,
-                "summary": "真实付费",
-            },
+                "lines": [
+                    {
+                        "line_no": 1,
+                        "account_code": "2202",
+                        "debit_fen": "100000",
+                        "credit_fen": "0",
+                        "party_id": SUPPLIER,
+                        "summary": "真实付费",
+                    },
+                    {
+                        "line_no": 2,
+                        "account_code": "1002",
+                        "debit_fen": "0",
+                        "credit_fen": "100000",
+                        "object_id": BANK,
+                        "summary": "真实付费",
+                    },
+                ],
+            }
         ],
         settlements=[
             {
@@ -642,23 +654,29 @@ def recovery():
             "policies": [],
             "source_locations": [],
         },
-        lines=[
+        journals=[
             {
-                "line_no": 1,
-                "account_code": "1221",
-                "debit_fen": "20000",
-                "credit_fen": "0",
-                "party_id": SUPPLIER,
+                "journal_key": "main",
                 "summary": "追收多付费用",
-            },
-            {
-                "line_no": 2,
-                "account_code": "2202",
-                "debit_fen": "0",
-                "credit_fen": "20000",
-                "party_id": SUPPLIER,
-                "summary": "追收多付费用",
-            },
+                "lines": [
+                    {
+                        "line_no": 1,
+                        "account_code": "1221",
+                        "debit_fen": "20000",
+                        "credit_fen": "0",
+                        "party_id": SUPPLIER,
+                        "summary": "追收多付费用",
+                    },
+                    {
+                        "line_no": 2,
+                        "account_code": "2202",
+                        "debit_fen": "0",
+                        "credit_fen": "20000",
+                        "party_id": SUPPLIER,
+                        "summary": "追收多付费用",
+                    },
+                ],
+            }
         ],
         obligation_reclassifications=[
             {
@@ -826,8 +844,8 @@ def refund(source_ref, *, amount="20000", seq=0):
             }
         ],
     )
-    plan["lines"][0].update(account_code="1221", party_id=SUPPLIER)
-    plan["lines"][1]["account_code"] = "5602"
+    plan["journals"][0]["lines"][0].update(account_code="1221", party_id=SUPPLIER)
+    plan["journals"][0]["lines"][1]["account_code"] = "5602"
     ob = plan["obligations"][0]
     ob.update(
         direction="receivable", category="other", account_code="1221", allowed_settlements=["money"]
@@ -900,7 +918,7 @@ def test_actual_cash_identity_is_unique_even_without_settlements(store):
         movement_type="managed_reserve", settled_fen="0", reserve_expense_fen="100000"
     )
     plan["settlements"] = []
-    plan["lines"][0]["account_code"] = "5602"
+    plan["journals"][0]["lines"][0]["account_code"] = "5602"
     first["publications"] = [publication(PAYMENT)]
     second = deepcopy(first)
     second_id = "50000000-0000-4000-8000-000000000099"
@@ -1163,7 +1181,7 @@ def withdrawal(baseline, *, seq=1):
             "explanation": "合成资料确认原来没有该笔费用",
             "source_locations": [],
         },
-        lines=[],
+        journals=[],
         obligations=[],
     )
     return withdrawn
@@ -1239,7 +1257,7 @@ def source_only_change(kind, *, seq=0):
         calculation_key=kind,
         rule_refs=[{"key": kind, "revision": 1, "policy_business_ids": [], "official_urls": []}],
         target={"kind": kind, "result_slot": "main", "values": values},
-        lines=[],
+        journals=[],
         obligations=[],
     )
     plan["basis"].update(kind=kind, input=data)
@@ -1499,7 +1517,7 @@ def test_real_object_rename_recalculation_reuses_complete_formal_result(frozen, 
     change = expense()
     plan = change["plans"][0]
     change["businesses"][0]["fact"]["data"]["creditor_id"] = supplier["object_id"]
-    plan["lines"][1]["party_id"] = supplier["object_id"]
+    plan["journals"][0]["lines"][1]["party_id"] = supplier["object_id"]
     plan["obligations"][0]["party_id"] = supplier["object_id"]
     with storage.write_unit(COMPANY) as uow:
         initial = identity.plan_change([supplier], IdentityContext(uow, str(uuid4())))
@@ -1563,7 +1581,7 @@ def _payment_at(
     plan["accounting_period"] = period
     plan["basis"].update(period=period, effective_on=fact["effective_on"])
     plan["target"]["values"].update(amount_fen=amount, settled_fen=amount)
-    for row in plan["lines"]:
+    for row in plan["journals"][0]["lines"]:
         row["debit_fen"] = amount if row["debit_fen"] != "0" else "0"
         row["credit_fen"] = amount if row["credit_fen"] != "0" else "0"
     plan["settlements"][0].update(period=period, actual_on=fact["effective_on"], amount_fen=amount)

@@ -191,7 +191,7 @@ def run(system, owner, mutations, *, evaluate_plans=True, ledger=None):
         descriptions = collect_changes(changes, (), context, registry, {})
         if evaluate_plans:
             evaluate(descriptions, context, ledger, None)
-            return context._candidate
+            return ledger.candidate
         return descriptions
 
 
@@ -539,7 +539,7 @@ def test_partial_read_requires_the_actual_resource_producing_slot_not_any_slot_o
         def evaluate_slot(self, business_id, slot, context):
             plan = super().evaluate_slot(business_id, slot, context)
             # This trusted-program scheduling fixture has no journal to adopt.
-            plan["lines"] = []
+            plan["journals"] = []
             if business_id == identity(90) and slot == "main":
                 plan["obligations"] = [
                     {
