@@ -54,7 +54,7 @@ Vue、TypeScript 和样式修改由 Vite 热更新。Python 常驻后台源码�
 
 ## 程序生成财报并保存到桌面
 
-CLI与MCP使用同一常驻后台，不需要浏览器。先按工作指南核对报表，再用 `accounting_report_export` 生成当前季度报表。以下公司编号为合成示例，实际使用目录中已登记的公司身份：
+CLI与MCP使用同一常驻后台，不需要浏览器。先按工作指南核对报表，再用 `accounting_report_export` 生成指定季度的当前报表。以下公司编号为合成示例，实际使用目录中已登记的公司身份：
 
 ```json
 {"action":"generate","company_id":"00000000-0000-4000-8000-000000000001","year":2026,"quarter":3}

@@ -335,6 +335,7 @@ class PeriodCheck(TypedDict):
 
 class ContextRequest(TypedDict):
     company_id: NotRequired[Id]
+    work_period: NotRequired[Month]
     note_scopes: NotRequired[list[str]]
     issue_scopes: NotRequired[list[str]]
 
@@ -546,6 +547,7 @@ class CompanyContext(TypedDict):
     company_id: Id
     database_id: Id
     company_identity: CompanyIdentity
+    work_period: Month | None
     open_periods: list[Month]
     closed_periods: list[Month]
     notes: list[CurrentNote]

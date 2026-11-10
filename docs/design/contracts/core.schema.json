@@ -3511,6 +3511,10 @@
         "company_id": {
           "$ref": "#/$defs/Id"
         },
+        "work_period": {
+          "$ref": "#/$defs/Month",
+          "description": "本次明确选择的工作月份，不改变业务归属期或公司工作范围。省略表示尚未选择月份。"
+        },
         "note_scopes": {
           "type": "array",
           "items": {
@@ -3533,6 +3537,11 @@
         }
       },
       "required": [],
+      "dependentRequired": {
+        "work_period": [
+          "company_id"
+        ]
+      },
       "additionalProperties": false
     },
     "ContextResult": {
@@ -5490,6 +5499,17 @@
         "company_identity": {
           "$ref": "#/$defs/CompanyIdentity"
         },
+        "work_period": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Month"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "回显本次明确选择的工作月；null表示尚未选择。最早开放月的候选资料、已保存的工作末月和当前日期都不代替选择。"
+        },
         "open_periods": {
           "type": "array",
           "items": {
@@ -5563,7 +5583,8 @@
           "maxItems": 500
         },
         "state": {
-          "const": "selected"
+          "const": "selected",
+          "description": "已选择公司，不表示已经选择工作月份。"
         },
         "work_defaults": {
           "type": "object",
@@ -5596,6 +5617,7 @@
         "company_id",
         "database_id",
         "company_identity",
+        "work_period",
         "open_periods",
         "closed_periods",
         "notes",

@@ -66,7 +66,9 @@ def context(application, request, read_context=None):
         )
         first_open = str(YearMonth.from_ordinal(following)) if following < 9999 * 12 else None
         working = scope.working_period_to
-        defaults = ["company", *(["period:" + first_open] if first_open else [])]
+        work_period = request.get("work_period")
+        context_period = work_period or first_open
+        defaults = ["company", *(["period:" + context_period] if context_period else [])]
         note_scopes = request.get("note_scopes", defaults)
         issue_scopes = list(dict.fromkeys(request.get("issue_scopes", defaults)))
         heads = _notes.basis_heads(application, note_scopes, read)
@@ -78,6 +80,7 @@ def context(application, request, read_context=None):
             "state": "selected",
             "company_id": company,
             "database_id": read.database_id,
+            "work_period": work_period,
             "company_identity": {
                 "credit_code": metadata.credit_code,
                 "legal_name": metadata.legal_name,

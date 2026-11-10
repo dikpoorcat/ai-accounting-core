@@ -161,7 +161,7 @@ status=ready要求所有表格字段known、十项check均pass且issues为空；
 
 ## 程序导出与桌面交付
 
-`accounting_report_export`提供生成当前季度报表和保存指定任务两个动作，合同见[公开入口](03-contracts.md)，CLI/MCP用法见[运行说明](09-runtime-and-ai.md#程序生成财报并保存到桌面)。网页保留人工查看和下载。host只创建一个`ReportExports(storage, ledger, files)`交给Application与Reading，共用季度读取、预览、计划接纳及已核下载；月度读取、后台准备和正式核算保持原归属，不新增交付任务或数据库表。
+`accounting_report_export`提供生成指定季度的当前报表和保存指定任务两个动作，合同见[公开入口](03-contracts.md)，CLI/MCP用法见[运行说明](09-runtime-and-ai.md#程序生成财报并保存到桌面)。网页保留人工查看和下载。host只创建一个`ReportExports(storage, ledger, files)`交给Application与Reading，共用季度读取、预览、计划接纳及已核下载；月度读取、后台准备和正式核算保持原归属，不新增交付任务或数据库表。
 
 已核下载携带来自同一计划的公司、数据库、任务身份及文件名、摘要和大小。取得独立流前复核计划和实际字节；取得后，即使公司改名、业务更正或内部任务被替换，传输内容和身份仍对应该精确快照，不能重新查询当前公司给旧流贴标签。复制期间不持有公司写事务或任务范围锁。保存失败不改变源任务；桌面副本属于用户文件，不随内部任务失效或清理删除，也不表示永远最新或代替正式备份。
 

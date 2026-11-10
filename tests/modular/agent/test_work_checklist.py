@@ -62,6 +62,28 @@ def test_payment_result_check_is_shared_before_the_stages_without_per_payment_ac
     assert "不汇集前面应已处理的遗漏" in rules["stages"][4]["completion"]
 
 
+def test_work_scope_precedes_checks_without_disabling_cross_period_dependencies():
+    rules = read_work_checklist()
+    scope = rules["common_checks"][0]
+    assert scope["id"] == "common.work_scope"
+    assert "actions" not in scope
+    assert "work_period" in scope["condition"]
+    assert "不机械要求其所属月等于工作月" in scope["condition"]
+    assert "null和候选月份不证明已经确定" in "".join(scope["evidence"])
+    assert "其他月份独立事项保留原范围" in scope["if_unmet"]
+    assert "本轮已交办的申报反馈和文件自身条件仍须满足" in scope["if_unmet"]
+    shared = next(item for item in rules["common_checks"] if item["id"] == "common.unfinished_work")
+    assert "本轮工作范围内所有未完成项" in shared["condition"]
+    assert "未答复或选择等待时不提前推进" in shared["condition"]
+    financial = rules["stages"][5]["checks"]
+    assert "工作月所在季度直接推断" in financial[0]["condition"]
+    assert "季度中间月" in financial[0]["if_unmet"]
+    assert "上年覆盖期" in financial[0]["if_unmet"]
+    assert "本次已确定覆盖期" in financial[1]["if_unmet"]
+    assert "当前季度" not in json.dumps(rules, ensure_ascii=False)
+    assert "其他月份独立事项不问" in INSTRUCTIONS
+
+
 def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition():
     stages = {item["id"]: item for item in read_work_checklist()["stages"]}
     checks = {item["id"]: item for item in stages["payment_export"]["checks"]}
@@ -92,7 +114,7 @@ def test_unfinished_steps_and_contribution_feedback_share_the_installed_rules():
     assert guide.count(f"`{shared['id']}`") == 1
     assert shared["condition"] in guide and shared["if_unmet"] in guide
     assert "未答复或选择等待时不提前推进" in shared["condition"]
-    assert "每次更新步骤清单都提醒未完成事项" in shared["if_unmet"]
+    assert "每次更新步骤清单都提醒本轮范围内未完成事项" in shared["if_unmet"]
     stages = {item["id"]: item for item in rules["stages"]}
     contribution = {item["id"]: item for item in stages["contributions"]["checks"]}
     assert "均不算本项完成" in stages["contributions"]["completion"]
