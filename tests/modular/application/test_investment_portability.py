@@ -92,7 +92,7 @@ def test_verified_zip_restore_keeps_closed_investment_history_after_correction(i
     reconcile(case)
     with case.kernel.storage.read_unit(case.company) as read:
         frozen_report = snapshot(case.app, case.company, read, view="as_posted")
-    checked = case.check("2026-07")
+    checked = case.prepare_close("2026-07")
     assert checked["ready"], str(checked)
     assert case.close(checked)["state"] == "closed"
     with case.kernel.storage.read_unit(case.company) as read:

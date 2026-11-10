@@ -134,7 +134,7 @@ def test_unknown_opening_keeps_known_expense_and_unknown_balances(case):
 
 def test_real_correction_invalidates_precise_group_version_and_closed_month_stays_frozen(case):
     original = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     january = ready(case)
     corrected = deepcopy(original)
     corrected["data"]["amount_fen"] = "80000"
@@ -218,6 +218,7 @@ def test_current_note_and_owner_tasks_are_replaced_without_retaining_old_bodies(
             "period": "2026-01",
             "evidence_ids": [],
             "missing_fields": [],
+            "required_before_close": None,
             "question": question,
             "assignee": assignee,
             "action": "professional_check",

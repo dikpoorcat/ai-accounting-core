@@ -248,7 +248,7 @@ def test_real_two_closed_corrections_keep_all_pending_legs_and_frozen_sources(li
     month_page(case)
     quarter_page(case)
     settle(case)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     # Publish the closed January artifact before the later, unconsumed changes.
     settle(case)
     january = assert_month(case, "2026-01", "100000")
@@ -258,7 +258,7 @@ def test_real_two_closed_corrections_keep_all_pending_legs_and_frozen_sources(li
         "reference"
     ]
     assert february_reference["baseline_result_id"] == january_source["result_id"]
-    assert case.close(case.check("2026-02"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-02"))["state"] == "closed"
     replace(case, expense, "150000", seq=2, correction_period="2026-03")
     march_reference = case.get(expense["business_id"])["businesses"][0]["results"][0]["reference"]
     assert march_reference["baseline_result_id"] == february_reference["result_id"]

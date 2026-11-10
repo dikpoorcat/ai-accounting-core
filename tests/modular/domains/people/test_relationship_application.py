@@ -277,7 +277,7 @@ def test_closed_management_correction_keeps_wage_refs_and_frozen_amounts(case):
     assert saved["completion"] == "complete", saved
     original = book.get(wage["business_id"])["businesses"][0]["results"]
     assert original[0]["target"]["values"]["net_fen"] == "100000"
-    checked = book.check()
+    checked = book.prepare_close()
     assert book.close(checked)["state"] == "closed"
     closed_check = book.check()
     open_result = original[0]

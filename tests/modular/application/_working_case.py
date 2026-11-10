@@ -1,7 +1,7 @@
 """Real production composition with synthetic facts and temporary company files."""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from uuid import uuid4
 
@@ -9,6 +9,7 @@ import pytest
 
 from ai_accounting_modular.host.public import create_kernel
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
+from tests.modular._period_support import checked_close_request
 
 
 @dataclass
@@ -17,6 +18,8 @@ class Case:
     company: str
     source_id: str
     party: str
+    prepared_closes: dict = field(default_factory=dict, repr=False)
+    coverage_sources: dict = field(default_factory=dict, repr=False)
 
     @property
     def app(self):
@@ -109,14 +112,56 @@ class Case:
         )
 
     def close(self, checked):
-        return self.app.accounting_period(
+        return self.app.accounting_period(deepcopy(self.prepared_closes[checked["head"]]))
+
+    def prepare_close(self, period="2026-01"):
+        """Explicitly declare the complete synthetic scenario, then adopt its version."""
+        discovered = self.check(period)
+        first = discovered["actual_range"]["period_from"]
+        key = (first, period)
+        source_id = self.coverage_sources.get(key)
+        if source_id is None:
+            source_id = str(uuid4())
+            text = (
+                f"合成测试资料交接：{first}至{period}本场景全部业务资料均由用例提供，"
+                "无其他未交资料。"
+            )
+            result = self.app.accounting_apply(
+                self.request(
+                    sources=[
+                        {
+                            "source_id": source_id,
+                            "kind": "owner_statement",
+                            "text": text,
+                            "sha256": sha256(text.encode()).hexdigest(),
+                            "archive_month": period,
+                        }
+                    ]
+                )
+            )
+            assert result["completion"] == "complete", result
+            self.coverage_sources[key] = source_id
+        checked, request = checked_close_request(self.app, self.company, period, source_id)
+        self.prepared_closes[checked["head"]] = request
+        return checked
+
+    def recheck(self, checked):
+        """Recheck exactly the already-reviewed material version without replacing it."""
+        request = self.prepared_closes[checked["head"]]
+        result = self.app.accounting_period(
             {
                 "company_id": self.company,
-                "action": "close",
-                "period": checked["period"],
-                "expected_head": checked["head"],
+                "action": "check",
+                "period": request["actual_range"]["period_to"],
+                "basis": deepcopy(request["basis"]),
+                "expected_material_version": request["expected_material_version"],
             }
         )
+        self.prepared_closes[result["head"]] = {
+            **deepcopy(request),
+            "expected_head": result["head"],
+        }
+        return result
 
 
 @pytest.fixture

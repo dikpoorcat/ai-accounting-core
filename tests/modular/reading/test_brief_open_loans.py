@@ -50,7 +50,7 @@ def test_opening_loan_progress_distinguishes_another_contract_from_changed_amoun
         ],
         sources=[source("opening-loan") | {"source_id": case.source_id}],
     )
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     loan = package["data"]["members"][0]["data"]

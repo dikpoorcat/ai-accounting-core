@@ -56,14 +56,10 @@ def test_cli_inspects_and_mcp_cancels_the_same_complete_month(local, tmp_path):
         params = StdioServerParameters(command=sys.executable, args=command[1:] + ["mcp"])
         async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
             await session.initialize()
-            contracts = json.loads(
-                (await session.read_resource("accounting://contracts")).contents[0].text
+            selected = await session.call_tool(
+                "accounting_schema", {"command": "accounting_cancel_month"}
             )
-            schema = next(
-                row["request_schema"]
-                for row in contracts["commands"]
-                if row["command"] == "accounting_cancel_month"
-            )
+            schema = selected.structuredContent["request_schema"]
             cancel = {
                 **inspect,
                 "action": "cancel",

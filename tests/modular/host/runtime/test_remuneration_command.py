@@ -60,7 +60,7 @@ def test_cli_and_mcp_expose_the_same_kernel_payroll_capacity(local, tmp_path):
             await session.initialize()
             contracts = await session.read_resource("accounting://contracts")
             catalog = json.loads(contracts.contents[0].text)
-            assert "accounting_remuneration" in {item["command"] for item in catalog["commands"]}
+            assert "accounting_remuneration" in catalog["commands"]
             result = await session.call_tool(
                 "accounting_command", {"command": "accounting_remuneration", "payload": payload}
             )

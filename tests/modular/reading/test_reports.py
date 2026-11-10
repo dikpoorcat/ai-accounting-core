@@ -2,8 +2,9 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.reading import _financial_projection
+from tests.modular._period_support import ledger_work_basis
 
-from ._support import PARTY, assemble, expense, payment, scope
+from ._support import PARTY, SOURCE, assemble, expense, payment, scope
 
 
 def ready(book, quarter=1):
@@ -248,7 +249,9 @@ def test_close_then_later_correction_keeps_the_frozen_quarter(tmp_path):
     before = ready(book)
     with book.storage.write_unit(book.company) as unit:
         check = book.ledger.check_period("2026-03", unit)
-        book.ledger.close_period("2026-03", check.head, unit)
+        basis = ledger_work_basis(check, SOURCE)
+        book.ledger.close_period("2026-03", check.head, unit, work_basis=basis)
+        book.records.replace_source_uses("period_close", "2026-03", basis["source_ids"], unit)
         from ai_accounting_modular.reading.public import PeriodRange, ReadingImpact
 
         book.reading.mark_targets(

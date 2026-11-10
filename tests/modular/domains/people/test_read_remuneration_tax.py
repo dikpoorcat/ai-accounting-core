@@ -43,7 +43,7 @@ def test_later_tax_is_its_own_month_and_not_another_wage_cost_or_payment(case):
     case.seed(expense=False)
     wage = unpaid_wage()
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     january = activity(case)
@@ -184,7 +184,7 @@ def test_closed_wage_correction_composes_only_the_selected_wage_not_its_old_nega
     wage["data"]["tax_basis"]["tax_fen"] = "10000"
     tax = tax_target(wage, "20000", tax_period="2026-01")
     add(case, no_contributions(), wage, tax)
-    checked = case.check("2026-02")
+    checked = case.prepare_close("2026-02")
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     february = activity(case, "2026-02")

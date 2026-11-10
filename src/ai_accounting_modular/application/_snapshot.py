@@ -83,6 +83,7 @@ class SnapshotVerifier:
             objects,
             read,
             required_source_ids=formal.source_ids,
+            frozen_close_source_uses=formal.close_source_uses,
         )
 
     def _relations(self, facts, heads, read):

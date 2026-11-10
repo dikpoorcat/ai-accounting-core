@@ -39,6 +39,7 @@ def issue(scope, source_id, period=None):
         "scope": scope,
         "evidence_ids": [source_id],
         "missing_fields": [],
+        "required_before_close": None,
         "question": "由AI核对对应资料。",
         "assignee": "ai",
         "action": "professional_check",
@@ -66,7 +67,7 @@ def save_work(case, *, notes=(), issues=(), scope=None):
                     {
                         note["scope"]: note["expected_basis_head"]
                         for note in notes
-                        if note["scope"] != "company"
+                        if note["scope"].startswith("period:")
                     },
                 ),
             ),

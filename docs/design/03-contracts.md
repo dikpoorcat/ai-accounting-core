@@ -35,7 +35,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `mutations` | 0–500 项。每项是 create/replace/withdraw/restore 之一；同单一个 business_id 只能出现一次。仅保存对象、来源或当前待办时可为空，但整单不能无任何内容。 |
 | `objects` | 可选，最多 500 个本单需要新建/更新的对象。逐个比较对象当前序号，与业务同事务保存。 |
 | `sources` | 可选，最多500项本单采用的来源描述。文件须已在指定公司目录，内容摘要须实际匹配；来源 UUID 可跨业务复用。 |
-| `notes` | 可选，公司背景、月份经营说明或具体业务事项，含 scope、expected_seq、text、evidence_ids。月份说明另须 expected_basis_head 与实际读取的财务依据一致；业务事项只按稳定业务身份关联，替换不保留旧正文。 |
+| `notes` | 可选，公司长期背景、`work:YYYY-MM`办理安排、`period:YYYY-MM`经营说明或具体业务用途，含scope、expected_seq、text、evidence_ids。经营说明另须expected_basis_head；办理说明不绑定财务头，按真实范围保存仍有效答复及核查依据，不保存阶段状态或检查日记。 |
 | `unresolved` | 可选，当前未解事项的完整替换集合；出现时必须同时给 unresolved_scope 和 expected_scope_head，按该范围当前头比较。省略不改，显式空数组清空该范围；不追加过去的问答。 |
 | `correction_period` | 本单确需更正闭期时必填，为开放月份，不早于受影响闭期；普通开放期更新不填。 |
 | `explanation` | 闭期冲正的简明事实原因，最多 2,000 字；作为正式冲正说明，开放期不要求写纠错经过。 |
@@ -71,19 +71,19 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 
 `changes=committed` 表明本单有效内容已保存，`accounting=saved` 表明其中正式核算确有提交；仅存资料/待办或完全幂等的单可 accounting=unchanged。`documents=ready` 表明对应最终文档已持久发布；保存内容与归档都满足才 completion=complete，归档未完为 saved_documents_pending。读取可以 preparing，不阻止这项完整办结。缺项、冲突或提交失败时不返回虚假的成功业务。内部错误不自动生成老板待办。
 
-`fact_issues` 每项含 `code, business_id?, field, meaning, message, allowed_precision, reusable_sources, blocking_scope`。field 使用实际 JSON Pointer；说明字段含义、允许精度、影响范围及可复用来源。它是程序交给AI处理的问题，不是老板问卷：输入、引用、程序错误及真正的现实缺项都可能出现。即使返回 `needs_information`，AI也先按[工作指南](08-ai-work-and-materials.md#不让老板承担程序协调)自行解答和定向查证；已有来源足够就补全提交，只有当前已交办工作仍缺必要现实事实才问老板。不增加另一套提问许可字段、检查流程或问答记录。
+`fact_issues` 每项含 `code, business_id?, field, meaning, message, allowed_precision, reusable_sources, blocking_scope`。field 使用实际 JSON Pointer；说明字段含义、允许精度、影响范围及可复用来源。它是程序交给AI处理的问题，不是老板问卷：输入、引用、程序错误及真正的现实缺项都可能出现。即使返回 `needs_information`，AI也先按[工作指南](08-ai-work-and-materials.md#先查清当前动作再办理)自行解答和定向查证；已有来源足够就补全提交，只有当前已交办工作仍缺必要现实事实才问老板。不增加另一套提问许可字段、检查流程或问答记录。
 
-月份说明依据头由 accounting_context.note_basis_heads 提供，即使该月还没有说明也可取得。它只覆盖该月相关正式业务及核算选择，不包含说明自身、文件任务或读取生成时间。AI 读取该头及对应业务结果后写说明；提交时比较事务最终将采用的依据头，过期或同单改变了依据则冲突，不把基于旧数字的文字绑定到新账。需要先记业务再解释时，先办理并读取实际结果，随后保存说明即可。自动失效同样推进说明 seq 并清掉旧正文/来源边；公司现实背景没有金额依据头，不随普通账务提交失效。
+`period:月份`经营说明的依据头由accounting_context.note_basis_heads提供，覆盖该月相关正式业务及核算选择，排除说明自身和派生状态。提交比较事务最终采用头，失效时清空旧正文及来源并推进seq。`company`长期安排和`work:月份`当前办理说明的basis_head为空；金额变化不清掉仍适用答复。work保存答复适用范围、接续安排及核查资料定位，不保存自身序号或全部通过标记；资料变化只要求重核受影响结论。清空work正文及来源保留并发序号，空说明不进入标准文档。
 
 ## 其他公开入口
 
 下表是应用层可调用能力。在线 CLI 使用 `finance-modular --catalog <绝对目录库> call accounting-apply --input <完整请求.json>` 这样的 `call` 形式，命令名接受连字符或下划线；MCP 使用 `accounting_command(command="accounting_apply", payload=完整请求)`。只有 Schema、UUID 和身份窗口另有专用工具，离线恢复／重建有独立入口；完整示例见[安装与接入](09-runtime-and-ai.md)。MCP 不暴露登记/准备/计算/发布等多段内部手续。
 
-`accounting://guides` 是小型只读操作目录，按需提供工作引导、公开命令、`business/{kind}` 业务规则、报表含义和运行说明。正文从本设计唯一来源生成并随包安装，不从工作区读取；主题及 kind 为明确目录，不能用任意路径读取文档。规则目录不是当前实例的支持承诺，仍先用 `accounting_schema` 选择实际支持的 kind，再读取对应规则和输入合同。离线 MCP 只提供适用的运行／恢复／重建说明及两个离线命令合同。
+`accounting://guides` 是随包生成的只读操作目录。工作指南给共同方法和八项流程，`work/checklist`给共用条件和阶段目录，`work/stages/{1到8}`交付该阶段完整内部清单。`business`给共同业务规则，`business/{kind}`只给该种类条件，`corrections`按需给更正规则；已读且仍有效的规则复用。正文均来自本设计的唯一来源，不读工作区、不加载无关业务全文。目录不是实例能力承诺，实际支持以accounting_schema为准。
 
 | 入口 | 输入 | 返回及作用 |
 | --- | --- | --- |
-| `accounting_schema` | SchemaRequest：可选 kinds、contract | SchemaResult：默认仅合同及支持目录，指定 kinds 才返回对应输入 Schema 的自包含依赖闭包，不返回旧接口或内部 PostingPlan。未知 kind 拒绝，不偷偷省略。 |
+| `accounting_schema` | SchemaRequest：可选command、kinds、contract；Apply必须明确kinds，包括空数组 | 无参数返回实际命令和种类目录；指定普通command返回完整request_schema；指定accounting_apply按kinds同时限制Fact与PartialFact，保留全字段和条件。空数组使用合法空事实Schema，仍可办理说明、对象、来源、普通待办和撤回。仅kinds查询继续返回所选事实合同。不把查询选择变成写入权限。 |
 | `accounting_context` | ContextRequest：可选 company_id、work_period、note_scopes、issue_scopes；提供 work_period 时须选择公司 | 返回公司身份、明确选择的工作月、支持范围、开放/关闭月、有效说明与待办及其 seq/head。work_defaults.payroll、service_revenue、income_tax 和 payment_export 提供通用办理安排。 |
 | `accounting_objects` | ObjectsRequest：get 指定 IDs；find 指定 kind、可选 name_contains、limit/cursor | CurrentObject 含 seq/digest 和完整当前档案；检索名称只供选择，不自动绑定同名人。 |
 | `accounting_get` | company_id、1–500 business_ids；可选 result_id+generation、include=facts/results/sources | 当前事实、序号、结果槽及其必要来源；成对指定 result_id/generation 精确查询正式保留结果，开放旧代已替换则 conflict。不得声称能读取已经删除的开放期旧正文。 |
@@ -94,7 +94,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `accounting_sources` | SourcesRequest：import/get/find/inspect/discard；company_id；来源描述或来源 ID；有界分页；discard 必须明确1–500个不重复source_ids | SourcesCommandResult：import/get/find/inspect返回SourcesResult，discard返回SourceDiscardResult。真实原件/老板有效补充的当前索引与定位；import核对公司根、文件类型/大小/摘要，discard只退出无当前或正式采用引用的指定无用来源，不任意读删主机文件。 |
 | `accounting_cancel_month` | MonthCancelRequest：company_id、period、action=inspect/cancel；cancel 另带 command_id 和 inspect 返回的整数 expected_head | MonthCancelResult：程序撤销指定开放月全部所属业务，清理该月说明、待办及可退出原件；返回实际业务和来源范围、保护保留项、文档及文件清理状态。闭期拒绝，不让 AI 分领域拼撤回。 |
 | `accounting_documents` | DocumentsRequest：company_id、action=status/finish/export；可选 scopes | DocumentsResult：集合标识、待完成范围和失败；ready 必含可供离线读取的 manifest_path 完整定位。finish 按当前事实接续；export 返回已发布清单定位，不新增归档任务或重记账。 |
-| `accounting_period` | company_id、action=check/close、period、expected_head(close) | 检查或关闭截至指定月尚未关闭的整段账务，不要求逐月处理空月。check 返回只读检查及阻断事实；close 在同一事务复查同范围 head 后冻结，无老板批准/密码预览。范围变化返回 conflict，不悄悄关掉新结果。 |
+| `accounting_period` | check指定period，可带basis与expected_material_version；close明确actual_range、basis、expected_material_version和expected_head | 返回真实起止范围、此前关闭截止月、accounting_ready、资料版本、work_issues及ready。关闭前在同一事务复核同一范围和采用依据，不能静默扩大范围；实际账务与资料条件分别返回，规则见下节。 |
 | `accounting_backup` | company_id、expected_database_id（目标取已配置目录） | 创建备份任务 receipt。成功仅在验证完成后返回包及摘要。 |
 | `accounting_restore` | IsolatedTargetRequest：action=restore、source_path、new_target_directory、mode=check/run | 离线同步返回 IsolatedTargetResult，不依赖源业务库/任务。check 不写目标库；run 验证并创建新目标，既有文件即使空库也不覆盖。 |
 | `accounting_rebuild` | 同合同 action=rebuild；来源为完整当前标准文档清单 | 离线同步返回检查或新目标结果；run 新建简化账，不接入旧目录、旧运行身份或旧请求。 |
@@ -102,7 +102,7 @@ JSON 禁止重复键，所有对象禁止未声明字段；UTF-8。规范摘要�
 | `accounting_report` | ReportRequest：company_id、year、quarter、可选 expected_head | FinancialSnapshot：共享三表及所得税取数依据。 |
 | `accounting_report_export` | ReportExportRequest：generate 指定 company_id、year、quarter；save 指定 company_id、task_id、destination=desktop | ReportExportResult：生成当前报表或复用现有任务，返回准备状态、缺项或精确任务；保存只交付该任务的已核快照，返回 copied/reused、公司/数据库/任务身份、绝对路径、摘要和大小。 |
 
-`accounting_context.work_period` 回显本次明确选择的工作月，未指定则返回 null；`state=selected` 仅表示已选择公司。默认资料范围为公司及所选工作月，未选月时沿用最早开放月资料供发现，不代表已经选择该月。两个 scopes 分别覆盖各自默认，空数组仍表示不读取；显式跨月查阅不改变工作月。所选 scope 的待办及 head 完整返回，不按工作月删去其他期间事项。读取不保存会话月份、不推进公司工作范围、不改变核算所属期；历史月沿现有读取能力处理，不以是否开放限制工作月。
+`accounting_context.work_period`回显明确选择的工作月，未选为null，仅表示尚未选择，不能直接转为老板提问。默认读取公司、所选work:月份及period:月份；未选月时保留最早开放月经营说明，并有界提供最近一份有效办理说明作为发现线索。AI结合对话、来源和正式结果主动判断接续月，不由日期、最早开放月或单个文件月决定。两个scopes分别覆盖自身默认，空数组仍表示不读；显式跨月读取不改变工作月，所选待办范围完整返回。读取不保存会话月份或推进核算工作范围。
 
 `accounting_report_export` 与网页共用 `ReportExports(storage, ledger, files)` 的读取、计划接纳及已核下载。`generate` 表示取得或生成该季度的当前报表，内部取得预览并在接纳时复核；不接收请求编号、预览摘要或epochs，不承诺永久请求幂等。尚未收到任务编号时可再次生成当前报表，期间结果变化可以取得新结果；已经收到任务编号后用 `accounting_jobs` 查询，不反复生成充当轮询。失败后明确再次生成可接续原有准备重试，普通读取和任务查询不自动重试。网页原有严格预览协议保持。
 
@@ -131,11 +131,11 @@ Ledger与Money先捕获范围内的轻量目录，再按页取正文；applicati
 
 资料 import 由程序生成/核对来源身份和摘要；inspect 只读支持文件的有界文本块与原件定位，未知格式明确 unsupported_media，不执行文件内容。解析所得不是正式事实，AI 仍需按业务合同整理。SourcesResult、SourceInspection 和 DocumentsResult 是对应返回真源。来源目录按所属月与来源身份稳定分页，只观察当前页文件状态，不以文件存在冒充摘要已经核对；inspect对所选原件核对完整字节后提供有界文本块。支持文本、CSV、XLS/XLSX隐藏行列及PDF文本；XLSX提供公式及缓存值，XLS仅提供缓存值，每页检查均按实际工作表提示公式表达式不能提取、空缓存不代表业务事实为空。未知格式或无法提取的PDF页明确说明，长行和单元格可以接续。自动来源身份按公司、种类和内容摘要确定，同一原件的并发导入不会另造两份。
 
-discard 不改账务和已有来源正文。SourceDiscardResult 固定包含company_id、discarded_source_ids、missing_source_ids和file_cleanup:{state,issues}；issues每项只有code、message。state=complete表示本批清理已完成，pending表示登记已退出但文件清理尚待后台接续，不能当作全部办结。后台只完成旧清理标识，重新导入的登记及原件受到保护；不能重复discard来催清理，因为它会重新选择当前登记退出。资料整理和退出选择见[资料如何进入系统](08-ai-work-and-materials.md#资料如何进入系统)。
+discard 不改账务和已有来源正文。SourceDiscardResult 固定包含company_id、discarded_source_ids、missing_source_ids和file_cleanup:{state,issues}；issues每项只有code、message。state=complete表示本批清理已完成，pending表示登记已退出但文件清理尚待后台接续，不能当作全部办结。后台只完成旧清理标识，重新导入的登记及原件受到保护；不能重复discard来催清理，因为它会重新选择当前登记退出。资料整理和退出选择见[资料如何进入系统](08-ai-work-and-materials.md#资料与撤回)。
 
-整月撤销与单笔／指定多笔 withdraw 分工不同：后者保留原件，前者用 `accounting_cancel_month` 从账务及本月资料重新开始。inspect 只读返回公司、数据库、月份、整数 `head`、完整 `business_ids` 和本月归档候选 `source_ids`；不承诺候选都能删除，`discarded_source_ids`、`retained_source_ids` 为空，`file_cleanup.state=not_started`。cancel 用 `command_id` 和 `expected_head` 防止旧请求撤掉后来新记的业务；这是并发保护，不是批准。程序在共同事务中查齐本月业务、核验范围外依赖、撤去结果、清理本月待办，并直接替换为等待本期资料的最终月份说明，随后按实际剩余引用判定来源退出。关闭月份拒绝，不能清冻结原件或顺便撤掉其他月份源业务。
+整月撤销与单笔／指定多笔withdraw分工不同：后者保留原件，前者用accounting_cancel_month从指定开放月重新开始。inspect交付数据库身份、月份、head、完整业务与归档来源候选；cancel复核同一范围后统一撤去。work办理说明改为重新办理的当前事实，period经营说明按原机制清空；待办按实际业务归属和关账节点处理。10月接续、9月关账节点的季度申报不因撤销任一月而丢失或冒充完成；保留来源沿当前引用和冻结依据保护。返回实际删除及保留项、标准文档与物理清理状态；清理未完由后台接续，不再造撤回日志，也不重复调用discard催办。
 
-MonthCancelResult 固定含 `company_id/database_id/period/head/state/business_ids/source_ids/discarded_source_ids/retained_source_ids/documents/file_cleanup`。`state=cancelled` 表示账务撤销已提交；`discarded_source_ids` 只列实际退出，`retained_source_ids` 列跨月、长期、模板、冻结或其他有效保护项，非空时向老板说明仍保留。`documents=ready/pending` 和 `file_cleanup.state=complete/pending` 分别说明最终标准文档及物理文件是否完成，pending 不得称为全部完成。文档 pending 用 accounting_documents(action=finish) 接续；文件 pending 由后台完成旧清理，不能用discard再次退出登记或用新head再撤一轮。响应丢失先 inspect 核对现范围。整月撤销后的现有月份说明记录本月待重新提供资料并从第1项办理，保护保留的旧来源不证明本期资料已收齐，不存撤销日志。原件不因单笔撤回自动退出，也不建立通用重做模式、审批记录或流程历史。
+MonthCancelResult 固定含 `company_id/database_id/period/head/state/business_ids/source_ids/discarded_source_ids/retained_source_ids/documents/file_cleanup`。`state=cancelled` 表示账务撤销已提交；`discarded_source_ids` 只列实际退出，`retained_source_ids` 列跨月、长期、模板、冻结或其他有效保护项，非空时向老板说明仍保留。`documents=ready/pending` 和 `file_cleanup.state=complete/pending` 分别说明最终标准文档及物理文件是否完成，pending 不得称为全部完成。文档 pending 用 accounting_documents(action=finish) 接续；文件 pending 由后台完成旧清理，不能用discard再次退出登记或用新head再撤一轮。响应丢失先 inspect 核对现范围。整月撤销后的work:YYYY-MM办理说明记录本月待重新提供资料并从第1项办理，保护保留的旧来源不证明本期资料已收齐，不存撤销日志。原件不因单笔撤回自动退出，也不建立通用重做模式、审批记录或流程历史。
 
 ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext；无公司时只返回目录选择，不虚构公司或数据库身份。work_defaults 提供工资、常规服务、季度所得税及代发表安排。`payment_export.file_requirement=required_unless_declined`表示默认需要文件；公司已有明确不用或本月例外按真实范围优先，模板及长期安排仍由公司说明和来源承接，不由程序解析正文，也不代表实际付款。新公司首次设置按专项指南确认，已有安排不逐月重问。增值税默认通过业务的 `tax_point={type:owner_recognition_default}` 与报表营业收入共用收入确认月和同含义金额，无须另建税点业务。老板明确的其他安排和长期规则优先，默认结果如实标记老板口径，不证明合同条款或法定结论。VatTreatment 的放弃选项省略时按 `false` 处理，正式采用依据保存明确布尔值。
 
@@ -144,6 +144,16 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 字段尚未合法解析的请求用 ErrorResponse 返回 rejected/code/message，不能为凑 ApplyResult 伪造 company_id/command_id。accounting_schema 中的 schema_document 是声明性 Schema 元数据，按 Draft2020-12 元合同检查；这项例外不允许任意业务数据扩展。
 
 同源 HTTP 页面只有只读业务能力及报表文件生成/下载，不提供业务修改或审批。会话保护属于本机入口安全：沿用单老板身份与原登录体验，不新增角色授权管理；专业顾问通过只读页面查看。AI 的业务入口由本机 MCP/CLI 接入程序，只接受上述类型化命令，不接收 SQL、脚本或自由分录；来源读取只用登记身份和受控公司相对路径，离线恢复/重建仅接受显式选定包及经过独立路径核验的新目标。
+
+### 关账范围、待办与采用依据
+
+current_issue的period表示业务影响或实际外部办理月份；required_before_close单独表示外部事项应在哪个月关闭前完成，新提交必须明确月份或null。三季度申报可以period=10月、节点=9月；普通已正确入账的未付款不因此设节点。必要核算missing_fields归最早受影响开放月；已有known_fact.period却漏填影响月属于输入归属错误，AI结合已有事实补正，不能静默存成无关联事项或机械照搬原月。核算缺项不能被外部动作标签或先关账例外豁免。关闭读取分别按period和节点定位，再按issue_id合并。旧事项没有可靠节点时不能统一补null，限制受影响转换或关账，不扩大为普通读取、维护或整公司禁用。
+
+check可先接收候选basis，返回actual_range及material_version；AI核对资料和现实覆盖后，用同一版本检查。basis.coverage用来源证明明确期间，additional_sources定位跨月来源，note_refs只引用实际采用的company或work说明及seq。来源内容是否真正证明全部业务齐全由AI判断，程序不解析正文；银行流水不能自动充当全业务证明。未完成外部事项通常先办完，老板明确先关账时early_close提供具体待办身份和来源；普通先办后续不代替这个选择。
+
+material_version覆盖实际关闭范围内归档资料、未归期资料和明确关联的跨月来源成员及内容；改名或移动路径不使内容版本失效。核查不得从一个版本摘要推测具体变化；有旧集合时比较变化，无旧集合时允许重读明确范围的目录。关闭必须提交已核actual_range、同一basis、expected_material_version及expected_head。Application头绑定预演前正式状态、资料、有效说明和实际计算输入，不含预演随机结果身份；Ledger独立生成冻结头。任何变化在同一事务拒绝或回滚，不能留下部分预演写入。
+
+关闭记录保存必要work_basis及原公开检查头。重试核对保存的范围、依据、版本和头，不用今天资料否定过去；旧冻结没有当时依据时保持原义，不补造来源。先关账的待办继续保留，后月不重复索取同一次许可。历史关闭回执不重读当前待办，unresolved为空不证明现实已完成；当前剩余工作从accounting_context核对。冻结依据的来源通过现有source_use保护，标准文档只保存当前业务及其来源，重建保持开放；恢复旧关账使用完整备份。
 
 ### 错误与接续
 
@@ -175,7 +185,9 @@ ContextResult 区分已选公司 CompanyContext 和无可用公司 EmptyContext�
 | ledger.public | `begin_candidate(responsibilities, uow, correction_period=None, publications=(), resource_uses=None, retained_results=())`、`resource_definitions(refs, kind, read_context)`、`fund_movements(account_id, period_from, period_to, read_context)`、`adopt(change_plans, uow, correction_period=None, explanation=None)`、正式结果和凭证等查询、`financial_snapshot(scope, read_context)` | 候选逐槽 stage，待计算槽齐备后 complete；保留槽经精确核对后已就绪，原资源仍可用。声明完整使用范围后，相关槽就绪即可读取精确资源窗口；完整资金范围仍须等全部候选齐备。ResourceDefinition 含公开身份、完整定义及精确采用来源；ResourceState 加入截至指定月份/必要实际日的清偿、转移、消耗及剩余量。采用和事务提交再次统一检查容量；正式读取明确 current 或指定月末 as_posted。完整查询与财务取数按各自合同返回。冻结槽退出由ledger统一生成必要空目标，原因原样采用请求说明；领域不虚报新的有效槽。 |
 | money.public | 同领域完整协议；`stable_occurrence_id(business_id, public_slot)`、`register_occurrences(plans, uow)`、`actual_settled_fen(source, cutoff, context)`、`fund_sources(fact, movements, context)`、`validate_occurrences(plans, context)`、`check_period(period_from, period_to, read_context)`；账户、资金、原行及核对查询 | 唯一承接所有领域实际资金的稳定身份登记和原行绑定核验；登记身份不另存一套金额。实际清偿按同单最终事实、本义务分配及经济截止计算，不含抵销、转债或代办。关账复用登记时的完整银行匹配和平台原行规则，返回范围依据头及全部阻断项；未付款或闲置账户不要求虚构原行。 |
 | ledger.opening / ledger.reporting | 同领域 describe/evaluate/apply/export/query 协议 | 分别承接 opening.package、reports.continuation 的事实写入和导出；共享 ledger 采用端口，不由 application 越界代写。期初仍是其唯一事实 owner，资产卡片及后续摊折由注入的 OpeningAssetAccounting 计算，不能另造启用事实。 |
-| records.public | `prepare_source_imports(imports, read_context)`、`sources(request, read_context)`、`prepare_sources(sources, read_context)`、`discard_sources(source_ids, uow, retained_source_ids=..., protected_paths=..., retain_protected=False)`、`has_source_discards(read_context)`、`period_sources(period, read_context)`、`source_discard_protection(source_ids, read_context, *, retained_source_ids=..., protected_paths=...)`、`clear_period_issues(period, command_id, uow)`、`note_written_by(scope, command_id, read_context)`、`pending_source_discard_markers(archive_month, read_context)`、`finish_source_discards(uow, protected_paths=..., marker_ids=None, limit=500, after_marker_id=None)`、`plan_change/apply_current`、`resolve_sources/source_status`、`lease_source`、当前说明/待办及期间分页、`capture_documents/prepare_documents/publish_documents`、`capture_backup_materials/lease_backup_inputs/discard_backup_capture`、`open_standard_bundle/copy_standard_bundle`、`verify_snapshot` | 唯一维护来源、说明、待办和最终文档。来源内容预核验在写事务外完成，活跃证明绑定公司、位置及完整输入，并在采用和提交前复核；下载租约另提供固定字节。明确选择的来源只在当前引用、正式采用和原件保护检查通过后退出；retain_protected=True在同一发布锁中跳过实际当前引用、正式保留、任务路径及活跃租约保护，SourceDiscards返回实际退出及retained_source_ids，不由应用另算一份保护结论；文件清理须在登记退出提交后使用独立新写事务，当前标识可分批接续，完成即删，不留过程历史。整月来源端口完整返回指定归档月登记，source_discard_protection只读分类最多500个明确来源，供旧前提重试核验，不代替写事务内的真实退出判断；clear_period_issues在当前正式写事务内清理指定月待办，保留其他月份及scope连续序号，返回实际变化的待办范围；应用通过现有说明入口直接保存最终等待资料正文；note_written_by仅证明当前有效说明由指定命令写入，供整月取消丢回复时核对，不暴露私有元数据或另存操作历史；pending标识只供提交后沿已有清理端口接续，不在读取阶段删文件。期间查询不把局部页当完整替换集合。备份捕获绑定同一数据库快照并保护原件和分片；离线核验把完整当前事实、对象、待办、说明及来源索引与已发布文档精确对应，同时检查未使用及冻结依据的已登记原件。完整资料可以脱离源库核验和复制。 |
+| records.public | `prepare_source_imports(imports, read_context)`、`sources(request, read_context)`、`prepare_sources(sources, read_context)`、`discard_sources(source_ids, uow, retained_source_ids=..., protected_paths=..., retain_protected=False)`、`has_source_discards(read_context)`、`period_sources(period, read_context)`、`source_discard_protection(source_ids, read_context, *, retained_source_ids=..., protected_paths=...)`、`clear_period_issues(period, command_id, uow)`、`note_written_by(scope, command_id, read_context)`、`pending_source_discard_markers(archive_month, read_context)`、`finish_source_discards(uow, protected_paths=..., marker_ids=None, limit=500, after_marker_id=None)`、`plan_change/apply_current`、`resolve_sources/source_status`、`lease_source`、当前说明/待办及期间分页、`capture_documents/prepare_documents/publish_documents`、`capture_backup_materials/lease_backup_inputs/discard_backup_capture`、`open_standard_bundle/copy_standard_bundle`、`verify_snapshot` | 唯一维护来源、说明、待办和最终文档。来源内容预核验在写事务外完成，活跃证明绑定公司、位置及完整输入，并在采用和提交前复核；下载租约另提供固定字节。明确选择的来源只在当前引用、正式采用和原件保护检查通过后退出；retain_protected=True在同一发布锁中跳过实际当前引用、正式保留、任务路径及活跃租约保护，SourceDiscards返回实际退出及retained_source_ids，不由应用另算一份保护结论；文件清理须在登记退出提交后使用独立新写事务，当前标识可分批接续，完成即删，不留过程历史。整月来源端口完整返回指定归档月登记，source_discard_protection只读分类最多500个明确来源，供旧前提重试核验，不代替写事务内的真实退出判断；clear_period_issues在当前正式写事务内只退出纯属指定月的待办，保留跨月业务归属或关闭节点的事项及scope连续序号，返回实际变化的待办范围；应用通过现有说明入口直接保存最终等待资料正文；note_written_by仅证明当前有效说明由指定命令写入，供整月取消丢回复时核对，不暴露私有元数据或另存操作历史；pending标识只供提交后沿已有清理端口接续，不在读取阶段删文件。期间查询不把局部页当完整替换集合。备份捕获绑定同一数据库快照并保护原件和分片；离线核验把完整当前事实、对象、待办、说明及来源索引与已发布文档精确对应，同时检查未使用及冻结依据的已登记原件。完整资料可以脱离源库核验和复制。 |
+| records.public | `latest_work_note(read)`、`capture_close_materials(first,last,read,source_ids=())`、`period_closing_issues(first,last,read,limit=500,cursor=None)` | 最近一份有效办理说明只作月份线索；资料版本按指定范围、未归期及明确来源生成，不读原件正文。关闭待办按业务影响月或外部关闭节点的并集定位并分页去重。来源与待办先限定索引范围，不扫描公司全部正文。 |
+| ledger.public / records.public | `check_period(period,read)`、`close_period(period,expected_head,uow,work_basis=...)`；`replace_source_uses("period_close",period,source_ids,uow)` | Ledger校验正式条件并冻结本次明确范围，新增关闭必须有Application已核work_basis；来源保护在同一事务交给Records。LedgerSnapshot从冻结记录导出close_source_uses，Application传给Records.verify_snapshot做精确对应，不另存一套可独立编辑的关闭引用。 |
 | storage.public | `read_unit/write_unit/preview_unit/maintenance_unit`、`list_companies/company_metadata`、`create_company_database`、`open_database_unit`、`publish_company_directory`、`company_structure_contract`、结构核验及一致数据库副本 | 在线和离线共用工作单元、模块仓储及实际结构核验，不开放跨公司任意 SQL。离线明确数据库和资料根，不创建虚假目录或负责人。试算复用完整核算及事务末检查，正常结束也回滚；新目标发布须原子且不覆盖已存在位置。数据库复制不承接完整包和文档编排。 |
 | files.public | `ensure_current(plan, head, request_id)`、`get(company_id, task_id, check_current=False)`、`current_plan(company_id, kind, scope_key)`、`update(task_id, expected_state, head, result, company_id=...)`、`verified_download(company_id, task_id)`、`retained_input_plans(kind, read_context)`、`discard_unaccepted_capture(company_id, capture_id)` | 当前备份、报表和代发任务，分别采用BackupPlan、ReportExportPlan、PaymentExportPlan。get默认只观察；check_current=True和current_plan同时核对当前语义及成功文件实际字节，缺失或损坏变为failed，过期变为expired；不执行生产。current_plan返回隔离计划与回执，expired无计划。ensure_current复用成功任务时同样核验字节，新请求可直接重建损坏交付，原请求保持幂等失败。retained_input_plans只用调用方快照返回pending/running/failed的严格计划，不恢复租约、加锁或读文件。生产者核验独立候选后，Files以绑定任务、范围和代次的VerifiedArtifact交给publish，再核对实际发布摘要，事务内复核当前语义并保存结果。下载核验真实字节与当前计划。未接纳捕获仅在无当前引用或租约时回收；files不反向依赖业务模块。 |
 | reading.public | `page(page_key, scope, query)`、`detail(detail_key, scope, query)`、`retry(page_key, scope, query?)`、`export_report(scope, head, request_id, *, epochs)`、`report_task(company_id, job_id)`、`report_download(company_id, job_id)`；`create_report_exports(storage, ledger, files)` 提供共用的 `ReportExports` | 月页/季度页及准确业务范围，ready/preparing/failed、范围版本、完整计数和分页。Application与Reading使用同一个报表端口，统一指定季度的当前报表生成、严格预览接纳、精确任务和已核下载；下载描述绑定同计划的公司/数据库/任务、文件名、摘要和大小。context使用ContextScope；月页使用MonthScope(company_id, period?, expected_head?)；季度和业务进展使用LedgerScope，简报组及只读月度核对使用明确月份的MonthScope，来源审查使用ContextScope。主动重试须明确月份，只重启该页面失败的派生组件，不改正式账务。 |
@@ -353,7 +365,7 @@ ResourceCutoff 的月份是经济截止，实际日只在确需区分先后时�
 
 source_id 对应固定内容，字节或有效说明变更必须新建来源，不能同 UUID 覆盖。归月只改变受控位置：先准备新位置、发布新来源清单，再清理旧位置。明确无用的来源通过discard退出，程序检查当前引用、正式采用、当前文档及读取/备份保护后，才移除登记并安全清理受控文件；清理未完明确返回pending。不能为保留全部旧答复滥用“必要”，也不能以退出资料为由改写冻结依据。sources 输入的旧位置不决定身份，幂等重试先核对已登记内容和当前实际位置。
 
-事实分片保存一个领域和事实所属月的当前有效业务；跨期合同按生效首月归档，后续业务通过稳定业务引用关联，不反复复制合同正文。公司身份在清单，objects/work 为固定分片。说明按 `notes:<scope>` 分片，例如 `notes:company`、`notes:period:2026-01`、`notes:business:<业务UUID>`；来源按 `sources:<来源UUID>` 分片，各片只保存对应的一项。政策/期初仍按各自事实家族归月。一个业务只归一个事实片，移月时从旧片移除并加入新片，说明的业务身份不变。
+事实分片保存一个领域和事实所属月的当前有效业务；跨期合同按生效首月归档，后续业务通过稳定业务引用关联，不反复复制合同正文。公司身份在清单，objects/work 为固定分片。说明按 `notes:<scope>` 分片，例如 `notes:company`、`notes:work:2026-01`、`notes:period:2026-01`、`notes:business:<业务UUID>`；来源按 `sources:<来源UUID>` 分片，各片只保存对应的一项。政策/期初仍按各自事实家族归月。一个业务只归一个事实片，移月时从旧片移除并加入新片，说明的业务身份不变。
 
 `current.json` 指向当前完整分片集合，含 format、company_identity、set_id、各分片相对路径/字节数/摘要。company_identity 的 working_period_to 保存已进入的工作月份，撤去该月唯一业务也不倒退；简化重建据此补齐资产等期间结果。缺省时取接账月与全部最终事实末月的较晚者，不采用电脑当前月。StandardPart 明确五种分片：FactShard、ObjectShard、SourceShard、WorkShard、NotesShard。事实片只含格式版本、归属、最终 Fact 数组及必要来源/对象引用，不含数据库连接、result_id、旧序号、冲正动作、请求日志或旧凭证编号。
 

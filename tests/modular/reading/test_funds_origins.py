@@ -154,7 +154,7 @@ def test_closed_payment_keeps_old_projected_purpose_after_current_expense_change
         item["subject_id"] == paid["business_id"] and "管理费用" in item["list_summary"]
         for item in previous["collections"]["movements"]["items"]
     )
-    checked = book.check()
+    checked = book.prepare_close()
     assert checked["ready"], checked
     assert book.close(checked)["state"] == "closed"
     expense["data"]["expense_class"] = "sales"

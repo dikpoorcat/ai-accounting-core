@@ -158,7 +158,7 @@ def test_three_real_payment_variants_keep_full_funds_packet_and_bank_batch(book,
 
 def test_closed_payment_recipient_is_its_adopted_party_after_creditor_changes(book, monkeypatch):
     expense, _, paid = paid_expense(book, account=CASH)
-    checked = book.check()
+    checked = book.prepare_close()
     assert checked["ready"], checked
     assert book.close(checked)["state"] == "closed"
     expense["data"]["creditor_id"] = COUNTERPARTY

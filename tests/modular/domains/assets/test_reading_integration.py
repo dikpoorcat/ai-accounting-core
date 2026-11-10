@@ -50,7 +50,7 @@ def test_closed_cost_adjustment_changes_stock_without_inventing_a_new_card(case)
     case.seed(expense=False)
     acquired, enabled = _asset(case, activate=True)
     save(case.app, case.request(case.expense("1000", period="2026-02")))
-    assert case.close(case.check("2026-02"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-02"))["state"] == "closed"
     changed = deepcopy(acquired)
     changed["data"]["asset"]["cost_fen"] = "132000"
     command = case.request(correction_period="2026-03")
@@ -153,7 +153,7 @@ def test_closed_asset_type_correction_groups_each_formal_leg_by_its_adopted_type
     case.seed(expense=False)
     acquired, _ = _asset(case, activate=True)
     save(case.app, case.request(case.expense("1000", period="2026-02")))
-    assert case.close(case.check("2026-02"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-02"))["state"] == "closed"
     final = deepcopy(acquired)
     final["data"]["asset"].update(asset_type="intangible", cost_fen="132000")
     command = case.request(

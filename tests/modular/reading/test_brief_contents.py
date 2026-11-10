@@ -91,7 +91,7 @@ def test_inherited_voucher_loads_its_missing_frozen_body_and_never_uses_the_new_
     with case.kernel.storage.read_unit(case.company) as read:
         old = _brief_open_sources.capture(case.kernel.reading, scope(case), read)
     original_body = next(iter(old.contents.values()))
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     declared, reference = declaration(wage, "0")
     wage["data"]["tax_basis"]["pooled_source"] = reference
     wire = replacement(case.company, wage)

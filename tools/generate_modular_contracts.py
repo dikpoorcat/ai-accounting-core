@@ -243,29 +243,15 @@ def work_checklist(source):
     return value
 
 
-def render_check(check, indent=""):
-    lines = [
-        f"{indent}- `{check['id']}`：{check['condition']}",
-        f"{indent}  核对依据：{'；'.join(check['evidence'])}。",
-        f"{indent}  未满足时：{check['if_unmet']}",
-    ]
-    lines.extend(
-        f"{indent}  调用 `{action['command']}(action={action['action']})`：{action['when']}"
-        for action in check.get("actions", ())
-    )
-    return lines
-
-
 def render_work_checklist(value):
-    """The human work guide and packaged machine list share these exact conditions."""
-    lines = ["**当前步骤打勾前，按实际办理范围采用共同核对项。**", ""]
-    for check in value["common_checks"]:
-        lines.extend(render_check(check))
-    lines.append("")
+    """Show the eight outcomes; detailed checks are read only for the current stage."""
+    lines = [
+        "按[内部核对规则](accounting://guides/work/checklist)采用公共条件；办理和打勾前读取当前阶段的详细条件。",
+        "",
+    ]
     for stage in value["stages"]:
         lines.append(f"{stage['number']}. **{stage['title']}**：{stage['completion']}")
-        for check in stage["checks"]:
-            lines.extend(render_check(check, "   "))
+        lines.append(f"   [本项核对条件](accounting://guides/work/stages/{stage['number']})")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -297,22 +283,21 @@ def guide_outputs(root, business_document):
 
     checklist = work_checklist(source / "work-checklist.json")
     operations = read("08-ai-work-and-materials.md")
-    marker = "<!-- generated-work-checklist -->"
-    if operations.count(marker) != 1:
-        raise ValueError("Work guide must include its checklist exactly once")
-    operations = operations.replace(marker, render_work_checklist(checklist))
-    work = "\n\n".join(
-        markdown_section(operations, "## " + heading)
-        for heading in (
-            "开始工作时取得什么",
-            "给老板看的办理清单",
-            "撤回、整月撤销与重新记账",
-            "资料如何进入系统",
-            "不让老板承担程序协调",
-            "当前待办只保留还需要做的事",
-            "核对、更正和顾问审查",
-        )
-    )
+    work_sections = []
+    for heading in (
+        "开始与接续",
+        "先查清当前动作，再办理",
+        "内部核对与老板看到的进度",
+        "安排与待办怎样接续",
+        "默认安排、交付和必要提问",
+        "资料与撤回",
+        "关账采用哪一份判断",
+    ):
+        section = markdown_section(operations, "## " + heading)
+        if heading == "内部核对与老板看到的进度":
+            section += "\n\n" + render_work_checklist(checklist)
+        work_sections.append(section)
+    work = "\n\n".join(work_sections)
     contracts = read("03-contracts.md")
     commands = "\n\n".join(
         markdown_section(contracts, "## " + heading)
@@ -350,7 +335,14 @@ def guide_outputs(root, business_document):
             "按事实种类读取业务规则",
             "05-business-rules.md",
             "先用 accounting_schema 取得当前实例实际支持的 kind，再读取 "
-            "accounting://guides/business/{kind}。规则文档不证明当前实例已装配该业务。\n",
+            "accounting://guides/business/{kind}。规则文档不证明当前实例已装配该业务。\n\n"
+            "更正、义务转移及多付重分类按需读取 accounting://guides/corrections。\n\n"
+            + "\n".join(
+                f"- {heading}：" + "、".join(
+                    f"[{kind}](accounting://guides/business/{kind})" for kind in kinds
+                )
+                for heading, kinds in BUSINESS_GUIDES
+            ),
         ),
         "reporting": page("报表期间、采用与未知", "05b-financial-reporting.md", reporting),
         "runtime": page(

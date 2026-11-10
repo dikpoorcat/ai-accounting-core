@@ -17,6 +17,7 @@ def issue(case, question, period):
         "scope": WORK,
         "evidence_ids": [case.source_id],
         "missing_fields": ["/data/amount_fen"],
+        "required_before_close": None,
         "question": question,
         "assignee": "ai",
         "action": "clarify_reality",

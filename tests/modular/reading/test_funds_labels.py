@@ -118,7 +118,7 @@ def test_loan_capital_and_frozen_old_type_keep_their_exact_formal_meaning(case):
     actual = labels(case)
     assert actual[loan["business_id"]] == "股东借入款"
     assert actual[capital["business_id"]] == "股东实缴出资"
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     loan["data"]["funding_kind"] = "capital"

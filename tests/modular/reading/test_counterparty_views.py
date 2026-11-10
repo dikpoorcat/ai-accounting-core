@@ -202,7 +202,7 @@ def test_closed_current_channel_updates_only_its_activity_and_preserves_vouchers
     first, other = apply(
         case, first, other, objects=[item for item in objects() if item["object_id"] == CASH]
     )
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     capture(case)
     capture_funds(case)
     original_rows = activity(case)["items"]

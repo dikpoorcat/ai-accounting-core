@@ -183,7 +183,7 @@ def test_mixed_payment_preserves_purpose_labels_but_actual_payment_is_counted_on
 
 def test_correction_summaries_keep_signed_original_and_replacement_without_new_cash(case):
     original = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     corrected = deepcopy(original)
     corrected["data"]["amount_fen"] = "80000"
     saved = case.app.accounting_apply(
@@ -212,6 +212,7 @@ def test_current_issue_ids_count_once_and_financial_problems_stay_ai_reviewing(c
         "period": "2026-01",
         "evidence_ids": [],
         "missing_fields": [],
+        "required_before_close": None,
         "question": "请核对真实业务用途。",
         "assignee": "owner",
         "action": "clarify_reality",
@@ -311,7 +312,7 @@ def test_real_closed_or_covered_header_needs_no_prepared_review(case, boundary, 
     if boundary == "2026-02":
         saved = case.app.accounting_apply(case.request(case.expense("1", boundary)))
         assert saved["completion"] == "complete", saved
-    assert case.close(case.check(boundary))["state"] == "closed"
+    assert case.close(case.prepare_close(boundary))["state"] == "closed"
     expected = "a" * 64
     with case.kernel.storage.read_unit(case.company) as read:
         closure = case.kernel.ledger.period_closure("2026-01", read)

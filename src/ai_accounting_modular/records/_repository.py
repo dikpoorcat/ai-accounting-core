@@ -138,22 +138,40 @@ class RecordsRepository:
             )
         )
 
-    def used_source_ids(self):
+    def current_source_ids(self):
         return tuple(
             row["source_id"]
             for row in self._session.fetchall(
-                "SELECT DISTINCT source_id FROM source_use ORDER BY source_id"
+                "SELECT DISTINCT source_id FROM source_use "
+                "WHERE owner_kind IN ('business','object','issue','note') ORDER BY source_id"
             )
         )
 
-    def referenced_source_ids(self, ids):
+    def close_material_metadata(self, first, last, source_ids):
+        return tuple(
+            tuple(row)
+            for row in self._session.fetchall(
+                "SELECT source_id,kind,sha256,archive_month FROM source "
+                "WHERE archive_month BETWEEN ? AND ? OR archive_month IS NULL "
+                "OR source_id IN (SELECT value FROM json_each(?)) ORDER BY source_id",
+                (first, last, canonical_json(list(source_ids))),
+            )
+        )
+
+    def referenced_source_ids(self, ids, *, current_only=False):
         if not ids:
             return ()
         return tuple(
             row["source_id"]
             for row in self._session.fetchall(
                 "SELECT DISTINCT source_id FROM source_use "
-                "WHERE source_id IN (SELECT value FROM json_each(?)) ORDER BY source_id",
+                "WHERE source_id IN (SELECT value FROM json_each(?)) "
+                + (
+                    "AND owner_kind IN ('business','object','issue','note') "
+                    if current_only
+                    else ""
+                )
+                + "ORDER BY source_id",
                 (canonical_json(list(ids)),),
             )
         )
@@ -186,9 +204,11 @@ class RecordsRepository:
             row["scope_key"]
             for row in self._session.fetchall(
                 "SELECT scope_key FROM current_issue WHERE period=? "
-                "UNION SELECT scope_key FROM current_issue WHERE scope_key=? AND period IS NULL "
+                "UNION SELECT scope_key FROM current_issue WHERE required_before_close=? "
+                "UNION SELECT scope_key FROM current_issue WHERE scope_key IN (?,?) "
+                "AND period IS NULL AND required_before_close IS NULL "
                 "ORDER BY scope_key",
-                (period, "period:" + period),
+                (period, period, "period:" + period, "work:" + period),
             )
         )
 
@@ -256,6 +276,14 @@ class RecordsRepository:
             )
         )
 
+    def latest_work_note(self):
+        row = self._session.fetchone(
+            "SELECT * FROM company_note WHERE scope_key BETWEEN 'work:0001-01' "
+            "AND 'work:9999-12' AND state='current' AND note_text<>'' "
+            "ORDER BY scope_key DESC LIMIT 1"
+        )
+        return dict(row) if row is not None else None
+
     def save_note(self, current, expected_seq, command_id, digest):
         self._session.execute(
             "INSERT INTO company_note(scope_key,note_text,basis_head,state,seq,latest_command_id,"
@@ -304,6 +332,7 @@ class RecordsRepository:
                 "assignee": row["assignee"],
                 "action": row["action"],
             }
+            issue["required_before_close"] = row["required_before_close"]
             for key in ("period", "business_id", "due_on"):
                 if row[key] is not None:
                     issue[key] = row[key]
@@ -352,6 +381,34 @@ class RecordsRepository:
             raise ContractError("storage_corrupt", "当前待办缺少所属范围的完整版本。")
         return self._issues(rows), {row["scope_key"]: row["scope_head"] for row in rows}
 
+    def closing_issue_metadata(self, first, last):
+        return tuple(
+            tuple(row)
+            for row in self._session.fetchall(
+                "SELECT scope_key,issue_id,content_digest FROM current_issue "
+                "WHERE period BETWEEN ? AND ? OR required_before_close BETWEEN ? AND ? "
+                "ORDER BY scope_key,issue_id",
+                (first, last, first, last),
+            )
+        )
+
+    def closing_issue_rows(self, first, last, after, limit):
+        where = "(i.period BETWEEN ? AND ? OR i.required_before_close BETWEEN ? AND ?)"
+        args = [first, last, first, last]
+        if after is not None:
+            where += " AND (i.scope_key,i.issue_id)>(?,?)"
+            args.extend(after)
+        rows = self._session.fetchall(
+            "SELECT i.*,s.head AS scope_head FROM current_issue AS i "
+            "LEFT JOIN current_issue_scope AS s ON s.scope_key=i.scope_key WHERE "
+            + where
+            + " ORDER BY i.scope_key,i.issue_id LIMIT ?",
+            (*args, limit),
+        )
+        if any(row["scope_head"] is None for row in rows):
+            raise ContractError("storage_corrupt", "当前待办缺少所属范围的完整版本。")
+        return self._issues(rows), {row["scope_key"]: row["scope_head"] for row in rows}
+
     def replace_issues(self, scope, head, expected_head, command_id, digest, issues):
         old_uses = (
             "owner_kind='issue' AND owner_key IN "
@@ -370,7 +427,8 @@ class RecordsRepository:
             self._session.execute(
                 "INSERT INTO current_issue(issue_id,scope_key,period,business_id,known_schema_key,"
                 "known_fact_json,missing_fields_json,current_question,assignee,action,due_on,"
-                "content_digest,evidence_ids_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "content_digest,evidence_ids_json,required_before_close) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     issue["issue_id"],
                     scope,
@@ -385,6 +443,7 @@ class RecordsRepository:
                     issue.get("due_on"),
                     content_digest(issue),
                     canonical_json(issue["evidence_ids"]),
+                    issue["required_before_close"],
                 ),
             )
             self.replace_uses("issue", issue["issue_id"], issue_source_ids(issue))

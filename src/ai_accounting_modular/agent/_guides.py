@@ -69,7 +69,13 @@ def guide_index():
     """A small fresh directory; documentation availability is not runtime support."""
     return {
         "format": _book()["format"],
-        "message": "按需读取；业务规则不代表实例已支持，先调用 accounting_schema 选择实际种类。",
+        "message": (
+            "按需读取当前阶段和专项规则；业务文档不代表实例已支持，"
+            "accounting_schema 返回实际目录及所选命令合同。"
+        ),
+        "checklist_uri": "accounting://guides/work/checklist",
+        "stage_uri_template": "accounting://guides/work/stages/{stage}",
+        "corrections_uri": "accounting://guides/corrections",
         "topics": [
             {
                 "topic": topic,
@@ -87,28 +93,43 @@ def guide_index():
 
 
 def read_work_checklist():
-    """Return an isolated rule list, never a company's progress or an acceptance log."""
-    return deepcopy(_book()["checklist"])
+    """Shared checks and stage navigation, without repeating all stage details."""
+    rules = _book()["checklist"]
+    return {
+        "format": rules["format"],
+        "common_checks": deepcopy(rules["common_checks"]),
+        "stages": [
+            {
+                **{key: stage[key] for key in ("number", "id", "title", "completion")},
+                "uri": f"accounting://guides/work/stages/{stage['number']}",
+            }
+            for stage in rules["stages"]
+        ],
+    }
+
+
+def read_work_stage(stage):
+    """Read one numbered stage; identifiers are not paths or company progress."""
+    if not isinstance(stage, str) or stage not in tuple(map(str, range(1, 9))):
+        raise ContractError("unsupported_guide", "办理阶段须为1至8，请先读取内部核对目录。")
+    return deepcopy(_book()["checklist"]["stages"][int(stage) - 1])
 
 
 def read_guide(topic, *, kind=None):
     """Return immutable Markdown for an explicit topic or exact documented Fact kind."""
+    if topic == "corrections" and kind is None:
+        return _book()["business"]["corrections"]
     if not isinstance(topic, str) or topic not in TOPICS:
         raise ContractError(
             "unsupported_guide", "没有此操作说明主题，请先读取 accounting://guides。"
         )
     if kind is None:
+        if topic == "business":
+            return _book()["business"]["common"] + "\n" + _book()["topics"][topic]["text"]
         return _book()["topics"][topic]["text"]
     if topic != "business" or not isinstance(kind, str) or kind not in _book()["business"]["kinds"]:
         raise ContractError(
             "unsupported_guide", "没有此事实种类的说明；请按实际 kind 选择，不能使用路径。"
         )
     business = _book()["business"]
-    return (
-        f"# 业务规则：{kind}\n\n"
-        + business["common"]
-        + "\n"
-        + business["sections"][business["kinds"][kind]]
-        + "\n"
-        + business["corrections"]
-    )
+    return f"# 业务规则：{kind}\n\n" + business["sections"][business["kinds"][kind]]

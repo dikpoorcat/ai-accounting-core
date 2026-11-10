@@ -9,6 +9,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     FactIssue,
     FinancialSnapshot,
+    FrozenWorkCloseBasis,
     YearMonth,
     content_digest,
     loads_json,
@@ -31,6 +32,9 @@ class LedgerPeriodCheck:
     head: str
     blocking_issues: tuple[FactIssue, ...]
     report: FinancialSnapshot
+    closing_period: str | None = None
+    previous_closed_through: str | None = None
+    work_basis: FrozenWorkCloseBasis | None = None
 
     @property
     def ready(self):
@@ -44,6 +48,14 @@ class PeriodClosure:
     closing_period: str | None = None
     period_from: str | None = None
     head: str | None = None
+
+
+@dataclass(frozen=True)
+class _SavedClose:
+    period_from: str
+    previous_closed_through: str | None
+    basis: CloseBasis
+    report: FinancialSnapshot
 
 
 def _first(previous, start):
@@ -61,7 +73,7 @@ def _scope(context, first, last=None):
     }
 
 
-def _basis(repo, first, last, context):
+def _basis(repo, first, last, context, *, work_basis=None):
     heads = repo.adoptions_between(first, last)
     refs = sorted(
         (stored_source_reference(head) for head in heads),
@@ -74,6 +86,8 @@ def _basis(repo, first, last, context):
         "period": last,
         "result_digest": content_digest(refs),
     }
+    if work_basis is not None:
+        basis["work_basis"] = work_basis
     validate_contract("reporting.schema.json", "CloseBasis", basis)
     return basis, heads
 
@@ -109,6 +123,7 @@ def _header(repo, row, context, basis, report):
     period = row["period"]
     previous = repo.previous_close(period)
     first = _first(previous, context.start_period)
+    work_basis = basis.get("work_basis")
     if (
         basis["company_id"] != context.company_id
         or basis["database_id"] != context.database_id
@@ -118,9 +133,11 @@ def _header(repo, row, context, basis, report):
         or report["database_id"] != context.database_id
         or report["scope"] != {**_scope(context, period), "as_of": period}
         or report["mapping_version"] != _financial.MAPPING_V1
+        or work_basis is not None
+        and work_basis["actual_range"] != {"period_from": first, "period_to": period}
     ):
         fail("storage_corrupt", "保存的关账三表、冻结范围或摘要不一致。")
-    return first
+    return first, previous
 
 
 def _record(repo, row, context):
@@ -129,12 +146,12 @@ def _record(repo, row, context):
         validate_contract("reporting.schema.json", "FinancialSnapshot", report)
     except ContractError as error:
         raise ContractError("storage_corrupt", "保存的关账三表不符合正式合同。") from error
-    first = _header(repo, row, context, basis, report)
+    first, previous = _header(repo, row, context, basis, report)
     if content_digest(report) != row["report_digest"] or any(
         check["status"] == "fail" for check in report["checks"]
     ):
         fail("storage_corrupt", "保存的关账三表或完整摘要不一致。")
-    return first, report
+    return _SavedClose(first, previous, basis, report)
 
 
 def period_closure(period, context):
@@ -150,7 +167,7 @@ def period_closure(period, context):
         metadata = loads_json(row["report_metadata_json"])
     except ContractError as error:
         raise ContractError("storage_corrupt", "保存的关账头格式不合法。") from error
-    first = _header(repo, row, context, basis, metadata)
+    first, _ = _header(repo, row, context, basis, metadata)
     return PeriodClosure(period, "closed", row["period"], first, row["result_head"])
 
 
@@ -163,8 +180,8 @@ def closed_report(scope, context):
     row = repo.close_record(last, covering=True)
     if row is None:
         fail("not_found", "该报表截止月尚未被关账覆盖。")
-    _, saved = _record(repo, row, context)
-    return _closed_result(scope, normalized, context, repo, row, saved)
+    saved = _record(repo, row, context)
+    return _closed_result(scope, normalized, context, repo, row, saved.report)
 
 
 def _closed_result(scope, normalized, context, repo, row, saved):
@@ -206,16 +223,21 @@ def check_period(period, context):
     frontier = repo.closed_through()
     if frontier is not None and period <= frontier:
         row = repo.close_record(period, covering=True)
-        first, saved = _record(repo, row, context)
+        saved = _record(repo, row, context)
         scope = _scope(context, period)
         return LedgerPeriodCheck(
             period,
-            first,
+            saved.period_from,
             frontier,
             "closed",
             row["result_head"],
             (),
-            _closed_result(scope, _financial.normalize(scope, context), context, repo, row, saved),
+            _closed_result(
+                scope, _financial.normalize(scope, context), context, repo, row, saved.report
+            ),
+            closing_period=row["period"],
+            previous_closed_through=saved.previous_closed_through,
+            work_basis=saved.basis.get("work_basis"),
         )
     first = _first(frontier, context.start_period)
     basis, heads = _basis(repo, first, period, context)
@@ -255,14 +277,28 @@ def check_period(period, context):
             )
         )
     head = _head(basis, frontier, report)
-    return LedgerPeriodCheck(period, first, frontier, "open", head, tuple(issues), report)
+    return LedgerPeriodCheck(
+        period,
+        first,
+        frontier,
+        "open",
+        head,
+        tuple(issues),
+        report,
+        previous_closed_through=frontier,
+    )
 
 
-def close_period(period, expected_head, unit):
+def close_period(period, expected_head, unit, *, work_basis=None):
     validate_contract("core.schema.json", "Digest", expected_head)
     checked = check_period(period, unit)
     if checked.state == "closed":
         return checked
+    if work_basis is None:
+        fail("invalid_input", "新的关账必须同时保存已核对的办理依据。")
+    validate_contract("core.schema.json", "FrozenWorkCloseBasis", work_basis)
+    if work_basis.get("actual_range") != {"period_from": checked.period_from, "period_to": period}:
+        fail("conflict", "办理依据的关闭范围与实际冻结范围不一致。")
     if checked.head != expected_head:
         fail("conflict", "检查后的正式核算范围已变化，请重新检查关账范围。")
     if not checked.ready:
@@ -279,9 +315,10 @@ def close_period(period, expected_head, unit):
 
     unit.check_before_commit(require_complete)
     repo = unit.repository("ledger")
-    basis, _ = _basis(repo, checked.period_from, period, unit)
+    basis, _ = _basis(repo, checked.period_from, period, unit, work_basis=work_basis)
+    frozen_head = _head(basis, checked.previous_closed_through, checked.report)
     repo.freeze_range(checked.period_from, period)
-    repo.save_close(period, checked.head, basis, checked.report, datetime.now(UTC).isoformat())
+    repo.save_close(period, frozen_head, basis, checked.report, datetime.now(UTC).isoformat())
     closed = check_period(period, unit)
     completed[0] = True
     return closed

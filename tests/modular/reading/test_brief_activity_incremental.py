@@ -144,14 +144,14 @@ def test_current_root_ignores_retained_older_generation_in_shared_body_cache(boo
         for row, item in zip(statement["data"]["rows"], (drawdown, paid), strict=True)
     ]
     apply(book, statement, reconciled)
-    checked = book.check()
+    checked = book.prepare_close()
     assert checked["ready"], checked["blocking_issues"]
     assert book.close(checked)["state"] == "closed"
     original = book.get(interest["business_id"])["businesses"][0]["results"][0]["reference"]
     interest["data"]["end_before"] = "2026-01-31"
     change(book, interest, correction_period="2026-02")
     apply(book, *statement_pair(ids, values=(), opening="999000", day="2026-02-01"))
-    assert book.close(book.check("2026-02"))["state"] == "closed"
+    assert book.close(book.prepare_close("2026-02"))["state"] == "closed"
     interest["data"]["end_before"] = "2026-01-30"
     change(book, interest, seq=2, correction_period="2026-03")
     decoded = []
@@ -464,7 +464,7 @@ def test_failure_keeps_later_work_and_explicit_retry_rebuilds_current_facts(book
 def test_closed_correction_and_withdrawal_keep_the_frozen_month(book):
     first = book.seed()
     publish_full(book)
-    assert book.close(book.check())["state"] == "closed"
+    assert book.close(book.prepare_close())["state"] == "closed"
     assert book.kernel.reading.run_pending(book.company)
     january = matches_complete(book)
     january_display = activity_page(book)
@@ -541,7 +541,7 @@ def test_no_voucher_business_legs_remain_incremental_after_closing(book):
     assert book.kernel.reading.run_pending(book.company)
     january = matches_complete(book)
     assert january["activity_count"] == 1 and january["voucher_count"] == 0
-    assert book.close(book.check())["state"] == "closed"
+    assert book.close(book.prepare_close())["state"] == "closed"
     assert book.kernel.reading.run_pending(book.company)
     january = matches_complete(book)
     publish_full(book, "2026-02")

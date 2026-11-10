@@ -95,6 +95,7 @@ def test_complete_internal_issue_scope_can_exceed_one_wire_submission(records_ca
             "period": "2026-01",
             "evidence_ids": [],
             "missing_fields": ["/data/amount_fen"],
+            "required_before_close": None,
             "question": "请核实这笔费用的金额。",
             "assignee": "owner",
             "action": "clarify_reality",

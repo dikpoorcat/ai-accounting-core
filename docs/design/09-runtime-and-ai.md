@@ -154,19 +154,23 @@ $company.database_id
 
 | 资源 | 内容 |
 | --- | --- |
-| `accounting://guides/work` | 月度清单、各阶段完成条件与推进、资料引导、当前待办、更正和完成状态。 |
+| `accounting://guides/work` | 自主核查方法、月度办理流程、答复复用、关账及资料边界。 |
+| `accounting://guides/work/checklist` | 共用检查条件与八阶段目录。 |
+| `accounting://guides/work/stages/{1到8}` | 当前阶段的完整内部条件、依据及未满足动作。 |
+| `accounting://guides/business` | 首次办理业务时读取的共同规则。 |
+| `accounting://guides/corrections` | 发生更正时读取的共用更正规则。 |
 | `accounting://guides/commands` | 公开请求、身份、防重、错误接续及标准业务文档。 |
 | `accounting://guides/business/{kind}` | 指定事实种类的实际业务规则；例如 `accounting://guides/business/operations.expense`。 |
 | `accounting://guides/reporting` | 共享报表的期间、实际采用、未知和取数含义。 |
 | `accounting://guides/runtime` | 本安装及运行说明。 |
 
-这些是由唯一设计正文生成、随包提供的只读说明，不读取工作区文档。文档中的种类目录不代表当前实例已装配该能力；先调用 `accounting_schema` 取得实际支持种类，选择后再读取该 kind 的说明和输入 Schema。`accounting://contracts` 提供当前可调用命令的自包含请求 Schema，不含任意分录入口。
+这些说明由唯一设计正文生成并随包提供，不读工作区。accounting_schema()与accounting://contracts都只返回实际命令及种类目录；普通命令用accounting_schema(command=命令名)取得完整请求。Apply必须明确kinds，返回提交外壳、所选Fact和PartialFact的完整条件；只办说明、来源、对象、普通待办及撤回时传kinds=[]。不返回整套无关种类，不另维护简化合同。事实种类本身的合同仍可用原kinds-only方式读取；读过哪些种类不限制正式写入权限。
 
 实际 MCP 工具只有下列四项；`accounting_apply/get/find/sources/...` 通过 `accounting_command` 选择，不是另一个同名 MCP 工具。
 
 | 工具名 | 一次调用的完整参数对象 |
 | --- | --- |
-| `accounting_schema` | `{"kinds":["operations.expense"]}` |
+| `accounting_schema` | `{"command":"accounting_apply","kinds":["operations.expense"]}` |
 | `accounting_new_ids` | `{"count":3}` |
 | `accounting_command` | `{"command":"accounting_context","payload":{}}` |
 | `accounting_security` | `{"operation":"session_status","payload":{}}` |
@@ -197,6 +201,6 @@ $company.database_id
 
 ## 当前结构基线
 
-目录结构为1，公司结构为5；结构、模块归属和指纹来自随包的当前完整合同。普通打开及备份恢复均核对这一基线，不携带历史结构、父合同、增量DDL或结构升级命令。结构不匹配明确拒绝，不靠改版本号、重建库或忽略指纹继续运行。
+目录结构为1，公司结构为6；结构、模块归属和指纹来自随包的当前完整合同。普通打开及备份恢复均核对这一基线，不携带历史结构、父合同、增量DDL或结构升级命令。结构不匹配明确拒绝，不靠改版本号、重建库或忽略指纹继续运行。
 
 标准业务文档具有独立的事实格式；文档重建使用当前内核重新核算，不能替代数据库结构核验。备份恢复只接受当前完整结构及格式，保持正式账务、必要冻结和原件的一致状态。

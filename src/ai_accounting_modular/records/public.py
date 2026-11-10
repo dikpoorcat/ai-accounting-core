@@ -12,6 +12,7 @@ from weakref import WeakSet
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    CurrentNote,
     ReadContext,
     Source,
     SourceImport,
@@ -28,6 +29,7 @@ from ai_accounting_modular.storage.public import RepositoryFactory, module_schem
 from . import (
     _backup,
     _changes,
+    _close_materials,
     _documents,
     _period_issues,
     _periods,
@@ -42,6 +44,7 @@ from ._repository import RecordsRepository
 from ._standard import copy_standard_bundle, open_standard_bundle
 from ._types import (
     BackupMaterials,
+    CloseMaterials,
     DocumentSnapshot,
     PeriodIssuesPage,
     PeriodNotesPage,
@@ -62,6 +65,7 @@ from ._types import (
 
 __all__ = [
     "BackupMaterials",
+    "CloseMaterials",
     "DocumentSnapshot",
     "PeriodIssuesPage",
     "PeriodNotesPage",
@@ -151,6 +155,11 @@ class Records:
         for source in sources:
             _sources.validate_source(source)
         return sources
+
+    def capture_close_materials(
+        self, period_from: str, period_to: str, read_context: ReadContext, *, source_ids=()
+    ) -> CloseMaterials:
+        return _close_materials.capture(period_from, period_to, read_context, source_ids)
 
     def source_discard_protection(
         self,
@@ -312,21 +321,26 @@ class Records:
     def replace_source_uses(
         self, owner_kind: str, owner_key: str, evidence_ids, uow: UnitOfWork
     ) -> None:
-        if owner_kind not in {"business", "object", "issue", "note"}:
-            raise ContractError("invalid_input", "来源引用只属于业务、对象、当前待办或说明。")
-        if owner_kind != "note":
+        if owner_kind not in {"business", "object", "issue", "note", "period_close"}:
+            raise ContractError("invalid_input", "来源引用须属于业务、对象、待办、说明或关账依据。")
+        if owner_kind == "period_close":
+            validate_contract("core.schema.json", "Month", owner_key)
+        elif owner_kind != "note":
             validate_contract("core.schema.json", "Id", owner_key)
         elif not isinstance(owner_key, str) or not 1 <= len(owner_key) <= 200:
             raise ContractError("invalid_input", "说明范围不能为空。")
-        ids = _changes.source_ids(evidence_ids, limit=None if owner_kind == "business" else 1000)
+        ids = _changes.source_ids(
+            evidence_ids, limit=None if owner_kind in {"business", "period_close"} else 1000
+        )
         repository = uow.repository("records")
         _changes._missing_sources(ids, repository.sources(ids))
         old_ids = repository.uses(owner_kind, owner_key)
         if old_ids != ids:
             repository.replace_uses(owner_kind, owner_key, ids)
-            self.mark_document_targets(
-                tuple("sources:" + source_id for source_id in set(old_ids) ^ set(ids)), uow
-            )
+            if owner_kind != "period_close":
+                self.mark_document_targets(
+                    tuple("sources:" + source_id for source_id in set(old_ids) ^ set(ids)), uow
+                )
 
     def current_notes(self, scopes, read_context: ReadContext) -> tuple[dict, ...]:
         repository = read_context.repository("records")
@@ -336,8 +350,13 @@ class Records:
             _changes.note_current(row, repository, uses[scope]) for scope, row in rows.items()
         )
 
+    def latest_work_note(self, read_context: ReadContext) -> CurrentNote | None:
+        repository = read_context.repository("records")
+        row = repository.latest_work_note()
+        return _changes.note_current(row, repository) if row is not None else None
+
     def clear_notes(self, scopes, command_id: str, uow: UnitOfWork) -> tuple[str, ...]:
-        """Clear selected business descriptions; preserve versions and all owner issues."""
+        """Retire selected notes; preserve versions and all owner issues."""
         changed, source_ids = _changes.clear_notes(scopes, command_id, uow)
         if changed:
             self.mark_document_targets(
@@ -375,6 +394,14 @@ class Records:
     ) -> PeriodIssuesPage:
         """All scopes' range/no-period issues, with full scope versions, paged."""
         return _periods.issues(period_from, period_to, read_context, limit=limit, cursor=cursor)
+
+    def period_closing_issues(
+        self, period_from, period_to, read_context: ReadContext, *, limit=500, cursor=None
+    ) -> PeriodIssuesPage:
+        """Union of issue periods and explicit closing obligations; never a replacement set."""
+        return _periods.closing_issues(
+            period_from, period_to, read_context, limit=limit, cursor=cursor
+        )
 
     def invalidate_notes(
         self, note_basis_heads, command_id: str, uow: UnitOfWork
@@ -527,13 +554,27 @@ class Records:
             return _documents.document_status(read_context, root)
 
     def verify_snapshot(
-        self, company_identity, facts, objects, read_context: ReadContext, *, required_source_ids=()
+        self,
+        company_identity,
+        facts,
+        objects,
+        read_context: ReadContext,
+        *,
+        required_source_ids=(),
+        frozen_close_source_uses=(),
     ) -> RecordsSnapshot:
         """Prove saved documents; FactAnalysis inputs reuse their exact strict analysis."""
         root = self._root(read_context)
         with _publication(root).lock:
             return _snapshot.verify(
-                self, company_identity, facts, objects, read_context, root, required_source_ids
+                self,
+                company_identity,
+                facts,
+                objects,
+                read_context,
+                root,
+                required_source_ids,
+                frozen_close_source_uses,
             )
 
     @contextmanager

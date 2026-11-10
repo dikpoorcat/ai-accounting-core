@@ -29,7 +29,7 @@ def test_closed_correction_becomes_one_final_fact_and_one_original_voucher(case,
     original_business = fact["business_id"]
     for expected, amount, correction in ((1, "120000", None), (2, "150000", "2026-03")):
         if correction:
-            assert case.close(case.check())["state"] == "closed"
+            assert case.close(case.prepare_close())["state"] == "closed"
         evidence = source(f"重新核实：一月维修实际费用为{amount}分。")
         final = deepcopy(fact)
         final["data"]["amount_fen"] = amount
@@ -166,7 +166,7 @@ def test_closed_paid_expense_with_later_real_recovery_rebuilds_only_final_facts(
         case.app.accounting_apply(case.request(statement, reconciliation))["completion"]
         == "complete"
     )
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     final = expense("rebuild-paid-cost", "80")
     claim = fact(
         "rebuild-paid-claim",

@@ -135,7 +135,7 @@ def test_old_expected_snapshot_is_rejected_while_the_requested_upgrade_is_queued
 
 def test_correction_labels_upgrade_rejects_old_snapshot_and_cursor(case, monkeypatch):
     fact = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     fact["data"].update(amount_fen="80000", expense_class="sales")
     changed = case.app.accounting_apply(
         case.request(

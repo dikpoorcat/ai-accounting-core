@@ -139,7 +139,7 @@ def test_open_social_components_select_different_real_vouchers_and_reject_cross_
 
 def test_closed_group_reversal_and_replacement_count_each_component_once(case):
     wage = payroll(case)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     changed = deepcopy(wage)
     changed["data"]["gross_fen"] = "650000"
     correct(case, changed, period="2026-02")
@@ -171,7 +171,7 @@ def test_closed_group_reversal_and_replacement_count_each_component_once(case):
 
 def test_frozen_and_current_voucher_progress_keep_the_selected_phase_amount_and_title(case):
     wage = payroll(case)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     changed = deepcopy(wage)
     changed["data"]["gross_fen"] = "650000"
     correct(case, changed, period="2026-02")
@@ -238,7 +238,7 @@ def test_zero_and_single_component_stages_keep_stage_progress(
     for index, item in enumerate(actual["data"]["items"]):
         item.update(employee_fen=personal[index], employer_fen=unit[index])
     add(case, wage, employment, actual)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     capture(case)
     rows = activity(case)["items"]
     assert {row["title"]: row["amount_fen"] for row in rows} == expected
@@ -409,7 +409,7 @@ def test_frozen_main_remuneration_keeps_complete_business_components(
     with monkeypatch.context() as installation:
         installation.setitem(people._CALCULATORS, "people.remuneration", old_rule)
         wage = payroll(case)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     capture(case)
     rows = activity(case)["items"]
     assert len(rows) == 2

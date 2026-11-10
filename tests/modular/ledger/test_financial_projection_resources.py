@@ -11,6 +11,7 @@ from ai_accounting_modular.ledger._financial_projection_bodies import capture_bo
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_projection_requests import request
 from ai_accounting_modular.ledger._financial_selection import Selection
+from tests.modular._period_support import ledger_work_basis
 
 
 class Blocks:
@@ -71,7 +72,10 @@ def test_reclassification_uses_exact_adopted_definition_and_has_one_cold_hot_roo
         with book.app.storage.write_unit(book.company) as unit:
             checked = book.app.ledger.check_period("2026-01", unit)
             assert checked.ready
-            book.app.ledger.close_period("2026-01", checked.head, unit)
+            book.app.ledger.close_period(
+                "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, support.SOURCE)
+            )
+            book.app.records.replace_source_uses("period_close", "2026-01", [support.SOURCE], unit)
     scope = {
         "company_id": book.company,
         "period_from": "2026-01",

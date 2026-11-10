@@ -132,7 +132,7 @@ def test_management_and_note_notifications_do_not_refresh_financial_component(ca
 def test_closed_baseline_is_not_refreshed_by_a_later_quarter_correction(case, monkeypatch):
     fact = case.seed()
     ready(case)
-    case.close(case.check())
+    case.close(case.prepare_close())
     frozen = ready(case)
     ready(case, 2)
     calls = spy(case, monkeypatch)
@@ -155,14 +155,14 @@ def test_close_marks_the_newly_covered_range_once_and_retry_reuses_it(case, monk
     case.seed()
     ready(case)
     calls = spy(case, monkeypatch)
-    closed = case.close(case.check("2026-03"))
+    closed = case.close(case.prepare_close("2026-03"))
     assert closed["state"] == "closed"
     assert ranges(calls[-1].closure_ranges) == [("2026-01", "2026-03")]
     assert not calls[-1].formal_changes
     assert case.kernel.reading.page("quarterly_report", scope(case), {}).state == "preparing"
     ready(case)
     count = len(calls)
-    assert case.close(case.check("2026-03"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-03"))["state"] == "closed"
     assert len(calls) == count
 
 

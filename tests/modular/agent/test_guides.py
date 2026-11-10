@@ -12,10 +12,23 @@ from pathlib import Path
 import pytest
 
 from ai_accounting_modular.agent import _guides
-from ai_accounting_modular.agent.public import guide_index, read_guide, read_work_checklist
+from ai_accounting_modular.agent.public import (
+    guide_index,
+    read_guide,
+    read_work_checklist,
+    read_work_stage,
+)
 from ai_accounting_modular.contracts.public import ContractError, schema_document
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def installed_checklist():
+    directory = read_work_checklist()
+    return {
+        **directory,
+        "stages": [read_work_stage(str(stage["number"])) for stage in directory["stages"]],
+    }
 
 
 def generator():
@@ -40,7 +53,9 @@ def test_all_actual_fact_inputs_have_exact_guides_and_generated_bytes():
     for kind in module.fact_kinds(document):
         text = read_guide("business", kind=kind)
         assert text.startswith("# 业务规则：" + kind)
-        assert "公共事实与计算条件" in text and "义务转移与多付重分类" in text
+        assert "公共事实与计算条件" not in text and "义务转移与多付重分类" not in text
+    assert "公共事实与计算条件" in read_guide("business")
+    assert "义务转移与多付重分类" in read_guide("corrections")
     assert "### 货币基金" in read_guide("business", kind="investment.money_fund_purchase")
     assert "### 合作项目投资" not in read_guide("business", kind="investment.money_fund_purchase")
     assert "direct_joint_operation_cash_labor_v1" in read_guide(
@@ -48,13 +63,13 @@ def test_all_actual_fact_inputs_have_exact_guides_and_generated_bytes():
     )
     assert "## 税费和期间口径" in read_guide("business", kind="taxes.income_tax_policy")
     assert "## 期初与报表接续" in read_guide("business", kind="reports.continuation")
-    assert "## 撤回、整月撤销与重新记账" in read_guide("work")
+    assert "## 资料与撤回" in read_guide("work")
     assert (
         "[合作项目投资](accounting://guides/business/investment.cooperation_contract)"
         in read_guide("business", kind="operations.expense")
     )
     assert "## 模块之间的公开能力" not in read_guide("commands")
-    assert "## agent 模块的交付验证" not in read_guide("work")
+    assert "## 开发与行为验收" not in read_guide("work")
     assert "## 开发验收" not in read_guide("reporting")
 
 
@@ -70,12 +85,11 @@ def test_new_fact_kind_requires_an_explicit_mapping_instead_of_family_fallback()
 def test_shipped_material_guidance_separates_owner_facts_from_dialogue_and_cleanup():
     work = read_guide("work")
     assert "owner_statement" in work
-    assert "现实会计事实和必要确认" in work
-    assert "整段聊天、程序报错或恢复、重复尝试和操作指令" in work
-    assert "真正的原始文件不改写" in work
-    assert "accounting_sources(action=discard)" in work
-    assert "不能自动扫删尚未处理的原件" in work
-    assert "实际文件清理仍待后台接续" in work
+    assert "只保存老板实际表达的现实事实和范围" in work
+    assert "不能把AI判断、程序报错或操作聊天写成老板确认" in work
+    assert "银行摘要、户名和备注保持原义" in work
+    assert "清理只走受保护入口，不扫删未处理资料" in work
+    assert "文档与物理清理pending沿原状态接续" in work
     commands = read_guide("commands")
     assert "SourcesCommandResult" in commands and "SourceDiscardResult" in commands
     assert "登记已退出但文件清理尚待后台接续" in commands
@@ -93,21 +107,21 @@ def test_managed_reserve_guide_preserves_self_owned_channel_as_sourced_managemen
 
 def test_installed_work_guide_includes_month_cancel_and_local_withdrawal_distinction():
     work = read_guide("work")
-    operations = generator().markdown_section(work, "## 撤回、整月撤销与重新记账")
-    assert "accounting_cancel_month" in operations and "expected_head" in operations
-    assert "单笔或指定多笔撤回是局部自纠" in operations
-    assert "继续原办理位置，不把整月退回第1项" in operations
-    assert "整月撤销后重新开始，才从第1项收集和核对本期资料" in operations
-    assert "retained_source_ids" in operations
-    assert "文件 pending 由后台自动接续旧清理，不能重复discard来催清理" in operations
-    assert "保护重新导入的登记与原件" in work
+    operations = generator().markdown_section(work, "## 资料与撤回")
+    assert "先inspect范围与head再cancel" in operations
+    assert "单笔或指定多笔误记用withdraw并保留原件" in operations
+    assert "局部纠错只重核受影响项" in operations
+    assert "整月撤销后重新办理才从第1项收集核查" in operations
+    assert "保留的跨月、长期、模板或冻结来源如实报告" in operations
+    assert "其他有效资料可以复用，被退出资料需重新提供" in operations
     assert "pending由后台沿旧清理标识接续" in read_guide("runtime")
-    assert "不要求恢复已删除的旧正文或旧编号映射" in operations
+    assert "不继承旧勾选或恢复旧进度" in operations
+    assert "只交办撤回时办完即止" in operations
 
 
 def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries():
     work = read_guide("work")
-    checklist = generator().markdown_section(work, "## 给老板看的办理清单")
+    checklist = generator().markdown_section(work, "## 内部核对与老板看到的进度")
     stages = (
         "流水与基础资料",
         "工资、劳务与个税",
@@ -121,26 +135,23 @@ def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries(
     assert re.findall(r"^(\d+)\. \*\*(.+?)\*\*：", checklist, re.MULTILINE) == [
         (str(number), stage) for number, stage in enumerate(stages, 1)
     ]
-    assert "每轮会计办理回复" in checklist and "没有推进时也保留" in checklist
-    assert "一次保存成功" in checklist and "不能代替整项完成" in checklist
-    assert "不为展示清单反复查全库" in checklist
-    assert "note_scopes" in checklist and "issue_scopes" in checklist
-    assert "ready" in checklist and "不证明所有现实业务" in checklist
-    assert "接续位置" in checklist and "逐项批准" in checklist
-    assert "先展示已经查明的原有基准" in work
-    assert "资料从哪里取得" in work
+    assert "月度办理每轮" in checklist and "没有推进或技术受阻也如实保留进度" in checklist
+    assert "保存成功、技术ready和旧勾选不代替核验" in checklist
+    assert "已有有效结果复用，必要时批量查证" in checklist
+    assert "不能证明现实业务齐全" in checklist
+    assert "正常完成后直接顺序推进，不逐项批准" in checklist
+    assert "主动询问变化先展示相关基准，只问差异" in work
     assert all(icon in checklist for icon in ("✅", "🔄", "⬜", "⏰", "➖"))
-    assert "1. 🔄 流水与基础资料：当前待补本月完整流水。" in checklist
+    assert "3. 🔄 社保、公积金：待您反馈本期申报结果" in checklist
     assert "八行编号列表" in checklist and "不用表格" in checklist
-    assert "图标后保留直白文字" in checklist and "加粗标记成对" in checklist
-    assert "已有明确期限且确实到期未办" in checklist
-    assert "当前缺资料仍保留🔄" in checklist
+    assert "图标后保留文字" in checklist and "加粗成对闭合" in checklist
+    assert "明确到期未办" in checklist and "🔄办理、等待或接续" in checklist
     assert "**⬜ 待补本月完整流水**" not in checklist
 
 
 def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_step():
     work = read_guide("work")
-    checklist = generator().markdown_section(work, "## 给老板看的办理清单")
+    checklist = generator().markdown_section(work, "## 内部核对与老板看到的进度")
     stages = dict(re.findall(r"^([1-8])\. \*\*.+?\*\*：(.*)$", checklist, re.MULTILINE))
     assert set(stages) == set("12345678")
     assert "不要求每笔正式入账" in stages["1"]
@@ -153,14 +164,12 @@ def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_s
     assert "文档已完成" in stages["4"] and "文件不代表实际付款" in stages["4"]
     assert "文件已生成" in stages["6"] and "不能称为已报送" in stages["6"]
     assert "后月份付款不强行登记在本期" in stages["7"]
-    assert "程序已实际关账" in stages["8"] and "检查通过不等于已经关账" in stages["8"]
-    assert "同时决定图标与接续位置" in checklist
-    assert "同阶段条件满足的独立事项" in checklist and "由老板决定顺序" in checklist
-    assert "原项保持未完成" in checklist and "先保全归期" in checklist
-    assert "后期办理安排" in checklist and "原项保持🔄" in checklist
-    assert "现实资料缺口不能改称后期待办绕过" in checklist
+    assert "相同范围实际关账" in stages["8"] and "不把冻结成功说成现实事项已办完" in stages["8"]
+    assert "适用内部项全部满足，外层阶段才打勾" in checklist
+    assert "先说明缺口、拟做范围和采用依据，由老板决定" in checklist
+    assert "不隐藏、不打勾、不重置" in checklist
     assert "未答复或选择等待时不提前推进" in checklist
-    assert "保留其他仍未解决的事项" in work
+    assert "保留本轮未完成项、具体缺口和执行者" in checklist
     assert "工资一人的核算资料不足，不阻止无关的银行对账" not in work
 
 
@@ -188,7 +197,7 @@ def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
     shutil.copyfile(ROOT / "docs/design/05-business-rules.md", file)
     work = source / "08-ai-work-and-materials.md"
     text = work.read_text(encoding="utf-8")
-    heading = "## 撤回、整月撤销与重新记账"
+    heading = "## 资料与撤回"
     for changed in (text.replace(heading, "## 尚未打包的撤销规则"), text + "\n" + heading + "\n"):
         work.write_text(changed, encoding="utf-8")
         with pytest.raises(ValueError, match="heading must exist exactly once"):
@@ -223,6 +232,23 @@ def test_directory_is_small_and_mutation_cannot_change_shared_text():
     assert read_guide("business", kind="operations.expense") == before
     assert "accounting_schema" in guide_index()["message"]
     assert read_work_checklist()["stages"][3]["id"] == "payment_export"
+    stage = read_work_stage("4")
+    stage["checks"].clear()
+    assert read_work_stage("4")["checks"]
+    index = read_work_checklist()
+    assert all("checks" not in item for item in index["stages"])
+    assert [item["uri"] for item in index["stages"]] == [
+        f"accounting://guides/work/stages/{number}" for number in range(1, 9)
+    ]
+    index["common_checks"].clear()
+    assert read_work_checklist()["common_checks"]
+
+
+@pytest.mark.parametrize("stage", ["0", "9", "04", "payment_export", "../work", 4, True])
+def test_stage_resources_require_an_exact_number(stage):
+    with pytest.raises(ContractError) as failure:
+        read_work_stage(stage)
+    assert failure.value.code == "unsupported_guide"
 
 
 def test_copied_package_reads_guides_without_workspace_application_or_docs(tmp_path):
@@ -237,7 +263,9 @@ def test_copied_package_reads_guides_without_workspace_application_or_docs(tmp_p
 import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from ai_accounting_modular.agent.public import guide_index, read_guide, read_work_checklist
+from ai_accounting_modular.agent.public import (
+    guide_index, read_guide, read_work_checklist, read_work_stage,
+)
 import ai_accounting_modular.agent.public as public
 assert Path(public.__file__).is_relative_to(Path(sys.argv[1]))
 assert not (Path(sys.argv[1]) / 'docs').exists()
@@ -245,21 +273,23 @@ assert 'ai_accounting_modular.application.public' not in sys.modules
 assert '实际收付款另记' in read_guide('business', kind='operations.expense')
 assert 'company-create' in read_guide('runtime')
 assert 'owner_statement' in read_guide('work')
-assert '## 给老板看的办理清单' in read_guide('work')
-assert '一次保存成功' in read_guide('work')
-assert '当前缺资料仍保留🔄' in read_guide('work')
-assert '同时决定图标与接续位置' in read_guide('work')
+assert '## 内部核对与老板看到的进度' in read_guide('work')
+assert '保存成功、技术ready和旧勾选不代替核验' in read_guide('work')
+assert '🔄办理、等待或接续' in read_guide('work')
+assert '适用内部项全部满足，外层阶段才打勾' in read_guide('work')
 assert 'SourceDiscardResult' in read_guide('commands')
 assert 'call accounting-sources' in read_guide('runtime')
-assert read_work_checklist()['stages'][3]['checks'][2]['id'] == 'payment_export.file'
+assert read_work_stage('4')['checks'][2]['id'] == 'payment_export.file'
 check = next(
     item for item in read_work_checklist()['common_checks']
     if item['id'] == 'common.payment_results'
 )
-assert check['condition'] in read_guide('work')
+assert check in read_work_checklist()['common_checks']
+assert check['condition'] not in read_guide('work')
 scope = read_work_checklist()['common_checks'][0]
 assert scope['id'] == 'common.work_scope'
-assert scope['condition'] in read_guide('work')
+assert scope in read_work_checklist()['common_checks']
+assert read_work_stage('4')['id'] == read_work_checklist()['stages'][3]['id']
 assert 'work_period=null' in read_guide('work')
 print(json.dumps(guide_index(), ensure_ascii=False))
 """

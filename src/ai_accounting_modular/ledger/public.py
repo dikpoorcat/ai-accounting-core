@@ -650,8 +650,10 @@ class Ledger:
     def check_period(self, period, read_context: ReadContext) -> LedgerPeriodCheck:
         return check_period(period, read_context)
 
-    def close_period(self, period, expected_head, uow: UnitOfWork) -> LedgerPeriodCheck:
-        return close_period(period, expected_head, uow)
+    def close_period(
+        self, period, expected_head, uow: UnitOfWork, *, work_basis=None
+    ) -> LedgerPeriodCheck:
+        return close_period(period, expected_head, uow, work_basis=work_basis)
 
     def get_closed_report(self, scope, read_context: ReadContext):
         return closed_report(scope, read_context)

@@ -38,6 +38,7 @@ class LedgerSnapshot:
     source_ids: tuple[str, ...]
     business_versions: tuple[AdoptedBusinessVersion, ...]
     period_to: str | None
+    close_source_uses: tuple[tuple[str, str], ...] = ()
 
 
 def _key(row):
@@ -233,14 +234,20 @@ def _verify(context, repo):
         validate_capacities(selected, businesses)
         unique_movements(selected, movements)
         verify_selected_slots(resource_slots, selected.current_heads(businesses))
+    close_source_uses = set()
     for closed in sorted(records["period_close"], key=lambda row: row["period"]):
         validate_contract("core.schema.json", "Month", closed["period"])
-        first, report = _record(repo, closed, context)
-        if closed["period"] < context.start_period or report["head"] > context.head:
+        saved = _record(repo, closed, context)
+        if closed["period"] < context.start_period or saved.report["head"] > context.head:
             fail("storage_corrupt", "关账期间或保存版本超出当前公司账本。")
-        basis, _ = _basis(repo, first, closed["period"], context)
-        if loads_json(closed["basis_json"]) != basis:
+        work_basis = saved.basis.get("work_basis")
+        basis, _ = _basis(repo, saved.period_from, closed["period"], context, work_basis=work_basis)
+        if saved.basis != basis:
             fail("storage_corrupt", "关账原始冻结采用摘要与保存的正式结果不一致。")
+        if work_basis is not None:
+            close_source_uses.update(
+                (closed["period"], source_id) for source_id in work_basis["source_ids"]
+            )
     return LedgerSnapshot(
         len(heads),
         len(records["voucher"]),
@@ -257,6 +264,7 @@ def _verify(context, repo):
             ),
             default=None,
         ),
+        tuple(sorted(close_source_uses)),
     )
 
 

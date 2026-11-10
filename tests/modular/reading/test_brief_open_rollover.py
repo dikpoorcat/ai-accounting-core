@@ -492,7 +492,7 @@ def test_closed_retirement_of_a_fully_paid_claim_rediscovers_its_missing_member(
         ],
     )
     ready(book, "2026-01")
-    assert book.close(book.check())["state"] == "closed"
+    assert book.close(book.prepare_close())["state"] == "closed"
     apply(
         book,
         mutations=[{"op": "withdraw", "expected_seq": 1, "business_id": paid["business_id"]}],
@@ -587,7 +587,7 @@ def test_repeated_closed_transfer_corrections_reproject_the_original_and_final_o
         ],
     )
     ready(book, "2026-01")
-    assert book.close(book.check())["state"] == "closed"
+    assert book.close(book.prepare_close())["state"] == "closed"
     for seq, target in enumerate((second, third), 1):
         accepted["data"]["sources"][0]["source"]["business_id"] = target["business_id"]
         apply(

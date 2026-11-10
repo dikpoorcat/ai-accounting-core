@@ -33,6 +33,12 @@ from ._journals import append_journal_line, posting_lines
 from ._projection_validation import validate_contract_items
 from ._read_inputs import ReadInputs
 from ._read_queries import PageQuery, QuerySelection, ReadPage, query_selection
+from ._request_schemas import (
+    COMMAND_REQUESTS,
+    command_request_schema,
+    fact_input_schema,
+    isolated_request_schema,
+)
 from ._resource_dependencies import (
     ALL_RESOURCE_COMPONENTS,
     check_resource_dependency,
@@ -67,6 +73,10 @@ from ._wire_types import __all__ as _wire_exports
 __all__ = [
     *_wire_exports,
     "CONTRACT",
+    "COMMAND_REQUESTS",
+    "command_request_schema",
+    "fact_input_schema",
+    "isolated_request_schema",
     "MAX_FEN",
     "MIN_FEN",
     "ActualDate",

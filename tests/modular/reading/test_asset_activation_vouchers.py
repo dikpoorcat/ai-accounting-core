@@ -75,7 +75,7 @@ def test_closed_activation_correction_uses_each_exact_cost_and_keeps_frozen_vouc
     case.seed(expense=False)
     acquired, enabled = bulk_fixed_assets(2)
     save(case.app, asset_request(case.company, acquired, enabled))
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     frozen = formal_activation(case, enabled["business_id"])

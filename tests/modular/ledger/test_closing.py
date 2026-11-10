@@ -6,7 +6,7 @@ from _financial_snapshot_review_support import SOURCE as APP_SOURCE
 from _financial_snapshot_review_support import assemble, fact, identity, loan_contract
 from _financial_snapshot_review_support import expense as app_expense
 from _financial_snapshot_review_support import opening as app_opening
-from test_adoption import BUSINESS, COMPANY, PAYMENT, _payment_at, expense
+from test_adoption import BUSINESS, COMPANY, PAYMENT, SOURCE, _payment_at, expense
 from test_adoption import store as store
 from test_aggregations import journal
 from test_financial_core import FEE, SALE, funds, origin, report, save, value
@@ -14,15 +14,19 @@ from test_financial_core import FEE, SALE, funds, origin, report, save, value
 from ai_accounting_modular.contracts.public import ContractError, content_digest, loads_json
 from ai_accounting_modular.ledger import _financial
 from ai_accounting_modular.ledger._balances import validate_capacities
+from ai_accounting_modular.ledger._closing import _basis
 from ai_accounting_modular.ledger._repository import LedgerRepository
 from ai_accounting_modular.ledger.public import create_ledger
+from tests.modular._period_support import ledger_work_basis
 
 
 def close(storage, ledger, period):
     with storage.write_unit(COMPANY) as unit:
         checked = ledger.check_period(period, unit)
         assert checked.ready, checked.blocking_issues
-        return ledger.close_period(period, checked.head, unit)
+        return ledger.close_period(
+            period, checked.head, unit, work_basis=ledger_work_basis(checked, SOURCE)
+        )
 
 
 def scope(period="2026-03", first=None):
@@ -147,13 +151,20 @@ def test_close_rejects_changed_same_scope_but_ignores_unrelated_future_business(
         before = ledger.check_period("2026-01", read)
     save(store, ledger, [journal(FEE, [("5602", 1), ("2202", -1)], period="2026-02")])
     with store.write_unit(COMPANY) as unit:
-        assert ledger.close_period("2026-01", before.head, unit).state == "closed"
+        assert (
+            ledger.close_period(
+                "2026-01", before.head, unit, work_basis=ledger_work_basis(before, SOURCE)
+            ).state
+            == "closed"
+        )
     with store.read_unit(COMPANY) as read:
         before = ledger.check_period("2026-02", read)
     save(store, ledger, [journal(SALE, [("5602", 2), ("2202", -2)], period="2026-02")])
     with pytest.raises(ContractError) as error:
         with store.write_unit(COMPANY) as unit:
-            ledger.close_period("2026-02", before.head, unit)
+            ledger.close_period(
+                "2026-02", before.head, unit, work_basis=ledger_work_basis(before, SOURCE)
+            )
     assert error.value.code == "conflict"
 
 
@@ -233,7 +244,9 @@ def test_failed_archive_write_cannot_commit_a_partial_freeze_even_if_caught(stor
     with pytest.raises(ContractError) as error:
         with store.write_unit(COMPANY) as unit:
             with pytest.raises(RuntimeError, match="archive failure"):
-                ledger.close_period("2026-03", checked.head, unit)
+                ledger.close_period(
+                    "2026-03", checked.head, unit, work_basis=ledger_work_basis(checked, SOURCE)
+                )
     assert error.value.code == "invalid_operation"
     with store.read_unit(COMPANY) as read:
         repo = read.repository("ledger")
@@ -247,7 +260,10 @@ def test_prebook_contracts_remain_nonaccounting_and_can_be_corrected_after_close
     book.submit(app_opening(), contract)
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-03", unit)
-        book.app.ledger.close_period("2026-03", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-03", checked.head, unit, work_basis=ledger_work_basis(checked, APP_SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-03", [APP_SOURCE], unit)
     contract["data"]["matures_on"] = "2029-01-01"
     book.replace(contract)
     book.submit(loan_contract("prebook-after-close", "2029-01-01", month="2024-01"))
@@ -309,7 +325,10 @@ def test_capacity_read_omits_large_original_statement_and_pure_policy_but_freeze
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-01", unit)
         assert checked.ready
-        closed = book.app.ledger.close_period("2026-01", checked.head, unit)
+        closed = book.app.ledger.close_period(
+            "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, APP_SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-01", [APP_SOURCE], unit)
         assert closed.state == "closed"
         heads = unit.repository("ledger").current_heads(
             [statement["business_id"], policy["business_id"]]
@@ -368,7 +387,9 @@ def test_known_cash_to_posting_difference_is_a_blocker_not_an_allowed_partial(st
         )
     with pytest.raises(ContractError) as error:
         with store.write_unit(COMPANY) as unit:
-            ledger.close_period("2026-01", checked.head, unit)
+            ledger.close_period(
+                "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, SOURCE)
+            )
     assert error.value.code == "needs_information"
     with store.read_unit(COMPANY) as read:
         assert read.repository("ledger").closed_through() is None
@@ -391,3 +412,33 @@ def test_saved_report_requires_valid_record_contract_and_digests(store, monkeypa
         with pytest.raises(ContractError) as error:
             ledger.get_closed_report(scope("2026-01"), read)
         assert error.value.code == "storage_corrupt"
+
+
+def test_new_close_requires_work_handoff_but_saved_legacy_basis_remains_exactly_readable(store):
+    ledger = create_ledger()
+    save(store, ledger, [origin()])
+    with store.write_unit(COMPANY) as unit:
+        checked = ledger.check_period("2026-01", unit)
+        with pytest.raises(ContractError) as error:
+            ledger.close_period("2026-01", checked.head, unit)
+        assert error.value.code == "invalid_input"
+        assert ledger.closed_through(unit) is None
+    # Construct the exact pre-work-basis frozen representation. This is a legacy
+    # fixture, not a second application closing route or a rewrite of closed data.
+    with store.write_unit(COMPANY) as unit:
+        checked = ledger.check_period("2026-01", unit)
+        repo = unit.repository("ledger")
+        basis, _ = _basis(repo, checked.period_from, checked.period, unit)
+        repo.freeze_range(checked.period_from, checked.period)
+        repo.save_close(
+            checked.period, checked.head, basis, checked.report, "2026-02-01T00:00:00+00:00"
+        )
+    with store.read_unit(COMPANY) as read:
+        saved = read.repository("ledger").close_record("2026-01")
+        old = ledger.check_period("2026-01", read)
+        assert old.work_basis is None and old.head == checked.head
+        assert ledger.verify_snapshot(read).close_source_uses == ()
+    with store.write_unit(COMPANY) as unit:
+        repeated = ledger.close_period("2026-01", "0" * 64, unit)
+        assert repeated.state == "closed" and repeated.work_basis is None
+        assert unit.repository("ledger").close_record("2026-01") == saved

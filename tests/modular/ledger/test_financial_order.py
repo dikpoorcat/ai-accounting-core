@@ -16,6 +16,7 @@ from ai_accounting_modular.ledger._financial_positions import positions
 from ai_accounting_modular.ledger._financial_profit import pretax_slices, profit
 from ai_accounting_modular.ledger._financial_selection import Selection
 from ai_accounting_modular.ledger.public import AccountBalanceKey, create_ledger
+from tests.modular._period_support import ledger_work_basis
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 
 FIRST = "50000000-0000-4000-8000-000000000099"
@@ -290,7 +291,12 @@ def test_saved_closed_report_does_not_enter_new_live_traversal(store, monkeypatc
     save(store, ledger, [origin("100"), test_adoption.expense("10")])
     with store.write_unit(COMPANY) as unit:
         checked = ledger.check_period("2026-01", unit)
-        closed = ledger.close_period("2026-01", checked.head, unit)
+        closed = ledger.close_period(
+            "2026-01",
+            checked.head,
+            unit,
+            work_basis=ledger_work_basis(checked, test_adoption.SOURCE),
+        )
         expected = closed.report
     with store.read_unit(COMPANY) as read:
         repo = read.repository("ledger")

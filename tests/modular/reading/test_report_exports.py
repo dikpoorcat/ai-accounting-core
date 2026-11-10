@@ -19,6 +19,7 @@ from ai_accounting_modular.identity.public import IdentityContext
 from ai_accounting_modular.reading import _descriptor, _models
 from ai_accounting_modular.reading.public import PeriodRange, ReadingImpact, create_report_producer
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
+from tests.modular._period_support import checked_close_request
 
 
 @dataclass
@@ -344,12 +345,11 @@ def test_same_content_new_ready_head_keeps_accepted_file_but_old_preview_epochs_
 
 def test_frozen_quarter_survives_later_correction_and_work_horizon(report_case):
     case = report_case
-    request = {"company_id": case.company.company_id, "action": "check", "period": "2026-03"}
-    checked = case.kernel.application.accounting_period(request)
-    assert checked["ready"], checked
-    closed = case.kernel.application.accounting_period(
-        request | {"action": "close", "expected_head": checked["head"]}
+    checked, close_request = checked_close_request(
+        case.kernel.application, case.company.company_id, "2026-03", case.expense["evidence_ids"][0]
     )
+    assert checked["ready"], checked
+    closed = case.kernel.application.accounting_period(close_request)
     assert closed["state"] == "closed", closed
     before = case.preview()
     job = case.post(case.request(before)).body["job_id"]

@@ -10,6 +10,7 @@ from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_projection_requests import request
 from ai_accounting_modular.ledger._financial_projection_roles import FlowRole, StockRole
 from ai_accounting_modular.ledger._financial_selection import Selection
+from tests.modular._period_support import ledger_work_basis
 
 
 class Blocks:
@@ -32,7 +33,10 @@ def close(book, month):
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period(month, unit)
         assert checked.ready
-        book.app.ledger.close_period(month, checked.head, unit)
+        book.app.ledger.close_period(
+            month, checked.head, unit, work_basis=ledger_work_basis(checked, support.SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", month, [support.SOURCE], unit)
 
 
 def corrected(fact, amount):

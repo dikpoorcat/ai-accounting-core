@@ -84,7 +84,7 @@ def test_empty_scopes_do_not_load_monthly_materials(case, monkeypatch):
 
 def test_closed_month_can_be_selected_without_changing_closure_or_default_candidate(case):
     case.seed(expense=False)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     with case.kernel.storage.read_unit(case.company) as read:
         before_head = read.head
     closed = case.context(work_period="2026-01")
@@ -113,6 +113,7 @@ def test_selected_month_keeps_other_period_issues_in_the_complete_replace_scope(
             "period": month,
             "evidence_ids": [case.source_id],
             "missing_fields": [],
+            "required_before_close": None,
             "question": month + "外部申报尚待办理。",
             "assignee": "owner",
             "action": "external_filing",

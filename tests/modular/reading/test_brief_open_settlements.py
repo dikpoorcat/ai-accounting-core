@@ -211,7 +211,7 @@ def test_closed_share_correction_can_clear_company_supplement_without_pretending
         case,
         *pair(BANK, [original_row(case, str(uuid4()), "100", "2026-01-03", "outflow")], [funded]),
     )
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     agreement["data"]["company_revenue_expense_share"] = "0.4"
@@ -264,7 +264,7 @@ def test_another_project_or_operator_position_is_not_progress_for_the_old_one(ca
         case,
         *pair(BANK, [original_row(case, str(uuid4()), "100", "2026-01-03", "outflow")], [funded]),
     )
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     replacement = str(uuid4())

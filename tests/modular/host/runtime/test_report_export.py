@@ -124,7 +124,7 @@ def test_cli_generation_and_mcp_delivery_share_verified_task_without_business_wr
             contracts = json.loads(
                 (await session.read_resource("accounting://contracts")).contents[0].text
             )
-            assert "accounting_report_export" in {item["command"] for item in contracts["commands"]}
+            assert "accounting_report_export" in contracts["commands"]
 
             async def call(name, body):
                 response = await session.call_tool(

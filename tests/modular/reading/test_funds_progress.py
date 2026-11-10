@@ -75,7 +75,7 @@ def test_later_new_obligation_invalidates_old_funds_and_preserves_followup_entry
     (capital,) = apply(case, capital)
     capture(case)
     assert _flags(case)[capital["business_id"]] is False
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     # Refresh the January projection after closing before testing a future change.

@@ -7,6 +7,7 @@ from ai_accounting_modular.contracts.public import (
     FactAnalysis,
     analyze_fact,
     canonical_json,
+    validate_contract,
 )
 
 from . import _documents, _sources
@@ -51,7 +52,16 @@ def _source_uses(known_facts, objects, issues, notes):
     return tuple(sorted(expected))
 
 
-def verify(records, company_identity, facts, objects, read, root, required_source_ids):
+def verify(
+    records,
+    company_identity,
+    facts,
+    objects,
+    read,
+    root,
+    required_source_ids,
+    frozen_close_source_uses,
+):
     objects = tuple(objects)
     repository = read.repository("records")
     current, targets = repository.document_set(), repository.targets()
@@ -92,8 +102,13 @@ def verify(records, company_identity, facts, objects, read, root, required_sourc
         note_current(row, repository, note_uses[scope]) for scope, row in note_rows.items()
     )
     expected_uses = _source_uses(known_facts, objects, issues, notes)
-    if repository.all_uses() != expected_uses:
-        _bad("当前来源引用索引与业务、对象、待办或说明不一致。")
+    frozen_uses = set()
+    for period, source_id in frozen_close_source_uses:
+        validate_contract("core.schema.json", "Month", period)
+        validate_contract("core.schema.json", "Id", source_id)
+        frozen_uses.add(("period_close", period, source_id))
+    if repository.all_uses() != tuple(sorted(set(expected_uses) | frozen_uses)):
+        _bad("来源引用索引与当前业务、对象、待办、说明或冻结关账依据不一致。")
     used_ids = tuple(sorted({source for _, _, source in expected_uses}))
     sources = repository.all_sources()
     registered = {source["source_id"]: source for source in sources}
@@ -101,6 +116,8 @@ def verify(records, company_identity, facts, objects, read, root, required_sourc
         _bad("当前事实、对象、待办或说明缺少已登记来源。")
     if set(required_source_ids) - set(registered):
         _bad("必要的正式采用依据缺少已登记的原始来源。")
+    if {source_id for _, _, source_id in frozen_uses} - set(registered):
+        _bad("冻结关账依据缺少已登记的原始来源。")
     used_sources = {source_id: registered[source_id] for source_id in used_ids}
     expected = {
         "objects": {

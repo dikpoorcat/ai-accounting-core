@@ -241,7 +241,7 @@ def test_closed_january_progress_updates_from_a_february_payment_without_full_ca
     case, monkeypatch
 ):
     first = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     later = case.expense("1000", "2026-02")
     bank = bank_object()
     apply(case, later, objects=[bank])
@@ -387,7 +387,7 @@ def test_missing_dependency_index_cannot_silently_ignore_a_later_notification(ca
     first = case.seed()
     formal = collection == _brief_open_index.BUSINESSES
     if formal:
-        assert case.close(case.check())["state"] == "closed"
+        assert case.close(case.prepare_close())["state"] == "closed"
         bank = bank_object()
         apply(case, case.expense("1000", "2026-02"), objects=[bank])
     publish(case)
@@ -435,7 +435,7 @@ def test_same_count_dependency_damage_cannot_hide_a_real_notification(
     first = case.seed()
     formal = collection == _brief_open_index.BUSINESSES
     if formal:
-        assert case.close(case.check())["state"] == "closed"
+        assert case.close(case.prepare_close())["state"] == "closed"
         bank = bank_object()
         apply(case, case.expense("1000", "2026-02"), objects=[bank])
     publish(case)
@@ -506,7 +506,7 @@ def test_closed_correction_uses_each_partys_actual_formal_identity_without_full_
     case, monkeypatch
 ):
     first = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     apply(case, case.expense("1000", "2026-02"))
     publish(case)
     revised = deepcopy(first)
@@ -554,7 +554,7 @@ def test_closed_project_labor_correction_refreshes_cached_economic_identity(case
     case.seed(expense=False)
     labor = payroll_case("B17P")
     add_payroll(case, labor)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     publish(case)
     member_id = labor["business_id"] + ":net_pay"
 

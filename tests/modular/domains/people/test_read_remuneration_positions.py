@@ -110,7 +110,7 @@ def test_withdrawn_closed_wage_is_explicit_and_historical_wage_remains_available
     case.seed(expense=False)
     wage = unpaid_wage()
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     withdrawn = case.app.accounting_apply(

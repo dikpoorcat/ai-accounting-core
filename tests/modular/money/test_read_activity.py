@@ -145,7 +145,7 @@ def test_original_text_edit_preserves_adoption_and_frozen_row_reads(case):
     statement, matched = bank_pair(case, funded)
     funded, statement, matched = apply(case, funded, statement, matched)
     before = case.get(statement["business_id"])["businesses"][0]["results"][0]["reference"]
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     statement["data"]["rows"][0].update(
@@ -189,7 +189,7 @@ def test_current_text_from_a_different_location_cannot_decorate_a_frozen_row(cas
     funded = funding()
     statement, matched = bank_pair(case, funded)
     _, statement, _ = apply(case, funded, statement, matched)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     sources = []
@@ -241,7 +241,7 @@ def test_wrong_current_row_is_not_a_supplement_to_frozen_money(case):
     funded = funding()
     statement, matched = bank_pair(case, funded)
     funded, statement, matched = apply(case, funded, statement, matched)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     funded["data"]["amount_fen"] = "120"

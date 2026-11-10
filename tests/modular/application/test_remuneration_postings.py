@@ -148,7 +148,7 @@ def test_later_partial_payments_and_tax_target_do_not_reaccrue_payroll(case):
     case.seed(expense=False)
     wage, employment, actual = wage_with_actuals()
     add(case, wage, employment, actual)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     frozen = result(case, wage)
@@ -245,7 +245,7 @@ def test_frozen_payroll_keeps_its_old_journal_until_explicit_correction(
             )
         add(case, wage, employment, actual)
     assert_revision(case, wage, 1 if legacy else 3)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     original = result(case, wage)

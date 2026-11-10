@@ -213,6 +213,7 @@ def test_notes_and_multiple_issue_scopes_are_all_installed_with_new_sequence(ass
                     "scope": f"独立范围{index}",
                     "evidence_ids": [evidence],
                     "missing_fields": [],
+                    "required_before_close": None,
                     "question": "月底自行申报",
                     "assignee": "owner",
                     "action": "external_filing",
@@ -222,6 +223,7 @@ def test_notes_and_multiple_issue_scopes_are_all_installed_with_new_sequence(ass
         )
         for index in range(3)
     ]
+    issues[1][1][0].update(period="2026-02", required_before_close="2026-01")
     bundle = seed(
         app,
         company,
@@ -232,7 +234,13 @@ def test_notes_and_multiple_issue_scopes_are_all_installed_with_new_sequence(ass
                 "expected_seq": 0,
                 "text": "公司只经营维修业务。",
                 "evidence_ids": [evidence],
-            }
+            },
+            {
+                "scope": "work:2026-01",
+                "expected_seq": 0,
+                "text": "本月不用代发表，仍按已有约定接续剩余工作。",
+                "evidence_ids": [evidence],
+            },
         ],
         scopes=issues,
     )
@@ -242,6 +250,8 @@ def test_notes_and_multiple_issue_scopes_are_all_installed_with_new_sequence(ass
     assert len(outcome.issue_scopes) == 3
     assert outcome.notes[0]["text"] == "公司只经营维修业务。"
     assert outcome.notes[0]["seq"] == 1
+    assert outcome.notes[1]["scope"] == "work:2026-01"
+    assert outcome.notes[1]["basis_head"] is None and outcome.notes[1]["seq"] == 1
     with unit(target) as read:
         for scope, expected in issues:
             current = app.records.current_issues(scope, read)
@@ -263,6 +273,7 @@ def test_late_scope_failure_cannot_commit_an_earlier_successful_accounting_core(
                     "scope": scope,
                     "evidence_ids": [],
                     "missing_fields": [],
+                    "required_before_close": None,
                     "question": "稍后申报",
                     "assignee": "owner",
                     "action": "external_filing",

@@ -16,20 +16,25 @@ def clear(records, period, command_id, uow):
     ):
         raise ContractError("invalid_operation", "月份待办只能在当前公司的正式写事务中清理。")
     repository = uow.repository("records")
-    month_scope = "period:" + period
+    month_scopes = {"period:" + period, "work:" + period}
     plans = []
     for scope in repository.issue_scopes_for_period(period):
         current = records.current_issues(scope, uow)
-        retained = tuple(
-            issue
-            for issue in current["issues"]
-            if issue.get("period") != period
-            and not (scope == month_scope and "period" not in issue)
-        )
+        retained = []
+        for issue in current["issues"]:
+            related = {
+                value
+                for value in (issue.get("period"), issue["required_before_close"])
+                if value is not None
+            }
+            if not related and scope in month_scopes:
+                related = {period}
+            if related != {period}:
+                retained.append(issue)
         plans.append(
             records.plan_change(
                 RecordsChange(
-                    unresolved=retained,
+                    unresolved=tuple(retained),
                     unresolved_scope=scope,
                     expected_scope_head=current["head"],
                 ),

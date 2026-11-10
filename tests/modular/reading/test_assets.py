@@ -340,7 +340,7 @@ def test_frozen_card_type_does_not_follow_current_classification_after_correctio
     case.seed(expense=False)
     acquired, _ = _asset(case, activate=True)
     save(case.app, case.request(case.expense("1000", period="2026-02")))
-    assert case.close(case.check("2026-02"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-02"))["state"] == "closed"
     changed = deepcopy(acquired)
     changed["data"]["asset"].update(asset_type="intangible", cost_fen="132000")
     command = case.request(

@@ -31,7 +31,7 @@ _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _PART_FILE = re.compile(
     r"(?:[a-z]+(?:--[0-9]{4}-[0-9]{2})?|sources--"
     + _UUID
-    + r"|notes--(?:company|period--[0-9]{4}-[0-9]{2}|business--"
+    + r"|notes--(?:company|(?:period|work)--[0-9]{4}-[0-9]{2}|business--"
     + _UUID
     + r"))--[0-9a-f]{64}\.json"
 )
@@ -91,7 +91,7 @@ def request_repair(uow):
         | {"company"}
         | {row["shard_key"] for row in targets}
         | {"notes:" + scope for scope in repository.notes()}
-        | {"sources:" + source_id for source_id in repository.used_source_ids()}
+        | {"sources:" + source_id for source_id in repository.current_source_ids()}
     )
     repository.request_documents(sorted(keys), uow.head)
 
@@ -220,7 +220,7 @@ def capture_documents(company_identity, facts, objects, read, root):
     source_candidates = tuple(
         sorted(key.removeprefix("sources:") for key in selected if key.startswith("sources:"))
     )
-    published_source_ids = repository.referenced_source_ids(source_candidates)
+    published_source_ids = repository.referenced_source_ids(source_candidates, current_only=True)
     used_sources.update(published_source_ids)
     sources = repository.sources(tuple(sorted(used_sources)))
     _missing_sources(used_sources, sources)

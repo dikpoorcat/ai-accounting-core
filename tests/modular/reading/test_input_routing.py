@@ -204,7 +204,7 @@ def test_current_relationship_uses_effective_history_not_later_fact_filing_month
 def test_closed_correction_keeps_historical_pages_and_updates_only_real_current_followup(case):
     expense = case.seed()
     ready(case, "brief")
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     historical = {name: ready(case, name) for name in ("funds", "employees", "assets")}
@@ -283,7 +283,7 @@ def test_previous_projection_format_rebuilds_on_demand_without_replaying_busines
 
 def test_closed_withdrawal_marks_discovery_stock_without_rewriting_frozen_month(case, monkeypatch):
     expense = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     ready(case, "brief")
     ready(case, "brief", "2026-02")
     seen, original = [], case.kernel.ledger.adopt

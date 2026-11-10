@@ -171,7 +171,7 @@ def test_multiple_closed_corrections_merge_signals_without_losing_formal_legs(fi
     page(case)
     quarter(case)
     drain(case)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     changed = deepcopy(original)
     changed["data"]["amount_fen"] = "120000"
     result = case.app.accounting_apply(
@@ -181,7 +181,7 @@ def test_multiple_closed_corrections_merge_signals_without_losing_formal_legs(fi
         )
     )
     assert result["completion"] == "complete", result
-    assert case.close(case.check("2026-02"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-02"))["state"] == "closed"
     changed["data"]["amount_fen"] = "150000"
     result = case.app.accounting_apply(
         case.request(

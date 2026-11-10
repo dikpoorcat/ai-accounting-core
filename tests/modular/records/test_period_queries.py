@@ -41,6 +41,7 @@ def _issue(scope, period="2026-01", *, question="请核查原始资料"):
     value = {
         "issue_id": str(uuid4()),
         "scope": scope,
+        "required_before_close": None,
         "question": question,
         "missing_fields": ["/data/amount_fen"],
         "assignee": "ai",

@@ -40,7 +40,7 @@ def _version(read, first, last, collection, metadata):
     )
 
 
-def _after(cursor, version, first, last, *, issues):
+def _after(cursor, version, first, last, *, collection):
     if cursor is None:
         return None
     try:
@@ -51,7 +51,13 @@ def _after(cursor, version, first, last, *, issues):
             raise ValueError("cursor_fields")
         validate_contract("core.schema.json", "Digest", payload["version"])
         after = payload["after"]
-        if issues:
+        if collection == "closing_issues":
+            if not isinstance(after, list) or len(after) != 2:
+                raise ValueError("closing_issue_position")
+            if not isinstance(after[0], str) or not 1 <= len(after[0]) <= 200:
+                raise ValueError("issue_scope")
+            validate_contract("core.schema.json", "Id", after[1])
+        elif collection == "issues":
             if not isinstance(after, list) or len(after) != 3:
                 raise ValueError("issue_position")
             if after[0] is not None:
@@ -83,7 +89,7 @@ def notes(first, last, read, *, limit, cursor):
     repository = read.repository("records")
     metadata = repository.period_note_metadata(first, last)
     version = _version(read, first, last, "notes", metadata)
-    after = _after(cursor, version, first, last, issues=False)
+    after = _after(cursor, version, first, last, collection="notes")
     rows = repository.period_note_rows(first, last, after, limit + 1)
     selected = rows[:limit]
     uses = repository.uses_many("note", tuple(row["scope_key"] for row in selected))
@@ -97,7 +103,7 @@ def issues(first, last, read, *, limit, cursor):
     repository = read.repository("records")
     metadata = repository.period_issue_metadata(first, last)
     version = _version(read, first, last, "issues", metadata)
-    after = _after(cursor, version, first, last, issues=True)
+    after = _after(cursor, version, first, last, collection="issues")
     rows, heads = repository.period_issue_rows(first, last, after, limit + 1)
     selected = rows[:limit]
     for item in selected:
@@ -106,6 +112,25 @@ def issues(first, last, read, *, limit, cursor):
         _cursor(
             version, [selected[-1].get("period"), selected[-1]["scope"], selected[-1]["issue_id"]]
         )
+        if len(rows) > limit
+        else None
+    )
+    scopes = {item["scope"]: heads[item["scope"]] for item in selected}
+    return PeriodIssuesPage(tuple(selected), MappingProxyType(scopes), len(metadata), next_cursor)
+
+
+def closing_issues(first, last, read, *, limit, cursor):
+    _range(first, last, limit)
+    repository = read.repository("records")
+    metadata = repository.closing_issue_metadata(first, last)
+    version = _version(read, first, last, "closing_issues", metadata)
+    after = _after(cursor, version, first, last, collection="closing_issues")
+    rows, heads = repository.closing_issue_rows(first, last, after, limit + 1)
+    selected = rows[:limit]
+    for item in selected:
+        validate_contract("core.schema.json", "CurrentIssue", item)
+    next_cursor = (
+        _cursor(version, [selected[-1]["scope"], selected[-1]["issue_id"]])
         if len(rows) > limit
         else None
     )

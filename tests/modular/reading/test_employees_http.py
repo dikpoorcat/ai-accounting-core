@@ -73,7 +73,7 @@ def test_closed_page_relationship_and_name_updates_refresh_without_rewriting_pay
     case.seed(expense=False)
     wage = business_case("B17Z")
     add(case, no_contributions(), wage)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     before = case.get(wage["business_id"])["businesses"]
     captured = []
     original = case.kernel.reading.people.remuneration_activity

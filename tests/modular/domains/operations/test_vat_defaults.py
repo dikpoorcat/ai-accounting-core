@@ -10,6 +10,7 @@ from test_tax_lifecycle import system as system
 
 from ai_accounting_modular.domains.operations.public import create_operations
 from ai_accounting_modular.ledger.public import LedgerQuery
+from tests.modular._period_support import checked_close_request
 
 CHOICES = ("waive_exemption", "waive_rate_reduction")
 
@@ -218,16 +219,9 @@ def test_closed_defaulted_sale_keeps_its_revenue_and_terms_during_later_tax_and_
     opening = fact(ids, "opening.package", {"basis": "newly_established", "members": []})
     saved = app.accounting_apply(command(company, opening, earned, rule, statement, reconciliation))
     assert saved["completion"] == "complete", saved
-    checked = app.accounting_period({"company_id": company, "action": "check", "period": "2026-01"})
+    checked, close_request = checked_close_request(app, company, "2026-01", ids["source"])
     assert checked["ready"], checked["blocking_issues"]
-    closed = app.accounting_period(
-        {
-            "company_id": company,
-            "action": "close",
-            "period": "2026-01",
-            "expected_head": checked["head"],
-        }
-    )
+    closed = app.accounting_period(close_request)
     assert closed["state"] == "closed", closed
     original = result(app, company, earned)
     assert original["target"]["values"]["revenue_fen"] == "10000"

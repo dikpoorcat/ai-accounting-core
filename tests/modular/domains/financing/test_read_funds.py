@@ -201,7 +201,7 @@ def test_closed_correction_keeps_old_and_new_fund_dates_and_balances(case):
     purchase["data"]["purchase_price_fen"] = "100"
     purchase["effective_on"] = "2026-01-04"
     (purchase,) = submit(case, purchase)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     other = str(uuid4())

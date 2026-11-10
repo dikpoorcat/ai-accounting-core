@@ -14,6 +14,7 @@ from ai_accounting_modular.agent.public import (
     offline_contracts,
     read_guide,
     read_work_checklist,
+    read_work_stage,
 )
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.host.public import create_offline_application
@@ -31,6 +32,8 @@ def _guides(mcp, *, offline=False):
                 item for item in directory["topics"] if item["topic"] == "runtime"
             ]
             directory["message"] = "离线实例只处理明确的恢复／重建目标；参阅运行说明。"
+            for key in ("checklist_uri", "stage_uri_template", "corrections_uri"):
+                directory.pop(key)
         return json.dumps(directory, ensure_ascii=False)
 
     @mcp.resource("accounting://guides/{topic}", mime_type="text/markdown")
@@ -44,8 +47,13 @@ def _guides(mcp, *, offline=False):
 
         @mcp.resource("accounting://guides/work/checklist", mime_type="application/json")
         def work_checklist() -> str:
-            """八阶段内部条件、依据与办理动作；不包含公司完成状态。"""
+            """公共核对条件及阶段目录；按阶段读取完整条件，不含公司进度。"""
             return json.dumps(read_work_checklist(), ensure_ascii=False)
+
+        @mcp.resource("accounting://guides/work/stages/{stage}", mime_type="application/json")
+        def work_stage(stage: str) -> str:
+            """读取1至8中的一项内部条件、依据和办理动作。"""
+            return json.dumps(read_work_stage(stage), ensure_ascii=False)
 
         @mcp.resource("accounting://guides/business/{kind}", mime_type="text/markdown")
         def business_guide(kind: str) -> str:
@@ -67,13 +75,24 @@ def create_mcp(client):
 
     @mcp.resource("accounting://contracts", mime_type="application/json")
     async def contracts() -> str:
-        """当前可调用的完整命令输入及自包含 Schema；业务类型先按 accounting_schema 选择。"""
+        """当前命令和业务种类目录；完整输入按 accounting_schema 的 command 与 kinds 选取。"""
         return json.dumps(await call(client.contracts), ensure_ascii=False)
 
     @mcp.tool()
-    async def accounting_schema(kinds: list[str] | None = None) -> dict[str, Any]:
-        """先读实际支持种类；选择 kinds 返回对应类型化事实合同。"""
-        return await call(client.dispatch, "accounting_schema", {"kinds": kinds or []})
+    async def accounting_schema(
+        command: str | None = None, kinds: list[str] | None = None
+    ) -> dict[str, Any]:
+        """无参数读实际目录；command读完整命令合同。Apply须明确kinds，纯说明或撤回可用[]。
+
+        kinds同时限定fact与known_fact；需要的种类均须列入。仅kinds沿用单项事实合同查询。
+        其他命令不传kinds。合同发现不读取公司或替代实际命令的完整校验。
+        """
+        request = {}
+        if command is not None:
+            request["command"] = command
+        if kinds is not None:
+            request["kinds"] = kinds
+        return await call(client.dispatch, "accounting_schema", request)
 
     @mcp.tool()
     async def accounting_new_ids(count: StrictInt = 1) -> dict[str, Any]:

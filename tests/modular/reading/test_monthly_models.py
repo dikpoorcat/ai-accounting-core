@@ -175,7 +175,7 @@ def test_later_business_and_unrelated_object_display_do_not_rebuild_earlier_fina
 def test_frozen_month_keeps_adopted_amount_after_a_later_correction(case):
     original = case.seed()
     before = ready(case)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     frozen = ready(case)

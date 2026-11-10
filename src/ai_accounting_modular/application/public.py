@@ -108,7 +108,7 @@ class Application:
         )
 
     def accounting_schema(self, request):
-        return _schema.result(self.registry, request)
+        return _schema.result(self, request)
 
     def accounting_context(self, request):
         return self.context(request)

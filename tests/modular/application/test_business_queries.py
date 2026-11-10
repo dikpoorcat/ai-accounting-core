@@ -107,7 +107,7 @@ def test_open_replaced_generation_is_conflict_and_exact_current_has_no_fake_hist
 def test_exact_frozen_result_keeps_original_sources_after_current_fact_is_corrected(case):
     fact = case.seed()
     original = case.get(fact["business_id"])["businesses"][0]["results"][0]["reference"]
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     changed = deepcopy(fact)

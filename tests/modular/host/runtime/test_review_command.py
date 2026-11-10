@@ -55,7 +55,7 @@ def test_review_round_trips_through_cli_and_mcp(local, tmp_path):
         async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
             await session.initialize()
             contracts = await session.read_resource("accounting://contracts")
-            names = {item["command"] for item in json.loads(contracts.contents[0].text)["commands"]}
+            names = json.loads(contracts.contents[0].text)["commands"]
             assert "accounting_review" in names
             response = await session.call_tool(
                 "accounting_command", {"command": "accounting_review", "payload": payload}

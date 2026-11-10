@@ -14,6 +14,7 @@ from ai_accounting_modular.ledger._financial_calculation import (
 )
 from ai_accounting_modular.ledger._financial_cells import Issues
 from ai_accounting_modular.ledger._financial_selection import Selection
+from tests.modular._period_support import ledger_work_basis
 
 
 class BoundaryOnly:
@@ -88,7 +89,10 @@ def test_saved_summary_tables_are_authoritative_and_only_live_account_fields_are
     book.submit(support.opening(), support.expense("closed-cost", "500"))
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-01", unit)
-        book.app.ledger.close_period("2026-01", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, support.SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-01", [support.SOURCE], unit)
     scope = {
         "company_id": book.company,
         "period_from": "2026-01",

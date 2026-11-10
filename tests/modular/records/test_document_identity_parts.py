@@ -85,7 +85,7 @@ def test_one_description_edit_reads_and_writes_only_its_own_body(
     with monkeypatch.context() as patch:
         patch.setattr(RecordsRepository, "notes", selected_notes)
         patch.setattr(RecordsRepository, "sources", selected_sources)
-        patch.setattr(RecordsRepository, "used_source_ids", forbid_all_sources)
+        patch.setattr(RecordsRepository, "current_source_ids", forbid_all_sources)
         prepared = _prepare(records_case, [], None)
         assert prepared.snapshot.scopes == ("notes:" + notes[0]["scope"],)
         assert len(prepared.snapshot.parts_json) == 1
@@ -110,6 +110,7 @@ def test_last_reference_removes_only_that_source_part(records_case, owner):
         "scope": "materials",
         "evidence_ids": [extra["source_id"]],
         "missing_fields": [],
+        "required_before_close": None,
         "question": "继续核查事项。",
         "assignee": "ai",
         "action": "provide_material",

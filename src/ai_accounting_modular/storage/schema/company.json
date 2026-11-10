@@ -1,5 +1,5 @@
 {
-  "fingerprint": "14d027c1bad018578e16a2c81cec81e82f8c4fd9de3e125992c8f269036de05f",
+  "fingerprint": "b302fd4184dd6f07fa20b95e7bcc0b93785e51a0382bfad276202afeec2b7845",
   "kind": "company",
   "objects": [
     {
@@ -927,6 +927,13 @@
       "type": "table"
     },
     {
+      "name": "current_issue_close_idx",
+      "owner": "records",
+      "sql": "CREATE INDEX current_issue_close_idx ON current_issue(required_before_close,scope_key,issue_id) WHERE required_before_close IS NOT NULL",
+      "table": "current_issue",
+      "type": "index"
+    },
+    {
       "name": "current_issue_period_idx",
       "owner": "records",
       "sql": "CREATE INDEX current_issue_period_idx ON current_issue(period,scope_key,issue_id)",
@@ -938,6 +945,13 @@
       "owner": "records",
       "sql": "CREATE INDEX current_issue_scope_idx ON current_issue(scope_key,period,issue_id)",
       "table": "current_issue",
+      "type": "index"
+    },
+    {
+      "name": "source_archive_month",
+      "owner": "records",
+      "sql": "CREATE INDEX source_archive_month ON source(archive_month,source_id)",
+      "table": "source",
       "type": "index"
     },
     {
@@ -971,7 +985,7 @@
     {
       "name": "current_issue",
       "owner": "records",
-      "sql": "CREATE TABLE current_issue (\nissue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),\n scope_key TEXT NOT NULL,\n period TEXT,\n business_id TEXT,\n known_schema_key TEXT,\n known_fact_json TEXT CHECK(known_fact_json IS NULL OR json_valid(known_fact_json)),\n missing_fields_json TEXT NOT NULL CHECK(json_valid(missing_fields_json)),\n current_question TEXT NOT NULL,\n assignee TEXT NOT NULL CHECK(assignee IN ('ai','owner')),\n action TEXT NOT NULL CHECK(action IN ('provide_material','clarify_reality','external_payment','external_filing','professional_check')),\n due_on TEXT,\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n evidence_ids_json TEXT NOT NULL CHECK(json_valid(evidence_ids_json) AND json_type(evidence_ids_json)='array')\n) STRICT",
+      "sql": "CREATE TABLE current_issue (\nissue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),\n scope_key TEXT NOT NULL,\n period TEXT,\n required_before_close TEXT,\n business_id TEXT,\n known_schema_key TEXT,\n known_fact_json TEXT CHECK(known_fact_json IS NULL OR json_valid(known_fact_json)),\n missing_fields_json TEXT NOT NULL CHECK(json_valid(missing_fields_json)),\n current_question TEXT NOT NULL,\n assignee TEXT NOT NULL CHECK(assignee IN ('ai','owner')),\n action TEXT NOT NULL CHECK(action IN ('provide_material','clarify_reality','external_payment','external_filing','professional_check')),\n due_on TEXT,\n content_digest TEXT NOT NULL CHECK(length(content_digest)=64),\n evidence_ids_json TEXT NOT NULL CHECK(json_valid(evidence_ids_json) AND json_type(evidence_ids_json)='array')\n) STRICT",
       "table": "current_issue",
       "type": "table"
     },
@@ -1006,7 +1020,7 @@
     {
       "name": "source_use",
       "owner": "records",
-      "sql": "CREATE TABLE source_use (\nowner_kind TEXT NOT NULL CHECK(owner_kind IN ('business','object','issue','note')),\n owner_key TEXT NOT NULL,\n source_id TEXT NOT NULL REFERENCES source(source_id) ON DELETE RESTRICT,\n location TEXT NOT NULL DEFAULT '',\n PRIMARY KEY(owner_kind,owner_key,source_id,location)\n) STRICT",
+      "sql": "CREATE TABLE source_use (\nowner_kind TEXT NOT NULL CHECK(owner_kind IN ('business','object','issue','note','period_close')),\n owner_key TEXT NOT NULL,\n source_id TEXT NOT NULL REFERENCES source(source_id) ON DELETE RESTRICT,\n location TEXT NOT NULL DEFAULT '',\n PRIMARY KEY(owner_kind,owner_key,source_id,location)\n) STRICT",
       "table": "source_use",
       "type": "table"
     },
@@ -1034,10 +1048,10 @@
     {
       "name": "system_meta",
       "owner": "storage",
-      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=5),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
+      "sql": "CREATE TABLE \"system_meta\" (\n singleton INTEGER PRIMARY KEY CHECK(singleton=1),\n format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),\n database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),\n schema_version INTEGER NOT NULL CHECK(schema_version=6),\n structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),\n global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)\n) STRICT",
       "table": "system_meta",
       "type": "table"
     }
   ],
-  "version": 5
+  "version": 6
 }

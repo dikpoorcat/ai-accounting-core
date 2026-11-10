@@ -120,7 +120,7 @@ def test_restore_maintenance_cannot_modify_formal_books_and_rolls_back_derived_c
     case, tmp_path, monkeypatch
 ):
     case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     case.kernel.reading.page("brief", reading.MonthScope(case.company, "2026-01"), {})
     source = package(case, seed=False)
     source_bytes = source.read_bytes()

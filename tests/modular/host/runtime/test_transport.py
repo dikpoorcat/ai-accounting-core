@@ -125,6 +125,23 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
     )
     assert process.returncode == 0
     assert json.loads(process.stdout)["accounting"] == "saved"
+    selection = {
+        "command": "accounting_apply",
+        "kinds": sorted({row["fact"]["kind"] for row in content["mutations"]}),
+    }
+    path.write_text(json.dumps(selection), encoding="utf-8")
+    discovered = subprocess.run(
+        [*command, "call", "accounting-schema", "--input", str(path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert discovered.returncode == 0, discovered.stderr
+    cli_contract = json.loads(discovered.stdout)
+    assert cli_contract["command"] == selection["command"]
+    assert cli_contract["kinds"] == selection["kinds"]
+    assert Draft202012Validator(cli_contract["request_schema"]).is_valid(content)
 
     async def check_mcp():
         params = StdioServerParameters(command=sys.executable, args=command[1:] + ["mcp"])
@@ -136,29 +153,29 @@ def test_cli_business_and_mcp_read_share_one_resident_and_browser_session(local,
             assert all(icon in initialized.instructions for icon in ("✅", "🔄", "⬜", "⏰", "➖"))
             resource = await session.read_resource("accounting://contracts")
             catalog = json.loads(resource.contents[0].text)
-            assert catalog["instructions"] == initialized.instructions
+            assert set(catalog) == {"contract", "commands", "supported_kinds"}
             guides = await session.read_resource("accounting://guides")
             assert len(json.loads(guides.contents[0].text)["topics"]) == 5
             work = await session.read_resource("accounting://guides/work")
-            assert "## 给老板看的办理清单" in work.contents[0].text
-            assert "先展示已经查明的原有基准" in work.contents[0].text
-            current_row = "1. 🔄 流水与基础资料：当前待补本月完整流水。"
+            assert "## 内部核对与老板看到的进度" in work.contents[0].text
+            assert "主动询问变化先展示相关基准，只问差异" in work.contents[0].text
+            current_row = "3. 🔄 社保、公积金：待您反馈本期申报结果"
             assert current_row in work.contents[0].text
-            assert "同时决定图标与接续位置" in work.contents[0].text
-            assert "保留其他仍未解决的事项" in work.contents[0].text
+            assert "适用内部项全部满足，外层阶段才打勾" in work.contents[0].text
+            assert "保留本轮未完成项、具体缺口和执行者" in work.contents[0].text
             expense_guide = await session.read_resource(
                 "accounting://guides/business/operations.expense"
             )
             assert "实际收付款另记" in expense_guide.contents[0].text
-            assert {item["command"] for item in catalog["commands"]} == set(runtime.agent.commands)
-            for item in catalog["commands"]:
-                Draft202012Validator.check_schema(item["request_schema"])
-                assert "core__PostingPlan" not in item["request_schema"]["$defs"]
-            schema = next(
-                item["request_schema"]
-                for item in catalog["commands"]
-                if item["command"] == "accounting_apply"
+            assert set(catalog["commands"]) == set(runtime.agent.commands)
+            selected = await session.call_tool(
+                "accounting_schema",
+                selection,
             )
+            schema = selected.structuredContent["request_schema"]
+            assert selected.structuredContent == cli_contract
+            Draft202012Validator.check_schema(schema)
+            assert "core__PostingPlan" not in schema["$defs"]
             assert Draft202012Validator(schema).is_valid(content)
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {

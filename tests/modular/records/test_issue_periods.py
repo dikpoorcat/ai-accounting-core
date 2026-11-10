@@ -15,6 +15,7 @@ def issue(scope, period=None, **values):
         "scope": scope,
         "evidence_ids": [],
         "missing_fields": [],
+        "required_before_close": None,
         "question": "请核对当前事实。",
         "assignee": "ai",
         "action": "professional_check",

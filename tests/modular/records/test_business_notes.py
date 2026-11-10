@@ -125,13 +125,14 @@ def test_empty_change_clears_body_and_sources_with_sequence_and_retry(records_ca
     assert current(records_case, scope)[1] == head + 1
 
 
-def test_internal_clear_only_accepts_business_scopes_and_preserves_owner_work(records_case):
+def test_internal_clear_protects_company_notes_and_preserves_owner_work(records_case):
     storage, (company, _), records = records_case
     evidence = source(records_case, "公司、月份及业务共同使用的现实资料")
     scope = "business:" + str(uuid4())
     owner_issue = {
         "issue_id": str(uuid4()),
         "scope": scope,
+        "required_before_close": None,
         "question": "确认另一项真实事项。",
         "evidence_ids": [evidence["source_id"]],
         "missing_fields": [],
@@ -157,10 +158,9 @@ def test_internal_clear_only_accepts_business_scopes_and_preserves_owner_work(re
             ),
             unit,
         )
-    for protected in ("company", "period:2026-01"):
-        with storage.write_unit(company.company_id) as unit:
-            with pytest.raises(ContractError):
-                records.clear_notes((scope, protected), str(uuid4()), unit)
+    with storage.write_unit(company.company_id) as unit:
+        with pytest.raises(ContractError):
+            records.clear_notes((scope, "company"), str(uuid4()), unit)
     assert current(records_case, scope)[0][0]["seq"] == 1
     with storage.write_unit(company.company_id) as unit:
         assert records.clear_notes((scope,), str(uuid4()), unit) == (scope,)

@@ -161,7 +161,7 @@ def test_frozen_position_current_change_does_not_reload_unrelated_ordinary_sourc
         case,
         *pair(BANK, [original_row(case, str(uuid4()), "100", "2026-01-03", "outflow")], [funded]),
     )
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     publish(case)
     agreement["data"]["company_revenue_expense_share"] = "0.4"
     charged["data"]["amount_fen"] = "120"

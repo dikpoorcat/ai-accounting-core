@@ -60,7 +60,7 @@ def test_ready_report_is_exact_shared_snapshot_and_only_relevant_changes_expire_
 
 def test_closed_quarter_keeps_its_formal_snapshot_after_later_correction(case):
     fact = case.seed()
-    assert case.close(case.check("2026-03"))["state"] == "closed"
+    assert case.close(case.prepare_close("2026-03"))["state"] == "closed"
     frozen = case.app.accounting_report(request(case))
     changed = deepcopy(fact)
     changed["data"]["amount_fen"] = "120000"

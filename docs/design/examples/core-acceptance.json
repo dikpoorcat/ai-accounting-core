@@ -751,7 +751,8 @@
           ],
           "question": "合成资料尚缺实际费用金额。",
           "assignee": "owner",
-          "action": "provide_material"
+          "action": "provide_material",
+          "required_before_close": null
         }
       ]
     },
@@ -1689,6 +1690,21 @@
           "archive_month": "2026-01"
         }
       ]
+    },
+    "closing_coverage": {
+      "contract": "ai-accounting-modular/1",
+      "company_id": "10000000-0000-4000-8000-000000000001",
+      "command_id": "70000000-0000-4000-8000-000000000097",
+      "mutations": [],
+      "sources": [
+        {
+          "source_id": "40000000-0000-4000-8000-000000000003",
+          "kind": "owner_statement",
+          "text": "合成关账用例交接：本用例1月至2月各步骤所列业务就是当时已交接的完整业务范围，没有未列业务或待办外部事项；后来明确发现的更正按该步骤事实处理。",
+          "sha256": "fc67b35534c171ed0646e4e12efb6b3304713309da5bd66f7ef0be05ab922ce9",
+          "archive_month": "2026-01"
+        }
+      ]
     }
   },
   "cases": [
@@ -1850,20 +1866,71 @@
       "given": [
         "common",
         "opening_zero",
-        "expense_a_1000"
+        "expense_a_1000",
+        "closing_coverage"
       ],
       "steps": [
+        {
+          "id": "discover_check_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-01",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            "material_version"
+          ],
+          "expect": {
+            "accounting_ready": true,
+            "ready": false
+          }
+        },
         {
           "id": "check_jan",
           "invoke": "accounting_period",
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "check",
-            "period": "2026-01"
+            "period": "2026-01",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "discover_check_jan.material_version"
+            }
           },
           "capture": [
-            "head"
-          ]
+            "head",
+            "material_version",
+            "actual_range"
+          ],
+          "expect": {
+            "ready": true
+          }
         },
         {
           "id": "close_jan",
@@ -1871,9 +1938,27 @@
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "close",
-            "period": "2026-01",
             "expected_head": {
               "$capture": "check_jan.head"
+            },
+            "actual_range": {
+              "$capture": "check_jan.actual_range"
+            },
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "check_jan.material_version"
             }
           },
           "expect": {
@@ -1996,20 +2081,71 @@
       "given": [
         "common",
         "opening_zero",
-        "expense_a_1000"
+        "expense_a_1000",
+        "closing_coverage"
       ],
       "steps": [
+        {
+          "id": "discover_check_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-01",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            "material_version"
+          ],
+          "expect": {
+            "accounting_ready": true,
+            "ready": false
+          }
+        },
         {
           "id": "check_jan",
           "invoke": "accounting_period",
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "check",
-            "period": "2026-01"
+            "period": "2026-01",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "discover_check_jan.material_version"
+            }
           },
           "capture": [
-            "head"
-          ]
+            "head",
+            "material_version",
+            "actual_range"
+          ],
+          "expect": {
+            "ready": true
+          }
         },
         {
           "id": "close_jan",
@@ -2017,9 +2153,27 @@
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "close",
-            "period": "2026-01",
             "expected_head": {
               "$capture": "check_jan.head"
+            },
+            "actual_range": {
+              "$capture": "check_jan.actual_range"
+            },
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "check_jan.material_version"
             }
           }
         },
@@ -2032,16 +2186,66 @@
           ]
         },
         {
+          "id": "discover_check_feb",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-02",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            "material_version"
+          ],
+          "expect": {
+            "accounting_ready": true,
+            "ready": false
+          }
+        },
+        {
           "id": "check_feb",
           "invoke": "accounting_period",
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "check",
-            "period": "2026-02"
+            "period": "2026-02",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "discover_check_feb.material_version"
+            }
           },
           "capture": [
-            "head"
-          ]
+            "head",
+            "material_version",
+            "actual_range"
+          ],
+          "expect": {
+            "ready": true
+          }
         },
         {
           "id": "close_feb",
@@ -2049,9 +2253,27 @@
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "close",
-            "period": "2026-02",
             "expected_head": {
               "$capture": "check_feb.head"
+            },
+            "actual_range": {
+              "$capture": "check_feb.actual_range"
+            },
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "check_feb.material_version"
             }
           }
         },
@@ -2848,20 +3070,71 @@
       "given": [
         "common",
         "opening_zero",
-        "expense_a_1000"
+        "expense_a_1000",
+        "closing_coverage"
       ],
       "steps": [
+        {
+          "id": "discover_check_jan",
+          "invoke": "accounting_period",
+          "input": {
+            "company_id": "10000000-0000-4000-8000-000000000001",
+            "action": "check",
+            "period": "2026-01",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            "material_version"
+          ],
+          "expect": {
+            "accounting_ready": true,
+            "ready": false
+          }
+        },
         {
           "id": "check_jan",
           "invoke": "accounting_period",
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "check",
-            "period": "2026-01"
+            "period": "2026-01",
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "discover_check_jan.material_version"
+            }
           },
           "capture": [
-            "head"
-          ]
+            "head",
+            "material_version",
+            "actual_range"
+          ],
+          "expect": {
+            "ready": true
+          }
         },
         {
           "id": "close_jan",
@@ -2869,9 +3142,27 @@
           "input": {
             "company_id": "10000000-0000-4000-8000-000000000001",
             "action": "close",
-            "period": "2026-01",
             "expected_head": {
               "$capture": "check_jan.head"
+            },
+            "actual_range": {
+              "$capture": "check_jan.actual_range"
+            },
+            "basis": {
+              "coverage": [
+                {
+                  "period_from": "2026-01",
+                  "period_to": "2026-02",
+                  "sources": [
+                    {
+                      "source_id": "40000000-0000-4000-8000-000000000003"
+                    }
+                  ]
+                }
+              ]
+            },
+            "expected_material_version": {
+              "$capture": "check_jan.material_version"
             }
           }
         },
@@ -3034,7 +3325,11 @@
       "id": "C14",
       "name": "真实账务内部替换后旧UI和实际工作量保持",
       "measurement_plan": {
-        "scale_months": [12, 48, 120],
+        "scale_months": [
+          12,
+          48,
+          120
+        ],
         "businesses_per_month": 1000,
         "employees": 50,
         "contractors": 5,

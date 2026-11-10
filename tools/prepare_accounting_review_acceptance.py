@@ -470,22 +470,56 @@ def main_company(runtime, root):
             "matches": [],
         },
     )
-    apply(root, company, july_statement, july_check, august_statement, august_check)
+    prior_coverage = source(
+        "合成前期资料交接：2026年7月至8月的全部业务、账户和渠道资料已完整提供并核对，"
+        "没有遗漏业务、待补资料或尚未办理的适用外部事项。此范围截至8月，不代表9月资料齐全。",
+        "2026-08",
+    )
+    apply(
+        root,
+        company,
+        july_statement,
+        july_check,
+        august_statement,
+        august_check,
+        sources=[prior_coverage],
+    )
+    check_request = {"company_id": company, "period": "2026-08", "action": "check"}
+    discovered = cli(root, "accounting_period", check_request)
+    expected_range = {"period_from": "2026-07", "period_to": "2026-08"}
+    if discovered["actual_range"] != expected_range:
+        raise RuntimeError("Synthetic prior coverage does not match the actual closing range")
+    basis = {
+        "coverage": [{**expected_range, "sources": [{"source_id": prior_coverage["source_id"]}]}],
+        "additional_sources": [],
+        "note_refs": [],
+    }
+    candidate = cli(root, "accounting_period", {**check_request, "basis": basis})
     inspected = cli(
-        root, "accounting_period", {"company_id": company, "period": "2026-08", "action": "check"}
+        root,
+        "accounting_period",
+        {
+            **check_request,
+            "basis": basis,
+            "expected_material_version": candidate["material_version"],
+        },
     )
     if not inspected.get("ready"):
         raise RuntimeError(json.dumps(inspected, ensure_ascii=False))
-    cli(
+    closed = cli(
         root,
         "accounting_period",
         {
             "company_id": company,
-            "period": "2026-08",
             "action": "close",
+            "actual_range": inspected["actual_range"],
+            "basis": basis,
+            "expected_material_version": inspected["material_version"],
             "expected_head": inspected["head"],
         },
     )
+    if closed.get("state") != "closed":
+        raise RuntimeError(json.dumps(closed, ensure_ascii=False))
     current = source(
         "9月完整流水已取得，只有四笔：9月5日付林青7300元；9月8日国库扣2410元，摘要为社保；"
         "9月16日远山商贸付技术咨询费50000元；9月25日付青竹文印1000元，银行摘要只有付款。"
@@ -798,8 +832,8 @@ def prepare(output):
 只读指南示例（PowerShell）：
 {guide_command}
 指南目录使用同一公开模块的guide_index()，按需调用read_guide读取专项指南。
-安装包合同使用ai_accounting_modular.contracts.public.schema_document("core.schema.json")；
-按需要选择其中的$defs，所引用合同也由schema_document读取，不加载全部业务合同。
+输入合同通过当前公开accounting_schema取得；普通命令传command，
+accounting_apply同时明确本单kinds（包括known_fact种类），纯资料或撤回使用kinds=[]。
 CLI没有contracts子命令；accounting://contracts属于MCP资源，本次用上述公开只读函数取得合同。
 需要报表文件时，公开HTTP合同见docs/design/06-dashboard-adapter.md第8节；
 预览为GET /api/dashboard/quarterly-report?company_id=...&year=...&quarter=...。

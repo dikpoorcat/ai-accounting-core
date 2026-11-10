@@ -176,7 +176,7 @@ def test_precise_mixed_payment_activity_clips_purpose_relations_before_events_an
 
 def test_exact_old_correction_leg_keeps_its_original_month_and_does_not_adopt_new_party(case):
     expense = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     other = str(uuid4())
     revised = deepcopy(expense)
     revised["data"].update(creditor_id=other, amount_fen="80000")
@@ -448,7 +448,7 @@ def test_unknown_and_unprepared_exact_scope_does_not_create_month_models(case):
 
 def test_closed_withdrawal_preserves_original_due_and_does_not_invent_payment(case):
     expense = case.seed()
-    closed = case.close(case.check())
+    closed = case.close(case.prepare_close())
     assert closed["state"] == "closed"
     apply(
         case,
@@ -469,7 +469,7 @@ def test_closed_withdrawal_preserves_original_due_and_does_not_invent_payment(ca
 def test_later_close_reports_actual_sealing_boundary_instead_of_inventing_january_close(case):
     expense = case.seed()
     apply(case, case.expense("1", "2026-02"))
-    closed = case.close(case.check("2026-02"))
+    closed = case.close(case.prepare_close("2026-02"))
     assert closed["state"] == "closed"
     data = progress(case, expense["business_id"])["data"]
     assert data["closure"]["state"] == "covered_by_later_close"

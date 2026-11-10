@@ -195,7 +195,7 @@ def test_closed_type_correction_uses_old_and_new_formal_bases(case):
     case.seed(expense=False)
     wage = business_case("B17Z")
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     before = activity(case)
@@ -231,7 +231,7 @@ def test_closed_capitalized_labor_reclassification_does_not_make_a_second_paymen
     case.seed(expense=False)
     capital = business_case("B17P")
     add(case, capital)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     changed = deepcopy(capital)
@@ -609,7 +609,7 @@ def test_current_quiet_historical_month_discovers_unpaid_created_by_a_later_clos
     wage = business_case("B17Z")
     wage["data"]["gross_fen"] = "0"
     add(case, no_contributions(), wage)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     add(case, case.expense("1", "2026-02"))
     wage["data"]["gross_fen"] = "120000"
     correct(case, wage, period="2026-03")
@@ -732,7 +732,7 @@ def test_frozen_source_location_review_keeps_the_formal_head_without_new_month_a
     case.seed(expense=False)
     wage = business_case("B17Z")
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     before = case.get(wage["business_id"])["businesses"][0]["results"][0]["reference"]
@@ -753,7 +753,7 @@ def test_equivalent_actual_declaration_evidence_does_not_repeat_frozen_wage_acti
     case.seed(expense=False)
     wage = business_case("B17Z")
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     before = case.get(wage["business_id"])["businesses"][0]["results"][0]
@@ -780,7 +780,7 @@ def test_equal_target_expense_reclassification_retains_both_formal_legs(case):
     case.seed(expense=False)
     wage = business_case("B17Z")
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     before = case.get(wage["business_id"])["businesses"][0]["results"][0]

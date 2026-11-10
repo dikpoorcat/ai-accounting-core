@@ -23,6 +23,7 @@ from ai_accounting_modular.ledger._financial_projection_indexes import (
 )
 from ai_accounting_modular.ledger._financial_selection import Selection
 from ai_accounting_modular.storage.public import Entry, Tree, TreeStore
+from tests.modular._period_support import ledger_work_basis
 
 
 class Rows:
@@ -173,7 +174,10 @@ def test_non_profit_journal_and_frozen_baseline_keep_real_source_entries(tmp_pat
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-01", unit)
         assert checked.ready
-        book.app.ledger.close_period("2026-01", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, support.SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-01", [support.SOURCE], unit)
     corrected = deepcopy(deposit)
     corrected["data"]["amount_fen"] = "40"
     book.replace(corrected, correction_period="2026-10")

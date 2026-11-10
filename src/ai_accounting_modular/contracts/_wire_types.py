@@ -63,6 +63,7 @@ class CurrentIssue(TypedDict):
     assignee: Literal['ai', 'owner']
     action: Literal['provide_material', 'clarify_reality', 'external_payment', 'external_filing', 'professional_check']
     due_on: NotRequired[Date]
+    required_before_close: Month | None
 
 type Mutation = MutationVariant1 | MutationVariant2 | MutationVariant3 | MutationVariant4
 
@@ -330,6 +331,11 @@ class PeriodCheck(TypedDict):
     unresolved: list[CurrentIssue]
     document_state: Literal['ready', 'pending']
     report_head: Digest | None
+    actual_range: CloseRange
+    previous_closed_through: Month | None
+    accounting_ready: bool
+    material_version: Digest | None
+    work_issues: list[FactIssue]
 
 class ContextRequest(TypedDict):
     company_id: NotRequired[Id]
@@ -567,11 +573,9 @@ class EmptyContext(TypedDict):
 class SchemaRequest(TypedDict):
     contract: NotRequired[Literal['ai-accounting-modular/1']]
     kinds: NotRequired[list[str]]
+    command: NotRequired[str]
 
-class SchemaResult(TypedDict):
-    contract: Literal['ai-accounting-modular/1']
-    supported_kinds: list[str]
-    schemas: list[SchemaResultSchemasItem]
+type SchemaResult = SchemaResultVariant1 | SchemaResultVariant2 | SchemaResultVariant3
 
 class ReportRequest(TypedDict):
     company_id: Id
@@ -728,6 +732,36 @@ class OwnFundsChannel(TypedDict):
     source: SourceLocator
 
 type CounterpartyMeaning = CounterpartyMeaningVariant1 | CounterpartyMeaningVariant2 | CounterpartyMeaningVariant3 | CounterpartyMeaningVariant4
+
+class CloseRange(TypedDict):
+    period_from: Month
+    period_to: Month
+
+class PeriodCoverage(TypedDict):
+    period_from: Month
+    period_to: Month
+    sources: list[SourceLocator]
+
+class WorkNoteReference(TypedDict):
+    scope: str
+    seq: int
+
+class EarlyCloseBasis(TypedDict):
+    pending_issue_ids: list[Id]
+    sources: list[SourceLocator]
+
+class PeriodWorkBasis(TypedDict):
+    coverage: list[PeriodCoverage]
+    additional_sources: NotRequired[list[SourceLocator]]
+    note_refs: NotRequired[list[WorkNoteReference]]
+    early_close: NotRequired[EarlyCloseBasis]
+
+class FrozenWorkCloseBasis(TypedDict):
+    actual_range: CloseRange
+    basis: PeriodWorkBasis
+    public_head: Digest
+    material_version: Digest
+    source_ids: list[Id]
 
 type NoteFormat = Literal['plain_text', 'markdown']
 
@@ -6946,6 +6980,7 @@ class CloseBasis(TypedDict):
     database_id: Id
     period: Month
     result_digest: Digest
+    work_basis: NotRequired[FrozenWorkCloseBasis]
 
 class CashflowContribution(TypedDict):
     business_id: Id
@@ -10120,11 +10155,15 @@ class PeriodRequestVariant1(TypedDict):
     company_id: Id
     action: Literal['check']
     period: Month
+    basis: NotRequired[PeriodWorkBasis]
+    expected_material_version: NotRequired[Digest]
 
 class PeriodRequestVariant2(TypedDict):
     company_id: Id
     action: Literal['close']
-    period: Month
+    actual_range: CloseRange
+    basis: PeriodWorkBasis
+    expected_material_version: Digest
     expected_head: Digest
 
 class CurrentObjectVariant1(TypedDict):
@@ -10242,9 +10281,21 @@ class EmptyContextAvailableCompaniesItem(TypedDict):
     credit_code: str
     legal_name: str
 
-class SchemaResultSchemasItem(TypedDict):
-    kind: str
-    schema_document: dict[str, JsonValue]
+class SchemaResultVariant1(TypedDict):
+    contract: Literal['ai-accounting-modular/1']
+    commands: list[str]
+    supported_kinds: list[str]
+
+class SchemaResultVariant2(TypedDict):
+    contract: Literal['ai-accounting-modular/1']
+    supported_kinds: list[str]
+    schemas: list[SchemaResultVariant2SchemasItem]
+
+class SchemaResultVariant3(TypedDict):
+    contract: Literal['ai-accounting-modular/1']
+    command: str
+    kinds: NotRequired[list[str]]
+    request_schema: dict[str, JsonValue]
 
 class MonthCancelRequestVariant1(TypedDict):
     company_id: Id
@@ -11974,6 +12025,10 @@ class CurrentObjectVariant8Data(TypedDict):
     project_id: NotRequired[Id]
     code: NotRequired[str]
 
+class SchemaResultVariant2SchemasItem(TypedDict):
+    kind: str
+    schema_document: dict[str, JsonValue]
+
 class MonthCancelResultFileCleanupIssuesItem(TypedDict):
     code: str
     message: str
@@ -12130,6 +12185,12 @@ __all__ = [
     'ReviewResult',
     'OwnFundsChannel',
     'CounterpartyMeaning',
+    'CloseRange',
+    'PeriodCoverage',
+    'WorkNoteReference',
+    'EarlyCloseBasis',
+    'PeriodWorkBasis',
+    'FrozenWorkCloseBasis',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',

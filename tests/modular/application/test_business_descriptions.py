@@ -79,7 +79,7 @@ def test_closed_description_only_edit_never_evaluates_or_changes_formal_accounti
     case, monkeypatch
 ):
     fact = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     before = case.get(fact["business_id"])
     evidence = source("合成确认：这笔维修费是个人垫付后的公司报销。")
 

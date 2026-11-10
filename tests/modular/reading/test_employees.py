@@ -248,7 +248,7 @@ def test_closed_labor_project_reclassification_preserves_signed_sources(case):
     case.seed(expense=False)
     capital = business_case("B17P")
     add(case, capital)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     changed = deepcopy(capital)
     changed["data"]["destination"] = {"type": "expense", "area": "administration"}
     correct(case, changed, period="2026-02")

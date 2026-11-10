@@ -62,7 +62,7 @@ def checked_payroll(app, read, wage_id):
 
 def test_verified_payroll_zip_restore_preserves_both_frozen_journals_exactly(case, tmp_path):
     wage = seed_payroll(case)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     with case.kernel.storage.read_unit(case.company) as read:

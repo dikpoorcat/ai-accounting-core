@@ -302,7 +302,7 @@ def test_frozen_month_and_month_only_correction_show_original_business_period(ca
     *_, purchase, _ = six()
     purchase["data"]["purchase_price_fen"] = "100"
     (purchase,) = apply(case, purchase)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     capture(case)

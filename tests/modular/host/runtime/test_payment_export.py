@@ -69,9 +69,7 @@ def test_cli_generation_and_mcp_save_deliver_the_same_verified_workbook(
             contracts = json.loads(
                 (await session.read_resource("accounting://contracts")).contents[0].text
             )
-            assert "accounting_payment_export" in {
-                item["command"] for item in contracts["commands"]
-            }
+            assert "accounting_payment_export" in contracts["commands"]
             checklist = json.loads(
                 (await session.read_resource("accounting://guides/work/checklist")).contents[0].text
             )

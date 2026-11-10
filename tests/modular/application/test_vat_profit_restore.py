@@ -69,7 +69,7 @@ def test_restore_old_frozen_vat_then_correct_without_rewriting_its_source(
         old.setattr(Taxes, "evaluate_slot", legacy)
         _submit(case.app, case.company, *facts)
     for month in range(1, 8):
-        checked = case.check(f"2026-{month:02d}")
+        checked = case.prepare_close(f"2026-{month:02d}")
         assert checked["ready"], checked
         assert case.close(checked)["state"] == "closed"
 

@@ -199,7 +199,7 @@ def test_current_description_survives_amount_update_but_does_not_relabel_old_ado
     assert result["completion"] == "complete", result
     capture(case)
     assert activity(case)["items"][0]["title"] == "培训费报销"
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     revised["data"]["amount_fen"] = "60000"
     result = case.app.accounting_apply(
         case.request(

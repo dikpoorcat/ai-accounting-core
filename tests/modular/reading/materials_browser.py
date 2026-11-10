@@ -17,6 +17,7 @@ from argon2 import PasswordHasher
 
 from ai_accounting_modular.host.runtime.public import create_runtime
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
+from tests.modular._period_support import ledger_work_basis
 
 from ..host.runtime.conftest import PASSWORD, business_request, native_login
 
@@ -138,7 +139,9 @@ def fixtures(runtime, company, directory):
     with kernel.storage.write_unit(company) as unit:
         check = kernel.ledger.check_period("2026-01", unit)
         assert check.ready
-        kernel.ledger.close_period("2026-01", check.head, unit)
+        basis = ledger_work_basis(check, sources[1]["source_id"])
+        kernel.ledger.close_period("2026-01", check.head, unit, work_basis=basis)
+        kernel.records.replace_source_uses("period_close", "2026-01", basis["source_ids"], unit)
     other["data"]["amount_fen"] = "90000"
     other["evidence_ids"] = [sources[2]["source_id"]]
     submit(other, replace=True, correction_period="2026-02")

@@ -63,7 +63,7 @@ def test_financial_tax_projection_and_closed_selection_retain_their_actual_sourc
     current = quarter_return(policy, surtax, "2026-07", "2026-09")
     submit(case.app, case.company, current)
     for month in range(1, 10):
-        checked = case.check(f"2026-{month:02d}")
+        checked = case.prepare_close(f"2026-{month:02d}")
         assert checked["ready"], str(checked)
         assert case.close(checked)["state"] == "closed"
     frozen = snapshot(case, "2026-09", "as_posted")

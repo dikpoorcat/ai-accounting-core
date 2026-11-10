@@ -82,19 +82,12 @@ def apply(agent, case, *facts, **fields):
     return payload
 
 
-def close(agent, company, period):
-    checked = agent.dispatch(
-        "accounting_period", {"company_id": company, "action": "check", "period": period}
-    )
+def close(agent, case, period):
+    checked = case.prepare_close(period)
     assert checked["ready"], checked
     result = agent.dispatch(
         "accounting_period",
-        {
-            "company_id": company,
-            "action": "close",
-            "period": period,
-            "expected_head": checked["head"],
-        },
+        case.prepared_closes[checked["head"]],
     )
     assert result["state"] == "closed" and result["document_state"] == "ready", result
 
@@ -288,7 +281,7 @@ def test_closed_salary_later_tax_payments_restore_and_rebuild_preserve_months(
     reconcile(
         agent, case, bank, source, "2026-09", "0", "2000000", ("2026-09-01", "inflow", "2000000")
     )
-    close(agent, case.company, "2026-09")
+    close(agent, case, "2026-09")
     frozen_wage = case.get(wage["business_id"])["businesses"][0]
     assert frozen_wage["fact"] == wage
     frozen_result = frozen_wage["results"][0]
@@ -370,7 +363,7 @@ def test_closed_salary_later_tax_payments_restore_and_rebuild_preserve_months(
         "990000",
         ("2026-10-15", "outflow", "1010000"),
     )
-    close(agent, case.company, "2026-10")
+    close(agent, case, "2026-10")
     with case.kernel.storage.read_unit(case.company) as read:
         october_report = assert_month(case.app, case.company, read, "2026-10", **keys)
         october_entries = case.kernel.ledger.query_vouchers(
@@ -418,7 +411,7 @@ def test_closed_salary_later_tax_payments_restore_and_rebuild_preserve_months(
         "970000",
         ("2026-11-15", "outflow", "20000"),
     )
-    close(agent, case.company, "2026-11")
+    close(agent, case, "2026-11")
     with case.kernel.storage.read_unit(case.company) as read:
         final_report = assert_month(case.app, case.company, read, "2026-11", **keys)
         assert case.get(wage["business_id"])["businesses"][0] == frozen_wage

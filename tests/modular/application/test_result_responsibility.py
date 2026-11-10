@@ -48,7 +48,7 @@ def test_horizon_updates_all_slots_without_changing_fact_sequence_and_preview_ro
     business = enabled["business_id"]
     before = heads(case, business)[business]
     assert loads(before["result_slots_json"]) == ["main"]
-    checked = case.check("2026-03")
+    checked = case.prepare_close("2026-03")
     assert checked["ready"], checked
     assert heads(case, business)[business] == before
     closed = case.close(checked)

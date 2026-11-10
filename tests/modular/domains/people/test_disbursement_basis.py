@@ -120,7 +120,7 @@ def test_closed_month_payment_arrangement_uses_new_adoption_without_rewriting_pr
     case.seed(expense=False)
     wage = pending("B17Z")
     add(case, no_contributions(), wage)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     before = get(case.app, case.company, wage["business_id"])["businesses"][0]["results"][0]

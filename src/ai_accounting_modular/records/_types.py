@@ -34,6 +34,14 @@ class SourceStatus:
 
 
 @dataclass(frozen=True)
+class CloseMaterials:
+    """Identity and content of a selected material range, without reading originals."""
+
+    version: str
+    source_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SourceDiscards:
     discarded_source_ids: tuple[str, ...]
     missing_source_ids: tuple[str, ...]

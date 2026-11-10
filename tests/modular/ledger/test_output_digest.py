@@ -15,6 +15,7 @@ from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.ledger._output_digest import EMPTY_OUTPUT_DIGEST
 from ai_accounting_modular.ledger._repository import LedgerRepository
 from ai_accounting_modular.ledger.public import create_ledger
+from tests.modular._period_support import ledger_work_basis
 
 
 @pytest.mark.parametrize(
@@ -153,7 +154,9 @@ def test_damaged_saved_journal_cannot_be_frozen_as_an_empty_valid_report(store, 
                 ledger.check_period("2026-01", read)
         else:
             with store.write_unit(COMPANY) as unit:
-                ledger.close_period("2026-01", checked.head, unit)
+                ledger.close_period(
+                    "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, SOURCE)
+                )
     assert error.value.code == "storage_corrupt"
     with store.read_unit(COMPANY) as read:
         assert read.head == before_head and ledger.closed_through(read) is None

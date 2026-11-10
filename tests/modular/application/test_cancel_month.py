@@ -79,10 +79,42 @@ def _issue(scope, source, period):
         "period": period,
         "evidence_ids": [source],
         "missing_fields": [],
+        "required_before_close": None,
         "question": "合成待核对事项：" + period,
         "assignee": "ai",
         "action": "professional_check",
     }
+
+
+@pytest.mark.parametrize("cancelled", ["2026-01", "2026-02"])
+def test_cancel_keeps_cross_period_external_obligation_and_its_original(case, cancelled):
+    case.seed(expense=False)
+    source = _original(case, "二月办理的一月申报", "2026-02")
+    cross = _issue("company", source["source_id"], "2026-02") | {
+        "required_before_close": "2026-01",
+        "action": "external_filing",
+        "assignee": "owner",
+    }
+    local = _issue("company", case.source_id, cancelled)
+    assert (
+        case.app.accounting_apply(
+            case.request(
+                unresolved=[cross, local], unresolved_scope="company", expected_scope_head=0
+            )
+        )["completion"]
+        == "complete"
+    )
+    result = case.app.accounting_cancel_month(_request(case, _inspect(case, cancelled)))
+    assert result["state"] == "cancelled" and result["documents"] == "ready"
+    assert case.context(issue_scopes=["company"])["issue_scopes"] == [
+        {"scope": "company", "head": 2, "issues": [cross]}
+    ]
+    assert (_root(case) / source["relative_path"]).is_file()
+    if cancelled == "2026-02":
+        assert source["source_id"] in result["retained_source_ids"]
+    bundle = open_standard_bundle(_root(case) / "standard/current.json")
+    assert bundle.issues == (cross,)
+    assert source["source_id"] in {item["source_id"] for item in bundle.sources}
 
 
 def test_cancel_month_exits_all_families_and_resets_only_that_months_work(case):
@@ -135,11 +167,15 @@ def test_cancel_month_exits_all_families_and_resets_only_that_months_work(case):
         assert business["state"]["state"] == "withdrawn"
         assert "fact" not in business and business["results"] == []
     assert case.get(later["business_id"])["businesses"][0]["fact"] == later
-    after = case.context(note_scopes=["company", "period:2026-01"], issue_scopes=[scope])
+    after = case.context(
+        note_scopes=["company", "period:2026-01", "work:2026-01"], issue_scopes=[scope]
+    )
     assert after["database_id"] == before["database_id"]
     assert after["company_id"] == before["company_id"]
     assert next(note for note in after["notes"] if note["scope"] == "company") == before["notes"][0]
-    restarted = next(note for note in after["notes"] if note["scope"] == "period:2026-01")
+    old = next(note for note in after["notes"] if note["scope"] == "period:2026-01")
+    assert old["state"] == "needs_refresh" and old["text"] is None
+    restarted = next(note for note in after["notes"] if note["scope"] == "work:2026-01")
     assert restarted["state"] == "current" and restarted["evidence_ids"] == []
     assert "重新" in restarted["text"] and "第1" in restarted["text"]
     assert month_note["text"] not in restarted["text"]
@@ -187,16 +223,18 @@ def test_cancel_month_without_books_removes_only_that_months_unused_originals(ca
     assert _sources(case, january["source_id"])["missing_source_ids"] == [january["source_id"]]
 
 
-def test_source_only_month_replaces_its_note_once_and_releases_originals(case):
+@pytest.mark.parametrize("scope_kind", ["period", "work"])
+def test_source_only_month_replaces_its_note_once_and_releases_originals(case, scope_kind):
     source = _original(case, "旧月度说明引用的唯一原件")
-    scope = "period:2026-01"
+    scope = scope_kind + ":2026-01"
     note = {
         "scope": scope,
         "expected_seq": 0,
-        "expected_basis_head": case.note_head(),
         "text": "旧资料已经收到，尚未开始正式记账。",
         "evidence_ids": [source["source_id"]],
     }
+    if scope_kind == "period":
+        note["expected_basis_head"] = case.note_head()
     assert case.app.accounting_apply(case.request(notes=[note]))["completion"] == "complete"
     before = case.context(note_scopes=[scope], issue_scopes=[])["notes"][0]
     checked = _inspect(case)
@@ -211,14 +249,18 @@ def test_source_only_month_replaces_its_note_once_and_releases_originals(case):
     assert result["file_cleanup"] == {"state": "complete", "issues": []}
     current = case.context(note_scopes=[scope], issue_scopes=[])["notes"][0]
     assert current["seq"] == before["seq"] + 1
-    assert current["state"] == "current" and current["evidence_ids"] == []
-    assert "重新" in current["text"] and "第1" in current["text"]
-    assert note["text"] not in current["text"]
+    assert current["evidence_ids"] == []
+    if scope_kind == "period":
+        assert current["state"] == "needs_refresh" and current["text"] is None
+    waiting = case.context(note_scopes=["work:2026-01"], issue_scopes=[])["notes"][0]
+    assert waiting["state"] == "current"
+    assert "重新" in waiting["text"] and "第1" in waiting["text"]
+    assert note["text"] not in waiting["text"]
     assert _sources(case, source["source_id"])["missing_source_ids"] == [source["source_id"]]
     assert not (_root(case) / source["relative_path"]).exists()
     bundle = open_standard_bundle(_root(case) / "standard/current.json")
     assert bundle.facts == () and bundle.sources == ()
-    assert bundle.notes == ({"scope": scope, "text": current["text"], "evidence_ids": []},)
+    assert bundle.notes == ({"scope": "work:2026-01", "text": waiting["text"], "evidence_ids": []},)
 
 
 @pytest.mark.parametrize("count", [1, 2])
@@ -276,7 +318,7 @@ def test_open_month_retains_an_original_used_only_by_a_frozen_result(case):
     replace = case.request(expense)
     replace["mutations"][0].update(op="replace", expected_seq=1)
     assert case.app.accounting_apply(replace)["completion"] == "complete"
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"] and case.close(checked)["state"] == "closed"
     frozen = case.get(expense["business_id"])["businesses"][0]["results"][0]
     corrected = evidence("合成三月核实：一月维修费应为900元。")
@@ -359,7 +401,7 @@ def test_late_transaction_failure_rolls_back_withdrawals_and_original_retirement
 
 def test_closed_month_rejects_original_cleanup_and_keeps_frozen_results(case):
     expense = case.seed()
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"] and case.close(checked)["state"] == "closed"
     source = _original(case, "闭期原件")
     before = case.get(expense["business_id"])
@@ -577,22 +619,26 @@ def test_old_inspect_without_a_committed_cancel_cannot_claim_success_after_an_un
     assert (_root(case) / source["relative_path"]).is_file()
 
 
-def test_old_cancel_cannot_claim_a_new_month_explanation_as_its_own_success(case, monkeypatch):
+@pytest.mark.parametrize("scope_kind", ["period", "work"])
+def test_old_cancel_cannot_claim_a_new_month_explanation_as_its_own_success(
+    case, monkeypatch, scope_kind
+):
     case.seed()
     request = _request(case, _inspect(case))
     assert case.app.accounting_cancel_month(request)["state"] == "cancelled"
-    scope = "period:2026-01"
-    current = case.context(note_scopes=[scope], issue_scopes=[])["notes"][0]
+    scope = scope_kind + ":2026-01"
+    current = case.context(note_scopes=[scope], issue_scopes=[])["notes"]
     source = _original(case, "老板重新提供的本月说明原件")
     path = _root(case) / source["relative_path"]
     original_bytes = path.read_bytes()
     new_note = {
         "scope": scope,
-        "expected_seq": current["seq"],
-        "expected_basis_head": case.note_head(),
+        "expected_seq": current[0]["seq"] if current else 0,
         "text": "老板已经开始重新核查本月业务，尚未保存正式账务。",
         "evidence_ids": [source["source_id"]],
     }
+    if scope_kind == "period":
+        new_note["expected_basis_head"] = case.note_head()
     assert case.app.accounting_apply(case.request(notes=[new_note]))["completion"] == "complete"
     before = case.context(note_scopes=[scope], issue_scopes=[])
     with monkeypatch.context() as patch:

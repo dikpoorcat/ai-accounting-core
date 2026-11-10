@@ -9,6 +9,7 @@ import pytest
 
 from ai_accounting_modular.host.public import create_kernel
 from ai_accounting_modular.storage.public import CompanySpec, OwnerProfile, create_catalog
+from tests.modular._period_support import checked_close_request
 
 PROJECT = str(UUID(int=701))
 CASH, COUNTERPARTY, OWNER, SOURCE = (str(UUID(int=index)) for index in range(702, 706))
@@ -194,22 +195,11 @@ def test_share_correction_preserves_actual_agency_and_recovers_real_project_exce
     before_paid = saved(system, paid)
     kernel, company = system
     if closed:
-        checked = kernel.application.accounting_period(
-            {
-                "company_id": company,
-                "action": "check",
-                "period": "2026-01",
-            }
+        checked, close_request = checked_close_request(
+            kernel.application, company, "2026-01", SOURCE
         )
         assert checked["ready"], json.dumps(checked, ensure_ascii=False)
-        closure = kernel.application.accounting_period(
-            {
-                "company_id": company,
-                "action": "close",
-                "period": "2026-01",
-                "expected_head": checked["head"],
-            }
-        )
+        closure = kernel.application.accounting_period(close_request)
         assert closure["state"] == "closed", closure
     month = "2026-02" if closed else "2026-01"
     corrected = deepcopy(charged)
@@ -591,25 +581,11 @@ def test_zero_recovery_inherits_no_empty_classification_and_keeps_actual_project
             {"category": "materials_services_payments", "weight": "1"}
         ]
     if closed:
-        checked = kernel.application.accounting_period(
-            {
-                "company_id": company,
-                "action": "check",
-                "period": "2026-01",
-            }
+        checked, close_request = checked_close_request(
+            kernel.application, company, "2026-01", SOURCE
         )
         assert checked["ready"], json.dumps(checked, ensure_ascii=False)
-        assert (
-            kernel.application.accounting_period(
-                {
-                    "company_id": company,
-                    "action": "close",
-                    "period": "2026-01",
-                    "expected_head": checked["head"],
-                }
-            )["state"]
-            == "closed"
-        )
+        assert kernel.application.accounting_period(close_request)["state"] == "closed"
     altered_first, altered_second = deepcopy(first), deepcopy(second)
     altered_first["data"].update(project_total_fen="0", amount_fen="0")
     altered_second["data"]["amount_fen"] = "1"

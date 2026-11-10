@@ -115,6 +115,7 @@ def test_object_names_future_business_and_external_tasks_preserve_current_cursor
                     "period": "2026-01",
                     "evidence_ids": [case.source_id],
                     "missing_fields": [],
+                    "required_before_close": None,
                     "question": "合成外部申报待办。",
                     "assignee": "owner",
                     "action": "external_filing",

@@ -1,4 +1,4 @@
-"""Monthly explanations follow accounting; business descriptions follow identity."""
+"""Financial notes follow accounting; work arrangements remain independent."""
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from ai_accounting_modular.records.public import RecordsChange, RecordsContext
@@ -7,13 +7,14 @@ from ai_accounting_modular.records.public import RecordsChange, RecordsContext
 def basis_heads(application, scopes, read):
     result = {}
     for scope in sorted(set(scopes)):
-        if scope == "company":
+        if scope == "company" or scope.startswith("work:"):
+            validate_contract("core.schema.json", "NoteScope", scope)
             continue
         if scope.startswith("business:"):
             validate_contract("core.schema.json", "BusinessNoteScope", scope)
             continue
         if not scope.startswith("period:"):
-            raise ContractError("invalid_input", "说明范围须为公司、月份或具体业务。")
+            raise ContractError("invalid_input", "说明范围须为公司、工作安排、月份核对或具体业务。")
         period = scope.removeprefix("period:")
         validate_contract("core.schema.json", "Month", period)
         report = application.ledger.financial_snapshot(

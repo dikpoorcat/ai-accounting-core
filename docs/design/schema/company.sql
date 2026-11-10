@@ -6,7 +6,7 @@ CREATE TABLE "system_meta" (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),
  database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),
- schema_version INTEGER NOT NULL CHECK(schema_version=5),
+ schema_version INTEGER NOT NULL CHECK(schema_version=6),
  structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),
  global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)
 ) STRICT;
@@ -191,7 +191,7 @@ CREATE UNIQUE INDEX source_path ON source(relative_path) WHERE relative_path IS 
 
 -- owner: records
 CREATE TABLE source_use (
-owner_kind TEXT NOT NULL CHECK(owner_kind IN ('business','object','issue','note')),
+owner_kind TEXT NOT NULL CHECK(owner_kind IN ('business','object','issue','note','period_close')),
  owner_key TEXT NOT NULL,
  source_id TEXT NOT NULL REFERENCES source(source_id) ON DELETE RESTRICT,
  location TEXT NOT NULL DEFAULT '',
@@ -205,6 +205,7 @@ CREATE TABLE current_issue (
 issue_id TEXT PRIMARY KEY CHECK(length(issue_id)=36),
  scope_key TEXT NOT NULL,
  period TEXT,
+ required_before_close TEXT,
  business_id TEXT,
  known_schema_key TEXT,
  known_fact_json TEXT CHECK(known_fact_json IS NULL OR json_valid(known_fact_json)),
@@ -875,3 +876,7 @@ CREATE TRIGGER period_close_immutable_delete BEFORE DELETE ON period_close BEGIN
 CREATE TRIGGER money_occurrence_identity_immutable BEFORE UPDATE ON money_occurrence
 WHEN NEW.occurrence_id<>OLD.occurrence_id OR NEW.business_id<>OLD.business_id OR NEW.public_slot<>OLD.public_slot
 BEGIN SELECT RAISE(ABORT,'immutable_money_identity'); END;
+
+-- owner: records
+CREATE INDEX source_archive_month ON source(archive_month,source_id);
+CREATE INDEX current_issue_close_idx ON current_issue(required_before_close,scope_key,issue_id) WHERE required_before_close IS NOT NULL;

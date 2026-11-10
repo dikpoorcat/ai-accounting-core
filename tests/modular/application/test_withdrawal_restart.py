@@ -185,7 +185,7 @@ def test_complete_open_payroll_redo_reuses_materials_and_releases_old_accounting
     original_movements = {
         stable_occurrence_id(fact["business_id"], "funds") for fact in original[2:4]
     }
-    assert case.check()["ready"]
+    assert case.check()["accounting_ready"]
     assert _withdraw(case, original)["completion"] == "complete"
     for business in case.get(*original_ids)["businesses"]:
         assert business["state"]["state"] == "withdrawn"
@@ -205,7 +205,7 @@ def test_complete_open_payroll_redo_reuses_materials_and_releases_old_accounting
     result = case.app.accounting_apply(request)
     assert result["completion"] == "complete", result
     assert case.app.accounting_apply(request)["changes"] == "none"
-    assert case.check()["ready"]
+    assert case.check()["accounting_ready"]
 
     with case.kernel.storage.read_unit(case.company) as read:
         movements = case.kernel.ledger.fund_movements(bank, "2026-01", "2026-01", read)
@@ -308,7 +308,7 @@ def test_withdraw_does_not_silently_remove_a_later_month_payment(case):
 
 def test_closed_withdrawal_and_redo_still_require_an_open_correction_period(case):
     expense = case.seed()
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"]
     assert case.close(checked)["state"] == "closed"
     original = case.get(expense["business_id"])

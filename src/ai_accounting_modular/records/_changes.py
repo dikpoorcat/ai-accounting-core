@@ -91,12 +91,14 @@ def _cleared_note(scope, seq):
 
 
 def clear_notes(scopes, command_id, uow):
-    """Withdraw business descriptions only, preserving their concurrency sequence."""
+    """Retire explicitly selected notes, preserving their concurrency sequence."""
     validate_contract("core.schema.json", "Id", command_id)
     if not isinstance(scopes, (list, tuple)):
-        raise ContractError("invalid_input", "清除说明须提供明确的业务说明范围集合。")
+        raise ContractError("invalid_input", "清除说明须提供明确的说明范围集合。")
     for scope in scopes:
-        validate_contract("core.schema.json", "BusinessNoteScope", scope)
+        validate_contract("core.schema.json", "NoteScope", scope)
+        if scope == "company":
+            raise ContractError("invalid_input", "公司说明须通过正常说明修改入口维护。")
     if not scopes:
         return (), ()
     repository = uow.repository("records")
@@ -197,7 +199,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             if basis is None or basis != note["expected_basis_head"]:
                 raise ContractError("conflict", "月份说明依据已经变化，请先读取当前业务结果。")
         elif "expected_basis_head" in note:
-            raise ContractError("invalid_input", "公司及业务说明不采用月份核算依据。")
+            raise ContractError("invalid_input", "公司、工作安排及业务说明不采用月份核算依据。")
         old = repository.notes((scope,)).get(scope)
         target = {
             "scope": scope,
@@ -208,7 +210,7 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             "evidence_ids": note["evidence_ids"],
             **_format_fields(note.get("text_format", "plain_text")),
         }
-        if scope.startswith("business:") and note["text"] == "":
+        if scope.startswith(("business:", "work:")) and note["text"] == "":
             target = _cleared_note(scope, 1)
         digest = note_digest(target)
         expected = note["expected_seq"]
@@ -252,12 +254,37 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
         ):
             raise ContractError("invalid_input", "替换待办须提供明确范围及当前范围序号。")
         issues, issue_ids = [], set()
-        for value in change.unresolved:
+        for index, value in enumerate(change.unresolved):
             validate_contract("core.schema.json", "CurrentIssue", value)
             issue = loads_json(canonical_json(value))
             issue["evidence_ids"] = list(source_ids(issue["evidence_ids"]))
             if issue["scope"] != scope or issue["issue_id"] in issue_ids:
                 raise ContractError("invalid_input", "待办必须属于指定范围，且身份不重复。")
+            if (
+                issue["missing_fields"]
+                and issue.get("known_fact", {}).get("period") is not None
+                and "period" not in issue
+            ):
+                raise ContractError(
+                    "invalid_input",
+                    "待办已有明确业务月份，但缺少核算缺项的影响月份；请AI结合已知事实补正归属。",
+                    fact_issues=[
+                        {
+                            "code": "issue_period_required",
+                            "field": f"/unresolved/{index}/period",
+                            "meaning": "必要核算缺项最早影响的开放月份，不是资料收到月",
+                            "message": (
+                                "已知事实提供了业务月份线索，请结合更正或接续范围填写；"
+                                "不机械复制原业务月份，也不直接向老板追问程序字段。"
+                            ),
+                            "allowed_precision": ["month"],
+                            "reusable_sources": [
+                                {"source_id": source_id} for source_id in issue_source_ids(issue)
+                            ],
+                            "blocking_scope": "business",
+                        }
+                    ],
+                )
             if (
                 "known_fact" in issue
                 and "business_id" in issue
@@ -383,6 +410,8 @@ def apply_current(plan, uow, root):
         keys.update("sources:" + source_id for source_id in changed_source_ids)
     keys.update(
         "sources:" + source_id
-        for source_id in repository.referenced_source_ids(plan.changed_source_ids)
+        for source_id in repository.referenced_source_ids(
+            plan.changed_source_ids, current_only=True
+        )
     )
     return tuple(sorted(keys))

@@ -69,10 +69,20 @@ def context(application, request, read_context=None):
         work_period = request.get("work_period")
         context_period = work_period or first_open
         defaults = ["company", *(["period:" + context_period] if context_period else [])]
-        note_scopes = request.get("note_scopes", defaults)
+        default_notes = [
+            "company",
+            *(["work:" + work_period] if work_period else []),
+            *(["period:" + context_period] if context_period else []),
+        ]
+        latest = None
+        if work_period is None and "note_scopes" not in request:
+            latest = application.records.latest_work_note(read)
+        note_scopes = request.get("note_scopes", default_notes)
         issue_scopes = list(dict.fromkeys(request.get("issue_scopes", defaults)))
         heads = _notes.basis_heads(application, note_scopes, read)
         notes = application.records.current_notes(tuple(dict.fromkeys(note_scopes)), read)
+        if latest is not None:
+            notes = (*notes, latest)
         issues = [application.records.current_issues(scope, read) for scope in issue_scopes]
         status = application.records.document_status(read)
         result = {

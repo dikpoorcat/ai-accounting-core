@@ -877,7 +877,7 @@ def check_links():
 def check_packaged_structure():
     """Current design DDL and packaged SQL describe the same complete baseline."""
     directory = ROOT.parents[1] / "src/ai_accounting_modular/storage/schema"
-    for kind, version in (("catalog", 1), ("company", 5)):
+    for kind, version in (("catalog", 1), ("company", 6)):
         contract = load(directory / f"{kind}.json")
         assert set(contract) == {"kind", "version", "objects", "fingerprint"}
         assert contract["kind"] == kind and contract["version"] == version

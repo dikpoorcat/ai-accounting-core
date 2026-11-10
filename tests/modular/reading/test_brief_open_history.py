@@ -83,7 +83,7 @@ def test_opening_preserves_declared_nature_original_reference_and_tax_month_with
 
 def test_closed_withdrawal_retains_january_but_current_progress_is_withdrawn(case, monkeypatch):
     expense = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     saved = case.app.accounting_apply(
         case.request(
             mutations=[
@@ -123,7 +123,7 @@ def test_no_voucher_adoption_inherits_the_actual_older_frozen_voucher(case):
     group = page(case, january)["collections"]["open_items"]["items"][0]
     before = members(case, january, group["group_key"])["collections"]
     original = before["vouchers"]["items"][0]
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     declared, reference = declaration(wage, "0")
     wage["data"]["tax_basis"]["pooled_source"] = reference
     wire = replacement(case.company, wage)

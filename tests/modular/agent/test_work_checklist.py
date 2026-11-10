@@ -5,47 +5,51 @@ from copy import deepcopy
 
 import pytest
 
-from ai_accounting_modular.agent.public import INSTRUCTIONS, read_guide, read_work_checklist
+from ai_accounting_modular.agent.public import (
+    INSTRUCTIONS,
+    read_guide,
+    read_work_checklist,
+    read_work_stage,
+)
 from ai_accounting_modular.contracts.public import schema_document
-from tests.modular.agent.test_guides import ROOT, generator
+from tests.modular.agent.test_guides import ROOT, generator, installed_checklist
 
 
 def test_checklist_conditions_and_actions_have_one_source_and_no_company_progress():
     source = json.loads((ROOT / "docs/design/work-checklist.json").read_text(encoding="utf-8"))
-    installed = read_work_checklist()
+    installed = installed_checklist()
     assert installed == source
     assert [stage["number"] for stage in installed["stages"]] == list(range(1, 9))
     guide = read_guide("work")
     identities = set()
     for stage in installed["stages"]:
         assert stage["completion"] in guide
+        assert read_work_stage(str(stage["number"])) == stage
+        assert f"accounting://guides/work/stages/{stage['number']}" in guide
+    assert read_work_checklist()["common_checks"] == source["common_checks"]
     checks = installed["common_checks"] + [
         check for stage in installed["stages"] for check in stage["checks"]
     ]
     for check in checks:
         assert check["id"] not in identities
         identities.add(check["id"])
-        assert check["condition"] in guide
-        assert check["if_unmet"] in guide
-        assert all(item in guide for item in check["evidence"])
-        for action in check.get("actions", ()):
-            assert f"{action['command']}(action={action['action']})" in guide
+        assert check["condition"] not in guide
     assert "<!-- generated-work-checklist -->" not in guide
     assert "[内部核对规则](accounting://guides/work/checklist)" in guide
     # This payload is static rules, never a shadow workflow or an AI decision log.
     assert set(installed) == {"format", "common_checks", "stages"}
     installed["stages"][0]["checks"].clear()
     installed["common_checks"].clear()
-    assert read_work_checklist() == source
+    assert installed_checklist() == source
 
 
 def test_payment_result_check_is_shared_before_the_stages_without_per_payment_actions():
-    rules = read_work_checklist()
+    rules = installed_checklist()
     check = next(item for item in rules["common_checks"] if item["id"] == "common.payment_results")
     guide = read_guide("work")
     assert check["id"] == "common.payment_results"
-    assert guide.count(f"`{check['id']}`") == 1
-    assert guide.index(check["condition"]) < guide.index("1. **流水与基础资料**")
+    assert check in read_work_checklist()["common_checks"]
+    assert check["condition"] not in guide
     assert "actions" not in check
     assert "本步骤、本批次" in check["condition"]
     assert "新办、变更或接续尚未核对" in check["condition"]
@@ -53,7 +57,6 @@ def test_payment_result_check_is_shared_before_the_stages_without_per_payment_ac
     assert "对象为空不证明不适用" in check["condition"]
     assert "own_funds_channel" in check["if_unmet"]
     assert "不能把managed_reserve一律视为不适用" in check["if_unmet"]
-    assert "counterparty" in INSTRUCTIONS
     assert "仅计提不索取未来付款资料" in check["condition"]
     assert "仅生成代发表不视为已实际付款，仍按文件自身条件检查" in check["condition"]
     assert "不逐笔另起查询" in "；".join(check["evidence"])
@@ -63,15 +66,15 @@ def test_payment_result_check_is_shared_before_the_stages_without_per_payment_ac
 
 
 def test_work_scope_precedes_checks_without_disabling_cross_period_dependencies():
-    rules = read_work_checklist()
+    rules = installed_checklist()
     scope = rules["common_checks"][0]
     assert scope["id"] == "common.work_scope"
     assert "actions" not in scope
     assert "work_period" in scope["condition"]
     assert "不机械要求其所属月等于工作月" in scope["condition"]
-    assert "null和候选月份不证明已经确定" in "".join(scope["evidence"])
-    assert "其他月份独立事项保留原范围" in scope["if_unmet"]
-    assert "本轮已交办的申报反馈和文件自身条件仍须满足" in scope["if_unmet"]
+    assert "null只表示尚未选择，不意味着必须问老板" in "".join(scope["evidence"])
+    assert "无关月份独立事项保留原范围" in scope["if_unmet"]
+    assert "跨月依赖只核当前动作需要的部分，不改变已选月份" in scope["if_unmet"]
     shared = next(item for item in rules["common_checks"] if item["id"] == "common.unfinished_work")
     assert "本轮工作范围内所有未完成项" in shared["condition"]
     assert "未答复或选择等待时不提前推进" in shared["condition"]
@@ -85,7 +88,7 @@ def test_work_scope_precedes_checks_without_disabling_cross_period_dependencies(
 
 
 def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition():
-    stages = {item["id"]: item for item in read_work_checklist()["stages"]}
+    stages = {item["id"]: item for item in installed_checklist()["stages"]}
     checks = {item["id"]: item for item in stages["payment_export"]["checks"]}
     file = checks["payment_export.file"]
     assert [item["action"] for item in file["actions"]] == ["generate", "status"]
@@ -108,11 +111,11 @@ def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition()
 
 
 def test_unfinished_steps_and_contribution_feedback_share_the_installed_rules():
-    rules = read_work_checklist()
+    rules = installed_checklist()
     shared = next(item for item in rules["common_checks"] if item["id"] == "common.unfinished_work")
     guide = read_guide("work")
-    assert guide.count(f"`{shared['id']}`") == 1
-    assert shared["condition"] in guide and shared["if_unmet"] in guide
+    assert shared in read_work_checklist()["common_checks"]
+    assert shared["condition"] not in guide
     assert "未答复或选择等待时不提前推进" in shared["condition"]
     assert "每次更新步骤清单都提醒本轮范围内未完成事项" in shared["if_unmet"]
     stages = {item["id"]: item for item in rules["stages"]}
@@ -137,12 +140,12 @@ def test_payment_actions_match_the_public_contract_and_instructions_point_to_rul
         if "$ref" in branch:
             branch = schema_document("core.schema.json")["$defs"][branch["$ref"].rsplit("/", 1)[-1]]
         supported.add(branch["properties"]["action"]["const"])
-    payment = read_work_checklist()["stages"][3]
+    payment = read_work_stage("4")
     declared = {
         action["action"] for check in payment["checks"] for action in check.get("actions", ())
     }
     assert declared == supported == {"inspect", "generate", "status", "save"}
-    assert "打勾前逐项核对工作指南中的内部条件" in INSTRUCTIONS
+    assert "在打勾前核对当前事项的完成条件" in INSTRUCTIONS
     assert "缺少成果时执行所列接口动作" in INSTRUCTIONS
 
 
@@ -163,7 +166,7 @@ def test_payment_actions_match_the_public_contract_and_instructions_point_to_rul
 )
 def test_broken_checklist_cannot_silently_ship(tmp_path, problem):
     module = generator()
-    source = deepcopy(read_work_checklist())
+    source = installed_checklist()
     if problem == "order":
         source["stages"][1]["number"] = 3
     elif problem == "duplicate":

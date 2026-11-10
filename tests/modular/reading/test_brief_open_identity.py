@@ -179,7 +179,7 @@ def test_opening_ordinary_current_progress_follows_the_actual_declared_claim(cas
         ],
         sources=[source("opening-identity") | {"source_id": case.source_id}],
     )
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     if change == "original_reference":
@@ -255,7 +255,7 @@ def test_opening_tax_identity_change_is_not_the_old_tax_claim(case, field, value
         ],
         sources=[source("opening-tax") | {"source_id": case.source_id}],
     )
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     package["data"]["members"][1]["data"][field] = value
     changed = case.app.accounting_apply(
         case.request(
@@ -275,7 +275,7 @@ def test_opening_tax_identity_change_is_not_the_old_tax_claim(case, field, value
 
 def test_expense_display_classification_change_does_not_replace_the_supplier_claim(case):
     expense = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     expense["data"].update(
         expense_class="sales", report_details=[{"code": "sales_other", "amount_fen": "100000"}]
     )
@@ -355,7 +355,7 @@ def test_opening_payroll_current_claim_uses_person_recipient_period_and_componen
             ],
         ],
     )
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     payroll = package["data"]["members"][1]["data"]

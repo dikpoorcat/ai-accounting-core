@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from tests.modular._period_support import checked_close_request
 from tests.modular.domains.operations.test_tax_lifecycle import (
     command,
     fact,
@@ -268,16 +269,9 @@ def test_later_receipt_updates_open_basis_without_rewriting_closed_advance_histo
         ids, "money.reconciliation", {"statement_id": statement["business_id"], "matches": []}
     )
     save(app, company, advance, point, rule, opening, statement, reconciliation)
-    checked = app.accounting_period({"company_id": company, "action": "check", "period": "2026-01"})
+    checked, close_request = checked_close_request(app, company, "2026-01", ids["source"])
     assert checked["ready"], checked["blocking_issues"]
-    closed = app.accounting_period(
-        {
-            "company_id": company,
-            "action": "close",
-            "period": "2026-01",
-            "expected_head": checked["head"],
-        }
-    )
+    closed = app.accounting_period(close_request)
     assert closed["state"] == "closed", closed
     with app.storage.read_unit(company, view="as_posted", as_of="2026-01") as read:
         before = deepcopy(app.ledger.get_results([advance["business_id"]], read))

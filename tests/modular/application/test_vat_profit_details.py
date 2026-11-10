@@ -215,7 +215,7 @@ def test_exact_vat_revision_retains_its_meaning_in_cold_and_warm_reports(
         _submit(case.app, case.company, *facts)
     if frozen:
         for month in range(1, 8):
-            checked = case.check(f"2026-{month:02d}")
+            checked = case.prepare_close(f"2026-{month:02d}")
             assert checked["ready"], checked
             assert case.close(checked)["state"] == "closed"
     original = get(case.app, case.company, current["business_id"])["businesses"][0]["results"][0]

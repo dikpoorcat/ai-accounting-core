@@ -4,6 +4,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -11,6 +12,7 @@ from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp.exceptions import ResourceError
 
 from ai_accounting_modular.agent.public import create_agent
+from ai_accounting_modular.application.public import Application
 from ai_accounting_modular.host.runtime._mcp import create_mcp, create_offline_mcp
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -37,16 +39,25 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
         assert "经营者劳动不估价入账" in rules.content
         assert "opening.package" not in rules.content
         work = list(await server.read_resource("accounting://guides/work"))[0].content
-        assert "owner_statement" in work and "accounting_sources(action=discard)" in work
+        assert "owner_statement" in work and "清理只走受保护入口" in work
         checklist = list(await server.read_resource("accounting://guides/work/checklist"))[0]
         assert checklist.mime_type == "application/json"
         stages = json.loads(checklist.content)["stages"]
         assert len(stages) == 8 and stages[3]["id"] == "payment_export"
-        assert "实际桌面绝对路径" in stages[3]["checks"][3]["condition"]
+        assert all("checks" not in stage for stage in stages)
+        stage = json.loads(list(await server.read_resource(stages[3]["uri"]))[0].content)
+        assert "实际桌面绝对路径" in stage["checks"][3]["condition"]
+        assert (
+            "义务转移与多付重分类"
+            in list(await server.read_resource("accounting://guides/corrections"))[0].content
+        )
+        assert "义务转移与多付重分类" not in rules.content
         for uri in (
             "accounting://guides/unknown",
             "accounting://guides/business/operations.unknown",
             "accounting://guides/business/../../README.md",
+            "accounting://guides/work/stages/0",
+            "accounting://guides/work/stages/09",
         ):
             with pytest.raises((ResourceError, ValueError)):
                 await server.read_resource(uri)
@@ -62,17 +73,18 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
 
 def test_mcp_bundles_discard_input_without_executing_a_business_command():
     class SourcesApplication:
+        registry = SimpleNamespace(supported_kinds=())
+        accounting_schema = Application.accounting_schema
+
         def accounting_sources(self, request):
             raise AssertionError("Contract discovery must not call accounting_sources")
 
     async def check():
         server = create_mcp(create_agent(SourcesApplication()))
         commands = list(await server.read_resource("accounting://contracts"))[0].content
-        sources = next(
-            item["request_schema"]
-            for item in json.loads(commands)["commands"]
-            if item["command"] == "accounting_sources"
-        )
+        assert json.loads(commands)["commands"] == ["accounting_schema", "accounting_sources"]
+        _, result = await server.call_tool("accounting_schema", {"command": "accounting_sources"})
+        sources = result["request_schema"]
         branch = next(
             item
             for item in sources["oneOf"]
@@ -86,14 +98,20 @@ def test_mcp_bundles_discard_input_without_executing_a_business_command():
 
 def test_mcp_declares_month_cancellation_without_company_reads_or_extra_tools():
     class MonthApplication:
+        registry = SimpleNamespace(supported_kinds=())
+        accounting_schema = Application.accounting_schema
+
         def accounting_cancel_month(self, request):
             raise AssertionError("Contract discovery must not cancel or read a month")
 
     async def check():
         server = create_mcp(create_agent(MonthApplication()))
         commands = json.loads(list(await server.read_resource("accounting://contracts"))[0].content)
-        assert [row["command"] for row in commands["commands"]] == ["accounting_cancel_month"]
-        schema = commands["commands"][0]["request_schema"]
+        assert commands["commands"] == ["accounting_schema", "accounting_cancel_month"]
+        _, selected = await server.call_tool(
+            "accounting_schema", {"command": "accounting_cancel_month"}
+        )
+        schema = selected["request_schema"]
         branches = {row["properties"]["action"]["const"]: row for row in schema["oneOf"]}
         assert set(branches) == {"inspect", "cancel"}
         assert branches["inspect"]["required"] == ["company_id", "action", "period"]
@@ -106,6 +124,26 @@ def test_mcp_declares_month_cancellation_without_company_reads_or_extra_tools():
             "accounting_command",
             "accounting_security",
         }
+
+    asyncio.run(check())
+
+
+def test_schema_mcp_preserves_absent_and_empty_kind_selections():
+    class Client:
+        def dispatch(self, command, payload):
+            assert command == "accounting_schema"
+            return payload
+
+    async def check():
+        server = create_mcp(Client())
+        for selection in (
+            {},
+            {"kinds": []},
+            {"command": "accounting_apply", "kinds": []},
+            {"command": "accounting_get"},
+        ):
+            _, returned = await server.call_tool("accounting_schema", selection)
+            assert returned == selection
 
     asyncio.run(check())
 

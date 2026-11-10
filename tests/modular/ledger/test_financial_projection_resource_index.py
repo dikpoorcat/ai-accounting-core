@@ -22,6 +22,7 @@ from ai_accounting_modular.ledger._financial_projection_indexes import BodyDirec
 from ai_accounting_modular.ledger._financial_projection_model import Model
 from ai_accounting_modular.ledger._financial_selection import Selection
 from ai_accounting_modular.storage.public import Entry
+from tests.modular._period_support import ledger_work_basis
 from tests.modular.acceptance.performance.ledger_variant import MODES, repository_factory
 from tests.modular.ledger.test_financial_projection_model import Blocks, scope
 
@@ -328,7 +329,10 @@ def test_anonymous_social_amount_change_and_frozen_payment_retirement_keep_each_
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-01", unit)
         assert checked.ready
-        book.app.ledger.close_period("2026-01", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, support.SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-01", [support.SOURCE], unit)
     actual["data"]["items"][0]["employee_fen"] = "200"
     book.replace(actual, correction_period="2026-02")
     # The real dependency closure also re-adopts the payment against the new wage Source.
@@ -341,7 +345,10 @@ def test_anonymous_social_amount_change_and_frozen_payment_retirement_keep_each_
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-02", unit)
         assert checked.ready
-        book.app.ledger.close_period("2026-02", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-02", checked.head, unit, work_basis=ledger_work_basis(checked, support.SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-02", [support.SOURCE], unit)
     book.submit(
         mutations=[{"op": "withdraw", "business_id": paid["business_id"], "expected_seq": 1}],
         correction_period="2026-03",

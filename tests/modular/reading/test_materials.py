@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
+from tests.modular._period_support import ledger_work_basis
 
 from ._support import BANK, SOURCE, assemble, expense, fact, source, uid
 
@@ -98,7 +99,9 @@ def test_frozen_sources_remain_exact_when_current_fact_uses_other_source(tmp_pat
     with book.storage.write_unit(book.company) as unit:
         check = book.ledger.check_period("2026-01", unit)
         assert check.ready
-        book.ledger.close_period("2026-01", check.head, unit)
+        basis = ledger_work_basis(check, SOURCE)
+        book.ledger.close_period("2026-01", check.head, unit, work_basis=basis)
+        book.records.replace_source_uses("period_close", "2026-01", basis["source_ids"], unit)
     replacement = expense(amount="12000", sources=(uid("replacement"),))
     book.submit(
         mutations=[{"op": "replace", "expected_seq": 1, "fact": replacement}],

@@ -88,6 +88,7 @@ def test_future_issue_does_not_invent_a_later_work_horizon(case, monkeypatch):
         "period": "2026-09",
         "question": "九月实际外部申报待办。",
         "missing_fields": [],
+        "required_before_close": None,
         "evidence_ids": [case.source_id],
         "action": "external_filing",
         "assignee": "owner",
@@ -111,7 +112,7 @@ def test_future_issue_does_not_invent_a_later_work_horizon(case, monkeypatch):
 
 def test_frozen_withdrawal_retains_formal_presence_and_actual_discovery_horizon(case):
     opening = case.seed(expense=False)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     result = case.app.accounting_apply(
         case.request(
             correction_period="2026-03",
@@ -132,7 +133,7 @@ def test_frozen_withdrawal_retains_formal_presence_and_actual_discovery_horizon(
 
 def test_current_work_metadata_does_not_change_historical_accounting_selection(case):
     fact = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     fact["data"]["amount_fen"] = "90000"
     result = case.app.accounting_apply(
         case.request(
@@ -182,7 +183,7 @@ def test_snapshot_checks_work_horizon_before_accepting_documents(case, monkeypat
     elif actual == "adoption":
         fact = case.expense()
         assert case.app.accounting_apply(case.request(fact))["completion"] == "complete"
-        assert case.close(case.check())["state"] == "closed"
+        assert case.close(case.prepare_close())["state"] == "closed"
         fact["data"]["amount_fen"] = "90000"
         result = case.app.accounting_apply(
             case.request(
@@ -191,7 +192,7 @@ def test_snapshot_checks_work_horizon_before_accepting_documents(case, monkeypat
             )
         )
     else:
-        result = case.close(case.check("2026-03"))
+        result = case.close(case.prepare_close("2026-03"))
         assert result["state"] == "closed"
     if actual != "closing":
         assert result["completion"] == "complete", result

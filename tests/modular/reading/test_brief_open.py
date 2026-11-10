@@ -220,7 +220,7 @@ def test_later_real_payment_refreshes_followup_without_changing_january_amount(c
 
 def test_closed_correction_preserves_old_counterparty_and_reports_it_reversed(case):
     expense = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     other = str(uuid4())
     revised = deepcopy(expense)
     revised["data"].update(creditor_id=other, amount_fen="80000")

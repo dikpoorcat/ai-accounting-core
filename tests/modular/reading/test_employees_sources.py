@@ -64,7 +64,7 @@ def test_historical_remuneration_display_kind_uses_adopted_type_before_later_cor
     labor = business_case("B17L")
     labor["data"]["person_id"] = PERSON
     add(case, no_contributions(), labor)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     changed = deepcopy(labor)
     changed["data"] = business_case("B17Z")["data"]
     correct(case, changed, period="2026-02")
@@ -118,7 +118,7 @@ def test_closed_labor_to_wage_correction_has_negative_labor_once_and_no_permanen
     labor = business_case("B17L")
     labor["data"].update(person_id=PERSON)
     add(case, no_contributions(), labor)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     changed = deepcopy(labor)
     changed["data"] = business_case("B17Z")["data"]
     correct(case, changed, period="2026-02")

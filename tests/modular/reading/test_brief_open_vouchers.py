@@ -76,7 +76,7 @@ def test_hot_change_uses_the_same_binder_and_stays_cold_equal(case, monkeypatch)
 
 def test_selected_frozen_journal_is_not_replaced_by_its_future_current_adoption(case, monkeypatch):
     first = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     apply(case, case.expense("1", "2026-02"))
     changed = deepcopy(first)
     changed["data"]["amount_fen"] = "80000"
@@ -167,7 +167,7 @@ def test_inherited_journal_still_loads_its_exact_old_owner_origin_once(case, mon
     with case.kernel.storage.read_unit(case.company) as read:
         initial = _brief_open_sources.capture(case.kernel.reading, scope(case), read)
         old = next(iter(initial.contents.values())).reference
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     declared, reference = declaration(wage, "30000")
     wage["data"]["tax_basis"]["pooled_source"] = reference
     wire = replacement(case.company, wage)

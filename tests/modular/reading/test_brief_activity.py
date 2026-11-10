@@ -180,7 +180,7 @@ def test_closed_correction_uses_old_and_new_exact_type_and_date(case):
     initialize(case)
     expense = case.expense("100")
     (expense,) = apply(case, expense)
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"], checked
     assert case.close(checked)["state"] == "closed"
     with case.kernel.storage.read_unit(case.company) as read:
@@ -407,7 +407,7 @@ def test_voucher_display_is_bound_and_historical_dependency_uses_only_referenced
     registration = asset_request(case.company, acquired, activated)
     asset = next(item for item in registration["objects"] if item["kind"] == "asset")
     save(case.app, registration)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     apply(case, case.expense("1", period="2026-03"))
     ref = next(
         result["reference"]
@@ -469,7 +469,7 @@ def test_evidence_only_formal_adoption_is_quiet_but_equal_reclassification_is_vi
     case.seed(expense=False)
     wage = business_case("B17Z")
     add_payroll(case, no_contributions(), wage)
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     capture(case)
     first = activity(case)
     declared, reference = declaration(wage, "0")
@@ -506,7 +506,7 @@ def test_effective_voucher_helper_preserves_ref_mapping_without_current_body_sub
     wage = business_case("B17Z")
     add_payroll(case, no_contributions(), wage)
     open_reference = case.get(wage["business_id"])["businesses"][0]["results"][0]["reference"]
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     old = case.get(wage["business_id"])["businesses"][0]["results"][0]["reference"]
     with case.kernel.storage.read_unit(case.company) as read:
         cache = Contents(case.kernel.ledger, read)
@@ -910,7 +910,7 @@ def test_zero_company_real_project_amount_correction_is_visible_without_fictitio
             }
         ],
     )
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     charged["data"]["project_total_fen"] = "2"
     charged["evidence_ids"] = [case.source_id]
     saved = case.app.accounting_apply(

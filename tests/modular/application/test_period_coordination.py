@@ -68,12 +68,13 @@ def asset_case(case):
 
 def test_horizon_check_is_persistently_read_only_then_one_close_completes_every_needed_month(case):
     acquired, enabled = asset_case(case)
+    prepared = case.prepare_close("2026-03")
     before = case.get(enabled["business_id"])
     documents = case.app.accounting_documents({"company_id": case.company, "action": "status"})
     with case.kernel.storage.read_unit(case.company) as read:
         head = read.head
-    first = case.check("2026-03")
-    second = case.check("2026-03")
+    first = case.recheck(prepared)
+    second = case.recheck(prepared)
     assert first["ready"] and second["head"] == first["head"], first
     assert first["report_head"] is None
     assert case.get(enabled["business_id"]) == before
@@ -116,7 +117,7 @@ def test_horizon_check_is_persistently_read_only_then_one_close_completes_every_
 
 def test_close_failure_after_horizon_adoption_rolls_everything_back(case, monkeypatch):
     _, enabled = asset_case(case)
-    checked = case.check("2026-03")
+    checked = case.prepare_close("2026-03")
     before = case.get(enabled["business_id"])
     documents = case.app.accounting_documents({"company_id": case.company, "action": "status"})
     original = case.kernel.ledger.close_period
@@ -147,9 +148,10 @@ def test_preview_rolls_back_note_invalidation_and_close_clears_the_old_explanati
         "expected_basis_head": case.note_head("2026-02"),
     }
     assert case.app.accounting_apply(case.request(notes=[note]))["completion"] == "complete"
+    prepared = case.prepare_close("2026-03")
     query = {"note_scopes": [note["scope"]], "issue_scopes": []}
     before = case.context(**query)["notes"]
-    checked = case.check("2026-03")
+    checked = case.recheck(prepared)
     assert case.context(**query)["notes"] == before
     assert case.close(checked)["state"] == "closed"
     after = case.context(**query)["notes"][0]
@@ -159,7 +161,7 @@ def test_preview_rolls_back_note_invalidation_and_close_clears_the_old_explanati
 
 def test_related_change_conflicts_but_future_business_and_company_background_do_not(case):
     fact = case.seed()
-    checked = case.check()
+    checked = case.prepare_close()
     note = {
         "scope": "company",
         "expected_seq": 0,
@@ -172,7 +174,7 @@ def test_related_change_conflicts_but_future_business_and_company_background_do_
         ]
         == "complete"
     )
-    assert case.check()["head"] == checked["head"]
+    assert case.recheck(checked)["head"] == checked["head"]
     changed = deepcopy(fact)
     changed["data"]["amount_fen"] = "90000"
     request = case.request(changed)
@@ -187,7 +189,7 @@ def test_related_change_conflicts_but_future_business_and_company_background_do_
 
 def test_two_concurrent_closes_reuse_one_committed_close(case):
     case.seed()
-    checked = case.check()
+    checked = case.prepare_close()
     with case.kernel.storage.read_unit(case.company) as read:
         head = read.head
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -197,7 +199,7 @@ def test_two_concurrent_closes_reuse_one_committed_close(case):
         assert read.head == head + 1
 
 
-def test_custom_scope_missing_fact_blocks_but_external_filing_and_unpaid_debt_do_not(case):
+def test_custom_scope_missing_fact_blocks_but_ordinary_unpaid_debt_does_not(case):
     case.seed()
     external = {
         "issue_id": str(uuid4()),
@@ -205,9 +207,10 @@ def test_custom_scope_missing_fact_blocks_but_external_filing_and_unpaid_debt_do
         "period": "2026-01",
         "evidence_ids": [case.source_id],
         "missing_fields": [],
-        "question": "老板稍后实际申报。",
+        "question": "普通货款已正确入账，尚未付款。",
         "assignee": "owner",
-        "action": "external_filing",
+        "action": "external_payment",
+        "required_before_close": None,
     }
     assert (
         case.app.accounting_apply(
@@ -217,7 +220,7 @@ def test_custom_scope_missing_fact_blocks_but_external_filing_and_unpaid_debt_do
         )["completion"]
         == "complete"
     )
-    ready = case.check()
+    ready = case.prepare_close()
     assert ready["ready"] and ready["unresolved"] == [external], ready
     necessary = {
         **external,
@@ -237,7 +240,7 @@ def test_custom_scope_missing_fact_blocks_but_external_filing_and_unpaid_debt_do
         )["completion"]
         == "complete"
     )
-    blocked = case.check()
+    blocked = case.recheck(ready)
     assert not blocked["ready"]
     index = next(
         index
@@ -265,9 +268,10 @@ def test_legal_multi_scope_work_keeps_all_issues_without_a_500_output_cap(case, 
                 "period": "2026-01",
                 "evidence_ids": [case.source_id],
                 "missing_fields": ["/data/amount_fen"] if necessary else [],
-                "question": "请核实资料的实际金额。" if necessary else "老板按实际情况办理申报。",
+                "question": "请核实资料的实际金额。" if necessary else "普通货款尚未支付。",
                 "assignee": "ai" if necessary else "owner",
-                "action": "provide_material" if necessary else "external_filing",
+                "action": "provide_material" if necessary else "external_payment",
+                "required_before_close": None,
             }
             for _ in range(count)
         ]
@@ -276,7 +280,7 @@ def test_legal_multi_scope_work_keeps_all_issues_without_a_500_output_cap(case, 
             case.request(unresolved=issues, unresolved_scope=scope, expected_scope_head=0)
         )
         assert result["completion"] == "complete", result
-    checked = case.check()
+    checked = case.prepare_close()
     assert checked["ready"] is (not necessary), checked
     assert {item["issue_id"] for item in checked["unresolved"]} == expected
     assert len(case.context(issue_scopes=["external:a", "external:b"])["issues"]) == 501
@@ -296,15 +300,16 @@ def test_future_item_in_the_same_issue_scope_does_not_invalidate_this_month_chec
         "period": "2026-01",
         "evidence_ids": [case.source_id],
         "missing_fields": [],
-        "question": "一月外部申报待办。",
+        "question": "一月普通应付货款尚未支付。",
         "assignee": "owner",
-        "action": "external_filing",
+        "action": "external_payment",
+        "required_before_close": None,
     }
     future = {
         **current,
         "issue_id": str(uuid4()),
         "period": "2026-04",
-        "question": "四月外部申报待办。",
+        "question": "四月普通应付货款尚未支付。",
     }
     assert (
         case.app.accounting_apply(
@@ -316,7 +321,7 @@ def test_future_item_in_the_same_issue_scope_does_not_invalidate_this_month_chec
         )["completion"]
         == "complete"
     )
-    checked = case.check()
+    checked = case.prepare_close()
     future["question"] = "仅修改四月的外部待办。"
     assert (
         case.app.accounting_apply(
@@ -328,13 +333,13 @@ def test_future_item_in_the_same_issue_scope_does_not_invalidate_this_month_chec
         )["completion"]
         == "complete"
     )
-    assert case.check()["head"] == checked["head"]
+    assert case.recheck(checked)["head"] == checked["head"]
     assert case.close(checked)["state"] == "closed"
 
 
 def test_correction_and_frozen_withdrawal_enter_explicit_discovery_month_horizon(case):
     acquired, enabled = asset_case(case)
-    case.close(case.check())
+    case.close(case.prepare_close())
     request = case.request(
         correction_period="2026-03", explanation="已核实整项采购及启用均误记，不存在对应现实业务。"
     )
@@ -463,6 +468,6 @@ def test_bank_actual_money_requires_complete_original_statement_and_reconciliati
     }
     result = case.app.accounting_apply(case.request(statement, reconciliation))
     assert result["completion"] == "complete", result
-    ready = case.check()
+    ready = case.prepare_close()
     assert ready["ready"], ready
     assert case.close(ready)["state"] == "closed"

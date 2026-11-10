@@ -4,7 +4,7 @@ from ai_accounting_modular.contracts.public import ContractError, validate_contr
 from ai_accounting_modular.reading.public import ReadingImpact
 from ai_accounting_modular.records.public import RecordsChange, RecordsContext
 
-from . import _documents, _execution, _notes, _source_discards
+from . import _documents, _execution, _source_discards
 from ._submission import Submission
 
 _WAITING = (
@@ -54,24 +54,23 @@ def _retained(application, sources, read):
 
 
 def _waiting_note(application, period, command_id, unit):
-    scope = "period:" + period
+    scope = "work:" + period
     current = application.records.current_notes((scope,), unit)
-    heads = _notes.basis_heads(application, (scope,), unit)
     plan = application.records.plan_change(
         RecordsChange(
             notes=(
                 {
                     "scope": scope,
                     "expected_seq": current[0]["seq"] if current else 0,
-                    "expected_basis_head": heads[scope],
                     "text": _WAITING,
                     "evidence_ids": [],
                 },
             ),
         ),
-        RecordsContext(unit, command_id, note_basis_heads=heads),
+        RecordsContext(unit, command_id),
     )
     application.records.apply_current(plan, unit)
+    application.records.clear_notes(("period:" + period,), command_id, unit)
 
 
 def _finish_cleanup(application, company, period):
@@ -126,8 +125,13 @@ def run(application, request):
             return validate_contract("core.schema.json", "MonthCancelResult", result)
         if request["expected_head"] != unit.head:
             same_cancel = not heads and application.records.note_written_by(
-                "period:" + period, request["command_id"], unit
+                "work:" + period, request["command_id"], unit
             )
+            if same_cancel:
+                same_cancel = not any(
+                    note["state"] == "current"
+                    for note in application.records.current_notes(("period:" + period,), unit)
+                )
             retained = _retained(application, sources, unit) if same_cancel else ()
             if not same_cancel or set(result["source_ids"]) - set(retained):
                 raise ContractError(
@@ -172,7 +176,11 @@ def run(application, request):
                 discarded.extend(prepared.discarded_source_ids)
                 retained.extend(prepared.retained_source_ids)
             application._notify_reading(
-                ReadingImpact(note_scopes=("period:" + period,), issue_periods=issue_periods), unit
+                ReadingImpact(
+                    note_scopes=("work:" + period, "period:" + period),
+                    issue_periods=issue_periods,
+                ),
+                unit,
             )
             result["head"] = unit.next_head
         result.update(

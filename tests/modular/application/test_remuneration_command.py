@@ -103,11 +103,9 @@ def test_public_payable_keeps_only_unabsorbed_hold_and_excludes_already_paid(cas
 
 def test_agent_publishes_exact_narrow_request_and_rejects_ambiguous_inputs(case):
     agent = create_agent(case.app)
-    schema = next(
-        command["request_schema"]
-        for command in agent.contracts()["commands"]
-        if command["command"] == "accounting_remuneration"
-    )
+    schema = agent.dispatch("accounting_schema", {"command": "accounting_remuneration"})[
+        "request_schema"
+    ]
     valid = {
         "company_id": case.company,
         "period": "2026-02",

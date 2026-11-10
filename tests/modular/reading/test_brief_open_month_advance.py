@@ -20,7 +20,7 @@ def test_first_later_month_payment_updates_only_its_claim(case, monkeypatch, clo
     bank = bank_object()
     apply(case, second, objects=[bank])
     if closed:
-        assert case.close(case.check())["state"] == "closed"
+        assert case.close(case.prepare_close())["state"] == "closed"
     publish(case)
     apply(case, payment(case, first["business_id"], bank["object_id"], "60000", "2026-02"))
     capture, seen = _brief_open_sources.capture, []

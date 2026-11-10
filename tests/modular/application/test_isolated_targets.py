@@ -85,7 +85,7 @@ def test_real_backup_task_restore_preserves_formal_identities_and_copies_only_ma
     case, tmp_path, monkeypatch
 ):
     fact = case.seed()
-    assert case.close(case.check())["state"] == "closed"
+    assert case.close(case.prepare_close())["state"] == "closed"
     metadata, _ = source_bundle(case)
     app = case.app
     with case.kernel.storage.read_unit(case.company) as read:

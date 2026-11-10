@@ -788,7 +788,8 @@
           "maxLength": 200
         },
         "period": {
-          "$ref": "#/$defs/Month"
+          "$ref": "#/$defs/Month",
+          "description": "事项影响的业务月份或实际外部办理月份；必要核算缺项已有known_fact.period等明确业务月份时，应由AI核实并填写最早受影响的开放月，不能省略后躲过相关关账，也不能机械复制原业务月。"
         },
         "business_id": {
           "$ref": "#/$defs/Id"
@@ -837,6 +838,17 @@
         },
         "due_on": {
           "$ref": "#/$defs/Date"
+        },
+        "required_before_close": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Month"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "管理语义：该适用外部事项必须完成的关账节点；null明确无此等待。核算必要缺项仍独立判断。"
         }
       },
       "required": [
@@ -846,9 +858,34 @@
         "missing_fields",
         "question",
         "assignee",
-        "action"
+        "action",
+        "required_before_close"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "required_before_close": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "required_before_close"
+            ]
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "external_payment",
+                  "external_filing"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "Mutation": {
       "oneOf": [
@@ -2219,7 +2256,7 @@
     },
     "NoteScope": {
       "type": "string",
-      "pattern": "^(company|period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])|business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+      "pattern": "^(company|(?:period|work):(?!0000)[0-9]{4}-(0[1-9]|1[0-2])|business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
     },
     "NoteChange": {
       "type": "object",
@@ -2317,9 +2354,41 @@
             }
           },
           "else": {
-            "properties": {
-              "text": {
-                "minLength": 1
+            "if": {
+              "properties": {
+                "scope": {
+                  "pattern": "^work:"
+                }
+              }
+            },
+            "then": {
+              "if": {
+                "properties": {
+                  "text": {
+                    "const": ""
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "evidence_ids": {
+                    "maxItems": 0
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "text": {
+                    "pattern": "\\S"
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "text": {
+                  "minLength": 1
+                }
               }
             }
           }
@@ -3010,7 +3079,7 @@
         },
         "key": {
           "type": "string",
-          "pattern": "^notes(:(company|period:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])|business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$"
+          "pattern": "^notes(:(company|(?:period|work):(?!0000)[0-9]{4}-(0[1-9]|1[0-2])|business:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$"
         },
         "notes": {
           "type": "array",
@@ -3395,6 +3464,12 @@
             },
             "period": {
               "$ref": "#/$defs/Month"
+            },
+            "basis": {
+              "$ref": "#/$defs/PeriodWorkBasis"
+            },
+            "expected_material_version": {
+              "$ref": "#/$defs/Digest"
             }
           },
           "required": [
@@ -3413,8 +3488,14 @@
             "action": {
               "const": "close"
             },
-            "period": {
-              "$ref": "#/$defs/Month"
+            "actual_range": {
+              "$ref": "#/$defs/CloseRange"
+            },
+            "basis": {
+              "$ref": "#/$defs/PeriodWorkBasis"
+            },
+            "expected_material_version": {
+              "$ref": "#/$defs/Digest"
             },
             "expected_head": {
               "$ref": "#/$defs/Digest"
@@ -3423,7 +3504,9 @@
           "required": [
             "company_id",
             "action",
-            "period",
+            "actual_range",
+            "basis",
+            "expected_material_version",
             "expected_head"
           ],
           "additionalProperties": false
@@ -3450,7 +3533,8 @@
           "$ref": "#/$defs/Digest"
         },
         "ready": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "本次范围具备程序可核验条件；AI仍须判断来源真实覆盖范围、内部清单及外部反馈，历史关闭结果不证明今天没有未完工作。"
         },
         "blocking_issues": {
           "type": "array",
@@ -3464,7 +3548,8 @@
           "items": {
             "$ref": "#/$defs/CurrentIssue"
           },
-          "minItems": 0
+          "minItems": 0,
+          "description": "本次开放范围检查读取的当前未完事项；历史关闭回执不重新读取当前工作，空数组不能证明现实事项已完成，当前待办用accounting_context读取。"
         },
         "document_state": {
           "type": "string",
@@ -3482,6 +3567,40 @@
               "type": "null"
             }
           ]
+        },
+        "actual_range": {
+          "$ref": "#/$defs/CloseRange"
+        },
+        "previous_closed_through": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Month"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accounting_ready": {
+          "type": "boolean",
+          "description": "技术账务、资金核对、必要核算缺项及标准文档检查结果；与资料覆盖和外部办理条件分别表达。"
+        },
+        "material_version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "work_issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactIssue"
+          },
+          "minItems": 0
         }
       },
       "required": [
@@ -3493,7 +3612,12 @@
         "blocking_issues",
         "unresolved",
         "document_state",
-        "report_head"
+        "report_head",
+        "actual_range",
+        "previous_closed_through",
+        "accounting_ready",
+        "material_version",
+        "work_issues"
       ],
       "additionalProperties": false
     },
@@ -4666,6 +4790,22 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "pattern": "^work:"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "basis_head": {
+                "type": "null"
+              }
+            }
+          }
         }
       ]
     },
@@ -5686,58 +5826,186 @@
           },
           "minItems": 0,
           "maxItems": 1000
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
         }
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "accounting_apply"
+              }
+            },
+            "required": [
+              "command"
+            ]
+          },
+          "then": {
+            "required": [
+              "kinds"
+            ]
+          },
+          "else": {
+            "if": {
+              "required": [
+                "command"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "kinds"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "SchemaResult": {
-      "type": "object",
-      "properties": {
-        "contract": {
-          "const": "ai-accounting-modular/1"
-        },
-        "supported_kinds": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 150
-          },
-          "minItems": 0,
-          "maxItems": 1000
-        },
-        "schemas": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "kind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "const": "ai-accounting-modular/1"
+            },
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            "supported_kinds": {
+              "type": "array",
+              "items": {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 150
               },
-              "schema_document": {
-                "type": "object",
-                "description": "程序生成的自包含 Draft2020-12输入Schema（含必要defs），另按元Schema校验；不是自由业务数据。"
-              }
-            },
-            "required": [
-              "kind",
-              "schema_document"
-            ],
-            "additionalProperties": false
+              "minItems": 0,
+              "maxItems": 1000
+            }
           },
-          "minItems": 0,
-          "maxItems": 1000
+          "required": [
+            "contract",
+            "commands",
+            "supported_kinds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "const": "ai-accounting-modular/1"
+            },
+            "supported_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150
+              },
+              "minItems": 0,
+              "maxItems": 1000
+            },
+            "schemas": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  "schema_document": {
+                    "type": "object",
+                    "description": "程序生成的自包含 Draft2020-12输入Schema（含必要defs），另按元Schema校验；不是自由业务数据。"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "schema_document"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 1000
+            }
+          },
+          "required": [
+            "contract",
+            "supported_kinds",
+            "schemas"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "const": "ai-accounting-modular/1"
+            },
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 150
+              },
+              "minItems": 0,
+              "maxItems": 1000
+            },
+            "request_schema": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "contract",
+            "command",
+            "request_schema"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "command": {
+                    "const": "accounting_apply"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "kinds"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "kinds"
+                  ]
+                }
+              }
+            }
+          ]
         }
-      },
-      "required": [
-        "contract",
-        "supported_kinds",
-        "schemas"
-      ],
-      "additionalProperties": false
+      ]
     },
     "ReportRequest": {
       "type": "object",
@@ -6717,6 +6985,156 @@
           "additionalProperties": false
         }
       ]
+    },
+    "CloseRange": {
+      "type": "object",
+      "properties": {
+        "period_from": {
+          "$ref": "#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "#/$defs/Month"
+        }
+      },
+      "required": [
+        "period_from",
+        "period_to"
+      ],
+      "additionalProperties": false
+    },
+    "PeriodCoverage": {
+      "type": "object",
+      "properties": {
+        "period_from": {
+          "$ref": "#/$defs/Month"
+        },
+        "period_to": {
+          "$ref": "#/$defs/Month"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceLocator"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "period_from",
+        "period_to",
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    "WorkNoteReference": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "pattern": "^(company|work:(?!0000)[0-9]{4}-(0[1-9]|1[0-2]))$"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        }
+      },
+      "required": [
+        "scope",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "EarlyCloseBasis": {
+      "type": "object",
+      "properties": {
+        "pending_issue_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceLocator"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "pending_issue_ids",
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    "PeriodWorkBasis": {
+      "type": "object",
+      "properties": {
+        "coverage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PeriodCoverage"
+          },
+          "minItems": 1
+        },
+        "additional_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceLocator"
+          },
+          "minItems": 0
+        },
+        "note_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkNoteReference"
+          },
+          "minItems": 0
+        },
+        "early_close": {
+          "$ref": "#/$defs/EarlyCloseBasis"
+        }
+      },
+      "required": [
+        "coverage"
+      ],
+      "additionalProperties": false
+    },
+    "FrozenWorkCloseBasis": {
+      "type": "object",
+      "properties": {
+        "actual_range": {
+          "$ref": "#/$defs/CloseRange"
+        },
+        "basis": {
+          "$ref": "#/$defs/PeriodWorkBasis"
+        },
+        "public_head": {
+          "$ref": "#/$defs/Digest"
+        },
+        "material_version": {
+          "$ref": "#/$defs/Digest"
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "actual_range",
+        "basis",
+        "public_head",
+        "material_version",
+        "source_ids"
+      ],
+      "additionalProperties": false
     }
   }
 }

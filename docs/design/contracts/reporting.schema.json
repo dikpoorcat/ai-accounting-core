@@ -2879,6 +2879,9 @@
         },
         "result_digest": {
           "$ref": "core.schema.json#/$defs/Digest"
+        },
+        "work_basis": {
+          "$ref": "core.schema.json#/$defs/FrozenWorkCloseBasis"
         }
       },
       "required": [

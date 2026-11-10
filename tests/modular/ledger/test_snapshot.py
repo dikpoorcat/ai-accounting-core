@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from _financial_snapshot_review_support import BANK as APP_BANK
 from _financial_snapshot_review_support import PARTY_A as APP_PARTY
+from _financial_snapshot_review_support import SOURCE as APP_SOURCE
 from _financial_snapshot_review_support import assemble, fact, loan_contract
 from _financial_snapshot_review_support import expense as app_expense
 from _financial_snapshot_review_support import opening as app_opening
@@ -29,6 +30,7 @@ from ai_accounting_modular.ledger.public import (
     create_ledger,
 )
 from ai_accounting_modular.storage.public import module_schema
+from tests.modular._period_support import ledger_work_basis
 
 
 def _snapshot(storage, ledger):
@@ -119,6 +121,7 @@ def test_formal_only_frozen_baseline_inherits_original_journal_before_later_reve
             )
         ),
         "2026-03",
+        (("2026-01", SOURCE), ("2026-02", SOURCE)),
     )
 
 
@@ -301,7 +304,10 @@ def test_public_application_opening_and_frozen_reference_to_replaced_prebook_bod
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-01", unit)
         assert checked.ready, checked
-        book.app.ledger.close_period("2026-01", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, APP_SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-01", [APP_SOURCE], unit)
     contract["data"]["matures_on"] = "2029-01-01"
     book.replace(contract, correction_period="2026-02")
     with book.app.storage.read_unit(book.company) as read:
@@ -319,7 +325,10 @@ def test_public_application_frozen_expense_and_actual_payment_correction(tmp_pat
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-01", unit)
         assert checked.ready
-        book.app.ledger.close_period("2026-01", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-01", checked.head, unit, work_basis=ledger_work_basis(checked, APP_SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-01", [APP_SOURCE], unit)
     paid["data"]["amount_fen"] = "10"
     paid["data"]["allocations"][0]["amount_fen"] = "10"
     book.replace(paid, correction_period="2026-02")
@@ -356,7 +365,10 @@ def test_unclosed_months_need_no_independent_capacity_before_later_real_recovery
     with book.app.storage.write_unit(book.company) as unit:
         checked = book.app.ledger.check_period("2026-02", unit)
         assert checked.ready
-        book.app.ledger.close_period("2026-02", checked.head, unit)
+        book.app.ledger.close_period(
+            "2026-02", checked.head, unit, work_basis=ledger_work_basis(checked, APP_SOURCE)
+        )
+        book.app.records.replace_source_uses("period_close", "2026-02", [APP_SOURCE], unit)
     with book.app.storage.read_unit(book.company) as read:
         assert book.app.ledger.verify_snapshot(read).result_count == 5
 
