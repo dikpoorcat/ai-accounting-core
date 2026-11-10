@@ -5,7 +5,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from ai_accounting_modular.contracts.public import canonical_json, format_fen, parse_fen
 
-from ._common import line, payable, plan_for, referenced, reject, total, use_location, use_result
+from ._common import line, obligation, plan_for, referenced, reject, total, use_location, use_result
 from ._remuneration import read_declaration_allocation
 
 KIND = "people.remuneration_tax"
@@ -136,8 +136,10 @@ def remuneration_tax(fact, context):
             difference,
             debit=True,
             party=values["person_id"],
+            summary="代扣个人所得税",
         )
-        payable(
+        line(plan, "222103", difference, summary="代扣个人所得税")
+        obligation(
             plan,
             "tax",
             "222103",

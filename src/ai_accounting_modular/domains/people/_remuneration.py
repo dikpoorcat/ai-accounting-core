@@ -9,11 +9,11 @@ from ai_accounting_modular.contracts.public import (
     validate_contract,
 )
 
-from ._common import line, missing, payable, plan_for, problem, reject, total, use_location
+from ._common import missing, obligation, plan_for, problem, reject, total, use_location
 from ._contributions import ContributionAmounts, wage_contributions
+from ._remuneration_postings import post_remuneration
 
-_WAGE_ACCOUNTS = {"administration": "560201", "sales": "560101", "service": "540101"}
-_LABOR_ACCOUNTS = {"administration": "560204", "sales": "560104", "service": "540104"}
+_APPENDIX_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf"
 
 
 def read_declaration_allocation(
@@ -142,6 +142,8 @@ def remuneration(fact, context):
     if tax_basis:
         values["tax_period"] = tax_basis["tax_period"]
     plan = plan_for(fact, context, values, accounting_input=_accounting_input(data))
+    plan["calculation_revision"] = plan["rule_refs"][0]["revision"] = 2
+    plan["rule_refs"][0]["official_urls"].append(_APPENDIX_URL)
     if tax_basis:
         use_location(plan, context, tax_basis["source"])
         if "pooled_source" in tax_basis:
@@ -191,7 +193,6 @@ def remuneration(fact, context):
     project = destination is not None and destination["type"] == "project"
     if project:
         project_id = destination["project_id"]
-        line(plan, "189901", cost, debit=True, object_id=project_id)
         plan["cost_lots"].append(
             {
                 "business_id": fact["business_id"],
@@ -202,16 +203,8 @@ def remuneration(fact, context):
                 "business_period": fact["period"],
             }
         )
-    else:
-        area = destination["area"] if destination else data["expense_area"]
-        line(
-            plan,
-            (_LABOR_ACCOUNTS if kind == "labor" else _WAGE_ACCOUNTS)[area],
-            cost,
-            debit=True,
-            party=data["person_id"],
-        )
-    payable(
+    post_remuneration(plan)
+    obligation(
         plan,
         "net_pay",
         "224104" if kind == "labor" else "221101",
@@ -225,7 +218,7 @@ def remuneration(fact, context):
         else "employee_payments",
     )
     if tax_basis:
-        payable(
+        obligation(
             plan,
             "tax",
             "222103",
@@ -241,5 +234,5 @@ def remuneration(fact, context):
             ("employer_social", "221102", amounts.employer_social, "social"),
             ("employer_housing", "221103", amounts.employer_housing, "housing"),
         ):
-            payable(plan, slot, account, amount, category=category, cashflow="employee_payments")
+            obligation(plan, slot, account, amount, category=category, cashflow="employee_payments")
     return plan

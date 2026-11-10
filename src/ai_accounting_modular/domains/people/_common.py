@@ -98,7 +98,7 @@ def use_location(plan, context, locator):
         plan["basis"]["source_locations"].append(deepcopy(locator))
 
 
-def line(plan, account, amount, *, debit=False, party=None, object_id=None):
+def line(plan, account, amount, *, summary, debit=False, party=None, object_id=None):
     if not amount:
         return
     value = {
@@ -106,7 +106,7 @@ def line(plan, account, amount, *, debit=False, party=None, object_id=None):
         "account_code": account,
         "debit_fen": format_fen(amount if debit else 0),
         "credit_fen": format_fen(0 if debit else amount),
-        "summary": "职工薪酬" if plan["basis"]["input"].get("type") != "labor" else "个人劳务",
+        "summary": summary,
     }
     if party is not None:
         value["party_id"] = party
@@ -115,7 +115,8 @@ def line(plan, account, amount, *, debit=False, party=None, object_id=None):
     plan["lines"].append(value)
 
 
-def payable(plan, slot, account, amount, *, category, party=None, period=None, cashflow=None):
+def obligation(plan, slot, account, amount, *, category, party=None, period=None, cashflow=None):
+    """Declare only the amount available for settlement, independent of journal turnover."""
     value = {
         "business_id": plan["business_id"],
         "slot": slot,
@@ -131,7 +132,6 @@ def payable(plan, slot, account, amount, *, category, party=None, period=None, c
     if cashflow is not None:
         value["cashflow_weights"] = [{"category": cashflow, "weight": "1"}]
     plan["obligations"].append(value)
-    line(plan, account, amount, party=party)
 
 
 def referenced(fact, context, business_id, kind, *, field):

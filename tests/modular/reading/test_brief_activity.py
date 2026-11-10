@@ -367,7 +367,11 @@ def test_social_components_stay_separate_and_wage_is_gross_not_debit_total(case)
         item for item in vouchers(case)["items"] if item["kind"] == "people.remuneration"
     )
     assert wage_voucher["business_amount_fen"] == "1000000"
-    assert wage_voucher["amount_fen"] == "1250000"
+    assert wage_voucher["amount_fen"] == "1420000"
+    wage_lines = [line for line in wage_voucher["lines"] if line["code"] == "221101"]
+    assert sum(int(line["credit_fen"]) for line in wage_lines) == 1000000
+    assert sum(int(line["debit_fen"]) for line in wage_lines) == 170000
+    assert any("代扣" in line["source_label"] for line in wage_lines)
     validate("OwnerBriefVoucher", wage_voucher)
 
 
