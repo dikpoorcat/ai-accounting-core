@@ -199,6 +199,14 @@ class Application:
     def rebuild_standard(self, bundle, unit, *, prepared_sources=None) -> ExecutionOutcome:
         return _rebuild.rebuild(self, bundle, unit, prepared_sources=prepared_sources)
 
+    def convert_investment_basis(self, source, target, basis_facts, *, source_kind):
+        """Developer-only explicit offline conversion; never a daily MCP operation."""
+        from . import _investment_conversion
+
+        return _investment_conversion.run(
+            self, source, target, basis_facts, source_kind=source_kind
+        )
+
     def accounting_isolated(self, request):
         from . import _isolated
 

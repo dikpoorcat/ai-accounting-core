@@ -977,6 +977,8 @@ def test_midyear_income_requires_typed_cumulative_carry_and_does_not_guess_from_
     with pytest.raises(ContractError, match="有源累计已计所得税") as error:
         create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert error.value.code == "needs_information"
+    assert error.value.fact_issues[0]["business_id"] == current["business_id"]
+    assert error.value.fact_issues[0]["field"] == "/"
     continuation = fact(
         "continuation",
         "reports.continuation",
@@ -1006,7 +1008,7 @@ def test_midyear_income_requires_typed_cumulative_carry_and_does_not_guess_from_
     )
     context.facts[continuation["business_id"]] = continuation
     # A strict public producer fixture, not an implementation of the report owner.
-    context.results[(continuation["business_id"], "main")] = EvaluatedSlot(
+    complete = EvaluatedSlot(
         source_ref(continuation["business_id"]),
         {
             "kind": "reports.continuation",
@@ -1037,6 +1039,30 @@ def test_midyear_income_requires_typed_cumulative_carry_and_does_not_guess_from_
             ],
         },
     )
+    read_result = context.get_result
+    context.get_result = lambda identity, slot: (
+        None if identity == continuation["business_id"] else read_result(identity, slot)
+    )
+    with pytest.raises(ContractError) as error:
+        create_taxes().evaluate_slot(current["business_id"], "main", context)
+    assert error.value.code == "dependency_conflict"
+    assert error.value.fact_issues[0]["business_id"] == continuation["business_id"]
+    assert error.value.fact_issues[0]["field"] == "/"
+    context.get_result = read_result
+    incomplete_basis = deepcopy(complete.basis)
+    incomplete_basis["adopted_quantities"] = []
+    context.results[(continuation["business_id"], "main")] = EvaluatedSlot(
+        complete.source, complete.target, incomplete_basis
+    )
+    with pytest.raises(ContractError) as error:
+        create_taxes().evaluate_slot(current["business_id"], "main", context)
+    assert error.value.code == "needs_information"
+    problem = error.value.fact_issues[0]
+    validate_contract("core.schema.json", "FactIssue", problem)
+    assert problem["business_id"] == continuation["business_id"]
+    assert problem["field"] == "/data/income_tax_carry"
+    assert problem["reusable_sources"] == [{"source_id": LOCATION["source_id"]}]
+    context.results[(continuation["business_id"], "main")] = complete
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert result["target"]["values"]["previous_cumulative_fen"] == "5000"
     assert result["target"]["values"]["change_fen"] == "3000"

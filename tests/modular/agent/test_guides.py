@@ -54,23 +54,55 @@ def test_all_actual_fact_inputs_have_exact_guides_and_generated_bytes():
         text = read_guide("business", kind=kind)
         assert text.startswith("# 业务规则：" + kind)
         assert "公共事实与计算条件" not in text and "义务转移与多付重分类" not in text
+        assert re.findall(r"^#{2,5} `([^`]+)`$", text, re.MULTILINE) == [kind]
     assert "公共事实与计算条件" in read_guide("business")
     assert "义务转移与多付重分类" in read_guide("corrections")
-    assert "### 货币基金" in read_guide("business", kind="investment.money_fund_purchase")
-    assert "### 合作项目投资" not in read_guide("business", kind="investment.money_fund_purchase")
     assert "direct_joint_operation_cash_labor_v1" in read_guide(
         "business", kind="investment.cooperation_contract"
     )
-    assert "## 税费和期间口径" in read_guide("business", kind="taxes.income_tax_policy")
-    assert "## 期初与报表接续" in read_guide("business", kind="reports.continuation")
     assert "## 资料与撤回" in read_guide("work")
-    assert (
-        "[合作项目投资](accounting://guides/business/investment.cooperation_contract)"
-        in read_guide("business", kind="operations.expense")
-    )
+    assert "合作经营份额" in read_guide("business", kind="operations.expense")
     assert "## 模块之间的公开能力" not in read_guide("commands")
     assert "## 开发与行为验收" not in read_guide("work")
     assert "## 开发验收" not in read_guide("reporting")
+
+
+@pytest.mark.parametrize(
+    "kind,expected,other_action",
+    [
+        ("operations.expense", "report_details可省", "原客户预收"),
+        ("people.relationship", "不强迫补齐首段以前的履历", "disbursement_basis"),
+        ("people.remuneration", "#### data.type=wage", "#### data.type=payroll_reserve"),
+        ("assets.acquisition", "#### data.type=project_completion", "寿命 1..1200 月"),
+        ("financing.loan_drawdown", "真实放款本金", "利息=本金"),
+        ("investment.acquire", "纯购买可以保留", "保存已经明确的估值日"),
+        ("investment.money_fund_purchase", "排除已宣告未发收益", "结算净款（可为零）"),
+        ("investment.cooperation_funding", "实际初始投入或补入", "company_revenue_expense_share"),
+        ("money.movement", "#### data.type=managed_reserve", "期初+有符号发生额=期末"),
+        ("money.bank_statement", "原件有对方户名时原样填写", "银行毛额=该组原毛工资合计"),
+        ("taxes.income_tax_policy", "优惠计税份额", "computed_provision"),
+        ("taxes.assessment", "#### data.type=income_tax", "#### data.type=payroll"),
+        ("reports.continuation", "缺比较资料", "成员稳定member_id"),
+    ],
+)
+def test_exact_kind_keeps_its_requirements_without_sibling_action_conditions(
+    kind, expected, other_action
+):
+    guide = read_guide("business", kind=kind)
+    assert expected in guide
+    assert other_action not in guide
+
+
+def test_shared_guide_paragraphs_have_one_source_and_are_only_selected_explicitly():
+    module = generator()
+    source = (ROOT / "docs/design/05-business-rules.md").read_text(encoding="utf-8")
+    sections = module.business_sections(
+        source, module.fact_kinds(schema_document("business-facts.schema.json"))
+    )
+    for title, selected in module.BUSINESS_SHARED_SECTIONS:
+        shared = module.markdown_section(source, "### " + title).strip()
+        for kind, guide in sections.items():
+            assert guide.count(shared) == int(kind in selected)
 
 
 def test_new_fact_kind_requires_an_explicit_mapping_instead_of_family_fallback():
@@ -187,12 +219,13 @@ def test_removed_or_ambiguous_source_section_fails_generation(tmp_path):
         shutil.copyfile(ROOT / "docs/design" / name, source / name)
     file = source / "05-business-rules.md"
     text = file.read_text(encoding="utf-8")
-    for changed in (
-        text.replace("### 合作项目投资", "### 标题已变更"),
-        text + "\n### 合作项目投资\n",
+    heading = "#### `investment.cooperation_contract`"
+    for changed, error in (
+        (text.replace(heading, "#### 标题已变更"), "guide sections differ"),
+        (text + "\n" + heading + "\n", "Duplicate business guide section"),
     ):
         file.write_text(changed, encoding="utf-8")
-        with pytest.raises(ValueError, match="heading must exist exactly once"):
+        with pytest.raises(ValueError, match=error):
             generator().guide_outputs(tmp_path, schema_document("business-facts.schema.json"))
     shutil.copyfile(ROOT / "docs/design/05-business-rules.md", file)
     work = source / "08-ai-work-and-materials.md"

@@ -108,7 +108,7 @@ def test_market_estimate_never_revalues_cost_or_creates_income(tmp_path):
     apply_facts(app, company, agreement, purchased, estimate, initial=True)
     body = result(app, company, estimate)
     assert body["vouchers"] == []
-    assert "tax_event" not in body["target"]["values"]
+    assert "economic_event" not in body["target"]["values"]
     product = activity(app, company).products[0]
     assert product.closing_cost == {"state": "known", "amount_fen": "10000"}
     assert product.market_value_fen == 7500
@@ -365,14 +365,6 @@ def test_issuer_maturity_income_and_existing_right_are_not_duplicated(tmp_path):
     for recognized in (False, True):
         app, company = assemble(tmp_path / str(recognized))
         agreement = terms(product_type="bank_wealth", measurement="other_financial_cost")
-        agreement["data"].update(
-            legal_form="financial_contract",
-            tax_facts={
-                "instrument_type": "bank_wealth",
-                "principal_protected": True,
-                "source": {"source_id": SOURCE, "location": "合成保本条款"},
-            },
-        )
         purchased = acquire(agreement, "10000", "100")
         purchased["data"]["acquisition_fees_fen"] = "1000"
         income = fact(
@@ -411,7 +403,7 @@ def test_issuer_maturity_income_and_existing_right_are_not_duplicated(tmp_path):
         body = result(app, company, maturity)
         values = body["target"]["values"]
         assert values["gain_loss_fen"] == ("-1000" if recognized else "200")
-        assert values["tax_event"]["maturity_income"]["amount_fen"] == "1200"
+        assert values["economic_event"]["maturity_income"]["amount_fen"] == "1200"
         assert activity(app, company).products[0].investment_income_fen == 200
         for voucher in body["vouchers"]:
             assert (
@@ -485,15 +477,6 @@ def test_five_financial_categories_keep_sourced_lifecycle_and_frozen_corrections
     app, company = assemble(tmp_path)
     schedule = [{"payment_on": "2026-06-30", "coupon_rate": "0.1"}] if category == "bond" else None
     agreement = terms(product_type=category, measurement=measurement, schedule=schedule)
-    if category == "bank_wealth":
-        agreement["data"].update(
-            legal_form="financial_contract",
-            tax_facts={
-                "instrument_type": "bank_wealth",
-                "principal_protected": True,
-                "source": {"source_id": SOURCE, "location": "合成理财产品法律权利"},
-            },
-        )
     if category == "equity":
         agreement["data"]["quantity_unit"] = "shares"
     purchased = acquire(

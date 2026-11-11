@@ -27,12 +27,11 @@ def investment_pair(limit="10000"):
         {
             "product_id": PRODUCT,
             "product_type": "money_fund",
-            "legal_form": "securities_fund",
+            "right_type": "fund_units",
             "measurement": "other_financial_cost",
             "quantity_unit": "units",
             "holding_arrangement": "noncurrent",
             "terms_source": {"source_id": SOURCE},
-            "tax_facts": {"instrument_type": "securities_fund", "source": {"source_id": SOURCE}},
             "settlement_authorizations": [
                 {
                     "entry_key": "collector",

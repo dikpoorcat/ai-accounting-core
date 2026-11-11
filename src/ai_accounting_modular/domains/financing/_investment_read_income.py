@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 from ._common import amount, fail, total
+from ._investment_accounting import investment_economic_events
 from ._investment_events import EVENT_KINDS
 from ._investment_read_sources import source_contents
 from ._read_funds import KINDS, _contents, _pages
@@ -36,7 +37,7 @@ def _origin(quantity, ledger, read, cache):
     original = source_contents(ledger, [quantity["source"]], read, cache)
     target = original[quantity["source"]["result_id"]].target
     values = target["values"]
-    events = [values["tax_event"]] if "tax_event" in values else values.get("tax_events", ())
+    events = investment_economic_events(values)
     index = quantity["event_index"]
     if (
         not target["kind"].startswith("investment.")

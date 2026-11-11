@@ -15,8 +15,7 @@ def position_plan(fact, result_slot, context):
     adopted = context.get_result(fact["business_id"], "main")
     if adopted is None:
         fail("投资月末位置缺少已声明的条款来源。")
-    validate_adopted_terms(adopted, fact["business_id"])
-    terms = adopted.target["values"]
+    terms = validate_adopted_terms(adopted, fact["business_id"])
     candidate = inventory(fact, adopted, context)
     opening, closing = candidate.month(period)
     values = {

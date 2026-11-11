@@ -13,6 +13,7 @@ from tests.modular.domains.taxes.test_investment_tax_application import (
     advance,
     inputs,
     new_trade,
+    qualification,
     quarter_return,
 )
 
@@ -28,9 +29,10 @@ def tax_setup(case, *, quarterly=False, defer_tax=False):
         values[1]["data"]["acquisition_fees_fen"] = "0"
         values[2]["data"]["gross_proceeds_fen"] = "2010000"
         values[3]["data"]["threshold_period"] = "quarter"
-    for value in values:
+    tax_basis = qualification(values[0])
+    for value in (*values, tax_basis):
         _sources(value, case.source_id)
-    apply(case, *(values[:-1] if defer_tax else values))
+    apply(case, *(values[:-1] if defer_tax else values), tax_basis)
     return values
 
 
@@ -132,13 +134,8 @@ def test_tax_only_interest_adjustment_keeps_professional_origin_without_funds_re
     agreement["data"].update(
         product_id=product,
         product_type="bank_wealth",
-        legal_form="financial_contract",
+        right_type="financial_contract",
         measurement="other_financial_cost",
-        tax_facts={
-            "instrument_type": "bank_wealth",
-            "principal_protected": True,
-            "source": {"source_id": case.source_id},
-        },
     )
     policy["data"].update(threshold_period="quarter", threshold_fen="30000000")
     interest = fact(
@@ -155,7 +152,15 @@ def test_tax_only_interest_adjustment_keeps_professional_origin_without_funds_re
     received = payment(
         interest, 10100, slot="income", party=COUNTERPARTY, direction="inflow", day="2026-07-03"
     )
-    values = [agreement, interest, received, policy, surtax, basis]
+    values = [
+        agreement,
+        qualification(agreement, instrument="bank_wealth", principal_protected=True),
+        interest,
+        received,
+        policy,
+        surtax,
+        basis,
+    ]
     for value in values:
         _sources(value, case.source_id)
     apply(

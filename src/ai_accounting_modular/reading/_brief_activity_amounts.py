@@ -141,6 +141,8 @@ def amount(content, *, journal_key=None, component=None):
                 parse_fen(values["vat_credit_fen"]) + parse_fen(values["surtax_credit_fen"])
             )
             label = "税费退抵金额"
+        case "taxes.investment_basis":
+            return BusinessAmount(None, "税务依据不产生金额", "not_applicable")
         case "taxes.financial_transfer_basis":
             if values.get("type") != "financial_transfer_position":
                 return BusinessAmount(None, "计税方法采用不产生金额", "not_applicable")

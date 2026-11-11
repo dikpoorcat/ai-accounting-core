@@ -43,10 +43,10 @@ def adopt_dividend_holdings(fact, context, plan):
             value["acquired_on"] = lots[0]["acquired_on"]
         holdings.append(value)
         adopt(plan, definition.source)
-    plan["target"]["values"]["tax_event"]["dividend_holding"] = holdings
+    plan["target"]["values"]["economic_event"]["dividend_holding"] = holdings
 
 
-def tax_event(fact, term_values, event):
+def economic_event(fact, term_values, event):
     data, suffix = fact["data"], fact["kind"].removeprefix("investment.")
     kind = (
         "acquisition"
@@ -60,9 +60,8 @@ def tax_event(fact, term_values, event):
     result = {
         "terms_id": data["terms_id"],
         "product_id": term_values["product_id"],
-        "legal_form": term_values["legal_form"],
+        "right_type": term_values["right_type"],
         "quantity_unit": term_values["quantity_unit"],
-        "tax_facts": deepcopy(term_values["tax_facts"]),
         "event_kind": kind,
         "quantity": decimal_text(event.quantity),
         "gross_price_fen": "0",
@@ -73,10 +72,6 @@ def tax_event(fact, term_values, event):
     }
     if suffix == "income":
         result.pop("quantity")
-    if "financial_instrument_reference" in term_values:
-        result["financial_instrument_reference"] = deepcopy(
-            term_values["financial_instrument_reference"]
-        )
     if suffix == "acquire":
         result.update(
             gross_price_fen=data["purchase_price_fen"],

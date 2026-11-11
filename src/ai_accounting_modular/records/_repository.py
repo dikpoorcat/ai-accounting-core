@@ -6,6 +6,7 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     canonical_json,
     content_digest,
+    conversion_issue_source_ids,
     loads_json,
 )
 from ai_accounting_modular.storage.public import RepositorySession
@@ -312,14 +313,18 @@ class RecordsRepository:
         )
         return dict(row) if row else None
 
-    def issues(self, scope=None):
+    def issues(self, scope=None, *, investment_conversion=False):
         where, args = ("", ()) if scope is None else (" WHERE scope_key=?", (scope,))
         rows = self._session.fetchall(
             "SELECT * FROM current_issue" + where + " ORDER BY scope_key,issue_id", args
         )
-        return self._issues(rows)
+        return (
+            self._issues(rows, investment_conversion=True)
+            if investment_conversion
+            else self._issues(rows)
+        )
 
-    def _issues(self, rows):
+    def _issues(self, rows, *, investment_conversion=False):
         uses = self.uses_many("issue", [row["issue_id"] for row in rows])
         result = []
         for row in rows:
@@ -341,7 +346,10 @@ class RecordsRepository:
             if (
                 content_digest(issue) != row["content_digest"]
                 or row["known_schema_key"] != issue.get("known_fact", {}).get("kind")
-                or tuple(uses[row["issue_id"]]) != issue_source_ids(issue)
+                or tuple(uses[row["issue_id"]])
+                != (conversion_issue_source_ids if investment_conversion else issue_source_ids)(
+                    issue
+                )
             ):
                 raise ContractError("storage_corrupt", "当前待办正文、来源或摘要不一致。")
             result.append(issue)

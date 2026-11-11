@@ -11,13 +11,14 @@ from ai_accounting_modular.contracts.public import ContractError, PageQuery
 from ai_accounting_modular.ledger.public import create_ledger
 from tests.modular.domains.financing._support import assemble, request
 from tests.modular.domains.taxes._fixtures import evidence
-from tests.modular.domains.taxes.test_investment_tax_application import inputs
+from tests.modular.domains.taxes.test_investment_tax_application import inputs, qualification
 
 
 @pytest.fixture
 def taxed_profit(tmp_path):
     app, company = assemble(tmp_path, taxes=True)
-    body = request(company, *inputs())
+    facts = inputs()
+    body = request(company, *facts, qualification(facts[0]))
     body["sources"].append(evidence())
     actual = app.accounting_apply(body)
     assert actual["completion"] == "complete", actual

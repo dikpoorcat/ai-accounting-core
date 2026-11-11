@@ -9,6 +9,7 @@ from ai_accounting_modular.contracts.public import YearMonth
 from . import _government_bond
 from ._common import adopt_source, amount, issue, missing_investment_input, reject, total
 from ._financial_transfer import BASIS_KIND, SLOT_PREFIX, bases, edge, slots
+from ._investment_qualification import qualify
 from ._investment_tax_math import event_key, income_character, interest_gross, taxable_interest
 from ._investment_units import rounded_fraction
 
@@ -48,6 +49,8 @@ def _held_twelve_months(view, holding):
 def exemption(view):
     event = view.event
     maturity_income = event.get("maturity_income")
+    if "tax_facts" not in event:
+        return None, 0
     if event["tax_facts"]["instrument_type"] == "government_bond":
         result = _government_bond.realization(view)
         return (None, 0) if result is None else ("government_bond_interest", result[0])
@@ -190,7 +193,11 @@ def quarterly_reliefs(fact, context, plan, start, end):
         return 0
     eligible = []
     government_amounts = {}
-    for view in context.investment_tax_events(start, end, kinds=RELIEF_EVENT_KINDS):
+    raw = context.investment_economic_events(start, end, kinds=RELIEF_EVENT_KINDS)
+    views, _ = qualify(fact, context, plan, raw, purpose="income_tax")
+    for view in views:
+        if "tax_facts" not in view.event:
+            continue
         if view.event["tax_facts"]["instrument_type"] == "government_bond":
             result = _government_bond.realization(view)
             if result is None:

@@ -42,6 +42,8 @@ from ._cooperation_plans import contract as cooperation_contract
 from ._cooperation_position import position_plan
 from ._funds import purchase, redemption
 from ._interest import interest, validate_interest
+from ._investment_accounting import investment_accounting_terms as investment_accounting_terms
+from ._investment_accounting import investment_economic_events as investment_economic_events
 from ._loans import contract, drawdown, owner_funding
 from ._read_cooperation import positions as cooperation_positions
 from ._read_funds import activity as fund_activity
@@ -177,6 +179,23 @@ class _FactOwner:
 
     def export_current(self, ids, read_context: ReadContext) -> tuple[Fact, ...]:
         return read_context.repository("domains.financing").get(self.family, ids)
+
+    def export_for_investment_conversion(self, ids, read_context):
+        """Explicit offline validation of the supported original terms shape."""
+        return read_context.repository("domains.financing").get(
+            self.family, ids, investment_conversion=True
+        )
+
+    def convert_current_terms(self, before, after, unit):
+        """Replace only a proved equivalent current representation, never adoption."""
+        from ai_accounting_modular.contracts.public import converted_investment_fact
+
+        if converted_investment_fact(before) != after:
+            fail("投资条款转换不能改变原会计事实。", "invalid_input")
+        current = self.export_for_investment_conversion([before["business_id"]], unit)
+        if current != (before,):
+            fail("待转换的原投资条款已经变化。", "conflict")
+        unit.repository("domains.financing").save(after, self.family)
 
     def query_current(self, query: BusinessQuery, read_context: ReadContext) -> tuple[Fact, ...]:
         validate_contract("core.schema.json", "BusinessQuery", query)

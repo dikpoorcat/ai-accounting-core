@@ -168,6 +168,7 @@ _KINDS = {
     "investment.holding_change": ("investment_holding_change", "投资持有安排变更"),
     "investment.market_estimate": ("investment_market_estimate", "投资市场估值"),
     "investment.position": ("investment_position", "投资持仓"),
+    "taxes.investment_basis": ("investment_tax_basis", "投资税务依据"),
     "taxes.financial_transfer_basis": ("financial_transfer_vat", "金融商品转让税额核算"),
     "taxes.partnership_allocation": ("partnership_allocation", "合伙投资所得分配依据"),
     "people.remuneration_tax": ("withholding", "个人代扣"),

@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 
-from ._common import add_months, assets_in, missing, reject, result_for
+from ._common import add_months, assets_in, issue, reject, result_for
 
 
 def opening_geometry(fact):
@@ -31,7 +31,14 @@ def unique_origin(fact, context, asset_id):
     if len(origins) > 1:
         reject("同一资产只能有一份期初成本或正常取得成本，不能重复承接。")
     if not origins:
-        missing(fact, "/data/asset_id", "资产缺少公司取得或期初卡片的真实依据。")
+        message = (
+            "本项资产尚无已登记的公司取得或期初成本来源，不能确定本次处置成本；"
+            "先核查已有资料并办理对应上游，未登记不等于现实资料缺失。"
+        )
+        reject(
+            message,
+            fact_issues=[issue(fact, "/data/asset_id", message, code="upstream_not_registered")],
+        )
     return origins[0]
 
 

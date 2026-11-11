@@ -13,8 +13,8 @@ from ._common import (
     base_plan,
     consume,
     cost_definition,
+    issue,
     line,
-    missing,
     reject,
     result_for,
     source,
@@ -31,7 +31,14 @@ def one_related(fact, context, asset_id, kind, *, required=True):
         reject("同一资产不能有多个有效的取得、启用或处置事实。")
     if not matches:
         if required:
-            missing(fact, "/data", "资产缺少已登记的公司取得或启用事实。")
+            message = (
+                "本项资产尚无已登记的取得或启用来源，当前处理不能采用成本卡片；"
+                "先查已有资产资料并办理上游，未登记不等于现实资料缺失。"
+            )
+            reject(
+                message,
+                fact_issues=[issue(fact, "/", message, code="upstream_not_registered")],
+            )
         return None
     return matches[0]
 

@@ -47,9 +47,6 @@ def populate(book):
         agreement = terms(product_type=category, measurement=method, schedule=schedule)
         identifier = PRODUCT if category == "money_fund" else str(uuid4())
         agreement["data"]["product_id"] = identifier
-        if category == "bank_wealth":
-            agreement["data"]["legal_form"] = "financial_contract"
-            agreement["data"]["tax_facts"]["instrument_type"] = "bank_wealth"
         if category != "money_fund":
             objects.append(
                 {

@@ -125,6 +125,7 @@ def test_related_facts_reuses_the_generated_dependency_enum():
         "producer_id",
         "relation_kind",
         "producer_kind",
+        "kinds",
         "period_from",
         "period_to",
     ]

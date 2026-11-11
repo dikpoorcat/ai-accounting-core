@@ -40,6 +40,8 @@ from . import (
     _source_queries,
     _sources,
 )
+from ._investment_conversion import open_bundle as open_investment_conversion_bundle
+from ._investment_conversion import write_bundle as write_investment_conversion_bundle
 from ._repository import RecordsRepository
 from ._standard import copy_standard_bundle, open_standard_bundle
 from ._types import (
@@ -64,6 +66,8 @@ from ._types import (
 )
 
 __all__ = [
+    "open_investment_conversion_bundle",
+    "write_investment_conversion_bundle",
     "BackupMaterials",
     "CloseMaterials",
     "DocumentSnapshot",
@@ -562,6 +566,7 @@ class Records:
         *,
         required_source_ids=(),
         frozen_close_source_uses=(),
+        investment_conversion=False,
     ) -> RecordsSnapshot:
         """Prove saved documents; FactAnalysis inputs reuse their exact strict analysis."""
         root = self._root(read_context)
@@ -575,6 +580,7 @@ class Records:
                 root,
                 required_source_ids,
                 frozen_close_source_uses,
+                investment_conversion,
             )
 
     @contextmanager

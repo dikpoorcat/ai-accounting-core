@@ -115,16 +115,16 @@ def test_fixed_identification_cannot_be_overridden_per_exit():
 
 
 @pytest.mark.parametrize(
-    ("legal_form", "character"),
+    ("right_type", "character"),
     [
         ("financial_contract", "dividend"),
         ("company_equity", "fund_distribution"),
-        ("securities_fund", "interest"),
+        ("fund_units", "interest"),
     ],
 )
-def test_income_name_cannot_override_legal_rights(legal_form, character):
+def test_income_name_cannot_override_legal_rights(right_type, character):
     agreement = terms()
-    agreement["data"]["legal_form"] = legal_form
+    agreement["data"]["right_type"] = right_type
     income = fact(
         "investment.income",
         {

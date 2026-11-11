@@ -255,6 +255,25 @@ def test_activation_rejects_false_or_impossible_cards(change):
         evaluate(enabled, acquired)
 
 
+@pytest.mark.parametrize("case_id,field", [("B21", "/"), ("B22", "/data/asset_id")])
+def test_unregistered_asset_origin_is_an_upstream_problem_not_new_owner_information(case_id, field):
+    current, acquired = case(case_id), case("B20")
+    context = Context(current, acquired)
+    context.facts.pop(acquired["business_id"])
+    with pytest.raises(ContractError) as failed:
+        create_assets().evaluate_slot(current["business_id"], "main", context)
+    assert failed.value.code == "dependency_conflict"
+    problem = failed.value.fact_issues[0]
+    validate_contract("core.schema.json", "FactIssue", problem)
+    assert problem["business_id"] == current["business_id"]
+    assert problem["field"] == field
+    assert problem["code"] == "upstream_not_registered"
+    assert problem["reusable_sources"] == [{"source_id": SOURCE}]
+    context.facts[acquired["business_id"]] = acquired
+    result = create_assets().evaluate_slot(current["business_id"], "main", context)
+    validate_contract("business-facts.schema.json", "PostingPlan", result)
+
+
 def test_half_up_card_rejects_early_exhaustion_and_uses_tail():
     acquired, enabled = case("B20"), case("B21")
     acquired["data"]["asset"]["cost_fen"] = "10001"

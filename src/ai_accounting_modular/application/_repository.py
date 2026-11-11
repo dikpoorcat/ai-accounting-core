@@ -287,15 +287,39 @@ class ApplicationRepository:
         )
 
     def related_ids(
-        self, producer_kind, producer_ids, relation_kind, *, period_from=None, period_to=None
+        self,
+        producer_kind,
+        producer_ids,
+        relation_kind,
+        *,
+        kinds=None,
+        period_from=None,
+        period_to=None,
     ):
-        sql = (
-            "SELECT DISTINCT d.consumer_business_id FROM current_relation d "
-            "JOIN business_head h ON h.business_id=d.consumer_business_id "
-            "WHERE d.producer_kind=? AND d.producer_id IN (SELECT value FROM json_each(?)) "
-            "AND d.relation_kind=? AND h.state='active'"
-        )
-        parameters = [producer_kind, canonical_json(sorted(producer_ids)), relation_kind]
+        if not producer_ids or kinds is not None and not kinds:
+            return ()
+        producers = canonical_json(sorted(producer_ids))
+        if kinds is None:
+            sql = (
+                "SELECT DISTINCT d.consumer_business_id FROM current_relation d "
+                "JOIN business_head h ON h.business_id=d.consumer_business_id "
+                "WHERE d.producer_kind=? AND d.producer_id IN (SELECT value FROM json_each(?)) "
+                "AND d.relation_kind=? AND h.state='active'"
+            )
+            parameters = [producer_kind, producers, relation_kind]
+            order = "d.consumer_business_id"
+        else:
+            # Start with the requested kinds' thin heads. Joining from a popular
+            # producer would walk all its unrelated historical reference members.
+            sql = (
+                "SELECT h.business_id AS consumer_business_id FROM business_head h "
+                "WHERE h.state='active' AND h.kind IN (SELECT value FROM json_each(?)) "
+                "AND EXISTS (SELECT 1 FROM current_relation d "
+                "WHERE d.consumer_business_id=h.business_id AND d.producer_kind=? "
+                "AND d.producer_id IN (SELECT value FROM json_each(?)) AND d.relation_kind=?)"
+            )
+            parameters = [canonical_json(sorted(kinds)), producer_kind, producers, relation_kind]
+            order = "h.business_id"
         for period, comparison in ((period_from, ">="), (period_to, "<=")):
             if period is not None:
                 sql += " AND h.period" + comparison + "?"
@@ -303,7 +327,7 @@ class ApplicationRepository:
         return tuple(
             row["consumer_business_id"]
             for row in self._session.fetchall(
-                sql + " ORDER BY d.consumer_business_id", tuple(parameters)
+                sql + " ORDER BY " + order, tuple(parameters)
             )
         )
 
@@ -384,6 +408,16 @@ class ApplicationRepository:
             + ") ON CONFLICT(business_id) DO UPDATE SET "
             + ",".join(f"{key}=excluded.{key}" for key in columns if key != "business_id"),
             tuple(row.values()),
+        )
+
+    def convert_fact_digest(self, business_id, before, after):
+        """Equivalent offline representation only: preserve fact sequence and identity."""
+        row = self.heads([business_id]).get(business_id)
+        if row is None or row["state"] != "active" or row["current_digest"] != before:
+            raise ContractError("conflict", "待转换的当前业务摘要已经变化。")
+        self._session.execute(
+            "UPDATE business_head SET current_digest=? WHERE business_id=? AND current_digest=?",
+            (after, business_id, before),
         )
 
     def replace_result_slots(self, responsibilities):

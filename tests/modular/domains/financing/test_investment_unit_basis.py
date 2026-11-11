@@ -53,7 +53,7 @@ def test_sourced_action_adopts_precise_existing_results_without_inventory_or_inc
     apply_facts(app, company, basis)
     body = result(app, company, basis)
     assert body["vouchers"] == []
-    assert "tax_event" not in body["target"]["values"]
+    assert "economic_event" not in body["target"]["values"]
     assert body["target"]["values"]["members"] == body["basis"]["source_results"]
     assert {row["business_id"] for row in body["target"]["values"]["members"]} == {
         item["business_id"] for item in changed

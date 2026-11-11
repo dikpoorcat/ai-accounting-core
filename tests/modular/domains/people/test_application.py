@@ -193,6 +193,30 @@ def test_actual_assessment_change_recalculates_dependent_wage_without_second_cos
     assert len(state["results"][0]["vouchers"]) == 2
 
 
+def test_shortfall_arrangement_is_required_only_when_a_real_wage_change_needs_it(assembled):
+    app, company_id = assembled
+    employment, wage = case("B14"), case("B17A")
+    employment["data"].pop("contribution_shortfall")
+    saved = app.accounting_apply(request(company_id, employment, case("B16"), wage))
+    assert saved["completion"] == "complete", saved
+    before = get(app, company_id, EMPLOYMENT, wage["business_id"])
+    wage["data"]["gross_fen"] = "100000"
+    rejected = app.accounting_apply(replacement(company_id, wage))
+    assert rejected["error"] == "needs_information", rejected
+    assert rejected["changes"] == "none" and rejected["completion"] == "not_saved"
+    assert rejected["fact_issues"][0]["business_id"] == EMPLOYMENT
+    assert rejected["fact_issues"][0]["field"] == "/data/contribution_shortfall"
+    assert get(app, company_id, EMPLOYMENT, wage["business_id"]) == before
+    employment["data"]["contribution_shortfall"] = "employer_borne"
+    command = replacement(company_id, wage)
+    command["mutations"].append({"op": "replace", "expected_seq": 1, "fact": employment})
+    accepted = app.accounting_apply(command)
+    assert accepted["completion"] == "complete", accepted
+    current = get(app, company_id, wage["business_id"])["businesses"][0]["results"][0]
+    assert current["target"]["values"]["net_fen"] == "0"
+    assert current["target"]["values"]["cost_fen"] == "420000"
+
+
 def test_unused_estimation_base_change_keeps_adopted_actual_wage_and_voucher(assembled):
     app, company_id = assembled
     wage = case("B17A")

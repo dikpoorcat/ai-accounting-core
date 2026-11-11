@@ -75,6 +75,9 @@ def test_work_scope_precedes_checks_without_disabling_cross_period_dependencies(
     assert "null只表示尚未选择，不意味着必须问老板" in "".join(scope["evidence"])
     assert "无关月份独立事项保留原范围" in scope["if_unmet"]
     assert "跨月依赖只核当前动作需要的部分，不改变已选月份" in scope["if_unmet"]
+    assert "不为了少问缩小交付" in scope["condition"]
+    assert "字段必填或专业上可能有关不证明必须问老板" in "".join(scope["evidence"])
+    assert "先判断某项信息是否影响当前结果，再核对既有来源" in scope["if_unmet"]
     shared = next(item for item in rules["common_checks"] if item["id"] == "common.unfinished_work")
     assert "本轮工作范围内所有未完成项" in shared["condition"]
     assert "未答复或选择等待时不提前推进" in shared["condition"]

@@ -137,8 +137,8 @@ class BackupVerifier:
         self._snapshot = SnapshotVerifier(identity, ledger, records, DomainRegistry(domains))
         self._repositories = tuple(repositories)
 
-    def verify_snapshot(self, read_context):
-        return self._snapshot.verify(read_context)
+    def verify_snapshot(self, read_context, *, investment_conversion=False):
+        return self._snapshot.verify(read_context, investment_conversion=investment_conversion)
 
     def __call__(self, stream):
         with self.open(stream) as verified:
@@ -173,7 +173,7 @@ class BackupVerifier:
         ) as error:
             raise ContractError("backup_corrupt", "备份不是可完整读取的有效ZIP文件。") from error
 
-    def verify_extracted(self, root, manifest):
+    def verify_extracted(self, root, manifest, *, investment_conversion=False):
         """Fully verify the actual extracted or copied target against its manifest."""
         verify_structure_contract(root)
         database = beneath(root, DATABASE_PATH)
@@ -195,7 +195,7 @@ class BackupVerifier:
         ) as read:
             if _documents.company_identity(read) != manifest["company_identity"]:
                 _bad("备份数据库的公司信息或工作末月与清单不一致。")
-            records = self.verify_snapshot(read)
+            records = self.verify_snapshot(read, investment_conversion=investment_conversion)
         if records.document_set_id != manifest["document_set_id"]:
             _bad("备份标准业务文档集合与数据库或清单不一致。")
         expected = {

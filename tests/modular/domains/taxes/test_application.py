@@ -873,7 +873,9 @@ def test_midyear_real_application_does_not_invent_prior_cumulative_income_tax(as
     current = confirmed_income("income-lower", "2026-06", "8000")
     result = app.accounting_apply(request(company_id, current))
     assert result["completion"] == "not_saved" and result["error"] == "needs_information", result
-    assert result["fact_issues"][0]["field"] == "/data/income_tax_carry"
+    assert result["fact_issues"][0]["business_id"] == current["business_id"]
+    assert result["fact_issues"][0]["field"] == "/"
+    assert "报表接续资料" in result["fact_issues"][0]["message"]
     absent = app.accounting_get(
         {"company_id": company_id, "business_ids": [current["business_id"]], "include": ["facts"]}
     )

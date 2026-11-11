@@ -5,9 +5,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal, localcontext
 
-from ai_accounting_modular.contracts.public import format_fen, parse_fen
+from ai_accounting_modular.contracts.public import ContractError, format_fen, parse_fen
 
-from ._common import checked, missing, plan_for, referenced, reject, total, use_result
+from ._common import checked, missing, plan_for, problem, referenced, reject, total, use_result
 
 KINDS = ("social_insurance", "housing_fund")
 FIELDS = (
@@ -155,20 +155,32 @@ def _policy_covers_month(policy, period):
     )
 
 
+def _basis_fact(result):
+    """Locate a missing fact on the adopted producer, not on its wage consumer."""
+    return {
+        "business_id": result.source["business_id"],
+        "evidence_ids": list(
+            dict.fromkeys(item["source_id"] for item in result.basis["source_locations"])
+        ),
+    }
+
+
+def _invalid_basis(fact, field, message, *, code):
+    raise ContractError(
+        "invalid_input",
+        message,
+        fact_issues=[
+            problem(fact, field, message, code=code, meaning="本次缴费核算路线及采用依据")
+        ],
+    )
+
+
 def _estimate(rule, employment_result):
     employment_data = employment_result.basis["input"]
     field = rule["base_kind"] + "_base_fen"
     if field not in employment_data:
-        source_fact = {
-            "business_id": employment_result.source["business_id"],
-            "evidence_ids": list(
-                dict.fromkeys(
-                    item["source_id"] for item in employment_result.basis["source_locations"]
-                )
-            ),
-        }
         missing(
-            source_fact,
+            _basis_fact(employment_result),
             "/data/" + field,
             f"所用档案缺少{field}，不能把毛工资当缴费基数。",
             precision=("fen",),
@@ -192,10 +204,10 @@ def _estimate(rule, employment_result):
     return ContributionLine(rule["base_kind"], employee, employer)
 
 
-def _actual_items(fact, context, plan):
+def _actual_result(fact, context, plan):
     data = fact["data"]
     if "contribution_actual_id" not in data:
-        return {}
+        return None
     result = referenced(
         fact,
         context,
@@ -208,7 +220,7 @@ def _actual_items(fact, context, plan):
         reject("实际申报或核定资料必须属于同员工同工资月。")
     check_actual({"data": actual_data})
     use_result(plan, result)
-    return {_key(item): item for item in _ordered(actual_data["items"])}
+    return result
 
 
 def _adopt_employment(plan, result, estimated_kinds):
@@ -254,8 +266,13 @@ def wage_contributions(fact, context, plan, gross, tax):
     ):
         reject("用工档案不覆盖工资所属月。")
     use_result(plan, employment_result)
-    participating = {kind for kind in KINDS if employment_data[kind + "_participating"]}
-    actual_items = _actual_items(fact, context, plan)
+    participating = tuple(kind for kind in KINDS if employment_data[kind + "_participating"])
+    actual_result = _actual_result(fact, context, plan)
+    actual_items = (
+        {_key(item): item for item in _ordered(actual_result.basis["input"]["items"])}
+        if actual_result is not None
+        else {}
+    )
     if any(
         item["base_kind"] not in participating
         and (parse_fen(item["employee_fen"]) or parse_fen(item["employer_fen"]))
@@ -266,7 +283,12 @@ def wage_contributions(fact, context, plan, gross, tax):
         _adopt_employment(plan, employment_result, set())
         return ContributionAmounts()
     if "contribution_basis" not in data:
-        missing(fact, "/data/contribution_basis", "参与缴费时必须明确采用实际额还是允许政策估算。")
+        _invalid_basis(
+            fact,
+            "/data/contribution_basis",
+            "本次工资尚未选择实际金额或政策估算路线；先核对已有实际结果、政策及适用安排后补齐提交。",
+            code="calculation_route_not_selected",
+        )
 
     policy_data, policy_result = None, None
     if "contribution_policy_id" in data:
@@ -287,10 +309,22 @@ def wage_contributions(fact, context, plan, gross, tax):
         reject("实际申报项目与所引用政策的项目不对应。")
     for kind in participating:
         if not any(item["base_kind"] == kind for item in (*rules, *actual_items.values())):
-            missing(
-                fact,
-                "/data/contribution_actual_id",
-                "参与类别缺少完整实际申报项目或有效政策，不能把缺项当零。",
+            category = "社保" if kind == "social_insurance" else "公积金"
+            if data["contribution_basis"] == "actual_required":
+                missing(
+                    _basis_fact(actual_result),
+                    "/data/items",
+                    f"所采用的实际申报或核定资料缺少本员工本月{category}项目及金额，不能把缺项当零。",
+                    precision=("fen",),
+                )
+            _invalid_basis(
+                _basis_fact(policy_result) if policy_result is not None else fact,
+                "/data/items" if policy_result is not None else "/data/contribution_policy_id",
+                f"本次政策估算路线的{category}项目尚无实际金额覆盖，也没有对应的适用政策；"
+                "先核查已有实际结果及政策，修正采用依据。",
+                code="incompatible_policy_items"
+                if policy_result is not None
+                else "reference_missing",
             )
 
     lines, applied_rules, estimated_kinds = [], [], set()
@@ -311,16 +345,18 @@ def wage_contributions(fact, context, plan, gross, tax):
         else:
             if item["enabled"] and data["contribution_basis"] == "actual_required":
                 missing(
-                    fact,
-                    "/data/contribution_actual_id",
-                    "要求实际金额的参与项目仍缺实际申报或核定依据；等待反馈不能填成零额。",
+                    _basis_fact(actual_result),
+                    "/data/items",
+                    f"所采用的实际申报或核定资料缺少项目{item['code']}的金额；等待反馈不能填成零额。",
+                    precision=("fen",),
                 )
             if not _policy_covers_month(policy_data["policy"], fact["period"]):
-                missing(
+                _invalid_basis(
                     fact,
                     "/data/contribution_policy_id",
-                    "估算政策须覆盖工资所属整月；月中变更不能只凭管理日期选择。",
-                    precision=("month",),
+                    "所选估算政策没有覆盖工资所属整月；先核对政策引用及实际生效范围，"
+                    "月中变更不能只凭管理日期选择。",
+                    code="incompatible_policy_period",
                 )
             applied_rules.append(deepcopy(item))
             if item["enabled"]:
@@ -348,8 +384,18 @@ def wage_contributions(fact, context, plan, gross, tax):
     _adopt_actuals(plan, fact, actual_items, participating)
     personal = total(item.employee for item in lines)
     available = gross - tax
-    if personal > available and employment_data["contribution_shortfall"] == "reject":
-        reject("个人缴费及已明确个税超过毛工资，需明确处理差额。")
+    if personal > available:
+        treatment = employment_data.get("contribution_shortfall")
+        if treatment is None:
+            missing(
+                _basis_fact(employment_result),
+                "/data/contribution_shortfall",
+                "个人缴费超过本次可扣工资，差额承担方式会改变工资及公司费用；"
+                "先查已有用工安排，确实未明确时再核实，不能默认由单位承担。",
+                precision=("source",),
+            )
+        if treatment == "reject":
+            reject("个人缴费及已明确个税超过毛工资，需明确处理差额。")
     budget = min(personal, available)
     adjusted = []
     for item in lines:

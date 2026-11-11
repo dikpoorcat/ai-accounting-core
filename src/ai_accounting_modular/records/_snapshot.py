@@ -7,7 +7,10 @@ from ai_accounting_modular.contracts.public import (
     FactAnalysis,
     analyze_fact,
     canonical_json,
+    content_digest,
+    conversion_issue_source_ids,
     validate_contract,
+    validate_conversion_envelope,
 )
 
 from . import _documents, _sources
@@ -36,7 +39,7 @@ def _known_facts(facts):
     return known
 
 
-def _source_uses(known_facts, objects, issues, notes):
+def _source_uses(known_facts, objects, issues, notes, *, investment_conversion=False):
     expected = {
         ("business", business_id, source_id)
         for business_id, (_, source_ids) in known_facts.items()
@@ -44,7 +47,12 @@ def _source_uses(known_facts, objects, issues, notes):
     }
     for kind, values, key, extract in (
         ("object", objects, "object_id", lambda value: value.get("evidence_ids", ())),
-        ("issue", issues, "issue_id", _sources.issue_source_ids),
+        (
+            "issue",
+            issues,
+            "issue_id",
+            conversion_issue_source_ids if investment_conversion else _sources.issue_source_ids,
+        ),
         ("note", notes, "scope", lambda value: value["evidence_ids"]),
     ):
         for value in values:
@@ -61,6 +69,7 @@ def verify(
     root,
     required_source_ids,
     frozen_close_source_uses,
+    investment_conversion=False,
 ):
     objects = tuple(objects)
     repository = read.repository("records")
@@ -74,7 +83,11 @@ def verify(
     ):
         _bad("标准文档确认入口或范围版本不属于已保存的账务快照。")
     known_facts = _known_facts(facts)
-    bundle, parts = _read_standard_bundle(root / "standard/current.json", known_facts=known_facts)
+    bundle, parts = _read_standard_bundle(
+        root / "standard/current.json",
+        known_facts=known_facts,
+        investment_conversion=investment_conversion,
+    )
     manifest = bundle.manifest
     if bundle.set_id != current["published_set_id"] or bundle.company_identity != company_identity:
         _bad("标准文档的公司信息、工作月份或确认集合与数据库不一致。")
@@ -90,18 +103,29 @@ def verify(
             len(data),
         ) or indexed_targets[part["key"]]["current_digest"] != shard["sha256"]:
             _bad("当前标准分片的原字节必须是完整事实的规范内容。")
-    issues = repository.issues()
+    issues = repository.issues(investment_conversion=investment_conversion)
     issue_scopes = set(repository.issue_scopes())
     if {issue["scope"] for issue in issues} - issue_scopes:
         _bad("当前待办缺少完整范围身份及集合版本。")
     for scope in sorted(issue_scopes):
-        records.current_issues(scope, read)
+        if investment_conversion:
+            scoped = [issue for issue in issues if issue["scope"] == scope]
+            scope_row = repository.issue_scope(scope)
+            validate_conversion_envelope(
+                "IssueScope", {"scope": scope, "head": scope_row["head"], "issues": scoped}
+            )
+            if scope_row["content_digest"] != content_digest(scoped):
+                _bad("当前待办范围与完整集合的摘要不一致。")
+        else:
+            records.current_issues(scope, read)
     note_rows = repository.notes()
     note_uses = repository.uses_many("note", tuple(note_rows))
     notes = tuple(
         note_current(row, repository, note_uses[scope]) for scope, row in note_rows.items()
     )
-    expected_uses = _source_uses(known_facts, objects, issues, notes)
+    expected_uses = _source_uses(
+        known_facts, objects, issues, notes, investment_conversion=investment_conversion
+    )
     frozen_uses = set()
     for period, source_id in frozen_close_source_uses:
         validate_contract("core.schema.json", "Month", period)

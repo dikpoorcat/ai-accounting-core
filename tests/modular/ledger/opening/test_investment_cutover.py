@@ -10,33 +10,24 @@ from ._support import PARTY, PERSON, SOURCE, assemble, fact, get, member, openin
 
 
 def investment_terms(product, category, method, *, current=False, maturity="2028-12-31"):
-    legal = {
+    right = {
         "equity": "company_equity",
         "bond": "direct_bond",
         "bank_wealth": "financial_contract",
-    }.get(category, "securities_fund")
-    tax_type = {
-        "equity": "unlisted_equity",
-        "bond": "corporate_bond",
-        "bank_wealth": "bank_wealth",
-    }.get(category, "securities_fund")
+    }.get(category, "fund_units")
     data = {
         "product_id": product,
         "product_type": category,
-        "legal_form": legal,
+        "right_type": right,
         "measurement": method,
         "quantity_unit": "nominal_fen" if category == "bond" else "units",
         "cost_method": "fifo",
         "holding_arrangement": "current" if current else "noncurrent",
         "terms_source": {"source_id": SOURCE, "location": "合成期初投资条款"},
-        "tax_facts": {
-            "instrument_type": tax_type,
-            "source": {"source_id": SOURCE, "location": "合成税务性质"},
-        },
     }
     if method == "long_bond_cost":
         data["coupon_schedule"] = [{"payment_on": maturity, "coupon_rate": "0.1"}]
-    if legal in {"direct_bond", "company_equity", "partnership_interest"}:
+    if right in {"direct_bond", "company_equity", "partnership_interest"}:
         data["initial_holding_intent"] = (
             "short_term" if method == "short_term_cost" else "long_term"
         )
@@ -129,7 +120,7 @@ def test_all_financial_categories_cut_over_without_historical_cash_or_income(tmp
     assert {(q["tax_buy_basis_fen"], q["eit_tax_basis_fen"], q["carrying_fen"]) for q in lots} == {
         ("800", "900", "1000")
     }
-    assert all("tax_facts" in q for q in lots)
+    assert all("tax_facts" not in q and "right_type" in q for q in lots)
     assert [q["acquisition_sequence"] for q in lots if "acquisition_sequence" in q] == [17]
     snapshot = report(app, company)
     assert {row: value(snapshot, "balance_sheet", row) for row in (2, 14, 16, 17, 28, 30)} == {

@@ -60,6 +60,9 @@ def missing_investment_input(
     meaning="投资税务核算所需的现实依据",
 ):
     """Attribute an actual missing investment fact to its adopted source."""
+    if field.startswith(("/data/tax_facts", "/data/financial_instrument_reference")):
+        business_id = event.get("_tax_basis_id", business_id)
+    source = event.get("tax_facts", {}).get("source")
     raise ContractError(
         "needs_information",
         message,
@@ -71,9 +74,26 @@ def missing_investment_input(
                 "meaning": meaning,
                 "message": message,
                 "allowed_precision": list(precision),
-                "reusable_sources": [event["tax_facts"]["source"]],
+                "reusable_sources": [source] if source is not None else [],
                 "blocking_scope": "business",
             }
+        ],
+    )
+
+
+def investment_result_issue(view, message, *, unsupported=False):
+    """A formal-source problem is not an owner's missing input field."""
+    reject(
+        message,
+        "unsupported_business" if unsupported else "dependency_conflict",
+        fact_issues=[
+            issue(
+                {"business_id": view.source["business_id"], "evidence_ids": []},
+                "/",
+                message,
+                code="unsupported_calculation" if unsupported else "investment_source_conflict",
+                meaning="已采用投资结果与独立税务成本的接续",
+            )
         ],
     )
 

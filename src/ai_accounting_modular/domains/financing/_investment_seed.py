@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import YearMonth
 
+from ._investment_accounting import investment_accounting_terms
 from ._investment_events import POSITION_KINDS
 from ._investment_rules import resolved_terms
 
@@ -104,7 +105,9 @@ def choose_seed(terms_fact, context, changes):
     ):
         return None
     adopted = context.get_result(terms_id, "main")
-    if adopted is None or resolved_terms(terms_fact["data"]) != adopted.target["values"]:
+    if adopted is None or resolved_terms(terms_fact["data"]) != investment_accounting_terms(
+        adopted.target["values"]
+    ):
         return None
     if not any(source == adopted.source for source in previous.basis["source_results"]):
         return None

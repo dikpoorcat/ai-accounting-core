@@ -45,11 +45,12 @@ def plan(fact, context):
     others = {}
     ids = tuple(dict.fromkeys(ref["business_id"] for ref in data["unit_change_sources"]))
     for offset in range(0, len(ids), 500):
-        for other in context.related_facts_many(ids[offset : offset + 500], "reference"):
+        for other in context.related_facts_many(
+            ids[offset : offset + 500], "reference", kinds=(fact["kind"],)
+        ):
             others[other["business_id"]] = other
     if any(
-        other["kind"] == fact["kind"]
-        and other["business_id"] != fact["business_id"]
+        other["business_id"] != fact["business_id"]
         and seen.intersection(reference_key(ref) for ref in other["data"]["unit_change_sources"])
         for other in others.values()
     ):

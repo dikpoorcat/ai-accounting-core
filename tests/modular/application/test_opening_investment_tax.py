@@ -6,6 +6,7 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError, validate_contract
 from tests.modular.domains.taxes._fixtures import policy, surtax
+from tests.modular.domains.taxes.test_investment_tax_application import qualification
 from tests.modular.ledger.opening._support import FUND, PARTY, SOURCE, fact, get, opening, request
 from tests.modular.ledger.opening.test_investment_cutover import equity, holding, investment_terms
 
@@ -31,8 +32,11 @@ def seed(case, *, unknown=None):
             "vat_policy_ids": [vat_policy["business_id"]],
         },
     )
+    tax_basis = qualification(terms)
+    tax_basis["evidence_ids"] = [SOURCE]
+    tax_basis["data"]["tax_facts"]["source"] = {"source_id": SOURCE}
     response = case.app.accounting_apply(
-        request(case.company, terms, package, vat_policy, surtax_policy, basis)
+        request(case.company, terms, tax_basis, package, vat_policy, surtax_policy, basis)
     )
     assert response.get("completion") == "complete", response
     return terms, member, package, basis

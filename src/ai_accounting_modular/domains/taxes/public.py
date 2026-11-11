@@ -16,7 +16,7 @@ from ai_accounting_modular.contracts.public import (
 )
 from ai_accounting_modular.storage.public import RepositoryFactory, module_schema
 
-from . import _financial_transfer, _investment_income, _partnership
+from . import _financial_transfer, _investment_basis, _investment_income, _partnership
 from ._actual import actual, declarations
 from ._common import interval, reject
 from ._credits import credit
@@ -48,6 +48,7 @@ _CALCULATORS = {
     "taxes.assessment": None,
     _financial_transfer.BASIS_KIND: _financial_transfer.adoption,
     _partnership.KIND: _partnership.allocation,
+    _investment_basis.KIND: _investment_basis.adoption,
 }
 
 
@@ -110,7 +111,9 @@ def _scope(fact, kind, start="0001-01", end="9999-12"):
 def _direct_dependencies(fact):
     data, kind = fact["data"], fact["kind"]
     edges = []
-    if kind == _financial_transfer.BASIS_KIND:
+    if kind == _investment_basis.KIND:
+        edges.append(_edge(fact, data["terms_id"], relation="reference"))
+    elif kind == _financial_transfer.BASIS_KIND:
         edges.extend(
             _edge(fact, identity, relation="policy") for identity in data["vat_policy_ids"]
         )
@@ -286,6 +289,8 @@ def _dependencies(fact, context, actuals=()):
 
 def _natural_key(fact):
     data, kind = fact["data"], fact["kind"]
+    if kind == _investment_basis.KIND:
+        return f"taxes:investment_basis:{data['terms_id']}:{data['applicable_from']}"
     if kind == _financial_transfer.BASIS_KIND:
         return "taxes:financial_transfer_basis:" + data["elected_on"][:7]
     if kind == _partnership.KIND:
@@ -416,6 +421,13 @@ class Taxes:
         validate_contract("business-facts.schema.json", "ChangePlan", plan)
         if plan["domain"] != "taxes" or plan["issues"]:
             reject("税费不能核验其他领域或仍有问题的候选。", "invalid_input")
+        terms = {
+            row["fact"]["data"]["terms_id"]
+            for row in plan["businesses"]
+            if row.get("fact", {}).get("kind") == _investment_basis.KIND
+        }
+        if terms:
+            _investment_basis.check_ranges(context, terms)
         if any(
             row.get("fact", {}).get("kind") == _financial_transfer.BASIS_KIND
             for row in plan["businesses"]

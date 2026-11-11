@@ -20,6 +20,7 @@ from tests.modular.domains.taxes._fixtures import evidence
 from tests.modular.domains.taxes.test_investment_tax_application import (
     inputs,
     journal_credit,
+    qualification,
     quarter_return,
 )
 
@@ -107,6 +108,7 @@ def _mixed_facts(*, actual=False):
     current = quarter_return(policy, surtax, "2026-07", "2026-07")
     return current, (
         terms,
+        qualification(terms),
         acquired,
         disposed,
         policy,

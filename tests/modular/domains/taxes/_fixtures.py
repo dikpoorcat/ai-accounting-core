@@ -169,6 +169,7 @@ def source_ref(business_id):
 
 class Context:
     evaluation_period_to = "2027-12"
+    changed_business_ids = ()
     read_context = SimpleNamespace(start_period="2026-01")
 
     def __init__(self, *facts, sales=(), profit="2000000"):
@@ -177,6 +178,9 @@ class Context:
         self.profit = profit
         self.results = {}
         self.cash_receipts = {}
+
+    def current_dependencies(self, business_ids):
+        return ()
 
     def get_fact(self, identity):
         return deepcopy(self.facts.get(identity))
@@ -190,15 +194,32 @@ class Context:
     def resolve_sources(self, ids):
         return [{"source_id": identity} for identity in ids]
 
-    def related_facts(self, producer_id, relation_kind, **_):
+    def related_facts(self, producer_id, relation_kind, *, kinds=None, **_):
         rows = []
         for row in self.facts.values():
+            if kinds is not None and row["kind"] not in kinds:
+                continue
             data = row["data"]
-            if producer_id in (data.get("assessment_id"), data.get("original_assessment_id")):
+            if producer_id in (
+                data.get("assessment_id"),
+                data.get("original_assessment_id"),
+                data.get("terms_id"),
+            ):
                 rows.append(row)
             elif producer_id in data.get("credit_ids", ()):
                 rows.append(row)
         return tuple(deepcopy(rows))
+
+    def related_facts_many(self, producer_ids, relation_kind, **kwargs):
+        found = {
+            row["business_id"]: row
+            for identity in producer_ids
+            for row in self.related_facts(identity, relation_kind, **kwargs)
+        }
+        return tuple(found.values())
+
+    def investment_economic_events(self, start, end, *, kinds=None):
+        return ()
 
     def facts_in_scope(self, kinds, start, end):
         return tuple(

@@ -56,8 +56,7 @@ def terms_result(fact, context):
         fail("投资事实必须采用本公司已登记的明确投资条款正式结果。")
     if result.basis["period"] > fact["period"]:
         fail("投资事项不能早于其采用条款的生效月份。")
-    validate_adopted_terms(result, terms_id)
-    return result
+    return result, validate_adopted_terms(result, terms_id)
 
 
 def opening_lots(terms_id, context, *, opening_refs):
@@ -162,7 +161,7 @@ def _debt_interest(fact, lot, terms, event):
             "invalid_input",
         )
     matches = [item for item in schedule if item["payment_on"] == payment_on]
-    if len(matches) != 1 or terms["legal_form"] != "direct_bond":
+    if len(matches) != 1 or terms["right_type"] != "direct_bond":
         fail("债券利息须对应已采用真实债券合同中的唯一付息日。", "invalid_input")
     if payment_on[:7] != fact["period"]:
         fail("债券付息所属月须与本次核算月份相同。", "invalid_input")
@@ -230,7 +229,7 @@ def _replay(terms_id, terms, facts, *, initial=(), start_period=None, observe=No
                 if (
                     suffix == "dispose"
                     and data["exit_mode"] == "maturity"
-                    and terms["legal_form"] == "direct_bond"
+                    and terms["right_type"] == "direct_bond"
                 ):
                     final_on = terms["coupon_schedule"][-1]["payment_on"]
                     if (
@@ -264,7 +263,7 @@ def _replay(terms_id, terms, facts, *, initial=(), start_period=None, observe=No
             event.gain, event.book_change = event.amount - event.cost, -event.cost
             if suffix == "dispose" and "maturity_income" in data:
                 maturity = data["maturity_income"]
-                if data["exit_mode"] != "maturity" or terms["legal_form"] == "direct_bond":
+                if data["exit_mode"] != "maturity" or terms["right_type"] == "direct_bond":
                     fail(
                         "到期收益组成只用于非直接债券的实际到期结算，债券仍按合同付息核算。",
                         "invalid_input",
@@ -276,7 +275,7 @@ def _replay(terms_id, terms, facts, *, initial=(), start_period=None, observe=No
                 if "recognized_income_source" in maturity:
                     event.gain -= income
         elif suffix == "income":
-            if terms["legal_form"] == "direct_bond":
+            if terms["right_type"] == "direct_bond":
                 fail(
                     "直接债券利息须通过debt_interest采用合同计算，不能以手填收益金额绕过。",
                     "invalid_input",

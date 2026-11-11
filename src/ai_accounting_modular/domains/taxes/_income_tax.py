@@ -116,15 +116,15 @@ def _carry(fact, context, plan):
     opening = None
     if openings:
         opening = result_for(
-            fact, context, openings[0]["business_id"], "opening.package", "/data/income_tax_carry"
+            openings[0], context, openings[0]["business_id"], "opening.package", "/"
         )
     if continuations:
         source = result_for(
-            fact,
+            continuations[0],
             context,
             continuations[0]["business_id"],
             "reports.continuation",
-            "/data/income_tax_carry",
+            "/",
         )
         expected = str(YearMonth.from_ordinal(YearMonth(start).ordinal - 1))
         quantities = [
@@ -146,10 +146,12 @@ def _carry(fact, context, plan):
         adopt_source(plan, opening.source)
         return 0
     missing(
-        fact,
-        "/data/income_tax_carry",
+        continuations[0] if continuations else fact,
+        "/data/income_tax_carry" if continuations else "/",
         "本年中途接账需要建账前同税年的有源累计已计所得税；"
+        "先查已有接账资料，在报表接续资料中补齐并采用。"
         "未清税余额和利润表所得税费用都不能代替该累计量。",
+        precision=("fen", "source"),
     )
 
 

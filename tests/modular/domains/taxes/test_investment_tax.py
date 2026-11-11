@@ -1,5 +1,7 @@
 """Investment VAT and EIT use different bases and exact, sourced tax periods."""
 
+import json
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +51,15 @@ def view(
         "gross_price_fen": gross,
         "transaction_fees_fen": fees,
         "separate_declared_income_fen": "0",
+        "right_type": {
+            "securities_fund": "fund_units",
+            "contractual_asset_management": "fund_units",
+            "bank_wealth": "financial_contract",
+            "partnership": "partnership_interest",
+            "listed_equity": "company_equity",
+            "unlisted_equity": "company_equity",
+        }.get(instrument, "direct_bond"),
+        "quantity_unit": "units",
     }
     if allocations:
         event["lot_allocations"] = [
@@ -173,14 +184,83 @@ def test_unknown_opening_tax_cost_is_not_zero_and_only_blocks_taxable_exit():
         inventory_month(holdings, (sale,), "weighted_average")
 
 
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_missing_or_duplicate_adopted_cost_relation_is_not_a_missing_lots_field(duplicate):
+    from ai_accounting_modular.domains.taxes._investment_tax_lots import month_lots
+
+    purchased = view("bought", "acquisition", gross="10000")
+    sold = view("sold", "disposal", gross="12000")
+    if duplicate:
+        sold.event["lot_allocations"] = [
+            {"source": {"business_id": uid("bought"), "slot": "cost"}, "quantity": "5"},
+            {"source": {"business_id": uid("bought"), "slot": "cost"}, "quantity": "5"},
+        ]
+    with pytest.raises(ContractError) as caught:
+        month_lots([], [purchased, sold])
+    assert caught.value.code == "dependency_conflict"
+    assert caught.value.fact_issues[0]["business_id"] == sold.source["business_id"]
+    assert caught.value.fact_issues[0]["field"] == "/"
+
+
+def test_old_unknown_vat_pool_without_original_source_reports_continuation_capability():
+    bought = view("buy", "acquisition", gross="10000")
+    holdings, *_ = inventory_month([], [bought], "weighted_average")
+    holdings[0].pop("vat_basis_fen")
+    sold = view("sold", "disposal", gross="12000", allocations=[("buy", "10")])
+    with pytest.raises(ContractError) as caught:
+        inventory_month(holdings, [sold], "weighted_average")
+    assert caught.value.code == "unsupported_business"
+    assert caught.value.fact_issues[0]["code"] == "unsupported_calculation"
+    assert caught.value.fact_issues[0]["field"] == "/"
+
+
 class InvestmentContext(Context):
     evaluation_period_to = "2026-07"
 
     def __init__(self, *facts, events=(), **kwargs):
         super().__init__(*facts, **kwargs)
-        self.events = tuple(events)
+        self.events = tuple(deepcopy(events))
+        qualifications = {}
+        self.qualification_ids = {}
+        for event in self.events:
+            raw = event.event
+            tax = raw.pop("tax_facts")
+            old_id = raw["terms_id"]
+            fingerprint = json.dumps(tax, sort_keys=True)
+            key = old_id, fingerprint
+            if key not in qualifications:
+                terms_id = (
+                    old_id if old_id not in self.qualification_ids else uid(old_id + fingerprint)
+                )
+                terms = {
+                    "business_id": terms_id,
+                    "kind": "investment.terms",
+                    "period": "2020-01",
+                    "evidence_ids": [],
+                    "data": {
+                        "right_type": raw["right_type"],
+                        "quantity_unit": raw["quantity_unit"],
+                    },
+                }
+                if "maturity_on" in tax:
+                    terms["data"]["coupon_schedule"] = [{"payment_on": tax["maturity_on"]}]
+                adopted = fact(
+                    "qualification/" + terms_id,
+                    "taxes.investment_basis",
+                    {"terms_id": terms_id, "tax_facts": tax, "applicable_from": "2020-01-01"},
+                )
+                self.facts[terms_id] = terms
+                self.facts[adopted["business_id"]] = adopted
+                self.results[terms_id, "main"] = SimpleNamespace(
+                    source=source_ref(terms_id),
+                    target={"kind": "investment.terms", "values": terms["data"]},
+                    basis={},
+                )
+                qualifications[key] = terms_id
+                self.qualification_ids[terms_id] = adopted["business_id"]
+            raw["terms_id"] = qualifications[key]
 
-    def investment_tax_events(self, start, end, *, kinds=None):
+    def investment_economic_events(self, start, end, *, kinds=None):
         return tuple(event for event in self.events if start <= event.period <= end)
 
     def related_facts(self, producer_id, relation_kind, **kwargs):
@@ -188,7 +268,8 @@ class InvestmentContext(Context):
         result.extend(
             row
             for row in self.facts.values()
-            if any(
+            if (kwargs.get("kinds") is None or row["kind"] in kwargs["kinds"])
+            and any(
                 claim["tax_assessment_id"] == producer_id
                 for claim in row["data"].get("previously_taxed_distributions", ())
             )
@@ -234,6 +315,29 @@ def basis(period="2026-07", method="weighted_average"):
             "vat_policy_ids": [uid("vat-policy")],
         },
         period,
+    )
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_monthly_policy_reference_conflict_is_not_missing_owner_information(duplicate):
+    method, adopted = basis(), policy()
+    rows = [method, adopted]
+    if duplicate:
+        other = deepcopy(adopted)
+        other["business_id"] = uid("other-vat-policy")
+        method["data"]["vat_policy_ids"].append(other["business_id"])
+        rows.append(other)
+    else:
+        adopted["data"]["policy"]["effective_to"] = "2026-06-30"
+    with pytest.raises(ContractError) as caught:
+        create_taxes().evaluate_slot(
+            method["business_id"], "financial_transfer:2026-07", InvestmentContext(*rows)
+        )
+    assert caught.value.code == "invalid_input"
+    (problem,) = caught.value.fact_issues
+    assert problem["field"] == "/data/vat_policy_ids"
+    assert problem["code"] == (
+        "ambiguous_policy_reference" if duplicate else "incompatible_policy_period"
     )
 
 
@@ -357,6 +461,35 @@ def test_quarterly_eit_reliefs_leave_annual_fair_value_and_partnership_differenc
     assert values["cumulative_tax_fen"] == "2350000"
 
 
+def test_income_tax_uses_each_events_applicable_qualification_without_a_vat_pool_transition():
+    current, prepayment, policy = income_inputs()
+    first = view(
+        "earlier-distribution",
+        "income",
+        gross="1000",
+        period="2026-01",
+        character="fund_distribution",
+    )
+    second = view(
+        "later-distribution",
+        "income",
+        gross="500",
+        period="2026-03",
+        character="fund_distribution",
+        instrument="contractual_asset_management",
+    )
+    second.event["tax_facts"]["principal_protected"] = False
+    context = InvestmentContext(current, prepayment, policy, events=[first, second])
+    terms_id = context.events[0].event["terms_id"]
+    first_basis = context.facts[context.qualification_ids[terms_id]]
+    second_basis = context.facts[context.qualification_ids[context.events[1].event["terms_id"]]]
+    first_basis["data"]["applicable_to"] = "2026-02-28"
+    second_basis["data"].update(terms_id=terms_id, applicable_from="2026-03-01")
+    context.events[1].event["terms_id"] = terms_id
+    plan = create_taxes().evaluate_slot(current["business_id"], "main", context)
+    assert plan["target"]["values"]["investment_exempt_income_fen"] == "1000"
+
+
 def test_listed_dividend_does_not_use_oldest_lot_to_exempt_every_batch():
     current, prepayment, tax_policy = income_inputs()
     dividend = view(
@@ -376,6 +509,7 @@ def test_listed_dividend_does_not_use_oldest_lot_to_exempt_every_batch():
         {"acquired_period": "2024-01", "amount_fen": "400"},
         {"acquired_period": "2026-02", "amount_fen": "600"},
     ]
+    context = InvestmentContext(current, prepayment, tax_policy, events=(dividend,))
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert result["target"]["values"]["investment_exempt_income_fen"] == "400"
 
@@ -756,7 +890,7 @@ def test_old_money_fund_redemption_does_not_request_unrelated_quarterly_relief_f
     current, prepayment, tax_policy = income_inputs()
     legacy = fact("old-redemption", "investment.money_fund_redemption", {}, "2026-03")
     context = InvestmentContext(current, prepayment, tax_policy, legacy)
-    context.investment_tax_events = lambda *_args, **_kwargs: pytest.fail(
+    context.investment_economic_events = lambda *_args, **_kwargs: pytest.fail(
         "无免税收益不应读取旧窄赎回的税务量"
     )
     result = create_taxes().evaluate_slot(current["business_id"], "main", context)
@@ -796,7 +930,10 @@ def test_dividend_missing_facts_point_to_real_investment_source(missing_field, b
         create_taxes().evaluate_slot(current["business_id"], "main", context)
     assert raised.value.code == "needs_information", raised.value.message
     (problem,) = raised.value.fact_issues
-    assert problem["business_id"] == uid(business)
+    expected = (
+        context.qualification_ids[uid("terms")] if missing_field == "issuer" else uid(business)
+    )
+    assert problem["business_id"] == expected
     assert problem["field"] == field
     assert problem["reusable_sources"] == [LOCATION]
     assert "prepayment_basis" not in str(problem)

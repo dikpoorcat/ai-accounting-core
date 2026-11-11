@@ -3071,13 +3071,37 @@
         "data": {
           "product_id": "eb8edd0f-9840-5b89-b30d-6973d479fa27",
           "product_type": "other_fund",
-          "legal_form": "securities_fund",
           "holding_arrangement": "noncurrent",
           "measurement": "other_financial_cost",
           "quantity_unit": "units",
           "terms_source": {
             "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
           },
+          "right_type": "fund_units"
+        }
+      },
+      "then": {
+        "schema": "valid",
+        "values_subset": {
+          "adopted_cost_method": "fifo"
+        }
+      }
+    },
+    {
+      "case_id": "TAX-investment-basis",
+      "kind": "taxes.investment_basis",
+      "given": [
+        "合成来源明确本项税务性质自2026年1月1日起适用，投资条款已登记。"
+      ],
+      "when": {
+        "business_id": "2e001880-f4a5-55b4-a9c6-bb9d507e249d",
+        "kind": "taxes.investment_basis",
+        "period": "2026-01",
+        "evidence_ids": [
+          "2360e900-7486-5cfb-a572-6b95424e1c07"
+        ],
+        "data": {
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5",
           "tax_facts": {
             "instrument_type": "securities_fund",
             "source": {
@@ -3089,13 +3113,14 @@
             "source": {
               "source_id": "2360e900-7486-5cfb-a572-6b95424e1c07"
             }
-          }
+          },
+          "applicable_from": "2026-01-01"
         }
       },
       "then": {
         "schema": "valid",
         "values_subset": {
-          "adopted_cost_method": "fifo"
+          "terms_id": "a851bac3-b60d-546d-88d3-e33a7dcc95a5"
         }
       }
     },

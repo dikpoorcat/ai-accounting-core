@@ -6,9 +6,10 @@ import pytest
 
 from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.domains.taxes._government_bond import realization
+from ai_accounting_modular.domains.taxes.public import create_taxes
 
-from ._fixtures import LOCATION, uid
-from .test_investment_tax import view
+from ._fixtures import LOCATION, income_inputs, uid
+from .test_investment_tax import InvestmentContext, view
 
 
 def government(day="2026-12-31", *, kind="debt_interest", origin="secondary_market", face="100000"):
@@ -145,3 +146,22 @@ def test_non_government_bond_never_uses_government_formula():
     event = deepcopy(government())
     event.event["tax_facts"]["instrument_type"] = "corporate_bond"
     assert realization(event) is None
+
+
+def test_old_disposal_without_embedded_rights_still_uses_named_bond_terms():
+    current, prepayment, policy = income_inputs()
+    for item in (current, prepayment):
+        item["period"] = item["data"]["quarter_end"] = "2026-09"
+    context = InvestmentContext(
+        current,
+        prepayment,
+        policy,
+        events=[government("2026-09-30", kind="disposal")],
+    )
+    context.events[0].event.pop("right_type")
+    context.events[0].event.pop("quantity_unit")
+    values = create_taxes().evaluate_slot(current["business_id"], "main", context)["target"][
+        "values"
+    ]
+    assert values["investment_exempt_income_fen"] == "997"
+    assert "right_type" not in context.events[0].event

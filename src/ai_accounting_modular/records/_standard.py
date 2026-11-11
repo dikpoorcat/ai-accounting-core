@@ -10,10 +10,13 @@ from pathlib import Path
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    analyze_conversion_fact,
     canonical_json,
+    conversion_issue_source_ids,
     fact_source_ids,
     loads_json,
     validate_contract,
+    validate_conversion_envelope,
 )
 
 from . import _documents, _sources
@@ -50,7 +53,7 @@ def _unique(items, field, meaning):
         seen.add(key)
 
 
-def _validate_parts(manifest, parts, known_facts=None):
+def _validate_parts(manifest, parts, known_facts=None, *, investment_conversion=False):
     if not _documents.FIXED_KEYS <= {part["key"] for part in parts}:
         _bad("完整标准文档必须包含对象和待办固定片。")
     collections = {name: [] for name in ("facts", "objects", "sources", "issues", "notes")}
@@ -92,7 +95,11 @@ def _validate_parts(manifest, parts, known_facts=None):
     required = set()
     for fact in collections["facts"]:
         if known_facts is None:
-            required.update(fact_source_ids(fact))
+            required.update(
+                analyze_conversion_fact(fact).source_ids
+                if investment_conversion
+                else fact_source_ids(fact)
+            )
         else:
             proof = known_facts.get(fact["business_id"])
             if proof is None or canonical_json(fact) != proof[0]:
@@ -113,7 +120,11 @@ def _validate_parts(manifest, parts, known_facts=None):
         for item in collections[name]:
             required.update(item.get("evidence_ids", ()))
     for issue in collections["issues"]:
-        required.update(_sources.issue_source_ids(issue))
+        required.update(
+            (conversion_issue_source_ids if investment_conversion else _sources.issue_source_ids)(
+                issue
+            )
+        )
     available = {source["source_id"] for source in collections["sources"]}
     if required - available:
         raise ContractError(
@@ -147,7 +158,7 @@ def open_standard_bundle(manifest_path: Path | str) -> StandardBundle:
     return _read_standard_bundle(manifest_path)[0]
 
 
-def _read_standard_bundle(manifest_path, *, known_facts=None):
+def _read_standard_bundle(manifest_path, *, known_facts=None, investment_conversion=False):
     path = Path(manifest_path).absolute()
     if path.name != "current.json" or path.parent.name != "standard":
         raise ContractError("invalid_path", "请明确选择公司standard/current.json完整清单。")
@@ -163,12 +174,17 @@ def _read_standard_bundle(manifest_path, *, known_facts=None):
             _bad("标准分片的原字节与清单摘要或大小不一致。")
         part = loads_json(raw_part)
         # A matching database proof saves source analysis, never this strict wire check.
-        validate_contract("core.schema.json", "StandardPart", part)
+        if investment_conversion:
+            validate_conversion_envelope("StandardPart", part)
+        else:
+            validate_contract("core.schema.json", "StandardPart", part)
         if part["key"] != shard["key"]:
             _bad("标准分片的归属与清单不一致。")
         parts.append(part)
         files.append(item)
-    sources = _validate_parts(manifest, parts, known_facts)
+    sources = _validate_parts(
+        manifest, parts, known_facts, investment_conversion=investment_conversion
+    )
     for source in sources:
         _sources.check_source(root, source)
         if source["kind"] == "file":
@@ -270,7 +286,9 @@ def _copy_identity(path):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def copy_standard_bundle(bundle: StandardBundle, target_root: Path | str) -> None:
+def copy_standard_bundle(
+    bundle: StandardBundle, target_root: Path | str, *, investment_conversion=False
+) -> None:
     if not isinstance(bundle, StandardBundle):
         raise ContractError("invalid_input", "复制必须使用已经核验的完整标准资料。")
     target = Path(target_root).absolute()
@@ -292,7 +310,9 @@ def copy_standard_bundle(bundle: StandardBundle, target_root: Path | str) -> Non
         ):
             path = _copy_file(bundle, target, item)
             created.append((path, item, _copy_identity(path)))
-        copied = open_standard_bundle(target / "standard/current.json")
+        copied = _read_standard_bundle(
+            target / "standard/current.json", investment_conversion=investment_conversion
+        )[0]
         if (copied.manifest_digest, copied.files) != (bundle.manifest_digest, bundle.files):
             _bad("目标资料与已核验的源集合不一致。")
     except BaseException:

@@ -3,28 +3,64 @@
 from copy import deepcopy
 from fractions import Fraction
 
-from ._common import amount, missing_investment_input, reject, total
+from ._common import amount, investment_result_issue, missing_investment_input, reject, total
 from ._investment_units import quantity_text, reference_key
 
-FIELDS = ("instrument_type", "legal_form", "quantity_unit", "instrument_reference")
+FIELDS = ("instrument_type", "right_type", "quantity_unit", "instrument_reference")
+
+
+def _rights(value):
+    return "fund_units" if value in {"securities_fund", "contractual_fund"} else value
+
+
+def stored_identity(row):
+    result = deepcopy(row.get("vat_pool_identity", row.get("_unclassified_identity", {})))
+    if "legal_form" in result:
+        result["right_type"] = _rights(result.pop("legal_form"))
+    return result
 
 
 def identity(event):
-    result = {
-        "instrument_type": event["tax_facts"]["instrument_type"],
-        **{field: event[field] for field in ("legal_form", "quantity_unit") if field in event},
-    }
+    result = {field: event[field] for field in ("right_type", "quantity_unit") if field in event}
+    if "tax_facts" in event:
+        result["instrument_type"] = event["tax_facts"]["instrument_type"]
     if "financial_instrument_reference" in event:
         result["instrument_reference"] = event["financial_instrument_reference"]["reference"]
     return result
 
 
-def key(product_id, declared):
-    return product_id, *(declared.get(field) for field in FIELDS)
+def key(product_id, declared, unclassified_terms_id=None):
+    return product_id, *(declared.get(field) for field in FIELDS), unclassified_terms_id
 
 
 def compatible(first, second):
     return all(first[field] == second[field] for field in first.keys() & second.keys())
+
+
+def affects_disposal(view, disposal, method):
+    """Monthly average uses the month; moving average uses the known transaction order."""
+    if view is None:
+        return True
+    if view.period != disposal.period:
+        return False
+    if method != "moving_weighted_average":
+        return True
+    if (
+        view.effective_on is not None
+        and disposal.effective_on is not None
+        and view.effective_on != disposal.effective_on
+    ):
+        return view.effective_on < disposal.effective_on
+    first, last = view.event.get("transaction_sequence"), disposal.event.get("transaction_sequence")
+    return first is None or last is None or first <= last
+
+
+def _identity_conflict(first, second, view):
+    changed = {key for key in first.keys() & second.keys() if first[key] != second[key]}
+    if changed <= {"instrument_type", "instrument_reference"}:
+        message = "当前投资税务身份与原池不同，现算法不能猜测拆分原始买入价或沿用旧身份。"
+        investment_result_issue(view, message, unsupported=True)
+    reject("正式原批次的真实会计权利或计量单位矛盾，不能混用来源。", "invalid_input")
 
 
 def _legacy_boundary():
@@ -46,16 +82,10 @@ def _missing_reference(lot, view=None):
             meaning="影响买入价归属的有源金融商品或权益标识",
         )
     source, terms_id = lot["source"], lot.get("terms_id")
-    field = (
-        "/data/financial_instrument_reference"
-        if terms_id
-        else "/data/members"
-        if source["slot"].startswith("member:")
-        else "/data"
-    )
     message = (
         f"原正式批次{source['slot']}的金融商品或权益参考尚未识别，"
-        "不能与已明确的其他类别按名称归为同一均价池。"
+        "不能与已明确的其他类别按名称归为同一均价池；先查其有源投资税务依据，"
+        "该身份不属于会计条款的待补字段。"
     )
     reject(
         message,
@@ -63,7 +93,7 @@ def _missing_reference(lot, view=None):
         fact_issues=[
             {
                 "business_id": terms_id or source["business_id"],
-                "field": field,
+                "field": "/",
                 "code": "missing_fact",
                 "meaning": "影响VAT均价的原持仓真实金融商品或权益标识",
                 "message": message,
@@ -97,25 +127,27 @@ def _merge(target, row):
                 target[field].append(deepcopy(value))
 
 
-def partition(previous, views, taxable_exit):
+def partition(previous, views, taxable_exit, method):
     """Classify from frozen rights; a fully referenced old pool can gain a new proof."""
-    claims = {}
+    claims, claim_views = {}, {}
     for view in views:
         declared = identity(view.event)
         for allocation in view.event.get("lot_allocations", ()):
             source = reference_key(allocation["source"])
             old = claims.get(source)
             if old is not None and not compatible(old, declared):
-                reject("同一正式原批次不能同时被声明为不同法律权益或计量单位。", "invalid_input")
+                _identity_conflict(old, declared, view)
             claims[source] = {**(old or {}), **declared}
+            claim_views[source] = view
     snapshots, owners = {}, {}
     for original in previous:
         row = deepcopy(original)
-        declared = row.get("vat_pool_identity", {})
+        declared = stored_identity(row)
         lots = [reference_key(lot["source"]) for lot in row.get("eit_lots", ())]
         proven = [claims[source] for source in lots if source in claims]
-        if proven and any(not compatible(declared, candidate) for candidate in proven):
-            reject("本次采用的原批次身份与其已经冻结的真实权利或计量单位矛盾。", "invalid_input")
+        for source in lots:
+            if source in claims and not compatible(declared, claims[source]):
+                _identity_conflict(declared, claims[source], claim_views[source])
         for field in FIELDS:
             if field in declared:
                 continue
@@ -154,9 +186,9 @@ def partition(previous, views, taxable_exit):
                     None,
                 )
                 _missing_reference(unknown, witness)
-        if declared:
+        if declared and "instrument_type" in declared:
             row["vat_pool_identity"] = declared
-        pool = key(row["product_id"], declared)
+        pool = key(row["product_id"], declared, row.get("unclassified_terms_id"))
         if pool in snapshots:
             _merge(snapshots[pool], row)
         else:
@@ -187,16 +219,24 @@ def partition(previous, views, taxable_exit):
             }
             if len(selected) > 1:
                 _legacy_boundary()
-            pool = next(iter(selected)) if selected else key(event["product_id"], declared)
+            pool = (
+                next(iter(selected))
+                if selected
+                else key(
+                    event["product_id"],
+                    declared,
+                    event["terms_id"] if "instrument_type" not in declared else None,
+                )
+            )
             known = {
                 field: pool[index + 1]
                 for index, field in enumerate(FIELDS)
                 if pool[index + 1] is not None
             }
-            if pool[0] != event["product_id"] or not compatible(known, declared):
-                reject(
-                    "正式来源所属的金融商品身份与本次权益不一致，不能混用批次。", "invalid_input"
-                )
+            if pool[0] != event["product_id"]:
+                reject("正式来源的产品身份与本次业务不一致，不能混用批次。", "invalid_input")
+            if not compatible(known, declared):
+                _identity_conflict(known, declared, view)
             groups.setdefault(pool, []).append(view)
             kind = event["event_kind"]
             if kind in {"opening", "acquisition", "unit_change", "capital_return", "debt_interest"}:
@@ -209,26 +249,34 @@ def partition(previous, views, taxable_exit):
     by_product = {}
     for pool in dict.fromkeys((*snapshots, *groups)):
         by_product.setdefault(pool[0], []).append(pool)
-    taxable_products = {
-        pool[0] for pool, rows in groups.items() if any(taxable_exit(view.event) for view in rows)
-    }
+    exits = {}
+    for view in views:
+        if taxable_exit(view.event):
+            exits.setdefault(view.event["product_id"], []).append(view)
+    active = set(snapshots)
+    active.update(
+        pool
+        for pool, rows in groups.items()
+        if any(
+            view.event["event_kind"] in {"acquisition", "opening"}
+            and any(affects_disposal(view, exit, method) for exit in exits.get(pool[0], ()))
+            for view in rows
+        )
+    )
     for pool in dict.fromkeys((*snapshots, *groups)):
-        if any(value is None for value in pool[1:]):
+        if any(value is None for value in pool[1:5]):
             alternatives = [
                 other
                 for other in by_product[pool[0]]
                 if other != pool
+                and other in active
                 and other[0] == pool[0]
                 and all(
                     a is None or b is None or a == b
-                    for a, b in zip(pool[1:], other[1:], strict=True)
+                    for a, b in zip(pool[1:5], other[1:5], strict=True)
                 )
             ]
-            active = pool in snapshots or any(
-                view.event["event_kind"] in {"acquisition", "opening"}
-                for view in groups.get(pool, ())
-            )
-            if alternatives and pool[0] in taxable_products and active:
+            if alternatives and pool[0] in exits and pool in active:
                 unidentified = next(
                     (
                         view
@@ -239,11 +287,11 @@ def partition(previous, views, taxable_exit):
                 )
                 if (
                     unidentified is not None
-                    and pool[-1] is None
-                    and any(other[-1] is not None for other in alternatives)
+                    and pool[4] is None
+                    and any(other[4] is not None for other in alternatives)
                 ):
                     _missing_reference({}, unidentified)
-                if pool[-1] is None and any(other[-1] is not None for other in alternatives):
+                if pool[4] is None and any(other[4] is not None for other in alternatives):
                     _missing_reference(snapshots[pool]["eit_lots"][0])
                 _legacy_boundary()
     return snapshots, groups, owners

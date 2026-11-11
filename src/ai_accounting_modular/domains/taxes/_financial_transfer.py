@@ -3,10 +3,13 @@
 from calendar import monthrange
 from copy import deepcopy
 
-from ai_accounting_modular.contracts.public import YearMonth, parse_rate
+from ai_accounting_modular.contracts.public import ContractError, YearMonth, parse_rate
 
-from ._common import adopt_source, amount, line, missing, month_end, plan_for, reject
+from ._common import adopt_source, amount, issue, line, missing, month_end, plan_for, reject
+from ._investment_basis_dependencies import dependencies as qualification_dependencies
 from ._investment_effects import check_effects, interest_effects, pool_effect
+from ._investment_qualification import economic_rights, qualify
+from ._investment_simple import separate
 from ._investment_tax_math import (
     allocate_interest_vat,
     inventory_month,
@@ -49,20 +52,22 @@ def rule_urls(period, views):
         result.append("https://12366.chinatax.gov.cn/bzds/010/010-5-2.html")
     if any(
         view.event.get("exit_mode") == "maturity"
-        or view.event["tax_facts"]["instrument_type"]
+        or view.event.get("tax_facts", {}).get("instrument_type")
         in {"bank_wealth", "contractual_asset_management"}
         and view.event["event_kind"] == "income"
         for view in views
     ):
         result.append("https://www.mof.gov.cn/gp/xxgkml/szs/201612/t20161221_2510638.htm")
     if any(
-        view.event["tax_facts"]["instrument_type"] in {"government_bond", "local_government_bond"}
+        view.event.get("tax_facts", {}).get("instrument_type")
+        in {"government_bond", "local_government_bond"}
         and taxable_interest(view.event)
         for view in views
     ):
         result.append("https://m.mof.gov.cn/zcfb/202508/t20250801_3969257.htm")
     if period >= "2026-09" and any(
-        view.event["tax_facts"]["instrument_type"] in {"unlisted_equity", "listed_equity"}
+        view.event.get("tax_facts", {}).get("instrument_type")
+        in {"unlisted_equity", "listed_equity"}
         for view in views
     ):
         result.append("https://shanghai.chinatax.gov.cn/zcfw/zcfgk/zzs/202608/t481411.html")
@@ -157,7 +162,7 @@ def edge(
 
 
 def investment_dependencies(
-    fact, context, start, end, *, consumer="main", kinds=INVESTMENT_TAX_KINDS
+    fact, context, start, end, *, consumer="main", kinds=INVESTMENT_TAX_KINDS, previous=None
 ):
     result = [
         edge(
@@ -175,6 +180,11 @@ def investment_dependencies(
     result.extend(
         edge(fact, row["business_id"], consumer=consumer)
         for row in context.facts_in_scope(kinds, start, end)
+    )
+    result.extend(
+        qualification_dependencies(
+            fact, context, kinds, start, end, consumer=consumer, previous=previous
+        )
     )
     return result
 
@@ -210,7 +220,9 @@ def dependencies(fact, context, result_slots):
             edge(fact, identity, consumer=slot) for identity in fact["data"]["vat_policy_ids"]
         )
         start = period if before else context.read_context.start_period
-        result.extend(investment_dependencies(fact, context, start, period, consumer=slot))
+        result.extend(
+            investment_dependencies(fact, context, start, period, consumer=slot, previous=before)
+        )
         result.append(
             edge(
                 fact,
@@ -241,10 +253,19 @@ def policy_for_month(fact, context, period, plan):
         and covers(policy, period + "-01", month_end(period))
     ]
     if len(matches) != 1:
-        missing(
-            fact,
-            "/data/vat_policy_ids",
-            "月度投资税务需要唯一且完整覆盖该月的已采用小规模VAT政策。",
+        message = "月度投资税务的政策引用未能唯一覆盖该月；须核对已登记政策及适用范围。"
+        reject(
+            message,
+            "invalid_input",
+            fact_issues=[
+                issue(
+                    fact,
+                    "/data/vat_policy_ids",
+                    message,
+                    code="ambiguous_policy_reference" if matches else "incompatible_policy_period",
+                    meaning="本月采用的政策引用及其有效范围",
+                )
+            ],
         )
     policy = adopt_policy(plan, fact, context, matches[0], "taxes.vat_policy", period, period)
     if parse_rate(policy["nominal_rate"]) != parse_rate("0.03"):
@@ -281,17 +302,21 @@ def _prior_inventory(fact, context, period, plan):
     start, end = context.read_context.start_period, month_before(period)
     if end < start:
         return []
-    views = tuple(context.investment_tax_events(start, end))
-    if any(is_financial_transfer(view.event) or taxable_interest(view.event) for view in views):
-        missing(
-            fact,
-            "/data/elected_on",
-            "先前月份已有投资应税事项，需要接续当时的真实方法和月度税务依据，不能从本月假设零起点。",
-        )
+    views = tuple(context.investment_economic_events(start, end))
     _adopt_events(plan, views)
     positions = []
     for month in sorted({view.period for view in views}):
-        current = tuple(view for view in views if view.period == month)
+        current = economic_rights(fact, context, (view for view in views if view.period == month))
+        positions, current, simple = separate(fact, positions, current)
+        current, positions = qualify(fact, context, plan, current, previous=positions, period=month)
+        if any(
+            is_financial_transfer(view.event) or taxable_interest(view.event) for view in current
+        ):
+            missing(
+                fact,
+                "/data/elected_on",
+                "先前月份已有投资应税事项，需要接续当时的真实方法和月度税务依据，不能从本月假设零起点。",
+            )
         adopted_from = len(plan["basis"]["adopted_quantities"])
         positions, _, _, _ = inventory_month(
             positions,
@@ -300,6 +325,7 @@ def _prior_inventory(fact, context, period, plan):
             unit_bases=unit_bases(context, month),
             adoptions=plan["basis"]["adopted_quantities"],
         )
+        positions.extend(simple)
         _adopt_unit_sources(plan, adopted_from)
     return positions
 
@@ -323,6 +349,30 @@ def _adopt_unit_sources(plan, start):
 
 
 def position(fact, result_slot, context):
+    try:
+        return _position(fact, result_slot, context)
+    except ContractError as error:
+        period = result_slot.removeprefix(SLOT_PREFIX)
+        problems = error.fact_issues
+        if error.code == "unsupported_business" and not problems:
+            problems = [
+                issue(
+                    fact,
+                    "/",
+                    error.message,
+                    code="unsupported_calculation",
+                    meaning=f"{period} 月度投资税务的实际计算能力",
+                )
+            ]
+        raise ContractError(
+            error.code,
+            f"{period} 月度正式投资税务结果未能更新：{error.message}",
+            fact_issues=problems,
+            diagnostic_id=error.diagnostic_id,
+        ) from error
+
+
+def _position(fact, result_slot, context):
     if result_slot not in slots(fact, context):
         reject("金融商品月度税务槽超出方法生效及明确工作月份。", "invalid_input")
     period = result_slot.removeprefix(SLOT_PREFIX)
@@ -342,19 +392,24 @@ def position(fact, result_slot, context):
         adopt_source(plan, result.source)
     else:
         previous["positions"] = _prior_inventory(fact, context, period, plan)
-    views = tuple(context.investment_tax_events(period, period))
+    raw = tuple(context.investment_economic_events(period, period))
+    _adopt_events(plan, raw)
+    prior, views, simple = separate(
+        fact, previous.get("positions", ()), economic_rights(fact, context, raw)
+    )
+    views, prior = qualify(fact, context, plan, views, previous=prior, period=period)
     for url in rule_urls(period, views):
         if url not in plan["rule_refs"][0]["official_urls"]:
             plan["rule_refs"][0]["official_urls"].append(url)
-    _adopt_events(plan, views)
     adopted_from = len(plan["basis"]["adopted_quantities"])
     positions, disposals, difference, interest = inventory_month(
-        previous.get("positions", ()),
+        prior,
         views,
         fact["data"]["method"],
         unit_bases=unit_bases(context, period),
         adoptions=plan["basis"]["adopted_quantities"],
     )
+    positions.extend(simple)
     _adopt_unit_sources(plan, adopted_from)
     values = transfer_position(
         previous,

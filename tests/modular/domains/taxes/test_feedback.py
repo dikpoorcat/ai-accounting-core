@@ -210,6 +210,32 @@ def test_given_policy_with_incompatible_period_is_an_input_reference_problem():
     assert failed.value.fact_issues[0]["field"] == "/data/vat_policy_id"
 
 
+@pytest.mark.parametrize("field", ["vat_policy_id", "surtax_policy_id"])
+def test_missing_policy_selection_is_an_input_issue_and_actual_route_still_works(field):
+    current, params, surcharge = assessment(), policy(), surtax(zero=True)
+    current["data"].pop(field)
+    sales = [tax_sale("ordinary", "10000", "300")]
+    with pytest.raises(ContractError) as failed:
+        create_taxes().evaluate_slot(
+            current["business_id"], "main", Context(current, params, surcharge, sales=sales)
+        )
+    assert failed.value.code == "invalid_input"
+    problem = failed.value.fact_issues[0]
+    validate_contract("core.schema.json", "FactIssue", problem)
+    assert problem["business_id"] == current["business_id"]
+    assert problem["field"] == "/data/" + field
+    assert problem["code"] == "reference_missing"
+    assert problem["reusable_sources"] == [{"source_id": LOCATION["source_id"]}]
+    declared = actual_vat(current, "300")
+    adopted = create_taxes().evaluate_slot(
+        current["business_id"],
+        "main",
+        Context(current, params, surcharge, declared, sales=sales),
+    )
+    assert adopted["target"]["values"]["adopted_basis"] == "actual"
+    assert adopted["target"]["values"]["payable_vat_fen"] == "300"
+
+
 def test_tax_point_with_missing_target_is_a_bad_reference():
     point = fact(
         "missing-target",

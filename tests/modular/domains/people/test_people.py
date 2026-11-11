@@ -127,7 +127,9 @@ def test_published_invalid_examples(name):
 
 
 def test_no_participation_does_not_require_fake_policies_or_bases():
-    plan = evaluate(case("B17Z"), no_contributions())
+    employment = no_contributions()
+    employment["data"].pop("contribution_shortfall")
+    plan = evaluate(case("B17Z"), employment)
     assert plan["basis"]["policies"] == []
     assert len(plan["basis"]["source_results"]) == 1
     assert len(plan["obligations"]) == 6
@@ -147,9 +149,11 @@ def test_actual_without_policy_does_not_require_estimation_bases():
     employment = case("B14")
     employment["data"].pop("social_insurance_base_fen")
     employment["data"].pop("housing_fund_base_fen")
+    employment["data"].pop("contribution_shortfall")
     plan = evaluate(case("B17A"), employment, case("B16"))
     assert plan["target"]["values"]["net_fen"] == "830000"
     assert plan["basis"]["policies"] == []
+    validate_contract("business-facts.schema.json", "PostingPlan", plan)
 
 
 def test_wage_basis_preserves_only_used_employment_bases_and_actual_items():
@@ -284,6 +288,9 @@ def test_each_item_rounds_before_sum_with_capped_base(rounding, employee, employ
         "missing_mode",
         "missing_category",
         "missing_base",
+        "missing_policy",
+        "missing_policy_category",
+        "missing_actual_item",
         "unmatched_item",
         "wrong_person",
         "wrong_month",
@@ -303,6 +310,15 @@ def test_incomplete_or_conflicting_contribution_facts_are_not_guessed(edit):
         employment["data"].pop("housing_fund_base_fen")
         actual["data"]["items"].pop()
         fact["data"]["contribution_basis"] = "policy_until_actual"
+    elif edit in {"missing_policy", "missing_policy_category"}:
+        actual["data"]["items"].pop()
+        fact["data"]["contribution_basis"] = "policy_until_actual"
+        if edit == "missing_policy":
+            fact["data"].pop("contribution_policy_id")
+        else:
+            policy["data"]["items"].pop()
+    elif edit == "missing_actual_item":
+        actual["data"]["items"].pop()
     elif edit == "unmatched_item":
         actual["data"]["items"][0]["code"] = "unknown"
     elif edit == "wrong_person":
@@ -317,8 +333,26 @@ def test_incomplete_or_conflicting_contribution_facts_are_not_guessed(edit):
         )
     elif edit == "duplicate":
         actual["data"]["items"].append(deepcopy(actual["data"]["items"][0]))
-    with pytest.raises(ContractError):
+    with pytest.raises(ContractError) as failed:
         evaluate(fact, employment, policy, actual)
+    expected = {
+        "missing_mode": ("invalid_input", fact, "/data/contribution_basis"),
+        "missing_category": ("needs_information", actual, "/data/items"),
+        "missing_base": ("needs_information", employment, "/data/housing_fund_base_fen"),
+        "missing_policy": ("invalid_input", fact, "/data/contribution_policy_id"),
+        "missing_policy_category": ("invalid_input", policy, "/data/items"),
+        "missing_actual_item": ("needs_information", actual, "/data/items"),
+        "expired": ("invalid_input", fact, "/data/contribution_policy_id"),
+        "midmonth": ("invalid_input", fact, "/data/contribution_policy_id"),
+    }
+    if edit in expected:
+        code, owner, field = expected[edit]
+        assert failed.value.code == code
+        problem = failed.value.fact_issues[0]
+        validate_contract("core.schema.json", "FactIssue", problem)
+        assert problem["business_id"] == owner["business_id"]
+        assert problem["field"] == field
+        assert problem["reusable_sources"] == [{"source_id": SOURCE}]
 
 
 def test_not_declared_is_explicit_zero_not_missing():
@@ -374,6 +408,33 @@ def test_shortfall_preserves_agency_total_and_never_makes_negative_net(treatment
     assert values["employer_social_fen"] == "220000"
     assert values["employer_housing_fen"] == "100000"
     assert sum(int(item["amount_fen"]) for item in plan["obligations"]) == 420000
+
+
+@pytest.mark.parametrize("gross,expected_net", [("170000", "0"), ("170001", "1")])
+def test_exactly_sufficient_wage_needs_no_hypothetical_shortfall_arrangement(gross, expected_net):
+    fact, employment = case("B17A"), case("B14")
+    fact["data"]["gross_fen"] = gross
+    employment["data"].pop("contribution_shortfall")
+    plan = evaluate(fact, employment, case("B16"))
+    assert plan["target"]["values"]["net_fen"] == expected_net
+    assert plan["target"]["values"]["employer_social_fen"] == "200000"
+    assert plan["target"]["values"]["employer_housing_fen"] == "50000"
+    validate_contract("business-facts.schema.json", "PostingPlan", plan)
+
+
+def test_real_shortfall_requires_arrangement_on_adopted_employment():
+    fact, employment = case("B17A"), case("B14")
+    fact["data"]["gross_fen"] = "169999"
+    employment["data"].pop("contribution_shortfall")
+    with pytest.raises(ContractError) as failed:
+        evaluate(fact, employment, case("B16"))
+    assert failed.value.code == "needs_information"
+    problem = failed.value.fact_issues[0]
+    validate_contract("core.schema.json", "FactIssue", problem)
+    assert problem["business_id"] == employment["business_id"]
+    assert problem["field"] == "/data/contribution_shortfall"
+    assert problem["reusable_sources"] == [{"source_id": SOURCE}]
+    assert "单位承担" in problem["message"]
 
 
 def test_zero_wage_can_have_explicit_employer_borne_contributions():

@@ -430,16 +430,31 @@ def vat(fact, context):
         required=source is None,
     )
     ordinary_sales = sales
-    financial_sales, investment = _investment_vat.components(
-        fact, context, plan, policy, source["data"] if source else None, actual_fact=source
-    )
-    sales = [*sales, *financial_sales]
     reference, fields, reference_error = None, None, None
     try:
-        if policy is not None and surtax is not None:
+        financial_sales, investment = _investment_vat.components(
+            fact, context, plan, policy, source["data"] if source else None, actual_fact=source
+        )
+    except ContractError as error:
+        # The adopted actual declaration may make classification/calculation optional.
+        # A nonzero investment part still needs its own accounting result, and an
+        # independent monthly producer must already have succeeded before this slot.
+        actual_parts = source is not None and any(
+            amount(source["data"].get(key, "0"))
+            for key in ("financial_transfer_vat_fen", "investment_interest_vat_fen")
+        )
+        if (
+            source is None
+            or actual_parts
+            or error.code not in {"needs_information", "unsupported_business"}
+        ):
+            raise
+        financial_sales, investment = (), None
+        reference_error = error
+    sales = [*sales, *financial_sales]
+    try:
+        if reference_error is None and policy is not None and surtax is not None:
             reference, fields = calculate(fact, sales, policy, surtax)
-        elif source is None:
-            missing(fact, "/data/vat_policy_id", "计算税额需要有效VAT及三项附加政策。")
     except ContractError as error:
         if source is None:
             raise

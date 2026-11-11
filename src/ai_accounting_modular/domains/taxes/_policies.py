@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ai_accounting_modular.contracts.public import parse_rate
 
-from ._common import adopt_source, fact_for, issue, missing, month_end, plan_for, reject, result_for
+from ._common import adopt_source, fact_for, issue, month_end, plan_for, reject, result_for
 
 POLICIES = (
     "taxes.vat_policy",
@@ -48,7 +48,23 @@ def adopt_policy(plan, fact, context, business_id, kind, start_month, end_month,
     )
     if business_id is None:
         if required:
-            missing(fact, field, "计算参考需要明确的政策来源。")
+            message = (
+                "本次计算没有提交所需政策引用；先查已有适用政策，必要时登记有源政策后补齐引用。"
+                "缺政策引用不等于老板缺少业务资料。"
+            )
+            reject(
+                message,
+                "invalid_input",
+                fact_issues=[
+                    issue(
+                        fact,
+                        field,
+                        message,
+                        code="reference_missing",
+                        meaning="本次税费计算采用的政策引用",
+                    )
+                ],
+            )
         return None
     if not required and context.get_fact(business_id) is None:
         return None

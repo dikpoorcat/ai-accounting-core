@@ -5,27 +5,19 @@ from copy import deepcopy
 from datetime import date
 
 from ._common import amount, fail, missing, require_object
-
-_TAX_RIGHTS = {
-    "direct_bond": {"government_bond", "local_government_bond", "corporate_bond"},
-    "company_equity": {"listed_equity", "unlisted_equity"},
-    "partnership_interest": {"partnership"},
-    "financial_contract": {"bank_wealth", "contractual_asset_management"},
-    "securities_fund": {"securities_fund"},
-    "contractual_fund": {"contractual_asset_management"},
-}
+from ._investment_accounting import investment_accounting_terms
 
 
 def validate_term_compatibility(fact):
-    """Management names never establish ownership, tax qualification or intent."""
+    """Management names never establish accounting rights or holding intent."""
     data = fact["data"]
-    model, legal = data["measurement"], data["legal_form"]
+    model, right = data["measurement"], data["right_type"]
     intent = data.get("initial_holding_intent")
     allowed = (
         {"short_term_cost", "long_bond_cost"}
-        if legal == "direct_bond"
+        if right == "direct_bond"
         else {"short_term_cost", "long_equity_cost"}
-        if legal in {"company_equity", "partnership_interest"}
+        if right in {"company_equity", "partnership_interest"}
         else {"short_term_cost", "other_financial_cost"}
     )
     if model not in allowed:
@@ -34,36 +26,21 @@ def validate_term_compatibility(fact):
         data["holding_arrangement"] != "current" or intent == "long_term"
     ):
         fail("短期投资方法须对应实际短期持有安排，不能以报告分类改写长期意图。", "invalid_input")
-    instrument = data["tax_facts"]["instrument_type"]
-    if instrument not in _TAX_RIGHTS[legal]:
-        if instrument == "securities_fund" and legal in {
-            "company_equity",
-            "partnership_interest",
-            "contractual_fund",
-        }:
-            fail(
-                "该结构的特殊证券基金税务资格不在当前已实现资格路径内，"
-                "不能仅更换税务标签套用基金优惠。",
-                "unsupported_business",
-            )
-        fail("税务工具性质与已确认的法律权利不相容，须保留真实权利而非更换标签。", "invalid_input")
-    if legal == "direct_bond" and data["quantity_unit"] != "nominal_fen":
+    if right == "direct_bond" and data["quantity_unit"] != "nominal_fen":
         fail("直接债券的数量须使用有据整数分票面本金。", "invalid_input")
-    if data["quantity_unit"] == "ownership_fraction" and legal not in {
+    if data["quantity_unit"] == "ownership_fraction" and right not in {
         "company_equity",
         "partnership_interest",
     }:
         fail("所有权比例只适用于实际股权或合伙权益，不能当作合同本金或基金份数。", "invalid_input")
     schedule = data.get("coupon_schedule", ())
-    if legal != "direct_bond" and schedule:
+    if right != "direct_bond" and schedule:
         fail("合同付息及折溢价计划只适用于已确认的直接债券权利。", "invalid_input")
     days = [row["payment_on"] for row in schedule]
-    if days != sorted(set(days)) or legal == "direct_bond" and not schedule:
+    if days != sorted(set(days)) or right == "direct_bond" and not schedule:
         fail("直接债券须保存日期不重复、顺序明确的实际付息计划。", "invalid_input")
-    if legal == "direct_bond" and data["tax_facts"].get("maturity_on", days[-1]) != days[-1]:
-        fail("债券税务到期日与已采用合同最后支付日不一致。", "invalid_input")
 
-    if legal in {"direct_bond", "company_equity", "partnership_interest"}:
+    if right in {"direct_bond", "company_equity", "partnership_interest"}:
         if intent is None:
             missing(
                 fact,
@@ -76,7 +53,7 @@ def validate_term_compatibility(fact):
             "short_term_cost"
             if intent == "short_term"
             else "long_bond_cost"
-            if legal == "direct_bond"
+            if right == "direct_bond"
             else "long_equity_cost"
         )
         if model != expected:
@@ -95,7 +72,7 @@ def resolved_terms(data):
 
 
 def validate_adopted_terms(result, terms_id):
-    data = result.target["values"]
+    data = investment_accounting_terms(result.target["values"])
     validate_term_compatibility(
         {
             "business_id": terms_id,
@@ -105,6 +82,7 @@ def validate_adopted_terms(result, terms_id):
             "data": data,
         }
     )
+    return data
 
 
 def _authorization_boundary(value, *, end=False):
@@ -129,12 +107,11 @@ def validate_income_character(terms, character):
     allowed = {
         "company_equity": {"dividend"},
         "financial_contract": {"interest", "market_distribution"},
-        "securities_fund": {"fund_distribution", "market_distribution"},
-        "contractual_fund": {"fund_distribution", "market_distribution"},
+        "fund_units": {"fund_distribution", "market_distribution"},
         "partnership_interest": {"market_distribution"},
         "direct_bond": set(),
-    }[terms["legal_form"]]
-    if terms["legal_form"] == "partnership_interest" and terms["product_type"] == "other_fund":
+    }[terms["right_type"]]
+    if terms["right_type"] == "partnership_interest" and terms["product_type"] == "other_fund":
         allowed = allowed | {"fund_distribution"}
     if character not in allowed:
         fail(
@@ -149,13 +126,13 @@ def separate_income_character(fact, terms):
     if not amount(data.get("separate_declared_income_fen", "0")):
         return None
     supplied = data.get("separate_income_character")
-    if terms["legal_form"] == "direct_bond":
+    if terms["right_type"] == "direct_bond":
         if supplied not in {None, "interest"}:
             fail(
                 "直接债券取得前旧息由已到息合同权利确定，不能更换为其他收益标签。", "invalid_input"
             )
         return "interest"
-    if supplied is None and terms["legal_form"] == "financial_contract":
+    if supplied is None and terms["right_type"] == "financial_contract":
         missing(
             fact,
             "/data/separate_income_character",
@@ -201,10 +178,7 @@ def validate_terms(fact, context):
 
 def decorate_lot(lot, terms, arrangement=None):
     lot["account_code"] = account_code(terms, arrangement)
-    lot["legal_form"] = terms["legal_form"]
-    lot["tax_facts"] = deepcopy(terms["tax_facts"])
-    if "financial_instrument_reference" in terms:
-        lot["financial_instrument_reference"] = deepcopy(terms["financial_instrument_reference"])
+    lot["right_type"] = terms["right_type"]
     if terms["measurement"] == "long_bond_cost":
         lot["matures_on"] = terms["coupon_schedule"][-1]["payment_on"]
     return lot

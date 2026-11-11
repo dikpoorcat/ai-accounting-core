@@ -1,8 +1,11 @@
-"""Month bounds filter the current index before owner bodies are exported."""
+"""Kind and month bounds select current heads before owner bodies are exported."""
 
 from copy import deepcopy
 
+import pytest
+
 from ai_accounting_modular.application._context import DomainRegistry, SubmissionContext
+from ai_accounting_modular.contracts.public import ContractError
 
 from .test_publications import Ledger, Owner, direct, fact, identity, relation, seed
 from .test_publications import system as system
@@ -22,6 +25,69 @@ def context(read, owner, *, facts=None):
         facts=facts,
         evaluation_period_to="2026-12",
     )
+
+
+def qualification(number, period="2026-01"):
+    return {
+        **fact(number, period),
+        "kind": "taxes.investment_basis",
+        "data": {
+            "terms_id": identity(100),
+            "tax_facts": {
+                "instrument_type": "securities_fund",
+                "source": {"source_id": identity(900)},
+            },
+            "applicable_from": "2026-01-01",
+        },
+    }
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_kind_selection_precedes_persisted_and_declared_body_load(system, declared):
+    unrelated, wanted = fact(1), qualification(2)
+    seed(system, [unrelated, wanted], relations=[link(1), link(2)])
+    owner = Owner([unrelated, wanted], {})
+    owner.supported_kinds = ("operations.expense", "taxes.investment_basis")
+    storage, company = system
+    with storage.read_unit(company) as read:
+        view = context(read, owner)
+        if declared:
+            view.set_relations((identity(1), identity(2)), tuple(map(relation, (link(1), link(2)))))
+        assert view.related_facts(
+            identity(100), "calculation", kinds=("taxes.investment_basis",)
+        ) == (wanted,)
+        assert view.related_facts(identity(100), "calculation", kinds=()) == ()
+        with pytest.raises(ContractError):
+            view.related_facts(identity(100), "calculation", kinds="taxes.investment_basis")
+        with pytest.raises(ContractError):
+            view.related_facts(identity(100), "calculation", kinds=("unknown.kind",))
+    assert owner.exported == [identity(2)]
+
+
+def test_kind_selection_uses_final_overlay_before_loading_old_bodies(system):
+    prior = [qualification(1), fact(2), qualification(3)]
+    seed(system, prior, relations=[link(number) for number in (1, 2, 3)])
+    owner = Owner(prior, {})
+    owner.supported_kinds = ("operations.expense", "taxes.investment_basis")
+    wanted = qualification(2)
+    overlay = {
+        identity(1): fact(1),
+        identity(2): wanted,
+        identity(3): None,
+        identity(4): qualification(4, "2026-12"),
+    }
+    storage, company = system
+    with storage.read_unit(company) as read:
+        view = context(read, owner, facts=overlay)
+        view.set_relations(overlay, tuple(relation(link(number)) for number in (1, 2, 4)))
+        assert view.related_facts_many(
+            (identity(100),),
+            "calculation",
+            kinds=("taxes.investment_basis",),
+            period_from="2026-01",
+            period_to="2026-01",
+        ) == (wanted,)
+    assert owner.exported == []
 
 
 def test_month_lookup_never_exports_unrelated_month_bodies(system):

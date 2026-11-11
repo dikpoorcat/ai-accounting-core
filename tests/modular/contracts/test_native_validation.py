@@ -36,6 +36,24 @@ def compile_local(schema):
     return native.validator(native.compile_schema(schema), registry=runtime._native_registry())
 
 
+def test_kind_selection_supports_every_formal_and_partial_fact():
+    definitions = schema_document("business-facts.schema.json")["$defs"]
+    kinds = set(definitions["FactKind"]["enum"])
+
+    def members(node):
+        if "$ref" in node:
+            yield from members(definitions[node["$ref"].rsplit("/", 1)[-1]])
+        elif "oneOf" in node:
+            for branch in node["oneOf"]:
+                yield from members(branch)
+        else:
+            yield node["properties"]["kind"]["const"]
+
+    for union in ("Fact", "PartialFact"):
+        # FactKind also names generated positions which are not public inputs.
+        assert set(members(definitions[union])) <= kinds
+
+
 def test_valid_resource_checks_do_not_run_the_diagnostic_interpreter(monkeypatch):
     def unexpected(*args):
         raise AssertionError("a valid native check must not interpret the schema again")
@@ -208,11 +226,11 @@ def test_all_fixed_design_examples_match_the_reference_without_schema_rewriting(
     module.validator = Compare
     module.check_examples()
     assert module.COUNTS == {
-        "valid_schema_examples": 206,
+        "valid_schema_examples": 207,
         "rejected_schema_examples": 41,
         "company_note_planned_checks": 12,
     }
-    assert observations.count(True) == 217 and observations.count(False) == 41
+    assert observations.count(True) == 218 and observations.count(False) == 41
 
 
 def test_json_invalid_types_are_rejected_before_native_conversion(monkeypatch):

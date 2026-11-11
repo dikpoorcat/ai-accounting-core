@@ -289,8 +289,8 @@ class TaxSaleView:
 
 
 @dataclass(frozen=True)
-class InvestmentTaxEventView:
-    """One selected investment transaction, including its frozen tax facts."""
+class InvestmentEconomicEventView:
+    """One sourced investment event, independent of later tax qualification."""
 
     event: dict
     source: ResultSourceRef
@@ -299,15 +299,15 @@ class InvestmentTaxEventView:
     event_index: int = 0
 
     def __post_init__(self) -> None:
-        validate_contract("business-facts.schema.json", "InvestmentTaxEvent", self.event)
+        validate_contract("business-facts.schema.json", "InvestmentEconomicEvent", self.event)
         validate_contract("business-facts.schema.json", "ResultSourceRef", self.source)
         validate_contract("core.schema.json", "Month", self.period)
         if self.effective_on is not None:
             validate_contract("core.schema.json", "Date", self.effective_on)
             if self.effective_on[:7] != self.period:
-                raise ContractError("invalid_input", "投资税务量的实际日与所属月不一致。")
+                raise ContractError("invalid_input", "投资经济量的实际日与所属月不一致。")
         if type(self.event_index) is not int or self.event_index < 0:
-            raise ContractError("invalid_input", "投资税务量在来源内的序号无效。")
+            raise ContractError("invalid_input", "投资经济量在来源内的序号无效。")
 
 
 @dataclass(frozen=True)
@@ -385,13 +385,14 @@ class EvaluationContext(Protocol):
         relation_kind: DependencyRelationKind,
         *,
         producer_kind: Literal["business", "object"] = "business",
+        kinds: tuple[str, ...] | None = None,
         period_from: str | None = None,
         period_to: str | None = None,
     ) -> tuple[Fact, ...]:
-        """Read declared current dependencies with same-unit replacements/withdrawals.
+        """Read current relations with same-unit replacements/withdrawals.
 
-        The application uses current_dependency and its submission overlay;
-        finding these facts must not scan arbitrary business JSON bodies.
+        The application filters current_relation/business heads and its submission
+        overlay before loading bodies. None selects all kinds; an empty tuple none.
         """
         ...
 
@@ -405,10 +406,11 @@ class EvaluationContext(Protocol):
         relation_kind: DependencyRelationKind,
         *,
         producer_kind: Literal["business", "object"] = "business",
+        kinds: tuple[str, ...] | None = None,
         period_from: str | None = None,
         period_to: str | None = None,
     ) -> tuple[Fact, ...]:
-        """Unique current facts related to at most 500 explicit producer identities."""
+        """Unique related facts; kind/period selection precedes body loading."""
         ...
 
     def get_result(self, business_id: str, result_slot: str) -> EvaluatedSlot | None:
@@ -448,9 +450,9 @@ class EvaluationContext(Protocol):
         """Current tax-period components after the declared publisher slots are ready."""
         ...
 
-    def investment_tax_events(
+    def investment_economic_events(
         self, period_from: str, period_to: str, *, kinds: tuple[str, ...] | None = None
-    ) -> tuple[InvestmentTaxEventView, ...]:
+    ) -> tuple[InvestmentEconomicEventView, ...]:
         """Declared investment scopes with exact candidate or adopted producer results."""
         ...
 

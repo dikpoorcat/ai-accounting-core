@@ -29,12 +29,11 @@ def inputs():
         {
             "product_id": PRODUCT,
             "product_type": "money_fund",
-            "legal_form": "securities_fund",
+            "right_type": "fund_units",
             "measurement": "short_term_cost",
             "quantity_unit": "units",
             "holding_arrangement": "current",
             "terms_source": location,
-            "tax_facts": {"instrument_type": "securities_fund", "source": location},
         },
         period="2026-07",
     )
@@ -78,6 +77,22 @@ def inputs():
     return terms, acquired, disposed, vat_policy, surtax(zero=True), tax_basis
 
 
+def qualification(terms, *, instrument="securities_fund", **fields):
+    return fact(
+        "taxes.investment_basis",
+        {
+            "terms_id": terms["business_id"],
+            "applicable_from": terms["period"] + "-01",
+            "tax_facts": {
+                "instrument_type": instrument,
+                "source": {"source_id": SOURCE},
+                **fields,
+            },
+        },
+        period=terms["period"],
+    )
+
+
 def tax_values(app, company, basis, period):
     records = get(app, company, basis["business_id"])["businesses"][0]["results"]
     return next(
@@ -103,7 +118,9 @@ def income_adjustments(app, company, producer, slot):
 def test_atomic_publish_month_without_return_and_open_replacement(tmp_path):
     app, company = assemble(tmp_path, taxes=True)
     terms, acquired, disposed, vat_policy, surtax_policy, basis = inputs()
-    body = request(company, terms, acquired, disposed, vat_policy, surtax_policy, basis)
+    body = request(
+        company, terms, qualification(terms), acquired, disposed, vat_policy, surtax_policy, basis
+    )
     body["sources"].append(evidence())
     result = app.accounting_apply(body)
     assert result.get("completion") == "complete", result
@@ -253,7 +270,9 @@ def start_quarter(app, company):
     acquired["data"]["acquisition_fees_fen"] = "0"
     disposed["data"]["gross_proceeds_fen"] = "2010000"
     vat_policy["data"]["threshold_period"] = "quarter"
-    body = request(company, terms, acquired, disposed, vat_policy, surtax_policy, basis)
+    body = request(
+        company, terms, qualification(terms), acquired, disposed, vat_policy, surtax_policy, basis
+    )
     body["sources"].append(evidence())
     result = app.accounting_apply(body)
     assert result.get("completion") == "complete", result
@@ -312,13 +331,8 @@ def test_real_bank_wealth_maturity_uses_issuer_interest_composition_once(tmp_pat
     terms, acquired, disposed, vat_policy, surtax_policy, basis = inputs()
     terms["data"].update(
         product_type="bank_wealth",
-        legal_form="financial_contract",
+        right_type="financial_contract",
         measurement="other_financial_cost",
-        tax_facts={
-            "instrument_type": "bank_wealth",
-            "principal_protected": True,
-            "source": {"source_id": SOURCE},
-        },
     )
     income = fact(
         "investment.income",
@@ -350,6 +364,7 @@ def test_real_bank_wealth_maturity_uses_issuer_interest_composition_once(tmp_pat
     body = request(
         company,
         terms,
+        qualification(terms, instrument="bank_wealth", principal_protected=True),
         acquired,
         *([income] if recognized else []),
         disposed,
@@ -390,11 +405,10 @@ def test_real_partnership_annual_actual_preserves_taxed_retained_payout_capacity
     terms, acquired, _, _, _, _ = inputs()
     terms["data"].update(
         product_type="other_fund",
-        legal_form="partnership_interest",
+        right_type="partnership_interest",
         measurement="long_equity_cost",
         holding_arrangement="noncurrent",
         initial_holding_intent="long_term",
-        tax_facts={"instrument_type": "partnership", "source": {"source_id": SOURCE}},
     )
     location = {"source_id": SOURCE}
 
@@ -551,7 +565,18 @@ def test_real_monthly_weighted_sale_before_split_and_later_purchase_needs_no_new
         period="2026-07",
         actual="2026-07-20",
     )
-    body = request(company, terms, acquired, sold, split, later, vat_policy, surtax_policy, basis)
+    body = request(
+        company,
+        terms,
+        qualification(terms),
+        acquired,
+        sold,
+        split,
+        later,
+        vat_policy,
+        surtax_policy,
+        basis,
+    )
     body["sources"].append(evidence())
     response = app.accounting_apply(body)
     assert response.get("completion") == "complete", response
@@ -569,14 +594,19 @@ def test_real_same_product_accounts_share_only_the_same_financial_instrument_poo
 ):
     app, company = assemble(tmp_path, taxes=True)
     terms, acquired, sold, vat_policy, surtax_policy, basis = inputs()
-    terms["data"]["financial_instrument_reference"] = {
+    tax_basis = qualification(terms)
+    tax_basis["data"]["financial_instrument_reference"] = {
         "reference": "share-class:A",
         "source": {"source_id": SOURCE},
     }
     acquired["data"].update(purchase_price_fen="10000", acquisition_fees_fen="0")
     other_terms = deepcopy(terms)
     other_terms["business_id"] = str(uuid4())
-    other_terms["data"]["financial_instrument_reference"]["reference"] = (
+    other_basis = qualification(other_terms)
+    other_basis["data"]["financial_instrument_reference"] = deepcopy(
+        tax_basis["data"]["financial_instrument_reference"]
+    )
+    other_basis["data"]["financial_instrument_reference"]["reference"] = (
         "share-class:" + second_class
     )
     other = deepcopy(acquired)
@@ -586,7 +616,17 @@ def test_real_same_product_accounts_share_only_the_same_financial_instrument_poo
     sold["effective_on"] = "2026-07-03"
     sold["data"].update(quantity="5", gross_proceeds_fen="10000")
     body = request(
-        company, terms, other_terms, acquired, other, sold, vat_policy, surtax_policy, basis
+        company,
+        terms,
+        other_terms,
+        tax_basis,
+        other_basis,
+        acquired,
+        other,
+        sold,
+        vat_policy,
+        surtax_policy,
+        basis,
     )
     body["sources"].append(evidence())
     response = app.accounting_apply(body)
@@ -649,7 +689,17 @@ def test_real_actual_vat_components_accept_true_ordinary_residual(tmp_path, refe
         period="2026-07",
     )
     body = request(
-        company, terms, acquired, disposed, sale, vat_policy, surtax_policy, basis, current, actual
+        company,
+        terms,
+        qualification(terms),
+        acquired,
+        disposed,
+        sale,
+        vat_policy,
+        surtax_policy,
+        basis,
+        current,
+        actual,
     )
     body["sources"].append(evidence())
     response = app.accounting_apply(body)
@@ -666,14 +716,17 @@ def test_real_actual_vat_components_accept_true_ordinary_residual(tmp_path, refe
 def government_terms(terms, acquired, issued):
     terms["data"].update(
         product_type="bond",
-        legal_form="direct_bond",
+        right_type="direct_bond",
         measurement="long_bond_cost",
         quantity_unit="nominal_fen",
         holding_arrangement="noncurrent",
         initial_holding_intent="long_term",
         coupon_schedule=[{"payment_on": "2026-12-31", "coupon_rate": "0.04"}],
-        tax_facts={
-            "instrument_type": "government_bond",
+    )
+    adopted = qualification(
+        terms,
+        instrument="government_bond",
+        **{
             "original_issue_on": issued,
             "maturity_on": "2026-12-31",
             "source": {"source_id": SOURCE},
@@ -692,6 +745,7 @@ def government_terms(terms, acquired, issued):
         acquisition_fees_fen="0",
         acquisition_origin="secondary_market",
     )
+    return adopted
 
 
 @pytest.mark.parametrize(
@@ -703,7 +757,7 @@ def test_real_secondary_government_coupon_uses_183_days_and_its_own_vat_share(
 ):
     app, company = assemble(tmp_path, taxes=True)
     terms, acquired, _, vat_policy, surtax_policy, basis = inputs()
-    government_terms(terms, acquired, issued)
+    adopted = government_terms(terms, acquired, issued)
     coupon = fact(
         "investment.debt_interest",
         {
@@ -741,6 +795,7 @@ def test_real_secondary_government_coupon_uses_183_days_and_its_own_vat_share(
     body = request(
         company,
         terms,
+        adopted,
         acquired,
         coupon,
         sale,
@@ -783,7 +838,7 @@ def test_real_government_early_transfer_realizes_91_day_interest_without_extra_b
 ):
     app, company = assemble(tmp_path, taxes=True)
     terms, acquired, sold, vat_policy, surtax_policy, basis = inputs()
-    government_terms(terms, acquired, "2024-01-01")
+    adopted = government_terms(terms, acquired, "2024-01-01")
     sold["period"], sold["effective_on"] = "2026-09", "2026-09-30"
     sold["data"].update(quantity="100000", gross_proceeds_fen="103000")
     eit, prepayment, eit_policy = income_inputs()
@@ -793,6 +848,7 @@ def test_real_government_early_transfer_realizes_91_day_interest_without_extra_b
     body = request(
         company,
         terms,
+        adopted,
         acquired,
         sold,
         vat_policy,
@@ -918,13 +974,8 @@ def test_real_actual_exemption_keeps_whole_period_amount_and_books_only_proven_o
         interest_terms["data"].update(
             product_id=str(uuid4()),
             product_type="bank_wealth",
-            legal_form="financial_contract",
+            right_type="financial_contract",
             measurement="other_financial_cost",
-            tax_facts={
-                "instrument_type": "bank_wealth",
-                "principal_protected": True,
-                "source": {"source_id": SOURCE},
-            },
         )
         income = fact(
             "investment.income",
@@ -937,10 +988,15 @@ def test_real_actual_exemption_keeps_whole_period_amount_and_books_only_proven_o
             period="2026-07",
             actual="2026-07-04",
         )
-        extra = [interest_terms, income]
+        extra = [
+            interest_terms,
+            income,
+            qualification(interest_terms, instrument="bank_wealth", principal_protected=True),
+        ]
     body = request(
         company,
         terms,
+        qualification(terms),
         acquired,
         disposed,
         sale,
@@ -1037,7 +1093,7 @@ def test_real_actual_investment_parts_cannot_be_ignored_without_monthly_position
         surtax_policy,
         current,
         actual,
-        *([terms, acquired, disposed] if include_trade else []),
+        *([terms, qualification(terms), acquired, disposed] if include_trade else []),
     )
     body["sources"].append(evidence())
     response = app.accounting_apply(body)

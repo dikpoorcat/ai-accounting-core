@@ -109,7 +109,7 @@ def test_new_coupon_day_batch_and_old_unpaid_coupon_reach_maturity_without_dupli
     apply_facts(app, company, holding, earlier, first_coupon, purchased, initial=True)
     body = result(app, company, purchased)
     assert body["target"]["values"]["cost_fen"] == "101000"
-    assert body["target"]["values"]["tax_event"]["acquired_coupon_dates"] == ["2026-06-30"]
+    assert body["target"]["values"]["economic_event"]["acquired_coupon_dates"] == ["2026-06-30"]
     assert body["target"]["values"]["created_lots"][0]["acquired_coupon_dates"] == ["2026-06-30"]
     adopted = result(app, company, holding)
     assert adopted["basis"]["input"]["debt_amortization_method"] == (

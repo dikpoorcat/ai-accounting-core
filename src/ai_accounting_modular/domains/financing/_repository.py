@@ -2,7 +2,9 @@
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    analyze_conversion_fact,
     canonical_json,
+    is_legacy_investment,
     loads_json,
     validate_contract,
 )
@@ -31,10 +33,17 @@ def _effective_on(fact):
     return fact.get("effective_on")
 
 
-def _read(row, family, main_object):
+def _read(row, family, main_object, *, investment_conversion=False):
     try:
         fact = loads_json(row["data_json"])
-        validate_fact(fact, family)
+        if investment_conversion and is_legacy_investment(fact):
+            analyze_conversion_fact(fact)
+            if family != "investment" or (
+                "effective_on" in fact and fact["effective_on"][:7] != fact["period"]
+            ):
+                raise ValueError("stored family or date mismatch")
+        else:
+            validate_fact(fact, family)
         if (
             fact["business_id"] != row["business_id"]
             or fact["kind"] != row["schema_key"]
@@ -77,7 +86,7 @@ class FinancingRepository:
             raise ContractError("storage_corrupt", "合作当前事实缺少本模块维护的合同身份。")
         return loads_json(row["data_json"])["data"]["project_id"]
 
-    def get(self, family, ids):
+    def get(self, family, ids, *, investment_conversion=False):
         if len(ids) > 500 or len(ids) != len(set(ids)):
             raise ContractError("invalid_input", "当前事实查询至多500个不同业务身份。")
         for business_id in ids:
@@ -90,7 +99,10 @@ class FinancingRepository:
             "WHERE business_id IN (SELECT value FROM json_each(?)) ORDER BY business_id",
             (canonical_json(list(ids)),),
         )
-        return tuple(_read(row, family, self._main_object) for row in rows)
+        return tuple(
+            _read(row, family, self._main_object, investment_conversion=investment_conversion)
+            for row in rows
+        )
 
     def query(self, query):
         clauses = ["json_extract(data_json,'$.period')>=?", "json_extract(data_json,'$.period')<=?"]

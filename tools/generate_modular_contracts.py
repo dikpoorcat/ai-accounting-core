@@ -81,9 +81,15 @@ BUSINESS_GUIDES = (
     (
         "金融投资",
         (
-            "investment.terms", "investment.acquire", "investment.income",
-            "investment.dispose", "investment.capital_return", "investment.reinvest",
-            "investment.unit_change", "investment.loss", "investment.debt_interest",
+            "investment.terms",
+            "investment.acquire",
+            "investment.income",
+            "investment.dispose",
+            "investment.capital_return",
+            "investment.reinvest",
+            "investment.unit_change",
+            "investment.loss",
+            "investment.debt_interest",
             "investment.holding_change",
             "investment.market_estimate",
             "investment.unit_change_basis",
@@ -127,13 +133,125 @@ BUSINESS_GUIDES = (
             "taxes.prepayment_basis",
             "taxes.financial_transfer_basis",
             "taxes.partnership_allocation",
+            "taxes.investment_basis",
         ),
     ),
     ("期初与报表接续", ("opening.package", "reports.continuation")),
 )
 
+# These are document references, not a second set of required fields or business
+# predicates. Each kind also has exactly one own section in the source document.
+BUSINESS_SHARED_SECTIONS = (
+    ("收入确认与税期", ("operations.service_sale",)),
+    (
+        "收入与预收的累计拆分",
+        (
+            "operations.service_sale",
+            "operations.advance",
+            "operations.advance_fulfillment",
+            "operations.advance_refund",
+            "operations.sale_return",
+        ),
+    ),
+    ("供应商预付与成本抵销", ("operations.advance", "money.transfer")),
+    ("合作经营份额", ("operations.service_sale", "operations.expense")),
+    ("工资及奖金计提", ("people.remuneration",)),
+    (
+        "缴费实际反馈与采用",
+        (
+            "people.employment",
+            "people.contribution_actual",
+            "people.remuneration",
+        ),
+    ),
+    ("个税依据", ("people.remuneration", "people.remuneration_tax")),
+    ("缴费与工资公式", ("people.remuneration",)),
+    ("报酬正式结果", ("people.remuneration",)),
+    ("后续付款安排与当前可付额", ("people.remuneration",)),
+    ("摊折与处置的接续计算", ("assets.activation", "assets.disposal")),
+    (
+        "投资持仓与批次接续",
+        (
+            "investment.acquire",
+            "investment.dispose",
+            "investment.capital_return",
+            "investment.reinvest",
+            "investment.unit_change",
+            "investment.loss",
+            "investment.debt_interest",
+            "investment.holding_change",
+        ),
+    ),
+    (
+        "投资金额与资金范围",
+        (
+            "investment.acquire",
+            "investment.income",
+            "investment.dispose",
+            "investment.capital_return",
+            "investment.reinvest",
+            "investment.loss",
+            "investment.debt_interest",
+            "investment.money_fund_purchase",
+            "investment.money_fund_redemption",
+        ),
+    ),
+    (
+        "合作事实的实际发生",
+        (
+            "investment.cooperation_funding",
+            "investment.cooperation_collection",
+            "investment.cooperation_payment",
+            "investment.cooperation_operator_transfer",
+            "investment.cooperation_distribution",
+            "investment.cooperation_exit",
+        ),
+    ),
+    (
+        "合作代理清偿",
+        (
+            "investment.cooperation_collection",
+            "investment.cooperation_payment",
+        ),
+    ),
+    (
+        "合作退回与更正",
+        (
+            "investment.cooperation_collection",
+            "investment.cooperation_payment",
+        ),
+    ),
+    (
+        "合作资金用途与退出",
+        (
+            "investment.cooperation_funding",
+            "investment.cooperation_operator_transfer",
+            "investment.cooperation_distribution",
+            "investment.cooperation_exit",
+        ),
+    ),
+    ("款项识别与关系核查", ("money.movement", "money.reconciliation")),
+    (
+        "税务政策采用",
+        (
+            "taxes.vat_policy",
+            "taxes.surtax_policy",
+            "taxes.used_asset_vat_policy",
+            "taxes.income_tax_policy",
+        ),
+    ),
+    (
+        "投资税务采用与计算",
+        (
+            "taxes.investment_basis",
+            "taxes.financial_transfer_basis",
+        ),
+    ),
+)
+
 GUIDE_LINKS = {
     "#合作项目投资": "accounting://guides/business/investment.cooperation_contract",
+    "#taxestax_point": "accounting://guides/business/taxes.tax_point",
     "03-contracts.md": "accounting://guides/commands",
     "05-business-rules.md": "accounting://guides/business",
     "05b-financial-reporting.md": "accounting://guides/reporting",
@@ -158,6 +276,33 @@ def markdown_section(text, heading):
         if match and len(match[1]) <= level:
             return "".join(lines[start:end]).strip() + "\n"
     return "".join(lines[start:]).strip() + "\n"
+
+
+def business_sections(text, kinds):
+    """Package exact action text and its explicit shared paragraphs, once each."""
+    headings = re.findall(r"^(#{2,5} `([^`]+)`)\s*$", text, re.MULTILINE)
+    indexed = {}
+    for heading, kind in headings:
+        if kind in indexed:
+            raise ValueError(f"Duplicate business guide section: {kind}")
+        indexed[kind] = heading
+    if set(indexed) != kinds:
+        raise ValueError(
+            "Business guide sections differ from Fact inputs; "
+            f"missing={sorted(kinds - indexed.keys())}; "
+            f"extra={sorted(indexed.keys() - kinds)}"
+        )
+    shared = {kind: [] for kind in kinds}
+    for title, selected in BUSINESS_SHARED_SECTIONS:
+        if not selected or len(selected) != len(set(selected)) or set(selected) - kinds:
+            raise ValueError(f"Invalid shared guide selection: {title}")
+        section = markdown_section(text, "### " + title)
+        for kind in selected:
+            shared[kind].append(section)
+    return {
+        kind: "\n".join((markdown_section(text, heading), *shared[kind]))
+        for kind, heading in indexed.items()
+    }
 
 
 def fact_kinds(document):
@@ -313,21 +458,22 @@ def guide_outputs(root, business_document):
         markdown_section(rules, "### " + heading)
         for heading in ("义务转移与多付重分类", "同一业务更正分类")
     )
-    business, sections = {}, {}
-    for heading, kinds in BUSINESS_GUIDES:
-        level = "### " if heading in {"金融投资", "货币基金", "合作项目投资"} else "## "
-        section = markdown_section(rules, level + heading)
-        sections[heading] = page(heading, "05-business-rules.md", section)["text"]
+    documented = set()
+    for _heading, kinds in BUSINESS_GUIDES:
         for kind in kinds:
-            if kind in business:
+            if kind in documented:
                 raise ValueError(f"Duplicate guide mapping: {kind}")
-            business[kind] = heading
+            documented.add(kind)
     actual = fact_kinds(business_document)
-    if set(business) != actual:
+    if documented != actual:
         raise ValueError(
-            f"Business guides differ from Fact inputs; missing={sorted(actual - business.keys())}; "
-            f"extra={sorted(business.keys() - actual)}"
+            f"Business guides differ from Fact inputs; missing={sorted(actual - documented)}; "
+            f"extra={sorted(documented - actual)}"
         )
+    business = {
+        kind: page(kind, "05-business-rules.md", text)["text"]
+        for kind, text in business_sections(rules, actual).items()
+    }
     topics = {
         "work": page("会计 AI 工作引导", "08-ai-work-and-materials.md", work),
         "commands": page("公开命令与标准资料", "03-contracts.md", commands),
@@ -335,12 +481,13 @@ def guide_outputs(root, business_document):
             "按事实种类读取业务规则",
             "05-business-rules.md",
             "先用 accounting_schema 取得当前实例实际支持的 kind，再读取 "
-            "accounting://guides/business/{kind}。规则文档不证明当前实例已装配该业务。\n\n"
+            "accounting://guides/business/{kind}，取得该种类及其真实type/method分支的条件。"
+            "只采用当前分支；其他分支和后续事项不变成当前必答题。"
+            "规则文档不证明当前实例已装配该业务。\n\n"
             "更正、义务转移及多付重分类按需读取 accounting://guides/corrections。\n\n"
             + "\n".join(
-                f"- {heading}：" + "、".join(
-                    f"[{kind}](accounting://guides/business/{kind})" for kind in kinds
-                )
+                f"- {heading}："
+                + "、".join(f"[{kind}](accounting://guides/business/{kind})" for kind in kinds)
                 for heading, kinds in BUSINESS_GUIDES
             ),
         ),
@@ -350,12 +497,11 @@ def guide_outputs(root, business_document):
         ),
     }
     payload = {
-        "format": "ai-accounting-guides/1",
+        "format": "ai-accounting-guides/2",
         "topics": topics,
         "checklist": checklist,
         "business": {
             "kinds": business,
-            "sections": sections,
             "common": page("公共事实", "05-business-rules.md", common)["text"],
             "corrections": page("更正与清偿", "05-business-rules.md", corrections)["text"],
         },

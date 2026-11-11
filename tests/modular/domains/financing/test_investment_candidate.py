@@ -11,7 +11,7 @@ from ai_accounting_modular.domains.financing._investment_math import Lot
 from ai_accounting_modular.domains.financing.public import Investment
 
 from ._investment_support import acquire, dispose, source, terms
-from ._support import COUNTERPARTY, PRODUCT, SOURCE, assemble, fact, request, result
+from ._support import COUNTERPARTY, PRODUCT, assemble, fact, request, result
 from .test_investment_lifecycle import apply_facts
 
 
@@ -135,18 +135,13 @@ def _bond():
     )
 
 
-@pytest.mark.parametrize(
-    "invalid", ["bypass_amortization", "tax_rights", "missing_intent_known_bypass"]
-)
-def test_real_terms_reject_profile_and_tax_label_counterexamples(tmp_path, invalid):
+@pytest.mark.parametrize("invalid", ["bypass_amortization", "missing_intent_known_bypass"])
+def test_real_terms_reject_accounting_model_bypass(tmp_path, invalid):
     app, company = assemble(tmp_path)
     holding = _bond()
-    if invalid in {"bypass_amortization", "missing_intent_known_bypass"}:
-        holding["data"]["measurement"] = "other_financial_cost"
-        if invalid == "missing_intent_known_bypass":
-            holding["data"].pop("initial_holding_intent")
-    else:
-        holding["data"]["tax_facts"]["instrument_type"] = "securities_fund"
+    holding["data"]["measurement"] = "other_financial_cost"
+    if invalid == "missing_intent_known_bypass":
+        holding["data"].pop("initial_holding_intent")
     payload = request(company, holding)
     for obj in payload["objects"]:
         if obj["object_id"] == PRODUCT:
@@ -155,17 +150,10 @@ def test_real_terms_reject_profile_and_tax_label_counterexamples(tmp_path, inval
     assert rejected["error"] == "invalid_input", rejected
 
 
-def test_financial_contract_cannot_claim_government_bond_tax_identity(tmp_path):
+def test_financial_contract_cannot_use_direct_bond_accounting(tmp_path):
     app, company = assemble(tmp_path)
     holding = terms(product_type="bank_wealth", measurement="other_financial_cost")
-    holding["data"].update(
-        legal_form="financial_contract",
-        tax_facts={
-            "instrument_type": "government_bond",
-            "original_issue_on": "2020-01-01",
-            "source": {"source_id": SOURCE},
-        },
-    )
+    holding["data"]["measurement"] = "long_bond_cost"
     payload = request(company, holding)
     for obj in payload["objects"]:
         if obj["object_id"] == PRODUCT:

@@ -2,6 +2,11 @@
 
 from copy import deepcopy
 
+from ai_accounting_modular.domains.financing.public import (
+    investment_accounting_terms,
+    investment_economic_events,
+)
+
 from ._common import adopt_source, amount, missing, plan_for, reject, total
 
 KIND = "taxes.partnership_allocation"
@@ -130,7 +135,8 @@ def allocation(fact, context):
     if (
         terms is None
         or terms.target["kind"] != "investment.terms"
-        or terms.target["values"]["legal_form"] != "partnership_interest"
+        or investment_accounting_terms(terms.target["values"])["right_type"]
+        != "partnership_interest"
     ):
         reject("合伙税务分配依据须引用本企业实际持有的合伙权益正式条款。", "invalid_input")
     seen, book_income, results = set(), 0, [terms]
@@ -144,7 +150,8 @@ def allocation(fact, context):
             reject("合伙收益核对须引用不重复的收益主结果。", "invalid_input")
         seen.add(key)
         result = context.get_result(*key)
-        event = None if result is None else result.target["values"].get("tax_event")
+        events = () if result is None else investment_economic_events(result.target["values"])
+        event = events[0] if len(events) == 1 else None
         if (
             event is None
             or event["terms_id"] != data["investment_id"]

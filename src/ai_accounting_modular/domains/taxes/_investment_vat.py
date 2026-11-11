@@ -6,6 +6,8 @@ from decimal import Decimal, localcontext
 from ._common import adopt_source, amount, line, missing, rounded, total
 from ._financial_transfer import INVESTMENT_TAX_KINDS, period_results
 from ._investment_effects import interest_effects, pool_effect
+from ._investment_qualification import economic_rights, qualify
+from ._investment_simple import separate
 from ._investment_tax_math import (
     allocate_interest_vat,
     event_key,
@@ -40,10 +42,12 @@ def components(fact, context, plan, policy, actual=None, *, actual_fact=None):
         )
         if facts:
             events = tuple(
-                context.investment_tax_events(
+                context.investment_economic_events(
                     fact["data"]["start_month"], fact["data"]["end_month"]
                 )
             )
+            _, events, _ = separate(fact, (), economic_rights(fact, context, events))
+            events, _ = qualify(fact, context, plan, events, purpose="vat_assessment")
             if any(
                 is_financial_transfer(view.event) or taxable_interest(view.event) for view in events
             ):
@@ -68,8 +72,12 @@ def components(fact, context, plan, policy, actual=None, *, actual_fact=None):
         "interest": total(amount(row["interest_vat_fen"]) for row in positions),
     }
     views = tuple(
-        context.investment_tax_events(fact["data"]["start_month"], fact["data"]["end_month"])
+        context.investment_economic_events(fact["data"]["start_month"], fact["data"]["end_month"])
     )
+    # Monthly positions already own inventory continuity. The return only
+    # classifies income/exit events, not every purchase again across the quarter.
+    views = tuple(view for view in views if "terms_id" in view.event)
+    views, _ = qualify(fact, context, plan, views, purpose="vat_assessment")
     _check_actual_sources(actual_fact or fact, actual, views)
     if not gross and not interest and not any(recognized.values()):
         if not (

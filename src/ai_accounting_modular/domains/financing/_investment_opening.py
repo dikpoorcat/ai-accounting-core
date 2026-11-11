@@ -15,8 +15,7 @@ def _terms(data, period, context):
         fail("期初投资须引用已经核验的投资条款正式结果。", "invalid_input")
     if result.basis["period"] > period:
         fail("期初不能采用建账边界之后成立的投资条款。", "invalid_input")
-    validate_adopted_terms(result, data["terms_id"])
-    return result
+    return result, validate_adopted_terms(result, data["terms_id"])
 
 
 def _balance(member, code, value, *, product=None, party=None):
@@ -34,8 +33,8 @@ def _balance(member, code, value, *, product=None, party=None):
     return result
 
 
-def _holding(fact, member, terms_result):
-    data, terms = member["data"], terms_result.target["values"]
+def _holding(fact, member, terms_result, terms):
+    data = member["data"]
     start = fact["period"]
     quantity = Decimal(data["quantity"])
     if quantity <= 0:
@@ -80,8 +79,7 @@ def _holding(fact, member, terms_result):
         "account_code": account_code(terms),
         "quantity": data["quantity"],
         "quantity_unit": terms["quantity_unit"],
-        "legal_form": terms["legal_form"],
-        "tax_facts": deepcopy(terms["tax_facts"]),
+        "right_type": terms["right_type"],
         **{key: data[key] for key in ("historical_cost_fen", "carrying_fen", "acquired_period")},
     }
     for key in (
@@ -95,8 +93,6 @@ def _holding(fact, member, terms_result):
     ):
         if key in data:
             lot[key] = deepcopy(data[key])
-    if "financial_instrument_reference" in terms:
-        lot["financial_instrument_reference"] = deepcopy(terms["financial_instrument_reference"])
     if ("eit_interest_realized_through" in data) != ("eit_interest_source" in data):
         fail("期初已实现税息截止日与其实际依据须一同提供。", "invalid_input")
     if data.get("eit_interest_realized_through", "0001-01-01") >= start + "-01":
@@ -129,11 +125,11 @@ def _holding(fact, member, terms_result):
     }
 
 
-def _receivable(fact, member, terms_result):
-    data, terms = member["data"], terms_result.target["values"]
-    legal, interest = terms["legal_form"], data["income_kind"] == "interest"
-    if (interest and legal not in {"financial_contract", "direct_bond"}) or (
-        not interest and legal == "direct_bond"
+def _receivable(fact, member, terms_result, terms):
+    data = member["data"]
+    right, interest = terms["right_type"], data["income_kind"] == "interest"
+    if (interest and right not in {"financial_contract", "direct_bond"}) or (
+        not interest and right == "direct_bond"
     ):
         fail("期初投资应收收益性质与已确认的法律权利不一致。", "invalid_input")
     code = "1132" if data["income_kind"] == "interest" else "1131"
@@ -193,8 +189,10 @@ def opening_investment_members(fact, context):
         if data["type"] == "cooperation":
             result.append(cooperation_member(fact, member, context))
         elif data["type"] in {"investment", "investment_receivable"}:
-            terms = _terms(data, fact["period"], context)
+            adopted, terms = _terms(data, fact["period"], context)
             result.append(
-                (_holding if data["type"] == "investment" else _receivable)(fact, member, terms)
+                (_holding if data["type"] == "investment" else _receivable)(
+                    fact, member, adopted, terms
+                )
             )
     return tuple(result)

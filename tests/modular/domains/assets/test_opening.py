@@ -328,7 +328,7 @@ def test_opening_cannot_erase_real_disposal_and_failure_keeps_all_current_result
         command = replace(company, item)
     failed = app.accounting_apply(command)
     assert failed["completion"] == "not_saved", failed
-    assert failed["error"] in {"needs_information", "dependency_conflict"}, failed
+    assert failed["error"] == "dependency_conflict", failed
     assert get(app, company, item["business_id"], disposed["business_id"]) == before
 
 

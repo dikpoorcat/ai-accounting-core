@@ -3,7 +3,15 @@
 from copy import deepcopy
 from decimal import Decimal, localcontext
 
-from ._common import amount, checked, missing_investment_input, reject, rounded, total
+from ._common import (
+    amount,
+    checked,
+    investment_result_issue,
+    missing_investment_input,
+    reject,
+    rounded,
+    total,
+)
 
 
 def _key(reference):
@@ -114,22 +122,16 @@ def month_lots(previous, views):
                 if not allocations:
                     if kind == "debt_interest":
                         continue
-                    missing_investment_input(
-                        event,
-                        view.source["business_id"],
-                        "/data/lots",
-                        "所得税成本接续缺少核心已经采用的原批次。",
+                    investment_result_issue(
+                        view, "所得税成本接续缺少核心已经采用的原批次，须核查正式业务的来源关联。"
                     )
                 consumed, unknown, units = 0, False, Decimal(0)
                 seen = set()
                 for selection in allocations:
                     key = _key(selection["source"])
                     if key in seen or key not in product:
-                        missing_investment_input(
-                            event,
-                            view.source["business_id"],
-                            "/data/lots",
-                            "所得税成本来源缺失或重复，不能用VAT均价代替。",
+                        investment_result_issue(
+                            view, "所得税成本的正式来源缺失或重复，不能用VAT均价代替。"
                         )
                     seen.add(key)
                     part = Decimal(selection["quantity"])

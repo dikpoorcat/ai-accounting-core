@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from ._common import adopt, amount, base_plan, fail
 from ._investment_candidate import REVISION, inventory
+from ._investment_economic import adopt_dividend_holdings, economic_event
 from ._investment_events import terms_result
 from ._investment_math import Event, decimal_text, reference_key
 from ._investment_position import position_plan as position_plan
@@ -14,7 +15,6 @@ from ._investment_rules import (
     validate_income_character,
     validate_terms,
 )
-from ._investment_tax import adopt_dividend_holdings, tax_event
 
 
 def terms(fact, context, *, authorization=None):
@@ -65,8 +65,8 @@ def _adopt_sources(plan, event, context):
             fail("投资成本来源必须公开唯一的完整批次数量和账面成本。")
         plan["basis"]["adopted_quantities"].append(deepcopy(lots[0]))
         if plan["target"]["kind"] in {"investment.debt_interest", "investment.dispose"}:
-            tax = plan["target"]["values"].get("tax_event")
-            if tax is not None and tax.get("legal_form") == "direct_bond":
+            transaction = plan["target"]["values"].get("economic_event")
+            if transaction is not None and transaction["right_type"] == "direct_bond":
                 lot = lots[0]
                 entitlement = {
                     "source": deepcopy(reference),
@@ -82,7 +82,7 @@ def _adopt_sources(plan, event, context):
                 ):
                     if key in lot:
                         entitlement[key] = deepcopy(lot[key])
-                tax.setdefault("bond_entitlements", []).append(entitlement)
+                transaction.setdefault("bond_entitlements", []).append(entitlement)
         value = amount(use["cost_fen"])
         if value:
             plan["cost_consumptions"].append(
@@ -97,8 +97,8 @@ def _adopt_sources(plan, event, context):
 
 
 def event_plan(fact, context):
-    adopted = terms_result(fact, context)
-    data, term_values = fact["data"], adopted.target["values"]
+    adopted, term_values = terms_result(fact, context)
+    data = fact["data"]
     if fact["kind"] == "investment.income":
         validate_income_character(term_values, data["income_character"])
         event = Event(
@@ -125,14 +125,14 @@ def event_plan(fact, context):
         values.update(
             quantity=decimal_text(event.quantity), remaining_quantity=decimal_text(prefix.quantity)
         )
-    transaction_tax = tax_event(fact, term_values, event)
-    if transaction_tax is not None:
-        values["tax_event"] = transaction_tax
-        if term_values["legal_form"] == "direct_bond" and fact["kind"] in {
+    transaction = economic_event(fact, term_values, event)
+    if transaction is not None:
+        values["economic_event"] = transaction
+        if term_values["right_type"] == "direct_bond" and fact["kind"] in {
             "investment.debt_interest",
             "investment.dispose",
         }:
-            transaction_tax["bond_coupon_dates"] = [
+            transaction["bond_coupon_dates"] = [
                 row["payment_on"] for row in term_values["coupon_schedule"]
             ]
     if fact["kind"] == "investment.market_estimate":

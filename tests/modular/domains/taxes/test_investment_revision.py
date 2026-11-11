@@ -181,16 +181,19 @@ def test_bare_actual_residual_still_needs_true_ordinary_book_reconciliation_reas
 def test_opening_precedes_month_only_conversion_independent_of_uuid_with_bounded_runtime():
     script = """
 import json
-from ai_accounting_modular.contracts.public import InvestmentTaxEventView
+from types import SimpleNamespace
 from ai_accounting_modular.domains.taxes._investment_tax_math import inventory_month
 from tests.modular.domains.taxes._fixtures import source_ref, LOCATION, uid
 ids = ["00000000-0000-4000-8000-000000000001", "ffffffff-ffff-4fff-8fff-ffffffffffff"]
 results=[]
+def tax_math_view(event, source, period):
+    return SimpleNamespace(
+        event=event, source=source, period=period, effective_on=None, event_index=0)
 for opening_id, change_id in (ids, ids[::-1]):
     original={"business_id":opening_id,"slot":"member:a:cost"}
     common={"terms_id":uid("terms"),"product_id":uid("product"),"tax_facts":{"instrument_type":"securities_fund","source":LOCATION}}
-    opening=InvestmentTaxEventView({**common,"event_kind":"opening","quantity":"10","origin_ref":original,"opening_vat_buy_basis_fen":"10000","opening_eit_tax_basis_fen":"10000"},source_ref(opening_id),"2026-07")
-    change=InvestmentTaxEventView({**common,"event_kind":"unit_change","quantity":"20","gross_price_fen":"0","transaction_fees_fen":"0","separate_declared_income_fen":"0","lot_allocations":[{"source":original,"quantity":"10"}]},source_ref(change_id),"2026-07")
+    opening=tax_math_view({**common,"event_kind":"opening","quantity":"10","origin_ref":original,"opening_vat_buy_basis_fen":"10000","opening_eit_tax_basis_fen":"10000"},source_ref(opening_id),"2026-07")
+    change=tax_math_view({**common,"event_kind":"unit_change","quantity":"20","gross_price_fen":"0","transaction_fees_fen":"0","separate_declared_income_fen":"0","lot_allocations":[{"source":original,"quantity":"10"}]},source_ref(change_id),"2026-07")
     positions,_,_,_=inventory_month([], [opening,change], "weighted_average")
     results.append([positions[0][key] for key in ("quantity","vat_basis_fen","eit_basis_fen")])
 print(json.dumps(results))
@@ -211,7 +214,7 @@ print(json.dumps(results))
     "field,left,right",
     [
         ("quantity_unit", "units", "nominal_fen"),
-        ("legal_form", "securities_fund", "financial_contract"),
+        ("right_type", "fund_units", "financial_contract"),
         ("instrument_type", "securities_fund", "corporate_bond"),
     ],
 )
@@ -247,7 +250,7 @@ def test_fund_share_classes_separate_but_same_security_two_accounts_share_averag
         allocations=[("class-a", "5")],
     )
     for event in (first, second, sold):
-        event.event.update(legal_form="securities_fund", quantity_unit="units")
+        event.event.update(right_type="fund_units", quantity_unit="units")
         event.event["financial_instrument_reference"] = {"reference": "A", "source": LOCATION}
     if not same_instrument:
         second.event["financial_instrument_reference"]["reference"] = "C"
@@ -281,7 +284,7 @@ def test_new_unidentified_class_only_needs_reference_when_it_can_change_vat_pric
     (issue,) = raised.value.fact_issues
     assert raised.value.code == "needs_information"
     assert issue["business_id"] == unknown.event["terms_id"]
-    assert issue["field"] == "/data/financial_instrument_reference"
+    assert issue["field"] == "/"
 
 
 def test_formal_pool_quantity_unit_reuses_the_upstream_controlled_dimension():

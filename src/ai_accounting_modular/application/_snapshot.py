@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    analyze_conversion_fact,
     analyze_fact,
     loads_json,
     validate_contract,
@@ -33,9 +34,9 @@ class SnapshotVerifier:
     records: object
     registry: DomainRegistry
 
-    def verify(self, read):
+    def verify(self, read, *, investment_conversion=False):
         heads = read.repository("application").snapshot_heads()
-        analyses = self._facts(heads, read)
+        analyses = self._facts(heads, read, investment_conversion=investment_conversion)
         facts = tuple(analysis.fact for analysis in analyses)
         self._relations(facts, heads, read)
         objects = _documents.export_objects(self, read)
@@ -84,6 +85,7 @@ class SnapshotVerifier:
             read,
             required_source_ids=formal.source_ids,
             frozen_close_source_uses=formal.close_source_uses,
+            investment_conversion=investment_conversion,
         )
 
     def _relations(self, facts, heads, read):
@@ -118,14 +120,19 @@ class SnapshotVerifier:
         if actual != expected:
             raise ContractError("storage_corrupt", "保存的直接关系目录与完整当前事实不一致。")
 
-    def _facts(self, heads, read):
+    def _facts(self, heads, read, *, investment_conversion=False):
         """FKs cover absent identities; every owner also proves no misplaced body remains."""
         facts = []
         owners = dict.fromkeys(self.registry.owner(kind) for kind in self.registry.supported_kinds)
         for offset in range(0, len(heads), 500):
             batch = {head["business_id"]: head for head in heads[offset : offset + 500]}
             for owner in owners:
-                exported = owner.export_current(list(batch), read)
+                export = (
+                    owner.export_for_investment_conversion
+                    if investment_conversion and owner is self.registry.owner("investment.terms")
+                    else owner.export_current
+                )
+                exported = export(list(batch), read)
                 expected = {
                     key
                     for key, head in batch.items()
@@ -137,7 +144,9 @@ class SnapshotVerifier:
                         "storage_corrupt", "领域正文有遗漏、重复或不属于本模块的记录。"
                     )
                 for fact in exported:
-                    analysis = analyze_fact(fact)
+                    analysis = (analyze_conversion_fact if investment_conversion else analyze_fact)(
+                        fact
+                    )
                     fact = analysis.fact
                     head = batch[fact["business_id"]]
                     digest = (

@@ -8,6 +8,7 @@ from types import MappingProxyType
 from ai_accounting_modular.contracts.public import YearMonth
 
 from ._common import fail, total
+from ._investment_accounting import investment_accounting_terms
 from ._investment_events import POSITION_KINDS, opening_lots, replay
 from ._investment_math import (
     Lot,
@@ -144,7 +145,7 @@ def inventory(terms_fact, adopted, context):
         fail("投资接续来源已改变，不能复用旧候选计算。", "dependency_conflict")
 
     def build():
-        terms = deepcopy(adopted.target["values"])
+        terms = investment_accounting_terms(adopted.target["values"])
         initial, start, estimate = None, context.read_context.start_period, (None, None)
         facts = data.facts
         seed = data.seed.values if data.seed is not None else None

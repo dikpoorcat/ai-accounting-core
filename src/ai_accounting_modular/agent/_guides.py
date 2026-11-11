@@ -16,11 +16,11 @@ def _book():
         if (
             not isinstance(value, dict)
             or set(value) != {"format", "topics", "business", "checklist"}
-            or value["format"] != "ai-accounting-guides/1"
+            or value["format"] != "ai-accounting-guides/2"
             or not isinstance(value["topics"], dict)
             or set(value["topics"]) != set(TOPICS)
             or not isinstance(value["business"], dict)
-            or set(value["business"]) != {"kinds", "sections", "common", "corrections"}
+            or set(value["business"]) != {"kinds", "common", "corrections"}
         ):
             raise ValueError("Invalid installed guide directory")
         checklist = value["checklist"]
@@ -47,15 +47,13 @@ def _book():
         if (
             not isinstance(business["kinds"], dict)
             or not business["kinds"]
-            or not isinstance(business["sections"], dict)
             or any(not isinstance(kind, str) or not kind for kind in business["kinds"])
-            or set(business["kinds"].values()) != set(business["sections"])
             or any(
                 not isinstance(text, str) or not text
                 for text in (
                     business["common"],
                     business["corrections"],
-                    *business["sections"].values(),
+                    *business["kinds"].values(),
                 )
             )
         ):
@@ -132,4 +130,4 @@ def read_guide(topic, *, kind=None):
             "unsupported_guide", "没有此事实种类的说明；请按实际 kind 选择，不能使用路径。"
         )
     business = _book()["business"]
-    return f"# 业务规则：{kind}\n\n" + business["sections"][business["kinds"][kind]]
+    return f"# 业务规则：{kind}\n\n" + business["kinds"][kind]

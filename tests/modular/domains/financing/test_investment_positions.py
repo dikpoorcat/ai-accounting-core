@@ -9,7 +9,11 @@ from ai_accounting_modular.contracts.public import ContractError
 from ai_accounting_modular.domains.financing.public import create_investment
 from tests.modular.application._working_case import case as case
 from tests.modular.domains.taxes._fixtures import evidence
-from tests.modular.domains.taxes.test_investment_tax_application import advance, inputs
+from tests.modular.domains.taxes.test_investment_tax_application import (
+    advance,
+    inputs,
+    qualification,
+)
 
 from ._investment_support import acquire, dispose, source, terms
 from ._support import COUNTERPARTY, PRODUCT, assemble, fact, payment, request, six
@@ -100,7 +104,7 @@ def test_positions_share_each_holding_cash_and_income_with_complete_activity(cas
 def test_tax_change_keeps_position_version_and_does_not_load_tax_contents(case, monkeypatch):
     app, company = book(case)
     values = inputs()
-    payload = request(company, *values[:-1])
+    payload = request(company, *values[:-1], qualification(values[0]))
     payload["sources"].append(evidence())
     actual = app.accounting_apply(payload)
     assert actual.get("completion") == "complete", actual

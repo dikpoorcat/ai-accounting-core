@@ -10,10 +10,11 @@ from ai_accounting_modular.contracts.public import (
     ContractError,
     DomainOwner,
     EvaluatedSlot,
-    InvestmentTaxEventView,
+    InvestmentEconomicEventView,
     ResourceCutoff,
     validate_contract,
 )
+from ai_accounting_modular.domains.financing.public import investment_economic_events
 
 from ._changes import fact_digest
 from ._resources import check_scope as check_resource_scope
@@ -305,7 +306,7 @@ class SubmissionContext:
         self._check_aggregate_scope("tax_sales", period_from, period_to)
         return self._candidate.tax_sales(period_from, period_to)
 
-    def investment_tax_events(self, period_from, period_to, *, kinds=None):
+    def investment_economic_events(self, period_from, period_to, *, kinds=None):
         """Read only declared scopes, using the same candidate overlay as calculation."""
         available_kinds = (
             "investment.acquire",
@@ -322,10 +323,10 @@ class SubmissionContext:
         )
         kinds = available_kinds if kinds is None else tuple(kinds)
         if not set(kinds) <= set(available_kinds) or len(kinds) != len(set(kinds)):
-            raise ContractError("invalid_input", "投资税务量只允许选择明确支持且不重复的事实种类。")
+            raise ContractError("invalid_input", "投资经济量只允许选择明确支持且不重复的事实种类。")
         self._periods(period_from, period_to)
         if period_from is None or period_to is None:
-            raise ContractError("invalid_input", "投资税务量读取必须指定完整月份范围。")
+            raise ContractError("invalid_input", "投资经济量读取必须指定完整月份范围。")
         if not kinds:
             return ()
         edges = [
@@ -340,7 +341,7 @@ class SubmissionContext:
                 and edge["period_from"] <= period_from <= period_to <= edge["period_to"]
                 for edge in edges
             ):
-                raise ContractError("dependency_conflict", "投资税务量读取未声明完整事实范围。")
+                raise ContractError("dependency_conflict", "投资经济量读取未声明完整事实范围。")
         result = []
         for fact in self.facts_in_scope(kinds, period_from, period_to):
             if not any(
@@ -350,21 +351,20 @@ class SubmissionContext:
                 and edge["read_mode"] == "result"
                 for edge in edges
             ):
-                raise ContractError("dependency_conflict", "投资税务量未声明实际生产结果。")
+                raise ContractError("dependency_conflict", "投资经济量未声明实际生产结果。")
             adopted = self.get_result(fact["business_id"], "main")
             if adopted is None or adopted.target["kind"] == "system.withdrawal":
                 continue
             values = adopted.target["values"]
-            events = values.get("tax_events", [])
-            if "tax_event" in values:
-                events = [values["tax_event"]]
+            events = investment_economic_events(
+                values, kind=adopted.target["kind"], input=adopted.basis["input"]
+            )
             if fact["kind"] == "opening.package":
                 events = [
                     {
                         "event_kind": "opening",
                         "terms_id": quantity["terms_id"],
                         "product_id": quantity["product_id"],
-                        "tax_facts": deepcopy(quantity["tax_facts"]),
                         "quantity": quantity["quantity"],
                         "origin_ref": deepcopy(quantity["source"]),
                         **{
@@ -377,11 +377,8 @@ class SubmissionContext:
                                 ("eit_interest_realized_through", "eit_interest_realized_through"),
                                 ("eit_interest_source", "eit_interest_source"),
                                 ("legal_form", "legal_form"),
+                                ("right_type", "right_type"),
                                 ("quantity_unit", "quantity_unit"),
-                                (
-                                    "financial_instrument_reference",
-                                    "financial_instrument_reference",
-                                ),
                             )
                             if source in quantity
                         },
@@ -389,32 +386,10 @@ class SubmissionContext:
                     for quantity in adopted.basis.get("adopted_quantities", ())
                     if quantity["type"] == "investment_lot"
                 ]
-            elif (
-                fact["kind"]
-                in {"investment.money_fund_purchase", "investment.money_fund_redemption"}
-                and not events
-            ):
-                raise ContractError(
-                    "needs_information",
-                    "旧货币基金事实没有投资税务性质和独立买入价依据，不能推定免税或税基。",
-                    fact_issues=[
-                        {
-                            "code": "investment_tax_basis_required",
-                            "business_id": fact["business_id"],
-                            "field": "/data",
-                            "meaning": "投资税务性质和独立计税基础",
-                            "message": "需要从原投资资料核实真实权利、税务性质和买入价。",
-                            "allowed_precision": [],
-                            "reusable_sources": [
-                                {"source_id": value} for value in fact["evidence_ids"]
-                            ],
-                            "blocking_scope": "business",
-                        }
-                    ],
-                )
+                events = investment_economic_events({"economic_events": events})
             for index, event in enumerate(events):
                 result.append(
-                    InvestmentTaxEventView(
+                    InvestmentEconomicEventView(
                         deepcopy(event),
                         deepcopy(adopted.source),
                         adopted.basis["period"],
@@ -500,6 +475,7 @@ class SubmissionContext:
         relation_kind,
         *,
         producer_kind="business",
+        kinds=None,
         period_from=None,
         period_to=None,
     ):
@@ -507,6 +483,7 @@ class SubmissionContext:
             (producer_id,),
             relation_kind,
             producer_kind=producer_kind,
+            kinds=kinds,
             period_from=period_from,
             period_to=period_to,
         )
@@ -517,6 +494,7 @@ class SubmissionContext:
         relation_kind,
         *,
         producer_kind="business",
+        kinds=None,
         period_from=None,
         period_to=None,
     ):
@@ -528,6 +506,23 @@ class SubmissionContext:
         self._periods(period_from, period_to)
         if producer_kind not in ("business", "object"):
             raise ContractError("invalid_input", "相关事实须指明业务或对象关系。")
+        if kinds is not None:
+            if not isinstance(kinds, (list, tuple)):
+                raise ContractError("invalid_input", "关联事实种类须为明确列表。")
+            for kind in kinds:
+                validate_contract("business-facts.schema.json", "FactKind", kind)
+            kinds = frozenset(kinds)
+            if not kinds:
+                return ()
+
+        def selected(value):
+            return (
+                value is not None
+                and (kinds is None or value["kind"] in kinds)
+                and (period_from is None or value["period"] >= period_from)
+                and (period_to is None or value["period"] <= period_to)
+            )
+
         repo = self.read_context.repository("application")
         ids = (
             set(
@@ -535,25 +530,36 @@ class SubmissionContext:
                     producer_kind,
                     producer_ids,
                     relation_kind,
+                    kinds=kinds,
                     period_from=period_from,
                     period_to=period_to,
                 )
             )
             - self._relation_roots
         )
-        ids.update(
+        overlay_ids = {
             edge["consumer_business_id"]
             for edge in self._relations
             if edge["producer_kind"] == producer_kind
             and edge["producer_id"] in producer_ids
             and edge["relation_kind"] == relation_kind
+        }
+        # Candidate facts are already available. Offline declarations may refer
+        # to persisted facts: select their thin heads before loading any body.
+        unknown = sorted(overlay_ids - self._facts.keys() - self._fact_cache.keys())
+        heads = {}
+        for offset in range(0, len(unknown), 500):
+            heads.update(repo.heads(unknown[offset : offset + 500]))
+        ids.update(
+            identity
+            for identity in overlay_ids
+            if selected(
+                self._facts[identity]
+                if identity in self._facts
+                else self._fact_cache.get(identity, heads.get(identity))
+            )
         )
-        return tuple(
-            fact
-            for fact in self._current_facts(ids)
-            if (period_from is None or fact["period"] >= period_from)
-            and (period_to is None or fact["period"] <= period_to)
-        )
+        return tuple(fact for fact in self._current_facts(ids) if selected(fact))
 
     def facts_in_scope(self, kinds, period_from, period_to):
         self._periods(period_from, period_to)

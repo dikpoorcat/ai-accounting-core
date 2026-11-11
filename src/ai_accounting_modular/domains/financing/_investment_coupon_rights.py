@@ -9,7 +9,7 @@ from ._investment_math import rounded
 def acquired_coupons(fact, terms, units, declared):
     data = fact["data"]
     supplied = data.get("acquired_coupon_dates")
-    if terms["legal_form"] != "direct_bond":
+    if terms["right_type"] != "direct_bond":
         if supplied is not None:
             fail("取得前已到息合同日期只用于直接债券，不能套用于其他投资。", "invalid_input")
         return None

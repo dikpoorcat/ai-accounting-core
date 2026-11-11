@@ -5,7 +5,7 @@ from ._contexts import (
     DomainOwner,
     EvaluatedSlot,
     EvaluationContext,
-    InvestmentTaxEventView,
+    InvestmentEconomicEventView,
     OpeningAssetAccounting,
     OpeningAssetSlots,
     PretaxView,
@@ -28,6 +28,13 @@ from ._fact_sources import (
     fact_source_paths,
     partial_fact_source_ids,
     partial_fact_source_paths,
+)
+from ._investment_legacy import (
+    analyze_conversion_fact,
+    conversion_issue_source_ids,
+    converted_investment_fact,
+    is_legacy_investment,
+    validate_conversion_envelope,
 )
 from ._journals import append_journal_line, posting_lines
 from ._projection_validation import validate_contract_items
@@ -71,6 +78,11 @@ from ._wire_types import *  # noqa: F403 - generated exports are the authoritati
 from ._wire_types import __all__ as _wire_exports
 
 __all__ = [
+    "analyze_conversion_fact",
+    "conversion_issue_source_ids",
+    "converted_investment_fact",
+    "is_legacy_investment",
+    "validate_conversion_envelope",
     *_wire_exports,
     "CONTRACT",
     "COMMAND_REQUESTS",
@@ -84,7 +96,7 @@ __all__ = [
     "YearMonth",
     "EvaluatedSlot",
     "EvaluationContext",
-    "InvestmentTaxEventView",
+    "InvestmentEconomicEventView",
     "OpeningAssetAccounting",
     "OpeningAssetSlots",
     "PretaxView",

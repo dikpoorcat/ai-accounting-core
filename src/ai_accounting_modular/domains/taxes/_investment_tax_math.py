@@ -7,7 +7,15 @@ from fractions import Fraction
 
 from ai_accounting_modular.contracts.public import ContractError
 
-from ._common import amount, checked, missing_investment_input, reject, rounded, total
+from ._common import (
+    amount,
+    checked,
+    investment_result_issue,
+    missing_investment_input,
+    reject,
+    rounded,
+    total,
+)
 from ._investment_pools import ending_lots, partition
 from ._investment_tax_lots import month_lots
 from ._investment_units import (
@@ -62,19 +70,24 @@ def allocate_interest_vat(views, tax):
 def is_financial_transfer(event):
     if event["event_kind"] != "disposal":
         return False
+    if event.get("right_type") == "partnership_interest":
+        return False
+    if event.get("exit_mode") == "maturity":
+        return False
     instrument = event["tax_facts"]["instrument_type"]
-    return (
-        instrument not in {"partnership", "unlisted_equity"}
-        and event.get("exit_mode") != "maturity"
-    )
+    return instrument not in {"partnership", "unlisted_equity"}
 
 
 def taxable_interest(event):
+    if event["event_kind"] not in {"income", "debt_interest", "disposal"}:
+        return False
     character = income_character(event)
+    if character not in {"interest", "market_distribution", "fund_distribution"}:
+        return False
     if event["tax_facts"]["instrument_type"] in {
         "bank_wealth",
         "contractual_asset_management",
-    } and character in {"interest", "market_distribution", "fund_distribution"}:
+    }:
         if "principal_protected" not in event["tax_facts"]:
             missing_investment_input(
                 event,
@@ -100,6 +113,8 @@ def taxable_interest(event):
 
 def income_character(event):
     if event["event_kind"] == "disposal" and event.get("exit_mode") == "maturity":
+        if event.get("right_type") == "direct_bond":
+            return None
         income = event.get("maturity_income")
         if income is None:
             if event["tax_facts"]["instrument_type"] in {
@@ -108,8 +123,8 @@ def income_character(event):
             }:
                 missing_investment_input(
                     event,
-                    event["terms_id"],
-                    "/data/maturity_income",
+                    event.get("_economic_business_id", event["terms_id"]),
+                    "/data/maturity_income" if "_economic_business_id" in event else "/",
                     "理财到期结算需要发行人有源的本金和收益组成，不能把买入价差猜成利息或默认免税。",
                 )
             return None
@@ -263,7 +278,7 @@ def inventory_month(previous, views, method, *, unit_bases=(), adoptions=None):
 
 def _inventory_month(previous, views, method, unit_bases, adoptions):
     eit_lots_by_product, eit_disposals = month_lots(previous, views)
-    previous_by_pool, groups, owners = partition(previous, views, is_financial_transfer)
+    previous_by_pool, groups, owners = partition(previous, views, is_financial_transfer, method)
     eit_lots = ending_lots(eit_lots_by_product, owners)
     pools = {
         pool: {
@@ -294,7 +309,7 @@ def _inventory_month(previous, views, method, unit_bases, adoptions):
         pool["vat_pool_identity"] = {
             field: pool_key[index + 1]
             for index, field in enumerate(
-                ("instrument_type", "legal_form", "quantity_unit", "instrument_reference")
+                ("instrument_type", "right_type", "quantity_unit", "instrument_reference")
             )
             if pool_key[index + 1] is not None
         }
@@ -413,11 +428,10 @@ def _inventory_month(previous, views, method, unit_bases, adoptions):
                                 precision=("integer_fen",),
                                 meaning=f"期初投资成员{origin['slot']}的VAT买入价",
                             )
-                        missing_investment_input(
-                            event,
-                            view.source["business_id"],
-                            "/data/lots",
-                            "金融商品转让的独立VAT买入价未知，须接续有源税务成本。",
+                        investment_result_issue(
+                            view,
+                            "历史金融商品池未保留可定位的独立VAT买入价来源，当前税务接续不能用会计成本代替。",
+                            unsupported=True,
                         )
                     difference = total((difference, amount(event["gross_price_fen"]), -vat_cost))
             elif kind == "capital_return":
@@ -462,7 +476,9 @@ def _inventory_month(previous, views, method, unit_bases, adoptions):
         if pool.get("quantity") == 0 and pool["vat_basis_fen"] == 0 and not tax_lots:
             continue
         row = {"product_id": product_id, "eit_lots": tax_lots}
-        if pool["vat_pool_identity"]:
+        if pool_key[5] is not None:
+            row["unclassified_terms_id"] = pool_key[5]
+        elif pool["vat_pool_identity"]:
             row["vat_pool_identity"] = deepcopy(pool["vat_pool_identity"])
         if pool["vat_basis_fen"] is not None:
             row["vat_basis_fen"] = str(pool["vat_basis_fen"])
