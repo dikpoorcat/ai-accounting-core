@@ -120,7 +120,8 @@ def test_shipped_material_guidance_separates_owner_facts_from_dialogue_and_clean
     assert "只保存老板实际表达的现实事实和范围" in work
     assert "不能把AI判断、程序报错或操作聊天写成老板确认" in work
     assert "银行摘要、户名和备注保持原义" in work
-    assert "清理只走受保护入口，不扫删未处理资料" in work
+    assert "清理通过受保护入口办理" in work
+    assert "正式采用及关闭依据的来源继续保全" in work
     assert "文档与物理清理pending沿原状态接续" in work
     commands = read_guide("commands")
     assert "SourcesCommandResult" in commands and "SourceDiscardResult" in commands
@@ -158,7 +159,7 @@ def test_installed_work_guide_preserves_owner_checklist_and_evidence_boundaries(
         "流水与基础资料",
         "工资、劳务与个税",
         "社保、公积金",
-        "银行代发表",
+        "工资代发",
         "账务补齐与报表准备",
         "财务报表报送",
         "所得税及其他适用申报",
@@ -192,8 +193,8 @@ def test_stage_completion_owns_only_its_work_and_drives_both_progress_and_next_s
     assert "第3项" in stages["2"] and "第4项" in stages["2"]
     assert "计提不必等待后来扣税、申报和付款" in stages["2"]
     assert "实际申报或核定反馈" in stages["3"] and "均不算本项完成" in stages["3"]
-    assert "不需要文件也不能漏掉必要核算" in stages["4"]
-    assert "文档已完成" in stages["4"] and "文件不代表实际付款" in stages["4"]
+    assert "明确不用代发表时仍须核实必要核算和实际发放" in stages["4"]
+    assert "文档已完成" in stages["4"] and "已实际发放并核实正式付款结果" in stages["4"]
     assert "文件已生成" in stages["6"] and "不能称为已报送" in stages["6"]
     assert "后月份付款不强行登记在本期" in stages["7"]
     assert "相同范围实际关账" in stages["8"] and "不把冻结成功说成现实事项已办完" in stages["8"]

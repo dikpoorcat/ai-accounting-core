@@ -99,18 +99,65 @@ def test_payment_file_is_an_action_and_actual_delivery_is_a_separate_condition()
     assert all(state in file["condition"] for state in ("pending", "running", "failed", "expired"))
     assert "实际交付" in stages["payment_export"]["completion"]
     assert "先实际交付当前有效文件" in checks["payment_export.delivery"]["if_unmet"]
-    assert "不是无需代发的依据" in checks["payment_export.scope"]["condition"]
+    assert "空查询或没有文件任务仍需核查实际范围" in checks["payment_export.scope"]["condition"]
     assert "首次" in checks["payment_export.scope"]["if_unmet"]
     assert "没有待付金额不生成空表" in checks["payment_export.scope"]["if_unmet"]
     assert "公司说明" in checks["payment_export.scope"]["if_unmet"]
-    assert "文件不代表实际付款" in stages["payment_export"]["completion"]
+    assert "原约定完整发放范围的款项已实际发放" in stages["payment_export"]["completion"]
     assert "经status核对为succeeded" in file["condition"]
     delivery = checks["payment_export.delivery"]
     assert "copied或reused" in delivery["condition"]
     assert "实际桌面绝对路径" in delivery["condition"]
-    assert "内部task.path的链接不证明桌面交付" in delivery["condition"]
+    assert "内部task.path用于任务定位" in delivery["if_unmet"]
     assert delivery["actions"][0]["action"] == "save"
     assert "destination固定为desktop" in delivery["if_unmet"]
+
+
+def test_payroll_disbursement_requires_actual_payment_for_the_complete_scope():
+    stage = read_work_stage("4")
+    checks = {item["id"]: item for item in stage["checks"]}
+    actual = checks["payment_export.actual_payment"]
+    assert stage["title"] == "工资代发"
+    assert list(checks) == [
+        "payment_export.accounting",
+        "payment_export.scope",
+        "payment_export.file",
+        "payment_export.delivery",
+        "payment_export.actual_payment",
+    ]
+    assert "完整发放范围" in actual["condition"]
+    assert "文件已交付但待付款、部分成功或失败待处理时保持🔄" in stage["completion"]
+    assert "老板明确不用代发表只影响文件项目" in checks["payment_export.scope"]["condition"]
+    assert "明确不用代发表时仍须核实必要核算和实际发放" in stage["completion"]
+    assert all(
+        state in actual["condition"]
+        for state in ("已提交银行", "处理中", "部分成功", "失败", "退回")
+    )
+    assert all(
+        term in actual["condition"]
+        for term in ("无相关业务", "确无应发款项", "remaining_fen", "held_fen", "抵销", "转移")
+    )
+    assert "money.movement按实际付款月" in actual["if_unmet"]
+    assert "已登记付款并复用有效核对" in actual["if_unmet"]
+    assert "部分成功只办理成功部分" in actual["if_unmet"]
+    assert "核对截止月覆盖已知实际付款月" in "".join(actual["evidence"])
+    assert "required_before_close按现有独立语义判断" in actual["if_unmet"]
+    assert "actions" not in actual
+
+
+def test_paid_scope_reuses_delivery_and_payment_evidence_after_file_expiry():
+    checks = {item["id"]: item for item in read_work_stage("4")["checks"]}
+    file = checks["payment_export.file"]
+    delivery = checks["payment_export.delivery"]
+    assert "付款导致的expired或旧计划退出" in file["condition"]
+    assert "无待执行款项时完成真实结果核对" in file["condition"]
+    assert "本次尚有待执行款项" in file["actions"][0]["when"]
+    assert "尚未提交银行或明确失败、退回需重办" in file["actions"][0]["when"]
+    assert "已提交银行仍处理中的款项等待原批次结果" in file["actions"][0]["when"]
+    assert "已实际发完的范围沿实付核验接续" in file["actions"][0]["when"]
+    assert "已核实发完且无待执行款项时结束相应文件工作" in delivery["condition"]
+    assert "已提交银行的款项复用提交时有效交付" in delivery["condition"]
+    assert "付款后复用已核实交付" in delivery["actions"][0]["when"]
 
 
 def test_unfinished_steps_and_contribution_feedback_share_the_installed_rules():
@@ -125,13 +172,15 @@ def test_unfinished_steps_and_contribution_feedback_share_the_installed_rules():
     contribution = {item["id"]: item for item in stages["contributions"]["checks"]}
     assert "均不算本项完成" in stages["contributions"]["completion"]
     assert "not_declared零额事实" in contribution["contributions.result"]["if_unmet"]
-    assert "contribution_actual_id" in contribution["contributions.adoption"]["condition"]
-    assert "已有引用则复用依赖重算" in contribution["contributions.adoption"]["if_unmet"]
+    adoption = contribution["contributions.adoption"]
+    assert "contribution_actual_id" in adoption["condition"]
+    assert "已有引用则复用依赖重算" in adoption["if_unmet"]
+    assert "按第4项的银行办理状态及待重办范围接续文件" in adoption["if_unmet"]
     payment = next(
         item for item in stages["payment_export"]["checks"] if item["id"] == "payment_export.scope"
     )
     assert "work_defaults.payment_export" in payment["condition"]
-    assert "本月例外只保存本月" in payment["if_unmet"]
+    assert "本月例外保存在本月安排" in payment["if_unmet"]
 
 
 def test_payment_actions_match_the_public_contract_and_instructions_point_to_rules():

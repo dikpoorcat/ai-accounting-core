@@ -39,13 +39,16 @@ def test_online_resources_are_on_demand_and_unknown_topics_or_kinds_are_rejected
         assert "经营者劳动不估价入账" in rules.content
         assert "opening.package" not in rules.content
         work = list(await server.read_resource("accounting://guides/work"))[0].content
-        assert "owner_statement" in work and "清理只走受保护入口" in work
+        assert "owner_statement" in work and "清理通过受保护入口办理" in work
         checklist = list(await server.read_resource("accounting://guides/work/checklist"))[0]
         assert checklist.mime_type == "application/json"
         stages = json.loads(checklist.content)["stages"]
         assert len(stages) == 8 and stages[3]["id"] == "payment_export"
         assert all("checks" not in stage for stage in stages)
         stage = json.loads(list(await server.read_resource(stages[3]["uri"]))[0].content)
+        assert stage["title"] == "工资代发"
+        assert len(stage["checks"]) == 5
+        assert stage["checks"][4]["id"] == "payment_export.actual_payment"
         assert "实际桌面绝对路径" in stage["checks"][3]["condition"]
         assert (
             "义务转移与多付重分类"
