@@ -6,7 +6,7 @@ CREATE TABLE "system_meta" (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  format_family TEXT NOT NULL CHECK(format_family='ai-accounting-modular/1'),
  database_id TEXT NOT NULL UNIQUE CHECK(length(database_id)=36),
- schema_version INTEGER NOT NULL CHECK(schema_version=6),
+ schema_version INTEGER NOT NULL CHECK(schema_version=7),
  structure_fingerprint TEXT NOT NULL CHECK(length(structure_fingerprint)=64),
  global_seq INTEGER NOT NULL DEFAULT 0 CHECK(global_seq>=0)
 ) STRICT;
@@ -235,6 +235,7 @@ scope_key TEXT PRIMARY KEY,
 CREATE TABLE company_note (
 scope_key TEXT PRIMARY KEY,
  note_text TEXT,
+ purpose TEXT CHECK(purpose IS NULL OR (scope_key GLOB 'business:*' AND length(purpose)>0)),
  basis_head TEXT,
  state TEXT NOT NULL CHECK(state IN ('current','needs_refresh')),
  seq INTEGER NOT NULL CHECK(seq>=1),
@@ -243,7 +244,8 @@ scope_key TEXT PRIMARY KEY,
  content_digest TEXT NOT NULL CHECK(length(content_digest)=64), note_format TEXT NOT NULL DEFAULT 'plain_text'
   CHECK(note_format IN ('plain_text', 'markdown'))
   CHECK(note_format='plain_text' OR scope_key='company'),
- CHECK((state='current' AND note_text IS NOT NULL AND length(note_text)>0) OR (state='needs_refresh' AND note_text IS NULL))
+ CHECK((state='current' AND note_text IS NOT NULL AND (length(note_text)>0 OR purpose IS NOT NULL))
+  OR (state='needs_refresh' AND note_text IS NULL AND purpose IS NULL))
 ) STRICT;
 
 -- owner: application

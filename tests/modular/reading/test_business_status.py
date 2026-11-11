@@ -33,7 +33,7 @@ def progress(case, business, month="2026-01", **query):
         "dashboard-response-v2.json",
         "dashboard_business_status",
         {
-            "schema_version": 10,
+            "schema_version": 11,
             "snapshot_version": delivery.version,
             "selected_period": payload["selected_period"],
             "read_context": {

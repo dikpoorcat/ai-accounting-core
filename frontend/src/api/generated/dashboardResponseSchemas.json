@@ -3938,10 +3938,6 @@
             "title": "Type",
             "type": "string"
           },
-          "display_summary": {
-            "title": "Display Summary",
-            "type": "string"
-          },
           "list_summary": {
             "title": "List Summary",
             "type": "string"
@@ -3972,7 +3968,6 @@
           "amount_fen",
           "signed_amount_fen",
           "type",
-          "display_summary",
           "list_summary",
           "party",
           "internal_transfer",
@@ -4004,7 +3999,7 @@
         "additionalProperties": false,
         "properties": {
           "schema_version": {
-            "const": 12,
+            "const": 13,
             "title": "Schema Version",
             "type": "integer"
           },
@@ -13759,10 +13754,6 @@
             "title": "Type",
             "type": "string"
           },
-          "display_summary": {
-            "title": "Display Summary",
-            "type": "string"
-          },
           "list_summary": {
             "title": "List Summary",
             "type": "string"
@@ -13793,7 +13784,6 @@
           "amount_fen",
           "signed_amount_fen",
           "type",
-          "display_summary",
           "list_summary",
           "party",
           "internal_transfer",
@@ -14309,7 +14299,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 12,
+        "const": 13,
         "title": "Schema Version",
         "type": "integer"
       },
@@ -18118,6 +18108,36 @@
           "settlement_status": {
             "title": "Settlement Status",
             "type": "string"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purpose"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "note_scope": {
+            "enum": [
+              "selected",
+              "whole_business",
+              null
+            ],
+            "title": "Note Scope"
           }
         },
         "required": [
@@ -18130,10 +18150,45 @@
           "paid_fen",
           "other_settled_fen",
           "remaining_fen",
-          "settlement_status"
+          "settlement_status",
+          "purpose",
+          "description",
+          "note_scope"
         ],
         "title": "OwnerObligation",
-        "type": "object"
+        "type": "object",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "description": {
+                  "type": "null"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "note_scope": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "description": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "note_scope": {
+                  "enum": [
+                    "selected",
+                    "whole_business"
+                  ]
+                }
+              }
+            }
+          }
+        ]
       },
       "OwnerProfileValues": {
         "additionalProperties": false,
@@ -18448,7 +18503,7 @@
     "additionalProperties": false,
     "properties": {
       "schema_version": {
-        "const": 10,
+        "const": 11,
         "title": "Schema Version",
         "type": "integer"
       },

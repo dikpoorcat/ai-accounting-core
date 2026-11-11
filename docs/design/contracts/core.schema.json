@@ -2271,7 +2271,8 @@
         },
         "text": {
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 20000,
+          "description": "业务范围保存完整详细说明，简短事项由purpose承接。其他范围沿用相应正文。"
         },
         "evidence_ids": {
           "type": "array",
@@ -2288,6 +2289,9 @@
         },
         "text_format": {
           "$ref": "company-note.schema.json#/$defs/NoteFormat"
+        },
+        "purpose": {
+          "$ref": "#/$defs/BusinessNotePurpose"
         }
       },
       "required": [
@@ -2332,6 +2336,9 @@
               "properties": {
                 "text": {
                   "const": ""
+                },
+                "purpose": {
+                  "type": "null"
                 }
               }
             },
@@ -2343,14 +2350,7 @@
               }
             },
             "else": {
-              "properties": {
-                "text": {
-                  "pattern": "\\S"
-                },
-                "evidence_ids": {
-                  "minItems": 1
-                }
-              }
+              "$ref": "#/$defs/BusinessNoteContent"
             }
           },
           "else": {
@@ -2390,6 +2390,11 @@
                   "minLength": 1
                 }
               }
+            },
+            "not": {
+              "required": [
+                "purpose"
+              ]
             }
           }
         },
@@ -2411,7 +2416,8 @@
             }
           }
         }
-      ]
+      ],
+      "description": "完整替换当前说明及最终来源。业务范围省略purpose与null等价，都会撤去已有简短事项。修改正文时须一并提交仍需保留的purpose。"
     },
     "DocumentObject": {
       "oneOf": [
@@ -2913,8 +2919,8 @@
         },
         "text": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 20000
+          "maxLength": 20000,
+          "description": "业务范围保存完整详细说明，简短事项由purpose承接。其他范围沿用相应正文。"
         },
         "evidence_ids": {
           "type": "array",
@@ -2926,6 +2932,9 @@
         },
         "text_format": {
           "$ref": "company-note.schema.json#/$defs/NoteFormat"
+        },
+        "purpose": {
+          "$ref": "#/$defs/BusinessNotePurpose"
         }
       },
       "required": [
@@ -2944,13 +2953,18 @@
             }
           },
           "then": {
+            "$ref": "#/$defs/BusinessNoteContent"
+          },
+          "else": {
             "properties": {
               "text": {
-                "pattern": "\\S"
-              },
-              "evidence_ids": {
-                "minItems": 1
+                "minLength": 1
               }
+            },
+            "not": {
+              "required": [
+                "purpose"
+              ]
             }
           }
         },
@@ -4670,13 +4684,13 @@
           "anyOf": [
             {
               "type": "string",
-              "minLength": 1,
               "maxLength": 20000
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "业务范围保存完整详细说明，简短事项由purpose承接。其他范围沿用相应正文。"
         },
         "basis_head": {
           "anyOf": [
@@ -4700,6 +4714,9 @@
         },
         "text_format": {
           "$ref": "company-note.schema.json#/$defs/NoteFormat"
+        },
+        "purpose": {
+          "$ref": "#/$defs/BusinessNotePurpose"
         }
       },
       "required": [
@@ -4734,14 +4751,7 @@
               }
             },
             "then": {
-              "properties": {
-                "text": {
-                  "pattern": "\\S"
-                },
-                "evidence_ids": {
-                  "minItems": 1
-                }
-              }
+              "$ref": "#/$defs/BusinessNoteContent"
             }
           }
         },
@@ -4760,6 +4770,9 @@
               },
               "evidence_ids": {
                 "maxItems": 0
+              },
+              "purpose": {
+                "type": "null"
               }
             }
           },
@@ -4767,7 +4780,6 @@
             "properties": {
               "text": {
                 "type": "string",
-                "minLength": 1,
                 "maxLength": 20000
               }
             }
@@ -4803,6 +4815,35 @@
             "properties": {
               "basis_head": {
                 "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "pattern": "^business:"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "purpose"
+              ]
+            },
+            "properties": {
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
               }
             }
           }
@@ -7135,6 +7176,56 @@
         "source_ids"
       ],
       "additionalProperties": false
+    },
+    "BusinessNotePurpose": {
+      "description": "管理语义，用于辨认当前业务的简短事项，来源复用本说明的evidence_ids。省略或null表示使用正式业务名称，不参与核算或分组身份。",
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "BusinessNoteContent": {
+      "properties": {
+        "text": {
+          "type": "string",
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "\\S",
+              "type": "string"
+            }
+          ]
+        },
+        "evidence_ids": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        }
+      },
+      "type": "object",
+      "required": [
+        "text",
+        "evidence_ids"
+      ],
+      "not": {
+        "properties": {
+          "text": {
+            "const": ""
+          },
+          "purpose": {
+            "type": "null"
+          }
+        }
+      }
     }
   }
 }

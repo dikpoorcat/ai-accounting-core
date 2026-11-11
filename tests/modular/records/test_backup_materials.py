@@ -27,8 +27,13 @@ from ai_accounting_modular.contracts.public import (
     content_digest,
     loads_json,
 )
-from ai_accounting_modular.records.public import RecordsChange, RecordsContext, create_records
-from ai_accounting_modular.storage.public import verify_database
+from ai_accounting_modular.records.public import (
+    RecordsChange,
+    RecordsContext,
+    create_records,
+    repository_factory,
+)
+from ai_accounting_modular.storage.public import open_database_unit, verify_database
 
 
 def _ready(case):
@@ -162,6 +167,47 @@ def test_capture_keeps_all_registered_originals_without_inventing_statement_file
         assert records.discard_backup_capture(materials.capture_id, read)
     assert (company.company_root / first["relative_path"]).exists()
     assert (company.company_root / "standard/current.json").exists()
+
+
+@pytest.mark.parametrize("detail", ["", "本项租金用于仓库日常经营，按合同约定确认。"])
+def test_backup_capture_preserves_business_purpose_and_complete_detail(records_case, detail):
+    storage, (company, _), records = records_case
+    fact, obj = _first_facts(records_case)
+    scope = "business:" + fact["business_id"]
+    value = {
+        "scope": scope,
+        "purpose": "仓库租金",
+        "text": detail,
+        "evidence_ids": fact["evidence_ids"],
+        "expected_seq": 0,
+    }
+    with storage.write_unit(company.company_id) as unit:
+        records.apply_current(
+            records.plan_change(RecordsChange(notes=(value,)), RecordsContext(unit, str(uuid4()))),
+            unit,
+        )
+    _publish(records_case, _prepare(records_case, [fact], [obj]))
+    with storage.read_unit(company.company_id) as read:
+        expected = records.current_notes((scope,), read)
+        with records.capture_backup_materials(read, str(uuid4())) as materials:
+            database = storage.capture_database(
+                read, materials.capture_root / "runtime/company.sqlite3"
+            )
+            with open_database_unit(
+                database.path,
+                repositories=(repository_factory(),),
+                company_root=company.company_root,
+            ) as captured:
+                assert records.current_notes((scope,), captured) == expected
+            note_input = next(
+                item
+                for item in materials.inputs
+                if item["archive_path"].startswith("standard/parts/notes--business--")
+            )
+            part = loads_json((company.company_root / note_input["relative_path"]).read_bytes())
+            assert part["notes"] == [
+                {key: field for key, field in value.items() if key != "expected_seq"}
+            ]
 
 
 def test_stale_database_snapshot_cannot_copy_a_newly_published_manifest(records_case):

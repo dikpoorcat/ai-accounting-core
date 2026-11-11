@@ -13,7 +13,7 @@ description: Prepare the installed local SQLite accounting service and native ow
 & 'D:/GitHub/ai-accounting-core/tools/start-accounting.ps1'
 ```
 
-`serve` 复用该目录的后台，通过一次性票据打开页面，不自行拼接登录令牌。详细入口见[运行说明](../../../docs/design/09-runtime-and-ai.md)。
+CLI 会在执行前读取目录库旁的 `<目录库文件名>.runtime.json` 本机安装绑定，核对目录位置和身份后使用绑定的独立安装程序。没有绑定时使用当前受控环境，绑定损坏或程序缺失时按定位错误处理。`serve` 复用该目录的后台，通过一次性票据打开页面，不自行拼接登录令牌。详细入口见[运行说明](../../../docs/design/09-runtime-and-ai.md)。
 
 通过宿主的 `ai_accounting` 连接调用 `accounting_schema`，以 `accounting_security(operation="session_status", payload={})` 查询负责人会话。需要登录时调用 `accounting_security(operation="request", payload={"kind":"login"})`，再用 `operation="status"` 和原 `request_id` 核对窗口状态。密码及恢复码只由老板在原生窗口输入；已有身份不重新建立，窗口取消后不循环弹窗。
 

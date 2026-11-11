@@ -106,19 +106,19 @@ async function run(config) {
       date: `${config.period}-01`, account_id: accounts[0].account_id, account_code: accounts[0].code,
       account_name: accounts[0].name, account_type: "bank", direction: "outflow", correction: false,
       amount_fen: "600000", signed_amount_fen: "-600000", type: "工资付款", party: "演示员工张某",
-      list_summary: "工资付款", display_summary: "演示工资部分支付及后续款项处理，完整摘要保留用途和月份", internal_transfer: false, ...overrides,
+      list_summary: "工资付款", internal_transfer: false, ...overrides,
     });
     const movements = [
       movement("partial"),
       movement("second-payment", { subject_id: "synthetic-partial", amount_fen: "100000", signed_amount_fen: "-100000", list_summary: "第二次支付" }),
-      movement("transfer-out", { subject_id: "synthetic-transfer", type: "账户互转", party: "", internal_transfer: true, list_summary: "账户互转", display_summary: "账户互转" }),
-      movement("transfer-in", { subject_id: "synthetic-transfer", account_id: accounts[1].account_id, account_code: accounts[1].code, direction: "inflow", signed_amount_fen: "600000", type: "账户互转", party: "", internal_transfer: true, list_summary: "账户互转", display_summary: "账户互转" }),
-      movement("refund", { type: "预付款退回", direction: "inflow", amount_fen: "10000", signed_amount_fen: "10000", list_summary: "预付款退回", display_summary: "演示供应商退回部分预付款" }),
-      movement("correction", { correction: true, direction: "inflow", amount_fen: "12345", signed_amount_fen: "-12345", type: "业务更正", list_summary: "工资业务更正", display_summary: "演示原业务更正" }),
-      movement("unknown", { amount_fen: "9007199254740993123", signed_amount_fen: "-9007199254740993123", type: "待核对事项", list_summary: "待核对事项", display_summary: "演示未知分类的大额资金记录" }),
+      movement("transfer-out", { subject_id: "synthetic-transfer", type: "账户互转", party: "", internal_transfer: true, list_summary: "账户互转" }),
+      movement("transfer-in", { subject_id: "synthetic-transfer", account_id: accounts[1].account_id, account_code: accounts[1].code, direction: "inflow", signed_amount_fen: "600000", type: "账户互转", party: "", internal_transfer: true, list_summary: "账户互转" }),
+      movement("refund", { type: "预付款退回", direction: "inflow", amount_fen: "10000", signed_amount_fen: "10000", list_summary: "预付款退回" }),
+      movement("correction", { correction: true, direction: "inflow", amount_fen: "12345", signed_amount_fen: "-12345", type: "业务更正", list_summary: "工资业务更正" }),
+      movement("unknown", { amount_fen: "9007199254740993123", signed_amount_fen: "-9007199254740993123", type: "待核对事项", list_summary: "待核对事项" }),
     ];
     const obligation = { key: "synthetic-net", name: "net", direction: "payable", category_key: "payroll_payables", source_period: config.period,
-      source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial" };
+      source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null };
     const tax = { ...obligation, key: "synthetic-tax", name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" };
     const event = (subject, n) => ({ id: `${subject}-event-${n}`, subject_id: `synthetic-payment-${n}`, source_subject_id: subject,
       posting_period: config.period, direction: n === 4 ? -1 : 1, signed_amount_fen: n === 4 ? "-10000" : "10000",

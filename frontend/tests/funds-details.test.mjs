@@ -14,8 +14,8 @@ import ts from "typescript";
 import { appendDashboardCollection, prepareDashboardCollections } from "./helpers/dashboardCollections.mjs";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
-const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
-const movement = (changes = {}) => ({ id: "salary-payment", subject_id: "salary-business", has_business_progress: true, account_id: "bank-a", account_type: "bank", list_summary: "9月工资付款", display_summary: "9月工资付款", type: "工资付款", party: "张某", date: "2026-09-15", direction: "outflow", amount_fen: "600000", signed_amount_fen: "-600000", correction: false, internal_transfer: false, ...changes });
+const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null, ...changes });
+const movement = (changes = {}) => ({ id: "salary-payment", subject_id: "salary-business", has_business_progress: true, account_id: "bank-a", account_type: "bank", list_summary: "9月工资付款", type: "工资付款", party: "张某", date: "2026-09-15", direction: "outflow", amount_fen: "600000", signed_amount_fen: "-600000", correction: false, internal_transfer: false, ...changes });
 function scenario(items = [obligation()]) {
   const data = structuredClone(samples.business_status.response.data);
   data.identity.kind = "payroll";
@@ -91,31 +91,48 @@ test("fund movement details add precise progress and context without repeating t
       const correction = await render(scenario([]), movement({ correction: true, signed_amount_fen: "-9007199254740993" }));
       assert.doesNotMatch(correction, /重新付款|重新收款|已结清/);
     });
-    await t.test("full summary and purpose deduplication compare complete texts only", async () => {
-      assert.doesNotMatch(await render(scenario([]), movement({ display_summary: "9月工资付款" })), /事项说明/);
-      assert.match(await render(scenario([]), movement({ display_summary: "张某" })), /事项说明：张某/, "a counterparty name is not the same fact as a description");
-      assert.match(await render(scenario([]), movement({ display_summary: "工资付款" })), /事项说明：工资付款/);
+    await t.test("short list names and complete progress notes keep their separate roles", async () => {
+      assert.doesNotMatch(await render(scenario([])), /事项说明/);
       const data = scenario([]);
       data.display_profiles.business.values = { purpose: "9月工资付款", note: "9月工资付款补充", note_scope: "selected" };
-      let html = await render(data, movement({ display_summary: "包含交通补助的9月工资" }));
-      assert.match(html, /事项说明：包含交通补助的9月工资/);
+      let html = await render(data);
       assert.match(html, /用途／备注：9月工资付款补充/); assert.doesNotMatch(html, /用途／备注：9月工资付款<\/p>/);
       data.display_profiles.business.values = { purpose: "包含交通补助的9月工资", note: "包含交通补助的9月工资", note_scope: "selected" };
-      html = await render(data, movement({ display_summary: "包含交通补助的9月工资" }));
-      assert.doesNotMatch(html, /用途／备注/);
+      html = await render(data);
+      assert.equal((html.match(/用途／备注：包含交通补助的9月工资/g) || []).length, 1);
       data.display_profiles.business.values = { purpose: "原始业务用途", note: "确需补充的备注", note_scope: "selected" };
-      html = await render(data, movement({ display_summary: "工资付款（2026-09）；原始业务用途" }));
-      assert.match(html, /事项说明：工资付款（2026-09）；原始业务用途/);
+      html = await render(data);
       assert.match(html, /用途／备注：原始业务用途/);
       assert.match(html, /用途／备注：确需补充的备注/);
+      assert.doesNotMatch(html, /事项说明/);
     });
     await t.test("bank text and a shared payment note retain their exact words and explicit scopes", async () => {
       const data = scenario([]);
       data.display_profiles.business.values = { purpose: "9月工资付款", note: "银行批扣：9月款项", note_scope: "whole_business" };
-      const html = await render(data, movement({ display_summary: "银行批扣：9月款项" }));
-      assert.match(html, /事项说明：银行批扣：9月款项/);
+      const html = await render(data);
       assert.match(html, /整单说明：银行批扣：9月款项/);
       assert.doesNotMatch(html, /用途／备注：9月工资付款/);
+    });
+    await t.test("mixed sources retain each complete note under its own short purpose", async () => {
+      const noteA = "本项服务在本月完成，原约定款项根据本次交接结清。";
+      const noteB = "另一项服务已完成，付款安排分为本次款项与下一期余额。";
+      const data = scenario([
+        obligation({ key: "source-a:primary", name: "primary", purpose: "服务费", description: noteA, note_scope: "selected", category_key: "supplier_payables" }),
+        obligation({ key: "source-b:primary", name: "primary", purpose: "服务费", description: noteB, note_scope: "selected", category_key: "supplier_payables" }),
+      ]);
+      data.display_profiles.business.values = { purpose: "服务费付款", note: "本次银行合并支付两项服务费。", note_scope: "whole_business" };
+      const html = await render(data);
+      assert.equal((html.match(/<h4[^>]*>服务费<\/h4>/g) || []).length, 2);
+      assert.match(html, new RegExp(noteA)); assert.match(html, new RegExp(noteB));
+      assert.match(html, /整单说明：本次银行合并支付两项服务费。/);
+      assert.doesNotMatch(html, /source-a|source-b/);
+    });
+    await t.test("a later description change remains visible when amounts are identical", async () => {
+      const data = scenario([obligation({ purpose: "服务费", description: "原安排已确认。", note_scope: "selected" })]);
+      data.current_followups.settlements.obligations = [obligation({ purpose: "服务费", description: "本项后来补充了结算安排。", note_scope: "selected" })];
+      const html = await render(data), [historical, later] = html.split("后续进展 ·");
+      assert.match(historical, /原安排已确认。/);
+      assert.match(later, /本项后来补充了结算安排。/);
     });
     await t.test("account identity excludes only current account and preserves same names across roles", async () => {
       const profile = (entity_id, display_name) => ({ entity_id, values: { display_name } });

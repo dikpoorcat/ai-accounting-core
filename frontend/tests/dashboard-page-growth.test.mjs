@@ -45,7 +45,7 @@ function payloadFor(name, total) {
   const template = response.data.collections[spec.collection].items[0];
   assert(template, `${name} has a real backend row template`);
   const row = index => ({ ...structuredClone(template), [spec.identity]: `growth-${index}`,
-    ...(name === "Funds" ? { list_summary: `增长流水 ${index}`, display_summary: `增长流水 ${index}`, summary: `增长流水 ${index}` } : { name: `增长对象 ${index}` }) });
+    ...(name === "Funds" ? { list_summary: `增长流水 ${index}`, summary: `增长流水 ${index}` } : { name: `增长对象 ${index}` }) });
   const collection = (start, count) => ({ items: Array.from({ length: count }, (_, offset) => row(start + offset)), page: {
     total_count: total, filtered_count: total, returned_count: count, has_more: start + count < total,
     next_cursor: start + count < total ? `growth-${start + count}` : null,

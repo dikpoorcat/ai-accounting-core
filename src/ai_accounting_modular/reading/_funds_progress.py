@@ -46,13 +46,11 @@ def capture(reader, scope, selected_sources, read):
     return found
 
 
-def available(value, view, content, presence):
+def available(value, view, content, presence, *, has_note=False):
     if not value["subject_id"]:
         return False
     if presence[value["subject_id"]] or view["allocations"]:
         return True
-    visible = (value["party"], value["list_summary"] or value["type"])
-    description = value["display_summary"]
-    if description and description not in visible:
+    if has_note:
         return True
     return bool(business_fund_accounts(content) - {value["account_id"]})

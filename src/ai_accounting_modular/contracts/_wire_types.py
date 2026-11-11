@@ -271,6 +271,7 @@ class NoteChange(TypedDict):
     evidence_ids: list[Id]
     expected_basis_head: NotRequired[str]
     text_format: NotRequired[NoteFormat]
+    purpose: NotRequired[BusinessNotePurpose]
 
 type DocumentObject = DocumentObjectVariant1 | DocumentObjectVariant2 | DocumentObjectVariant3 | DocumentObjectVariant4 | DocumentObjectVariant5 | DocumentObjectVariant6 | DocumentObjectVariant7 | DocumentObjectVariant8
 
@@ -279,6 +280,7 @@ class DocumentNote(TypedDict):
     text: str
     evidence_ids: list[Id]
     text_format: NotRequired[NoteFormat]
+    purpose: NotRequired[BusinessNotePurpose]
 
 class ObjectShard(TypedDict):
     format: Literal['ai-accounting-standard/1']
@@ -439,6 +441,7 @@ class CurrentNote(TypedDict):
     basis_head: str | None
     evidence_ids: list[Id]
     text_format: NotRequired[NoteFormat]
+    purpose: NotRequired[BusinessNotePurpose]
 
 class NoteBasisHead(TypedDict):
     scope: str
@@ -762,6 +765,12 @@ class FrozenWorkCloseBasis(TypedDict):
     public_head: Digest
     material_version: Digest
     source_ids: list[Id]
+
+type BusinessNotePurpose = str | None
+
+class BusinessNoteContent(TypedDict):
+    text: Literal[''] | str
+    evidence_ids: list[Id]
 
 type NoteFormat = Literal['plain_text', 'markdown']
 
@@ -7941,7 +7950,6 @@ class DashboardFundsDelivery__FundMovement(TypedDict):
     amount_fen: str
     signed_amount_fen: str
     type: str
-    display_summary: str
     list_summary: str
     party: str
     internal_transfer: bool
@@ -7954,7 +7962,7 @@ class DashboardFundsDelivery__FundsCollections(TypedDict):
     investment_products: NotRequired[DashboardFundsDelivery__Collection_InvestmentProduct_]
 
 class DashboardFundsDelivery__FundsDashboardResponse(TypedDict):
-    schema_version: Literal[12]
+    schema_version: Literal[13]
     snapshot_version: str | None
     selected_period: DashboardFundsDelivery__DashboardPeriod | None
     read_semantics: DashboardFundsDelivery__ReadSemantics
@@ -9330,7 +9338,6 @@ class DashboardFunds__FundMovement(TypedDict):
     amount_fen: str
     signed_amount_fen: str
     type: str
-    display_summary: str
     list_summary: str
     party: str
     internal_transfer: bool
@@ -9409,7 +9416,7 @@ class DashboardFunds__SelectedMovementAccount(TypedDict):
     account_id: str
 
 class DashboardFundsWire(TypedDict):
-    schema_version: Literal[12]
+    schema_version: Literal[13]
     snapshot_version: str | None
     selected_period: DashboardFunds__DashboardPeriod | None
     read_semantics: DashboardFunds__ReadSemantics
@@ -9945,6 +9952,9 @@ class DashboardBusinessStatus__OwnerObligation(TypedDict):
     other_settled_fen: str | None
     remaining_fen: str | None
     settlement_status: str
+    purpose: str | None
+    description: str | None
+    note_scope: Literal['selected', 'whole_business', None]
 
 class DashboardBusinessStatus__OwnerProfileValues(TypedDict):
     display_name: str | None
@@ -9987,7 +9997,7 @@ class DashboardBusinessStatus__ReadSemantics(TypedDict):
     recorded_later: Literal['business_recording_period_after_selected_period']
 
 class DashboardBusinessStatusWire(TypedDict):
-    schema_version: Literal[10]
+    schema_version: Literal[11]
     snapshot_version: str
     selected_period: DashboardBusinessStatus__DashboardPeriod
     read_semantics: DashboardBusinessStatus__ReadSemantics
@@ -12444,6 +12454,8 @@ __all__ = [
     'EarlyCloseBasis',
     'PeriodWorkBasis',
     'FrozenWorkCloseBasis',
+    'BusinessNotePurpose',
+    'BusinessNoteContent',
     'NoteFormat',
     'CompanyNoteQuery',
     'CompanyNoteDescription',

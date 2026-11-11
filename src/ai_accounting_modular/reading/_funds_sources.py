@@ -14,7 +14,13 @@ from ai_accounting_modular.ledger.public import (
     AdoptedOriginProjection,
 )
 
-from ._business_descriptions import Descriptions, common_text, description_reference, merged
+from ._business_descriptions import (
+    Descriptions,
+    DescriptionSubject,
+    common_text,
+    note_reference,
+    obligation_subject,
+)
 from ._business_labels import (
     BusinessLabel,
     business_label,
@@ -30,16 +36,17 @@ class FundSources:
     contents: dict[str, AdoptedOriginProjection | AdoptedContent]
     obligations: dict[tuple[str, str], ResourceDefinition]
     descriptions: Descriptions
+    description_digest: str
 
     def titles(self, view):
-        """Resolve source prose once for the standard name, list heading and full purpose."""
+        """Resolve the standard name and concise heading from exact source purposes."""
         groups = {}
         for part in view["allocations"]:
             resource = self.obligations[part.source["business_id"], part.source["slot"]]
             body = self.contents[resource.source["result_id"]]
-            label = business_label(body, resource)
-            reference = description_reference(body, label)
-            text = self.descriptions.text(reference) if reference else None
+            subject = obligation_subject(body, resource)
+            label = subject.label
+            text = self.descriptions.purpose(subject)
             groups.setdefault(label, []).append(text)
         content, direction = (
             self.contents[view["source"]["result_id"]],
@@ -47,21 +54,28 @@ class FundSources:
         )
         label = settlement_label(content, tuple(groups), direction).title
         if not groups:
-            text = self.descriptions.source_text(view["source"]) or label
+            text = (
+                self.descriptions.purpose(DescriptionSubject(content, business_label(content)))
+                or label
+            )
             if text != label and origin_fields(content)[0]["kind"] == "money.movement":
                 text = settlement_title(text, business_label(content).code, direction)
-            return label, text, text
-        brief, full = [], []
+            return label, text
+        brief = []
         for meaning, texts in groups.items():
             brief.append(BusinessLabel(meaning.code, common_text(texts, meaning.title)))
-            full.append(
-                BusinessLabel(meaning.code, merged(text or meaning.title for text in texts))
-            )
         return (
             label,
             settlement_label(content, brief, direction).title,
-            settlement_label(content, full, direction).title,
         )
+
+    def has_note(self, view):
+        sources = [view["source"]]
+        sources.extend(
+            self.obligations[part.source["business_id"], part.source["slot"]].source
+            for part in view["allocations"]
+        )
+        return any(self.descriptions.source_text(source) for source in sources)
 
 
 def load(reader, activity, scope, read):
@@ -121,18 +135,23 @@ def load(reader, activity, scope, read):
             contents[content.reference["result_id"]] = content
     if contents.keys() != entries.keys():
         raise ContractError("storage_corrupt", "资金用途所需的正式正文不完整。")
-    references = []
+    references, subjects, own_notes = [], [], []
     for view in activity.movements:
         for part in view["allocations"]:
             resource = obligations[part.source["business_id"], part.source["slot"]]
             body = contents[resource.source["result_id"]]
-            reference = description_reference(body, business_label(body, resource))
+            subjects.append(obligation_subject(body, resource))
+            reference = note_reference(body)
             if reference:
                 references.append(reference)
+        body = contents[view["source"]["result_id"]]
+        reference = note_reference(body)
+        if reference:
+            references.append(reference)
+            own_notes.append(reference)
         if not view["allocations"]:
-            body = contents[view["source"]["result_id"]]
-            reference = description_reference(body)
-            if reference:
-                references.append(reference)
+            subjects.append(DescriptionSubject(body, business_label(body)))
     prose = Descriptions(reader, references, read)
-    return FundSources(entries, contents, obligations, prose)
+    return FundSources(
+        entries, contents, obligations, prose, prose.digest(subjects, notes=own_notes)
+    )

@@ -36,6 +36,18 @@ test("activity members display signed payroll composition with their existing vo
   } finally { await server.close(); }
 });
 
+test("a single activity member displays its complete description directly without opening progress", async () => {
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
+  try {
+    const description = "此前预收的服务款对应业务已经完成，本期确认服务收入。完整说明还保留业务归属和结算安排，展开本条记录后应能直接读到最后一句。";
+    const member = { key: "service", group_key: "employee", subject_id: "service-business", detail_scope_key: "service", voucher_version_id: null, title: "预收款转收入", description, amount_fen: "10000", amount_label: "业务金额", state: "已入账", party: "合成客户", date: null, recognition: { precision: "month", period: "2026-07", label: "按月确认" }, group: "business", amount_components: [] };
+    const html = await renderMembers(server, [member], { section: "activity" });
+    assert(html.includes(description));
+    assert.doesNotMatch(html, /business-detail-panel|<details|aria-expanded="true"/);
+    assert.match(html, /业务进展/);
+  } finally { await server.close(); }
+});
+
 test("monthly contribution table owns single records and compresses missing and settled components", async () => {
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true }, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {

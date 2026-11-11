@@ -911,7 +911,7 @@ test("personal labor parent details pass displayed facts to avoid repeating exac
       businessStatus.settlements = { cutoff_period: labor.cutoff_period, status: "established", checking: false, obligations: [{
         key: obligation.key, name: obligation.name, direction: "payable", category_key: "labor_payables", source_period: labor.period,
         source_amount_fen: obligation.amount_fen, paid_fen: obligation.paid_fen, other_settled_fen: obligation.other_settled_fen,
-        remaining_fen: obligation.remaining_fen, settlement_status: "open",
+        remaining_fen: obligation.remaining_fen, settlement_status: "open", purpose: null, description: null, note_scope: null,
       }] };
       businessStatus.current_followups.settlements = structuredClone(businessStatus.settlements);
       businessStatus.collections.settlement_events = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };

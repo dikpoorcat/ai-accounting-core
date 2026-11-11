@@ -65,7 +65,7 @@ async function run(config) {
     data.identity.company_id = response.read_context.company_id; data.identity.subject_id = subject; data.identity.kind = "payroll";
     data.period = current; data.latest_source.period = current; data.latest_source.deleted = false;
     data.current_business_result = { amount_fen: "800000", amount_label: "税前工资", posting_period: current };
-    const source = { key: `${subject}-net`, name: "net", direction: "payable", category_key: "payroll_payables", source_period: current, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial" };
+    const source = { key: `${subject}-net`, name: "net", direction: "payable", category_key: "payroll_payables", source_period: current, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null };
     if (largeProgress) Object.assign(source, { source_amount_fen: "9007199254740993123", paid_fen: "6007199254740993123", remaining_fen: "3000000000000000000" });
     const tax = { ...source, key: `${subject}-tax`, name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" };
     const housing = { ...tax, key: `${subject}-housing`, name: "employee_housing", source_amount_fen: "10000", remaining_fen: "10000" };

@@ -14,7 +14,7 @@ __all__ = ["Dashboard", "HttpResponse", "create_dashboard"]
 LOCAL_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 _MONTH_PAGES = {
     "/api/dashboard/brief": ("brief", 20),
-    "/api/dashboard/funds": ("funds", 12),
+    "/api/dashboard/funds": ("funds", 13),
     "/api/dashboard/assets": ("assets", 10),
     "/api/dashboard/employees": ("employees", 13),
 }
@@ -231,7 +231,7 @@ class Dashboard:
             scope, query = _requests.business_status(parameters)
             delivery = self.reading.detail("business_status", scope, query)
             return _validate(
-                "dashboard_business_status", _monthly.response(delivery, 10, self.now())
+                "dashboard_business_status", _monthly.response(delivery, 11, self.now())
             )
         if path == "/api/dashboard/close-review":
             scope, query = _requests.close_review(parameters)

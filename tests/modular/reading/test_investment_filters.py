@@ -157,7 +157,7 @@ def test_http_filter_uses_same_published_snapshot_and_complete_category_counts(c
     status, ready = get(case, ("period", "2026-01"), ("investment_filter", "all"))
     assert status == 200 and ready["state"] == "ready", ready
     response = ready["response"]
-    assert response["schema_version"] == 12
+    assert response["schema_version"] == 13
     version = response["snapshot_version"]
     for investment_filter, count in (("financial", 6), ("cooperation", 1)):
         status, filtered = get(

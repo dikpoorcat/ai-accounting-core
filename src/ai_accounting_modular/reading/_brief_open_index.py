@@ -13,7 +13,7 @@ from ._collections import IndexItem, PreparedModel, _index, _read_item, prepare_
 from ._open_store import OpenPool
 
 COMPONENT = "brief_open_items"
-FORMAT_VERSION = 15
+FORMAT_VERSION = 17
 DIRTY = "_open_pending"
 BUSINESSES, OBJECTS, FOLDS, VOUCHERS, NOTES, PROVIDER, DESCRIPTIONS = blocks.PRIVATE
 COLLECTIONS, PUBLIC = blocks.COLLECTIONS, blocks.PUBLIC

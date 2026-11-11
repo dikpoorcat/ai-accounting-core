@@ -7,7 +7,7 @@ export namespace DashboardFundsDeliveryContract {
   export type Period = string | null;
   export type ModelVersion = string | null;
   export type State = "ready";
-  export type SchemaVersion1 = 12;
+  export type SchemaVersion1 = 13;
   export type SnapshotVersion = string | null;
   export type Key = string;
   export type Year = number;
@@ -103,7 +103,6 @@ export namespace DashboardFundsDeliveryContract {
   export type AmountFen = string;
   export type SignedAmountFen = string;
   export type Type2 = string;
-  export type DisplaySummary = string;
   export type ListSummary = string;
   export type Party = string;
   export type InternalTransfer = boolean;
@@ -298,7 +297,6 @@ export namespace DashboardFundsDeliveryContract {
     amount_fen: AmountFen;
     signed_amount_fen: SignedAmountFen;
     type: Type2;
-    display_summary: DisplaySummary;
     list_summary: ListSummary;
     party: Party;
     internal_transfer: InternalTransfer;

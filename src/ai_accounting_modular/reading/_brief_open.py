@@ -14,8 +14,7 @@ from . import _brief_open_members as member_rows
 from . import _brief_open_rows as rows
 from . import _brief_open_sources as sources
 from . import _brief_vouchers, _monthly, _payroll_journals
-from ._business_descriptions import Descriptions, description_reference
-from ._business_labels import business_label
+from ._business_descriptions import Descriptions, note_reference
 from ._collections import CollectionFilter, IndexItem, wire_page
 from ._dependencies import bind
 from ._funds_items import key
@@ -105,7 +104,7 @@ def project(reader, captured, company_id, read):
     references = []
     for item in captured.selected:
         content = captured.contents[item.source["result_id"]]
-        reference = description_reference(content, business_label(content, item))
+        reference = note_reference(content)
         if reference:
             references.append(reference)
     prose = Descriptions(reader, references, read)

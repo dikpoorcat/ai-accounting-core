@@ -54,6 +54,7 @@ def test_group_wording_handles_shared_and_distinct_notes_through_incremental_rem
                         "scope": "business:" + fact["business_id"],
                         "expected_seq": 0,
                         "text": text,
+                        "purpose": text,
                         "evidence_ids": [case.source_id],
                     }
                 ],
@@ -114,6 +115,7 @@ def member(position):
         "party": "固定供应商",
         "subject_id": uid(identity),
         "_matter_title": "管理费用",
+        "_purpose": f"具体事项-{position:04d}",
         "_description": f"隐藏事项说明-{position:04d}-" + "中文说明" * 15,
         "_note_scope": "business:" + uid(identity),
         "source_amount_fen": "100",

@@ -28,7 +28,7 @@ function scenario(context = laborContext()) {
   data.settlements = { cutoff_period: context.cutoff_period, status: "established", checking: false, obligations: [{
     key: obligation.key, name: obligation.name, direction: "payable", category_key: "labor_payables", source_period: context.period,
     source_amount_fen: obligation.amount_fen, paid_fen: obligation.paid_fen, other_settled_fen: obligation.other_settled_fen,
-    remaining_fen: obligation.remaining_fen, settlement_status: "partial",
+    remaining_fen: obligation.remaining_fen, settlement_status: "partial", purpose: null, description: null, note_scope: null,
   }] };
   data.current_followups.settlements = structuredClone(data.settlements);
   data.collections.settlement_events = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
@@ -67,6 +67,15 @@ test("personal labor details remove only facts already displayed for the exact s
         data.current_business_result.amount_label = "应发金额";
         assert.doesNotMatch(await render(data, context), /补充款项进度|¥5,000\.00|¥4,500\.00|¥1,000\.00|¥500\.00|¥3,000\.00/, `${kind} does not repeat the displayed labor amounts or progress`);
       }
+    });
+    await t.test("a complete source note remains visible when every labor amount is already displayed", async () => {
+      const data = scenario();
+      Object.assign(data.settlements.obligations[0], { purpose: "设计服务费", description: "本期设计服务已按约完成，余款按既定安排支付。", note_scope: "selected" });
+      const html = await render(data);
+      assert.match(html, /设计服务费/); assert.match(html, /本期设计服务已按约完成，余款按既定安排支付。/);
+      assert.doesNotMatch(html, /¥4,500\.00|¥1,000\.00|¥500\.00|¥3,000\.00/);
+      data.settlements.obligations[0].note_scope = "whole_business";
+      assert.match(await render(data), /整单说明[\s\S]*本期设计服务已按约完成，余款按既定安排支付。/);
     });
     await t.test("distinct keys, names or periods retain full progress and changed amounts show only the new cells", async () => {
       const distinctSources = [

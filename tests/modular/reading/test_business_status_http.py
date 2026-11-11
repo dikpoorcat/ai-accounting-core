@@ -16,7 +16,7 @@ def test_business_progress_http_is_available_without_month_projection(case):
     with case.kernel.dashboard.get(PATH, query) as response:
         assert response.status == 200, response.body
         first = response.body
-    assert first["schema_version"] == 10
+    assert first["schema_version"] == 11
     assert first["read_context"]["company_id"] == case.company
     assert first["data"]["settlements"]["obligations"][0]["remaining_fen"] == "100000"
     version = first["snapshot_version"]

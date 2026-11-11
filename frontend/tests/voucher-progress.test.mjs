@@ -13,7 +13,7 @@ import ts from "typescript";
 import { appendDashboardCollection } from "./helpers/dashboardCollections.mjs";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
-const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
+const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null, ...changes });
 const voucher = (changes = {}) => ({ number: 9, voucher_version_id: "voucher-a", subject_id: "salary-business", reverses_version_id: null, date: "2026-09-30", recognition: { period: "2026-09" }, type: "工资确认", kind: "payroll", state: "已入账", group: "payroll", summary: "9月工资确认", list_summary: "9月工资", amount_fen: "900000", business_amount_fen: "900000", business_amount_label: "税前工资", asset: null, asset_members: [], lines: [], ...changes });
 function scenario(items = [obligation()]) {
   const data = structuredClone(samples.business_status.response.data);
@@ -88,6 +88,19 @@ test("voucher progress adds business facts without repeating the voucher", async
       assert(tables.some(table => /原应付/.test(table) && !/预付金额|款项总额/.test(table)));
       assert(tables.some(table => /预付金额/.test(table) && /已退回/.test(table) && /已冲抵/.test(table) && !/原应付/.test(table)));
       assert(tables.some(table => /款项总额/.test(table) && /AI 会计核对中/.test(table) && /¥90,071,992,547,409\.93/.test(table)));
+    });
+    await t.test("desktop progress keeps different complete notes under equal short source names", async () => {
+      const data = scenario([
+        obligation({ key: "source-a:primary", name: "primary", purpose: "服务费", description: "第一项服务本月完成，余款安排已明确。", note_scope: "selected" }),
+        obligation({ key: "source-b:primary", name: "primary", purpose: "服务费", description: "第二项服务已交接，按合同约定分期支付。", note_scope: "selected" }),
+        obligation({ key: "source-c:employee_social", name: "employee_social", description: "本次报酬整笔业务的共同安排。", note_scope: "whole_business" }),
+      ]);
+      const html = await render(data);
+      assert.match(html, /第一项服务本月完成，余款安排已明确。/);
+      assert.match(html, /第二项服务已交接，按合同约定分期支付。/);
+      assert.match(html, /整单说明[\s\S]*本次报酬整笔业务的共同安排。/);
+      assert.equal((html.match(/>服务费</g) || []).length, 2);
+      assert.doesNotMatch(html, /source-a|source-b|source-c/);
     });
     await t.test("later progress compares obligation keys and retains historical balances", async () => {
       const data = scenario();

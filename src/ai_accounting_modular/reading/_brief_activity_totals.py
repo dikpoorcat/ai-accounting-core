@@ -89,7 +89,7 @@ def empty():
         "vouchers": 0,
         "month": 0,
         "dates": {},
-        "descriptions": {},
+        "purposes": {},
         "titles": {},
     }
 
@@ -114,7 +114,7 @@ def adjust(fold, members, sign):
     tokens = set()
     for member in members:
         row = member["row"]
-        for field, text in (("descriptions", row["description"]), ("titles", row["title"])):
+        for field, text in (("purposes", member["purpose"]), ("titles", row["title"])):
             count = _count(fold[field].get(text, 0), sign)
             if count:
                 fold[field][text] = count
@@ -147,7 +147,7 @@ def validate_fold(value):
         "dates",
         "first",
         "order",
-        "descriptions",
+        "purposes",
         "titles",
     }:
         corrupt()
@@ -157,7 +157,7 @@ def validate_fold(value):
     for field in ("unknown", "vouchers", "month"):
         if type(value[field]) is not int or not 0 <= value[field] <= count:
             corrupt()
-    for field in ("descriptions", "titles"):
+    for field in ("purposes", "titles"):
         if (
             not isinstance(value[field], dict)
             or any(
@@ -230,7 +230,7 @@ def group_value(first, fold, order):
         "has_month_recognition": bool(fold["month"]),
     }
     if first["kind"] not in {"people.remuneration", "people.remuneration_tax"}:
-        value["title"] = common_text(fold["descriptions"], first["title"])
+        value["title"] = common_text(fold["purposes"], next(iter(fold["titles"])))
     return IndexItem("activity", value["group_key"], order, value, category=value["group"])
 
 

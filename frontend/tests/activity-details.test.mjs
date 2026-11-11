@@ -9,7 +9,7 @@ import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
-const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
+const obligation = (changes = {}) => ({ key: "salary", name: "net", direction: "payable", category_key: "payroll_payables", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null, ...changes });
 const activity = (changes = {}) => ({ key: "occurrence", subject_id: "salary-business", voucher_version_id: "occurrence", group: "payroll", party: "张某", title: "工资", description: "9月工资", date: null, recognition: { period: "2026-09" }, state: "已入账", amount_label: "税前工资", amount_fen: "800000", amount_components: [], ...changes });
 function scenario(items = [obligation(), obligation({ key: "tax", name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" })]) {
   const data = structuredClone(samples.business_status.response.data);
@@ -202,9 +202,12 @@ test("activity details only add information to the exact occurrence row", async 
       assert.match(standalone, /整单说明：培训费报销/);
     });
     await t.test("an expanded activity member displays its purpose once and keeps separately scoped notes", async () => {
-      const row = activity({ title: "支付管理费用", description: "支付消防安全培训费报销", detail_scope_key: "reimbursement" });
-      const data = scenario([]);
-      data.display_profiles = { business: { values: { purpose: row.description, note: row.description, note_scope: "selected" } } };
+      const description = "本次消防安全培训已完成，培训费按既定报销安排支付。";
+      const row = activity({ title: "支付管理费用", description, detail_scope_key: "reimbursement" });
+      const selectedPurpose = "消防培训费报销";
+      const data = scenario([obligation({ key: "expense:primary", name: "primary", purpose: selectedPurpose, description, note_scope: "selected" })]);
+      data.detail_scope = { key: row.detail_scope_key, voucher_version_id: row.voucher_version_id, category: "expense_supplier", amount_fen: row.amount_fen, amount_label: "实际付款" };
+      data.display_profiles = { business: { values: { purpose: selectedPurpose, note: null, note_scope: null } } };
       data.collections.settlement_events = { items: [], page: { total_count: 0, filtered_count: 0, returned_count: 0, has_more: false, next_cursor: null } };
       const { default: members } = await server.ssrLoadModule("/src/components/brief/BriefGroupMembers.vue");
       const wrapped = { ...members, setup(props, context) {
@@ -219,12 +222,41 @@ test("activity details only add information to the exact occurrence row", async 
         return renderToString(app);
       }
       const selected = await renderMember();
-      assert.equal((selected.match(/支付消防安全培训费报销/g) ?? []).length, 1);
+      assert.equal((selected.match(/本次消防安全培训已完成，培训费按既定报销安排支付。/g) ?? []).length, 1);
+      assert.equal((selected.match(/消防培训费报销/g) ?? []).length, 1, "the exact obligation heading carries the short purpose once");
       assert.doesNotMatch(selected, /事项说明|用途／备注|owner-detail-context/);
+      data.display_profiles.business.values.note = description;
       data.display_profiles.business.values.note_scope = "whole_business";
       const whole = await renderMember();
-      assert.equal((whole.match(/支付消防安全培训费报销/g) ?? []).length, 2);
-      assert.match(whole, /整单说明：支付消防安全培训费报销/);
+      assert.equal((whole.match(/本次消防安全培训已完成，培训费按既定报销安排支付。/g) ?? []).length, 2);
+      assert.match(whole, /整单说明：本次消防安全培训已完成，培训费按既定报销安排支付。/);
+    });
+    await t.test("activity note deduplication requires one matching exact scope and keeps shared or other-source text", async () => {
+      const description = "已在成员中完整显示的合成服务说明。";
+      const row = activity({ description, detail_scope_key: "service-member", voucher_version_id: "service-voucher" });
+      const source = obligation({ key: "service:primary", name: "primary", purpose: "服务费", description, note_scope: "selected" });
+      const exact = () => {
+        const data = scenario([source]);
+        data.detail_scope = { key: row.detail_scope_key, voucher_version_id: row.voucher_version_id, category: "business", amount_fen: row.amount_fen, amount_label: "业务金额" };
+        data.display_profiles = {};
+        data.current_followups.settlements = structuredClone(data.settlements);
+        return data;
+      };
+      assert.doesNotMatch(await render(exact(), row), /已在成员中完整显示的合成服务说明。/);
+      for (const [field, value] of [["key", "another-member"], ["voucher_version_id", "another-voucher"]]) {
+        const data = exact(); data.detail_scope[field] = value;
+        assert.match(await render(data, row), /已在成员中完整显示的合成服务说明。/, field);
+      }
+      const mixed = exact();
+      mixed.settlements.obligations.push({ ...source, key: "another-service:primary" });
+      assert.equal(((await render(mixed, row)).match(/已在成员中完整显示的合成服务说明。/g) ?? []).length, 2, "different source rows retain their equal complete text");
+      const shared = exact(); shared.settlements.obligations[0] = { ...source, note_scope: "whole_business" };
+      const whole = await render(shared, row);
+      assert.match(whole, /整单说明[\s\S]*已在成员中完整显示的合成服务说明。/);
+      const changed = exact(); changed.settlements.obligations[0] = { ...source, description: description + "后来补充的独立安排。" };
+      assert.match(await render(changed, row), /后来补充的独立安排。/);
+      const independent = exact(); independent.display_profiles = { business: { values: { purpose: "另有明确用途", note: null, note_scope: null } } };
+      assert.match(await render(independent, row), /用途／备注：另有明确用途/);
     });
     await t.test("current withdrawal follows the formal state independently of occurrence labels", async () => {
       for (const state of ["已入账", "更正前", "更正后", "更正原业务"]) {

@@ -20,7 +20,8 @@ from ai_accounting_modular.ledger.opening.public import (
 
 from ._brief_open_groups import group_key, status
 from ._brief_open_sources import batches, ref_key
-from ._business_descriptions import description_reference
+from ._business_descriptions import note_reference, obligation_subject
+from ._business_descriptions import note_scope as description_scope
 from ._business_labels import (
     BusinessLabel,
     ObligationFields,
@@ -384,11 +385,16 @@ def project(snapshot, company_id, identity, read, *, descriptions=None):
             reference,
         )
         contribution = meaning.component if meaning.component in _CONTRIBUTIONS else None
-        note_scope, description = None, None
-        prose_reference = description_reference(content, meaning.label, component=meaning.component)
+        note_scope, purpose, description = None, None, None
+        subject = obligation_subject(
+            content, definition, label=meaning.label, component=meaning.component
+        )
+        prose_reference = note_reference(content)
         if descriptions is not None and prose_reference:
             note_scope = descriptions.scope(prose_reference)
-            description = descriptions.text(prose_reference)
+            purpose = descriptions.purpose(subject)
+            if description_scope(subject) == "selected":
+                description = descriptions.text(prose_reference)
         rows.append(
             {
                 "id": reference["business_id"] + ":" + reference["slot"],
@@ -410,6 +416,10 @@ def project(snapshot, company_id, identity, read, *, descriptions=None):
                 else format_fen(current_remaining),
                 "subject_id": reference["business_id"],
                 "_matter_title": meaning.label.title,
+                "_purpose": purpose,
+                "_description_digest": descriptions.digest((subject,))
+                if descriptions is not None
+                else None,
                 "_description": description,
                 "_note_scope": note_scope,
                 "_locator": _locator(content, item),

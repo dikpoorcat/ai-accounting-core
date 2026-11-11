@@ -34,6 +34,7 @@ def note_current(row, repository, evidence_ids=None):
         if evidence_ids is None
         else evidence_ids,
         **_format_fields(row["note_format"]),
+        **_purpose_fields(row["purpose"]),
     }
     try:
         validate_contract("core.schema.json", "CurrentNote", result)
@@ -52,6 +53,7 @@ def note_digest(current):
                 for key in ("scope", "state", "text", "basis_head", "evidence_ids")
             },
             **_format_fields(current.get("text_format", "plain_text")),
+            **_purpose_fields(current.get("purpose")),
         }
     )
 
@@ -61,10 +63,16 @@ def _format_fields(text_format):
     return {} if text_format == "plain_text" else {"text_format": text_format}
 
 
+def _purpose_fields(purpose):
+    # Existing notes keep their canonical bytes until a purpose is supplied.
+    return {} if purpose is None else {"purpose": purpose}
+
+
 def document_note(current):
     return {
         **{key: current[key] for key in ("scope", "text", "evidence_ids")},
         **_format_fields(current.get("text_format", "plain_text")),
+        **_purpose_fields(current.get("purpose")),
     }
 
 
@@ -209,8 +217,13 @@ def plan_change(change: RecordsChange, context: RecordsContext, root) -> Records
             "basis_head": basis,
             "evidence_ids": note["evidence_ids"],
             **_format_fields(note.get("text_format", "plain_text")),
+            **_purpose_fields(note.get("purpose")),
         }
-        if scope.startswith(("business:", "work:")) and note["text"] == "":
+        if (
+            scope.startswith(("business:", "work:"))
+            and note["text"] == ""
+            and note.get("purpose") is None
+        ):
             target = _cleared_note(scope, 1)
         digest = note_digest(target)
         expected = note["expected_seq"]

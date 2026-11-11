@@ -61,9 +61,11 @@ const isFunds = computed(() => props.presentation === "funds" && Boolean(props.f
 const isVoucher = computed(() => props.presentation === "voucher" && Boolean(props.voucherContext));
 const isLabor = computed(() => props.presentation === "labor" && Boolean(props.laborContext));
 const isOwnerDetail = computed(() => isOpenItem.value || isActivity.value || isFunds.value || isVoucher.value || isLabor.value);
-const fundsDescription = computed(() => {
-  const item = props.fundsContext;
-  return item?.display_summary && item.display_summary !== (item.list_summary || item.type) ? item.display_summary : "";
+const selectedActivityObligation = computed(() => {
+  const current = data.value, item = props.activityContext, scope = current?.detail_scope;
+  if (!isActivity.value || !current || !item || !scope || scope.key !== item.detail_scope_key
+    || scope.voucher_version_id !== item.voucher_version_id) return null;
+  return current.settlements.obligations.length === 1 ? current.settlements.obligations[0] : null;
 });
 const ownerPurposes = computed(() => {
   let visibleTexts: (string | undefined)[];
@@ -71,9 +73,10 @@ const ownerPurposes = computed(() => {
     const voucher = props.voucherContext;
     visibleTexts = [voucher.summary, voucher.list_summary, voucher.type];
   } else if (isFunds.value) {
-    visibleTexts = [props.fundsContext?.list_summary || props.fundsContext?.type, fundsDescription.value];
+    visibleTexts = [props.fundsContext?.list_summary || props.fundsContext?.type];
   } else if (isActivity.value) {
     visibleTexts = [props.activityContext?.description || props.activityContext?.title];
+    visibleTexts.push(selectedActivityObligation.value?.purpose ?? undefined);
   } else visibleTexts = [props.briefContext?.description];
   return purposes.value.filter(entry => entry.scope === "whole_business" || !visibleTexts.includes(entry.text));
 });
@@ -137,7 +140,7 @@ function laborProgressRows(settlements: BusinessStatusData["settlements"]) {
     const newState = item.direction !== "payable" || item.category_key === "unknown"
       || !["open", "partial", "settled"].includes(item.settlement_status)
       || (settlements.checking && !laborCheckingRepeated(settlements));
-    return amounts.length || newState ? [{ item, amounts }] : [];
+    return amounts.length || newState || item.purpose || item.description ? [{ item, amounts }] : [];
   });
 }
 const laborHistoricalRows = computed(() => data.value ? laborProgressRows(data.value.settlements) : []);
@@ -205,7 +208,7 @@ const activityFollowups = computed(() => {
   const latest = new Map(currentSettlements.value.obligations.map(item => [item.key, item]));
   return [...new Set([...historical.keys(), ...latest.keys()])].flatMap(key => {
     const before = historical.get(key), after = latest.get(key);
-    return !before || !after || (["source_amount_fen", "paid_fen", "other_settled_fen", "remaining_fen", "settlement_status", "direction", "category_key"] as const).some(field => before[field] !== after[field])
+    return !before || !after || (["source_amount_fen", "paid_fen", "other_settled_fen", "remaining_fen", "settlement_status", "direction", "category_key", "purpose", "description", "note_scope"] as const).some(field => before[field] !== after[field])
       ? [{ key, before, after, name: (after || before)?.name || "" }] : [];
   });
 });
@@ -258,6 +261,10 @@ function activityState(item: Obligation, checking: boolean) {
 const isAdvance = computed(() => props.briefContext?.categoryKey === "supplier_advances");
 const selectedObligation = computed(() => data.value?.settlements.obligations.find(item => item.key === props.briefContext?.obligationKey));
 const currentObligation = computed(() => currentSettlements.value?.obligations.find(item => item.key === props.briefContext?.obligationKey));
+const selectedObligationDescription = computed(() => {
+  const item = selectedObligation.value;
+  return item?.note_scope === "selected" && item.description === props.briefContext?.description ? "" : obligationDescription(item);
+});
 const selectedProgress = computed(() => {
   const item = selectedObligation.value, context = props.briefContext;
   return {
@@ -284,6 +291,9 @@ const showLatestProgress = computed(() => latestProgress.value.cutoff !== select
     currentObligation.value.source_amount_fen !== selectedObligation.value.source_amount_fen
     || currentObligation.value.paid_fen !== selectedObligation.value.paid_fen
     || currentObligation.value.other_settled_fen !== selectedObligation.value.other_settled_fen
+    || currentObligation.value.purpose !== selectedObligation.value.purpose
+    || currentObligation.value.description !== selectedObligation.value.description
+    || currentObligation.value.note_scope !== selectedObligation.value.note_scope
   ))
 ));
 const originalLabel = computed(() => isAdvance.value ? "预付金额" : props.briefContext?.direction === "receivable" ? "原应收" : "原应付");
@@ -328,6 +338,15 @@ function movementPurpose(name: string) {
   const netLabel = kind === "annual_bonus" ? "实发奖金" : kind === "payroll" ? "实发工资" : kind === "labor" || kind === "labor_project_cost" ? "实发劳务款" : "个人实发款";
   const labels: Record<string, string> = { net: netLabel, tax: "个人所得税", withheld_tax: "代扣个人所得税", primary: "业务款项", collection: "代收款", remittance: "代付款", employee_social: "个人社保", employee_housing: "个人公积金", employer_social: "公司社保", employer_housing: "公司公积金" };
   return labels[name] || "相关款项";
+}
+function obligationTitle(item: Obligation | undefined, name = "") {
+  return item?.purpose || movementPurpose(item?.name || name);
+}
+function obligationDescription(item: Obligation | undefined) {
+  if (!item?.description || !item.note_scope) return "";
+  if (item.note_scope === "whole_business") return item.description;
+  if (selectedActivityObligation.value?.key === item.key && item.description === props.activityContext?.description) return "";
+  return item.description !== obligationTitle(item) ? item.description : "";
 }
 function detailScope() {
   const item = props.activityContext;
@@ -433,7 +452,8 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <template v-if="laborHistoricalRows.length">
           <h4>补充款项进度 · 截至{{ periodText(data.settlements.cutoff_period) }}末</h4>
           <article v-for="row in laborHistoricalRows" :key="row.item.key" class="labor-progress-row">
-            <header><div class="owner-item-heading"><h4>{{ movementPurpose(row.item.name) }}</h4><p v-if="!row.item.source_period || row.item.source_period !== laborContext.period">业务所属月份：{{ periodText(row.item.source_period || undefined) }}</p></div><span class="business-state" :class="activityTone(row.item, data.settlements.checking)">{{ activityState(row.item, data.settlements.checking) }}</span></header>
+            <header><div class="owner-item-heading"><h4>{{ obligationTitle(row.item) }}</h4><p v-if="!row.item.source_period || row.item.source_period !== laborContext.period">业务所属月份：{{ periodText(row.item.source_period || undefined) }}</p></div><span class="business-state" :class="activityTone(row.item, data.settlements.checking)">{{ activityState(row.item, data.settlements.checking) }}</span></header>
+            <p v-if="obligationDescription(row.item)" class="obligation-description"><span v-if="row.item.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(row.item) }}</p>
             <dl v-if="row.amounts.length"><div v-for="amount in row.amounts" :key="amount.key"><dt>{{ amount.label }}</dt><dd>{{ ownerMoney(amount.value) }}</dd></div></dl>
             <p v-if="row.item.direction === 'unknown' || row.item.category_key === 'unknown'" class="checking">这项款项的收付分类待核对。</p>
           </article>
@@ -442,7 +462,8 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
           <h4>后续进展 · 截至最新月份（{{ periodText(currentSettlements.cutoff_period) }}末）</h4>
           <p v-if="currentSettlements.checking" class="checking">AI 会计核对中，当前收付结果尚不能完整确认。</p>
           <article v-for="row in laborCurrentRows" :key="row.item.key" class="labor-progress-row">
-            <header><div class="owner-item-heading"><h4>{{ movementPurpose(row.item.name) }}</h4><p v-if="!row.item.source_period || row.item.source_period !== laborContext.period">业务所属月份：{{ periodText(row.item.source_period || undefined) }}</p></div><span class="business-state" :class="activityTone(row.item, currentSettlements.checking)">{{ activityState(row.item, currentSettlements.checking) }}</span></header>
+            <header><div class="owner-item-heading"><h4>{{ obligationTitle(row.item) }}</h4><p v-if="!row.item.source_period || row.item.source_period !== laborContext.period">业务所属月份：{{ periodText(row.item.source_period || undefined) }}</p></div><span class="business-state" :class="activityTone(row.item, currentSettlements.checking)">{{ activityState(row.item, currentSettlements.checking) }}</span></header>
+            <p v-if="obligationDescription(row.item)" class="obligation-description"><span v-if="row.item.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(row.item) }}</p>
             <dl v-if="row.amounts.length"><div v-for="amount in row.amounts" :key="amount.key"><dt>{{ amount.label }}</dt><dd>{{ ownerMoney(amount.value) }}</dd></div></dl>
             <p v-if="row.item.direction === 'unknown' || row.item.category_key === 'unknown'" class="checking">这项款项的收付分类待核对。</p>
           </article>
@@ -453,7 +474,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <p v-if="isFunds && data.latest_source.deleted">这笔业务目前已撤回；原行保留资金变动记录。</p>
         <p v-else-if="isActivity && data.latest_source.deleted">这笔业务目前已撤回；原行保留本次发生记录。</p>
         <p v-else-if="isVoucher && data.latest_source.deleted">这笔业务目前已撤回；凭证保留历史记录。</p>
-        <p v-if="isFunds && fundsDescription">事项说明：{{ fundsDescription }}</p>
         <div v-if="ownerPurposes.length || (isVoucher ? voucherObjects : activityObjects).length" class="owner-detail-context">
           <p v-for="purpose in ownerPurposes" :key="purpose.scope + purpose.text">{{ purpose.scope === 'whole_business' ? '整单说明' : '用途／备注' }}：{{ purpose.text }}</p>
           <p v-for="group in (isVoucher ? voucherObjects : activityObjects)" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
@@ -466,14 +486,15 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
             <colgroup><col class="voucher-progress-name-column" /><col /><col /><col v-if="group.showOther" /><col /><col class="voucher-progress-state-column" /></colgroup>
             <thead><tr><th scope="col">款项</th><th scope="col" class="money">{{ group.labels.original }}</th><th scope="col" class="money">{{ group.labels.paid }}</th><th v-if="group.showOther" scope="col" class="money">{{ group.labels.other }}</th><th scope="col" class="money">{{ group.labels.remaining }}</th><th scope="col" class="status">状态</th></tr></thead>
             <tbody><tr v-for="row in group.rows" :key="row.key">
-              <th scope="row">{{ movementPurpose(row.name) }}<small v-if="row.item?.source_period && row.item.source_period !== period">{{ periodText(row.item.source_period) }}</small><small v-if="row.item?.direction === 'unknown' || row.item?.category_key === 'unknown'">收付分类待核对</small></th>
+              <th scope="row">{{ obligationTitle(row.item, row.name) }}<small v-if="row.item?.source_period && row.item.source_period !== period">{{ periodText(row.item.source_period) }}</small><small v-if="row.item?.direction === 'unknown' || row.item?.category_key === 'unknown'">收付分类待核对</small><small v-if="obligationDescription(row.item)" class="obligation-description"><span v-if="row.item?.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(row.item) }}</small></th>
               <td class="money">{{ ownerMoney(row.item?.source_amount_fen) }}</td><td class="money">{{ ownerMoney(row.item?.paid_fen) }}</td><td v-if="group.showOther" class="money">{{ ownerMoney(row.item?.other_settled_fen) }}</td><td class="money remaining">{{ ownerMoney(row.item?.remaining_fen) }}</td>
               <td class="status"><span v-if="row.item" class="business-state" :class="activityTone(row.item, data.settlements.checking)">{{ activityState(row.item, data.settlements.checking) }}</span></td>
             </tr></tbody>
           </table>
           <div class="owner-activity-obligations" :class="{ 'voucher-progress-mobile': isVoucher }">
             <article v-for="item in data.settlements.obligations" :key="item.key" class="owner-activity-obligation">
-              <header><div class="owner-item-heading"><h4>{{ movementPurpose(item.name) }}</h4><p v-if="item.source_period && item.source_period !== period">业务所属月份：{{ periodText(item.source_period) }}</p></div><span class="business-state" :class="activityTone(item, data.settlements.checking)">{{ activityState(item, data.settlements.checking) }}</span></header>
+              <header><div class="owner-item-heading"><h4>{{ obligationTitle(item) }}</h4><p v-if="item.source_period && item.source_period !== period">业务所属月份：{{ periodText(item.source_period) }}</p></div><span class="business-state" :class="activityTone(item, data.settlements.checking)">{{ activityState(item, data.settlements.checking) }}</span></header>
+              <p v-if="obligationDescription(item)" class="obligation-description"><span v-if="item.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(item) }}</p>
               <div class="owner-item-progress">
                 <div class="owner-item-balance"><span>{{ activityLabels(item).remaining }}</span><strong>{{ ownerMoney(item.remaining_fen) }}</strong></div>
                 <dl class="owner-item-amounts"><div><dt>{{ activityLabels(item).original }}</dt><dd>{{ ownerMoney(item.source_amount_fen) }}</dd></div><div><dt>{{ activityLabels(item).paid }}</dt><dd>{{ ownerMoney(item.paid_fen) }}</dd></div><div v-if="item.other_settled_fen !== '0' || item.category_key === 'supplier_advances'"><dt>{{ activityLabels(item).other }}</dt><dd>{{ ownerMoney(item.other_settled_fen) }}</dd></div></dl>
@@ -491,21 +512,22 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
             <colgroup><col class="voucher-progress-name-column" /><col /><col /><col v-if="group.showOther" /><col /><col class="voucher-progress-state-column" /></colgroup>
             <thead><tr><th scope="col">款项</th><th scope="col" class="money">{{ group.labels.original }}</th><th scope="col" class="money">{{ group.labels.paid }}</th><th v-if="group.showOther" scope="col" class="money">{{ group.labels.other }}</th><th scope="col" class="money">{{ group.labels.remaining }}</th><th scope="col" class="status">状态</th></tr></thead>
             <tbody><tr v-for="row in group.rows" :key="row.key">
-              <th scope="row">{{ movementPurpose(row.name) }}<small v-if="row.added">后续新增款项</small></th>
+              <th scope="row">{{ obligationTitle(row.item || row.previous, row.name) }}<small v-if="row.added">后续新增款项</small><small v-if="obligationDescription(row.item || row.previous)" class="obligation-description"><span v-if="(row.item || row.previous)?.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(row.item || row.previous) }}</small></th>
               <td class="money">{{ ownerMoney(row.item?.source_amount_fen) }}</td><td class="money">{{ ownerMoney(row.item?.paid_fen) }}</td><td v-if="group.showOther" class="money">{{ ownerMoney(row.item?.other_settled_fen) }}</td><td class="money remaining">{{ ownerMoney(row.item?.remaining_fen) }}</td>
               <td class="status"><span class="business-state" :class="row.item ? activityTone(row.item, currentSettlements.checking) : 'attention'">{{ row.item ? activityState(row.item, currentSettlements.checking) : '最新进度待核对' }}</span></td>
             </tr></tbody>
           </table>
           <div v-for="change in activityFollowups" :key="change.key" class="owner-item-latest" :class="{ 'voucher-progress-mobile': isVoucher }">
-            <div><h4>{{ movementPurpose(change.name) }}{{ !change.before ? ' · 后续新增款项' : '' }}</h4><span class="business-state" :class="change.after ? activityTone(change.after, currentSettlements.checking) : 'attention'">{{ change.after ? activityState(change.after, currentSettlements.checking) : '最新进度待核对' }}</span></div>
+            <div><h4>{{ obligationTitle(change.after || change.before, change.name) }}{{ !change.before ? ' · 后续新增款项' : '' }}</h4><span class="business-state" :class="change.after ? activityTone(change.after, currentSettlements.checking) : 'attention'">{{ change.after ? activityState(change.after, currentSettlements.checking) : '最新进度待核对' }}</span><p v-if="obligationDescription(change.after || change.before)" class="obligation-description"><span v-if="(change.after || change.before)?.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(change.after || change.before) }}</p></div>
             <div v-if="change.after"><span>{{ activityLabels(change.after).remaining }}</span><strong>{{ ownerMoney(change.after.remaining_fen) }}</strong><p>{{ activityLabels(change.after).original }} {{ ownerMoney(change.after.source_amount_fen) }} · {{ activityLabels(change.after).paid }} {{ ownerMoney(change.after.paid_fen) }}</p><p v-if="change.after.other_settled_fen !== '0' || change.after.category_key === 'supplier_advances'">{{ activityLabels(change.after).other }} {{ ownerMoney(change.after.other_settled_fen) }}</p></div>
           </div>
         </template>
       </template>
       <template v-else-if="isOpenItem && briefContext">
-        <div v-if="(selectedObligation?.source_period && selectedObligation.source_period !== period) || ownerPurposes.length || relatedObjects.length" class="owner-item-description">
+        <div v-if="(selectedObligation?.source_period && selectedObligation.source_period !== period) || selectedObligationDescription || ownerPurposes.length || relatedObjects.length" class="owner-item-description">
           <p v-if="selectedObligation?.source_period && selectedObligation.source_period !== period">业务所属月份：{{ periodText(selectedObligation.source_period) }}</p>
           <p v-for="purpose in ownerPurposes" :key="purpose.scope + purpose.text">{{ purpose.scope === 'whole_business' ? '整单说明' : '用途／备注' }}：{{ purpose.text }}</p>
+          <p v-if="selectedObligationDescription" class="obligation-description"><span v-if="selectedObligation?.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ selectedObligationDescription }}</p>
           <p v-for="group in relatedObjects" :key="group.label">{{ group.label }}：{{ group.names.join('、') }}</p>
         </div>
         <h4>款项拆解 · 截至{{ periodText(selectedProgress.cutoff) }}末{{ briefContext.selectedPeriodClosed ? '（关账时）' : '' }}</h4>
@@ -519,6 +541,7 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <p v-else-if="data.settlements.checking || selectedProgress.remaining == null" class="checking">AI 会计核对中，详情进度暂不能完整确认；原行保留列表金额。</p>
         <div v-if="showLatestProgress" class="owner-item-latest">
           <div><h4>后续进展 · 截至最新月份（{{ periodText(latestProgress.cutoff) }}末）</h4><span class="business-state" :class="progressTone(latestProgress.status, latestProgress.remaining, Boolean(currentSettlements?.checking) || !currentObligation)">{{ progressState(latestProgress.status, latestProgress.remaining, Boolean(currentSettlements?.checking) || !currentObligation) }}</span></div>
+          <p v-if="obligationDescription(currentObligation)" class="obligation-description"><span v-if="currentObligation?.note_scope === 'whole_business'" class="obligation-note-label">整单说明</span>{{ obligationDescription(currentObligation) }}</p>
           <div><span>{{ remainingLabel }}</span><strong>{{ ownerMoney(latestProgress.remaining) }}</strong></div>
         </div>
       </template>
@@ -617,6 +640,8 @@ button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; b
 .owner-activity-obligations { display: grid; gap: 16px; }
 .owner-activity-obligation { display: grid; min-width: 0; gap: 8px; }
 .owner-item-description { display: grid; gap: 3px; }
+.obligation-description { white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 400; }
+.obligation-note-label { display: block; color: var(--muted); font-size: 11px; }
 .owner-item-progress { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 20px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
 .owner-item-balance { min-width: 0; display: grid; gap: 5px; }
 .owner-item-balance > span, .owner-item-latest span { color: var(--muted); font-size: 12px; }

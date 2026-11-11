@@ -42,7 +42,7 @@
   "funds_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
@@ -67,7 +67,7 @@
   "first_account_without_period": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": null,
       "selected_period": null,
       "read_semantics": {
@@ -1435,7 +1435,7 @@
   "cash_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1554,7 +1554,6 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "type": "现金投入或借款",
-                "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
                 "internal_transfer": false,
@@ -1573,7 +1572,6 @@
                 "amount_fen": "12500",
                 "signed_amount_fen": "-12500",
                 "type": "现金收付款",
-                "display_summary": "付款（2026-01） · 合成办公用品商店",
                 "list_summary": "付款",
                 "party": "合成办公用品商店",
                 "internal_transfer": false,
@@ -1615,7 +1613,7 @@
   "first_account_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1737,7 +1735,6 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "type": "现金投入或借款",
-                "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
                 "internal_transfer": false,
@@ -1756,7 +1753,6 @@
                 "amount_fen": "12500",
                 "signed_amount_fen": "-12500",
                 "type": "现金收付款",
-                "display_summary": "付款（2026-01） · 合成办公用品商店",
                 "list_summary": "付款",
                 "party": "合成办公用品商店",
                 "internal_transfer": false,
@@ -1798,7 +1794,7 @@
   "deferred_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -1917,7 +1913,6 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "type": "现金投入或借款",
-                "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
                 "internal_transfer": false,
@@ -1936,7 +1931,6 @@
                 "amount_fen": "12500",
                 "signed_amount_fen": "-12500",
                 "type": "现金收付款",
-                "display_summary": "付款（2026-01） · 合成办公用品商店",
                 "list_summary": "付款",
                 "party": "合成办公用品商店",
                 "internal_transfer": false,
@@ -1978,7 +1972,7 @@
   "page_accounts": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2089,7 +2083,7 @@
   "page_movements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2168,7 +2162,6 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "type": "现金投入或借款",
-                "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
                 "internal_transfer": false,
@@ -2190,7 +2183,7 @@
   "page_statements": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2271,7 +2264,7 @@
   "page_investment_products": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2352,7 +2345,7 @@
   "account_filter": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2474,7 +2467,6 @@
                 "amount_fen": "100000",
                 "signed_amount_fen": "100000",
                 "type": "现金投入或借款",
-                "display_summary": "股东投入（2026-01） · 甲出资人",
                 "list_summary": "股东投入",
                 "party": "甲出资人",
                 "internal_transfer": false,
@@ -2726,7 +2718,7 @@
   "business_status": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "0af68c1ac49b7d0ae91733a18925a8b7b7b47fc0cc5bfd8d4e4a17c44bf96c5b",
       "selected_period": {
         "key": "2026-01",
@@ -2795,7 +2787,10 @@
               "paid_fen": "12500",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -2853,7 +2848,10 @@
                 "paid_fen": "12500",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }
@@ -5229,7 +5227,7 @@
   "bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "e3ef83b0e5622d5973c0cbec485cf54ecb34d7c035ebecb99df528613f64adad",
       "selected_period": {
         "key": "2026-09",
@@ -5408,7 +5406,6 @@
                 "amount_fen": "1000",
                 "signed_amount_fen": "1000",
                 "type": "股东投入或借款",
-                "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
                 "internal_transfer": false,
@@ -5427,7 +5424,6 @@
                 "amount_fen": "500",
                 "signed_amount_fen": "500",
                 "type": "股东投入或借款",
-                "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
                 "internal_transfer": false,
@@ -5494,7 +5490,7 @@
   "filtered_bank_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "e3ef83b0e5622d5973c0cbec485cf54ecb34d7c035ebecb99df528613f64adad",
       "selected_period": {
         "key": "2026-09",
@@ -5616,7 +5612,6 @@
                 "amount_fen": "500",
                 "signed_amount_fen": "500",
                 "type": "股东投入或借款",
-                "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
                 "internal_transfer": false,
@@ -5671,7 +5666,7 @@
   "frozen_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "2c63c1f17b2fa59e1c29af4f0d69419f6d8a28f85b5410fb65808586a104da93",
       "selected_period": {
         "key": "2026-09",
@@ -5850,7 +5845,6 @@
                 "amount_fen": "1000",
                 "signed_amount_fen": "1000",
                 "type": "股东投入或借款",
-                "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
                 "internal_transfer": false,
@@ -5869,7 +5863,6 @@
                 "amount_fen": "500",
                 "signed_amount_fen": "500",
                 "type": "股东投入或借款",
-                "display_summary": "股东投入（2026-09）",
                 "list_summary": "股东投入",
                 "party": "未提供姓名或名称",
                 "internal_transfer": false,
@@ -5948,7 +5941,7 @@
   "first_frozen_account_funds": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "2c63c1f17b2fa59e1c29af4f0d69419f6d8a28f85b5410fb65808586a104da93",
       "selected_period": {
         "key": "2026-09",
@@ -6189,7 +6182,7 @@
   "wage_mapping_missing": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "20c3685a8afd8b33505dc3a78600445ba883201ba073afeb5d0e67c76111b571",
       "selected_period": {
         "key": "2026-01",
@@ -6300,7 +6293,7 @@
   "wage_mapping_unsupported": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "b5b872984bf0768fb0c2bfc964b8cb1ada083514babbb81d211333d9a44f0de0",
       "selected_period": {
         "key": "2026-01",
@@ -6411,7 +6404,7 @@
   "late_closed_missing_material": {
     "command": "dashboard_funds",
     "response": {
-      "schema_version": 12,
+      "schema_version": 13,
       "snapshot_version": "5aa1db1d20ff043f61c875d5043c1b9cc4d9cb98f94eff6951d6f61e67ccef68",
       "selected_period": {
         "key": "2026-02",
@@ -7221,7 +7214,7 @@
   "business_month_dates": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "6a4c3f5bddc955eeb57467f8b6d219a4f162f78ac6ecde01ef6baf3d17723aa8",
       "selected_period": {
         "key": "2026-01",
@@ -7290,7 +7283,10 @@
               "paid_fen": "0",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "payroll:january:employee_social",
@@ -7302,7 +7298,10 @@
               "paid_fen": "0",
               "other_settled_fen": "0",
               "remaining_fen": "80000",
-              "settlement_status": "open"
+              "settlement_status": "open",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "payroll:january:employer_housing",
@@ -7314,7 +7313,10 @@
               "paid_fen": "0",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "payroll:january:employer_social",
@@ -7326,7 +7328,10 @@
               "paid_fen": "0",
               "other_settled_fen": "0",
               "remaining_fen": "160000",
-              "settlement_status": "open"
+              "settlement_status": "open",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "payroll:january:net",
@@ -7338,7 +7343,10 @@
               "paid_fen": "0",
               "other_settled_fen": "0",
               "remaining_fen": "907400",
-              "settlement_status": "open"
+              "settlement_status": "open",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "payroll:january:tax",
@@ -7350,7 +7358,10 @@
               "paid_fen": "0",
               "other_settled_fen": "0",
               "remaining_fen": "12600",
-              "settlement_status": "open"
+              "settlement_status": "open",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -7408,7 +7419,10 @@
                 "paid_fen": "0",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "payroll:january:employee_social",
@@ -7420,7 +7434,10 @@
                 "paid_fen": "0",
                 "other_settled_fen": "0",
                 "remaining_fen": "80000",
-                "settlement_status": "open"
+                "settlement_status": "open",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "payroll:january:employer_housing",
@@ -7432,7 +7449,10 @@
                 "paid_fen": "0",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "payroll:january:employer_social",
@@ -7444,7 +7464,10 @@
                 "paid_fen": "0",
                 "other_settled_fen": "0",
                 "remaining_fen": "160000",
-                "settlement_status": "open"
+                "settlement_status": "open",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "payroll:january:net",
@@ -7456,7 +7479,10 @@
                 "paid_fen": "0",
                 "other_settled_fen": "0",
                 "remaining_fen": "907400",
-                "settlement_status": "open"
+                "settlement_status": "open",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "payroll:january:tax",
@@ -7468,7 +7494,10 @@
                 "paid_fen": "0",
                 "other_settled_fen": "0",
                 "remaining_fen": "12600",
-                "settlement_status": "open"
+                "settlement_status": "open",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }
@@ -8789,7 +8818,7 @@
   "business_matter_scope_0": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -8858,7 +8887,10 @@
               "paid_fen": "20000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "opening_payroll_payable:employer_housing:primary",
@@ -8870,7 +8902,10 @@
               "paid_fen": "30000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -8947,7 +8982,10 @@
                 "paid_fen": "20000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "opening_payroll_payable:employer_housing:primary",
@@ -8959,7 +8997,10 @@
                 "paid_fen": "30000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }
@@ -9008,7 +9049,7 @@
   "business_matter_scope_page_0": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -9077,7 +9118,10 @@
               "paid_fen": "20000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "opening_payroll_payable:employer_housing:primary",
@@ -9089,7 +9133,10 @@
               "paid_fen": "30000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -9166,7 +9213,10 @@
                 "paid_fen": "20000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "opening_payroll_payable:employer_housing:primary",
@@ -9178,7 +9228,10 @@
                 "paid_fen": "30000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }
@@ -9480,7 +9533,7 @@
   "business_matter_scope_1": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -9549,7 +9602,10 @@
               "paid_fen": "140307",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -9626,7 +9682,10 @@
                 "paid_fen": "140307",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }
@@ -9928,7 +9987,7 @@
   "business_matter_scope_2": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -9997,7 +10056,10 @@
               "paid_fen": "300000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "opening_payroll_payable:employer_social:primary",
@@ -10009,7 +10071,10 @@
               "paid_fen": "319000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -10086,7 +10151,10 @@
                 "paid_fen": "300000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "opening_payroll_payable:employer_social:primary",
@@ -10098,7 +10166,10 @@
                 "paid_fen": "319000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }
@@ -10147,7 +10218,7 @@
   "business_matter_scope_page_2": {
     "command": "dashboard_business_status",
     "response": {
-      "schema_version": 10,
+      "schema_version": 11,
       "snapshot_version": "0c6b4919b2195ddf30fe39a85d1df275412258d17f8134414fe339c2f9619119",
       "selected_period": {
         "key": "2026-01",
@@ -10216,7 +10287,10 @@
               "paid_fen": "300000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             },
             {
               "key": "opening_payroll_payable:employer_social:primary",
@@ -10228,7 +10302,10 @@
               "paid_fen": "319000",
               "other_settled_fen": "0",
               "remaining_fen": "0",
-              "settlement_status": "settled"
+              "settlement_status": "settled",
+              "purpose": null,
+              "description": null,
+              "note_scope": null
             }
           ]
         },
@@ -10305,7 +10382,10 @@
                 "paid_fen": "300000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               },
               {
                 "key": "opening_payroll_payable:employer_social:primary",
@@ -10317,7 +10397,10 @@
                 "paid_fen": "319000",
                 "other_settled_fen": "0",
                 "remaining_fen": "0",
-                "settlement_status": "settled"
+                "settlement_status": "settled",
+                "purpose": null,
+                "description": null,
+                "note_scope": null
               }
             ]
           }

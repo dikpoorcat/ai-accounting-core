@@ -79,8 +79,8 @@ test("new page contracts keep detail rows only under collections", () => {
 
 test("all non-context dashboards carry required read context and current schema versions", () => {
   const versions = {
-    dashboard_context: 3, dashboard_brief: 20, dashboard_brief_group: 4, dashboard_funds: 12,
-    dashboard_employees: 13, dashboard_assets: 10, dashboard_business_status: 10,
+    dashboard_context: 3, dashboard_brief: 20, dashboard_brief_group: 4, dashboard_funds: 13,
+    dashboard_employees: 13, dashboard_assets: 10, dashboard_business_status: 11,
     dashboard_quarterly_report: 5,
   };
   for (const [name, sample] of Object.entries(samples)) {
@@ -92,6 +92,36 @@ test("all non-context dashboards carry required read context and current schema 
       assert.equal(typeof sample.response.read_context.read_version, "string", name);
     }
   }
+});
+
+test("funds13 and business progress11 require split descriptions and reject earlier fields", () => {
+  const funds = structuredClone(samples.frozen_funds.response);
+  const validateFunds = validators.validateDashboardFundsResponse;
+  assert(validateFunds(funds), JSON.stringify(validateFunds.errors));
+  funds.schema_version = 12;
+  assert.equal(validateFunds(funds), false);
+  funds.schema_version = 13;
+  funds.data.collections.movements.items[0].display_summary = "旧的拼接说明";
+  assert.equal(validateFunds(funds), false);
+
+  const progress = structuredClone(samples.business_status.response);
+  const validateProgress = validators.validateDashboardBusinessStatusResponse;
+  assert(validateProgress(progress), JSON.stringify(validateProgress.errors));
+  progress.schema_version = 10;
+  assert.equal(validateProgress(progress), false);
+  progress.schema_version = 11;
+  const obligation = progress.data.settlements.obligations[0];
+  for (const key of ["purpose", "description", "note_scope"]) {
+    const value = obligation[key]; delete obligation[key];
+    assert.equal(validateProgress(progress), false, key);
+    obligation[key] = value;
+  }
+  Object.assign(obligation, { purpose: "服务费", description: "本项服务及结算安排的完整说明。", note_scope: "selected" });
+  assert(validateProgress(progress), JSON.stringify(validateProgress.errors));
+  obligation.note_scope = null;
+  assert.equal(validateProgress(progress), false, "a complete note has an explicit business scope");
+  Object.assign(obligation, { description: null, note_scope: "whole_business" });
+  assert.equal(validateProgress(progress), false, "an absent note has no invented scope");
 });
 
 test("payroll amount components are required in members and focused rows, including brief delivery", () => {

@@ -6,7 +6,8 @@ import pytest
 from test_documents import _first_facts, _prepare, _publish, company_identity
 from test_standard_bundle import rewrite
 
-from ai_accounting_modular.contracts.public import ContractError
+from ai_accounting_modular.contracts.public import ContractError, content_digest
+from ai_accounting_modular.records._changes import document_note, note_digest
 from ai_accounting_modular.records._repository import RecordsRepository
 from ai_accounting_modular.records.public import (
     RecordsChange,
@@ -70,6 +71,67 @@ def test_save_replace_retry_and_conflict_use_stable_scope_and_existing_sequence(
         save(records_case, original | {"expected_seq": 1})
     assert caught.value.code == "conflict"
     assert current(records_case, scope)[0][0]["text"] == "仓库租金"
+
+
+def test_purpose_and_detail_share_full_replacement_sources_sequence_and_retry(records_case):
+    storage, (company, _), records = records_case
+    evidence = source(records_case, "负责人确认本项为仓库租金，并提供完整租赁说明。")
+    scope = "business:" + str(uuid4())
+    original = note(scope, evidence["source_id"]) | {"purpose": "仓库租金"}
+    save(records_case, original, evidence)
+    assert save(records_case, original).changed_scopes == ()
+    saved = current(records_case, scope)[0][0]
+    assert saved["purpose"] == "仓库租金" and saved["text"] == original["text"]
+
+    short_only = original | {"text": "", "expected_seq": 1}
+    save(records_case, short_only)
+    assert save(records_case, short_only).changed_scopes == ()
+    saved = current(records_case, scope)[0][0]
+    assert saved["seq"] == 2 and saved["state"] == "current"
+    assert saved["purpose"] == "仓库租金" and saved["text"] == ""
+    with storage.read_unit(company.company_id) as read:
+        assert read.repository("records").uses("note", scope) == (evidence["source_id"],)
+
+    detailed_only = note(scope, evidence["source_id"], expected_seq=2)
+    save(records_case, detailed_only)
+    assert "purpose" not in current(records_case, scope)[0][0]
+    assert save(records_case, detailed_only | {"purpose": None}).changed_scopes == ()
+    with pytest.raises(ContractError) as caught:
+        save(records_case, short_only)
+    assert caught.value.code == "conflict"
+
+    save(records_case, original | {"text": "", "expected_seq": 3})
+    cleared = {"scope": scope, "text": "", "purpose": None, "evidence_ids": [], "expected_seq": 4}
+    save(records_case, cleared)
+    assert save(records_case, cleared).changed_scopes == ()
+    saved = current(records_case, scope)[0][0]
+    assert saved["seq"] == 5 and saved["state"] == "needs_refresh"
+    assert saved["text"] is None and "purpose" not in saved
+    with storage.read_unit(company.company_id) as read:
+        assert read.repository("records").uses("note", scope) == ()
+
+
+def test_null_purpose_preserves_existing_digest_sequence_and_document_bytes(records_case):
+    storage, (company, _), records = records_case
+    evidence = source(records_case, "已有完整业务说明的真实依据。")
+    scope = "business:" + str(uuid4())
+    original = note(scope, evidence["source_id"])
+    save(records_case, original, evidence)
+    saved, head = current(records_case, scope)
+    expected = {
+        key: saved[0][key] for key in ("scope", "state", "text", "basis_head", "evidence_ids")
+    }
+    digest = content_digest(expected)
+    assert note_digest(saved[0]) == note_digest(saved[0] | {"purpose": None}) == digest
+    assert document_note(saved[0]) == document_note(saved[0] | {"purpose": None})
+    assert save(records_case, original | {"purpose": None}).changed_scopes == ()
+    assert current(records_case, scope) == (saved, head)
+    with storage.read_unit(company.company_id) as read:
+        row = read.repository("records").notes((scope,))[scope]
+        assert row["purpose"] is None and row["content_digest"] == digest
+    save(records_case, original | {"purpose": "仓库租金", "expected_seq": 1})
+    saved = current(records_case, scope)[0][0]
+    assert saved["seq"] == 2 and note_digest(saved) != digest
 
 
 def test_missing_description_source_rejects_entire_change_and_stale_plan_is_atomic(records_case):
@@ -189,14 +251,19 @@ def test_internal_empty_clear_does_not_read_notes_or_advance_version(records_cas
         assert read.head == 0 and records.current_notes(None, read) == ()
 
 
+@pytest.mark.parametrize("detail", ["", "支付工厂租金，供本公司日常经营使用。"])
 def test_business_description_survives_fact_changes_copy_and_rejects_orphan_archive(
-    records_case, tmp_path
+    records_case, tmp_path, detail
 ):
     storage, (company, _), records = records_case
     fact, obj = _first_facts(records_case)
     evidence = source(records_case, "公司确认这项费用用于仓库经营。")
     scope = "business:" + fact["business_id"]
-    save(records_case, note(scope, evidence["source_id"]), evidence)
+    save(
+        records_case,
+        note(scope, evidence["source_id"], text=detail) | {"purpose": "仓库租金"},
+        evidence,
+    )
     _publish(records_case, _prepare(records_case, [fact], [obj]))
     new_fact_source = source(records_case, "金额与核算所属期修改后的新原始凭据。")
     changed = fact | {
@@ -224,7 +291,8 @@ def test_business_description_survives_fact_changes_copy_and_rejects_orphan_arch
     assert bundle.notes == (
         {
             "scope": scope,
-            "text": "支付工厂租金，供本公司日常经营使用。",
+            "purpose": "仓库租金",
+            "text": detail,
             "evidence_ids": [evidence["source_id"]],
         },
     )

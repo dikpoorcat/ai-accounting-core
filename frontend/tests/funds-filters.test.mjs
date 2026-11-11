@@ -118,7 +118,7 @@ test("fund book and bank continuations preserve 20 then 500 then the ordered tai
 });
 
 function response(value, snapshot = "version") {
-  return { schema_version: 12, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
+  return { schema_version: 13, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
 }
 
 test("investment type filters replace only their collection and reject late prior filters", async () => {

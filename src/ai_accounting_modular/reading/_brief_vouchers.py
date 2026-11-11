@@ -75,7 +75,7 @@ def assets(content):
 
 def descriptor(entry, content, members, *, reverses=None, party_ids=()):
     label, value = business_label(content), amount(content, journal_key=entry.journal_key)
-    titles = list(dict.fromkeys(item["row"]["description"] for item in members))
+    titles = list(dict.fromkeys(item["purpose"] for item in members))
     summary = "、".join(titles) or label.title
     type_title = "、".join(dict.fromkeys(item["row"]["title"] for item in members)) or label.title
     voucher_summary = entry.summary
@@ -117,7 +117,11 @@ def descriptor(entry, content, members, *, reverses=None, party_ids=()):
             "business_amount_fen": signed(value.amount_fen, sign),
             "business_amount_label": value.label,
             "business_amount_state": value.state,
-            "has_business_progress": any(item["row"]["detail_scope_key"] for item in members),
+            "has_business_progress": any(
+                item["row"]["detail_scope_key"]
+                or item["row"]["description"] not in {voucher_summary, item["purpose"], type_title}
+                for item in members
+            ),
         },
         "assets": assets(content),
     }
@@ -280,7 +284,7 @@ def descriptors_for_references(reader, references, read, *, known_contents=(), c
             for identity, entry in unique.items()
             if entry.role != "reversal"
             for part in prepared[identity]
-            for ref in descriptions.part_references(cache.get(entry.result), part, cache)
+            for ref in descriptions.part_references(cache.get(entry.result), part)
         ),
         read,
     )
@@ -293,15 +297,21 @@ def descriptors_for_references(reader, references, read, *, known_contents=(), c
             [],
             party_ids=_brief_vouchers_display.party_ids(body, prepared[identity], cache),
         )
-        titles = [
-            descriptions.part_display(body, part, cache, prose, entry.role)[0]
-            for part in prepared[identity]
+        displays = [
+            descriptions.part_display(body, part, prose, entry.role) for part in prepared[identity]
         ]
+        titles = [display.purpose for display in displays]
         if titles:
             value["template"]["list_summary"] = "、".join(dict.fromkeys(titles))
             prefix = descriptions.role_prefix(entry.role)
             value["template"]["type"] = "、".join(
                 dict.fromkeys(prefix + part.label.title for part in prepared[identity])
+            )
+            value["template"]["has_business_progress"] = any(
+                display.has_hidden_note
+                or display.description
+                not in {value["template"]["summary"], display.purpose, value["template"]["type"]}
+                for display in displays
             )
         raw.append(value)
     bound = {

@@ -129,6 +129,7 @@ def detail(reader, scope, query):
         selected = selection.select(reader, normalized, query, read)
         positions = settlements.capture(reader, normalized, selected, read)
         prose = Descriptions(reader, display.description_references(selected, positions), read)
+        positions = settlements.describe(positions, selected, prose)
         view = query.get("settlement_view", "current")
         actual_events = events.capture(reader, selected, positions, view, read, descriptions=prose)
         closure = reader.ledger.period_closure(normalized["period_to"], read)

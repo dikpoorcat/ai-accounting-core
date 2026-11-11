@@ -72,6 +72,7 @@ export const localBusinessNames: Record<string, string> = {
   "taxes.prepayment_basis": "企业所得税季度预缴依据",
   "taxes.financial_transfer_basis": "金融商品转让计税依据",
   "taxes.partnership_allocation": "合伙投资所得分配依据",
+  "taxes.investment_basis": "投资税务依据",
   "taxes.assessment": "税费确认",
   "taxes.tax_credit": "税额抵减与退税确认",
   "taxes.actual_declaration": "实际税费申报",

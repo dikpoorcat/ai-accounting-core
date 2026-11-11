@@ -62,7 +62,7 @@ def movements(activity, accounts, objects, sources, presence):
         entry = sources.entries[view["source"]["result_id"]]
         account = accounts[actual["funds_account_id"]]
         internal = "transfer_group_id" in actual
-        label, summary, full_summary = sources.titles(view)
+        label, summary = sources.titles(view)
         party = counterparty_label(view["counterparty"], objects, direction=actual["direction"])
         value = {
             "id": actual["movement_id"],
@@ -81,7 +81,6 @@ def movements(activity, accounts, objects, sources, presence):
                 parse_fen(actual["amount_fen"]) * (1 if actual["direction"] == "inflow" else -1)
             ),
             "type": label,
-            "display_summary": full_summary,
             "list_summary": summary,
             "party": party,
             "internal_transfer": internal,
@@ -91,6 +90,7 @@ def movements(activity, accounts, objects, sources, presence):
             view,
             sources.contents[view["source"]["result_id"]],
             presence,
+            has_note=sources.has_note(view),
         )
         result.append(
             IndexItem(

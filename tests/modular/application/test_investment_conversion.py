@@ -1,6 +1,7 @@
 """The predecessor's real synthetic backup survives explicit contract conversion."""
 
 import hashlib
+import json
 import shutil
 import sqlite3
 import zipfile
@@ -12,6 +13,7 @@ import pytest
 
 from ai_accounting_modular.contracts.public import (
     ContractError,
+    canonical_json,
     validate_contract,
     validate_conversion_envelope,
 )
@@ -21,6 +23,7 @@ from ai_accounting_modular.records.public import (
     open_standard_bundle,
 )
 from ai_accounting_modular.storage.public import OwnerProfile, create_catalog, open_database_unit
+from tools.upgrade_business_descriptions import convert_structure
 
 FIXTURE = Path(__file__).with_name("fixtures") / "investment-pre-separation.finance-company.zip"
 
@@ -28,9 +31,27 @@ FIXTURE = Path(__file__).with_name("fixtures") / "investment-pre-separation.fina
 def _predecessor(tmp_path, fixture=FIXTURE):
     app, root = create_offline_application(), tmp_path / "original"
     with fixture.open("rb") as stream, app.backup_verifier.extract(stream) as extracted:
-        app.backup_verifier.verify_extracted(
-            extracted.company_root, extracted.manifest, investment_conversion=True
+        # Prepare the current SQL structure before exercising investment conversion.
+        manifest = extracted.manifest
+        contract_path = extracted.company_root / "contracts/company.json"
+        source_contract = json.loads(contract_path.read_bytes())
+        contract, _ = convert_structure(
+            extracted.company_root / "runtime/company.sqlite3", source_contract
         )
+        contract_path.write_text(canonical_json(contract) + "\n", encoding="utf-8")
+        for item in manifest["files"]:
+            path = extracted.company_root / item["path"]
+            item.update(
+                sha256=hashlib.sha256(path.read_bytes()).hexdigest(), byte_size=path.stat().st_size
+            )
+        manifest["structure_fingerprint"] = contract["fingerprint"]
+        app.backup_verifier.verify_extracted(
+            extracted.company_root, manifest, investment_conversion=True
+        )
+        with zipfile.ZipFile(tmp_path / "current-structure.finance-company.zip", "w") as current:
+            current.writestr("manifest.json", canonical_json(manifest))
+            for item in manifest["files"]:
+                current.write(extracted.company_root / item["path"], item["path"])
         shutil.copytree(extracted.company_root, root)
     bundle = open_investment_conversion_bundle(root / "standard/current.json")
     terms = next(fact for fact in bundle.facts if fact["kind"] == "investment.terms")
@@ -96,8 +117,8 @@ def test_conversion_keeps_original_frozen_and_open_results(
             old_pool["target"]["values"]["positions"][0]["vat_pool_identity"]["legal_form"]
             == "securities_fund"
         )
-    source = FIXTURE if source_kind == "backup" else root
-    source_before = FIXTURE.read_bytes() if source_kind == "backup" else _digest_files(root)
+    source = tmp_path / "current-structure.finance-company.zip" if source_kind == "backup" else root
+    source_before = source.read_bytes() if source_kind == "backup" else _digest_files(root)
     closed_before = _close_records(root)
     target = tmp_path / "converted"
     outcome = app.convert_investment_basis(source, target, [basis], source_kind=source_kind)
@@ -117,7 +138,7 @@ def test_conversion_keeps_original_frozen_and_open_results(
             == old_terms["reference"]["result_id"]
         )
     assert (
-        FIXTURE.read_bytes() if source_kind == "backup" else _digest_files(root)
+        source.read_bytes() if source_kind == "backup" else _digest_files(root)
     ) == source_before
     facts = open_standard_bundle(target / "standard/current.json").facts
     converted = next(f for f in facts if f["business_id"] == terms["business_id"])

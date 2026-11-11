@@ -4,7 +4,7 @@
 
 本文说明当前 3.0 模块化体系，运行标识为 `ai-accounting-modular/1`，唯一 CLI 是 `finance-modular`。项目目录库为 `data/accounting/catalog.sqlite3`；正式公司资料统一在 `data/accounting/companies/<信用代码>/`，各自保存运行库、原件、标准文档与备份。实际公司状态通过当前内核读取，结果入口见[交付状态](10-delivery-status.md)。
 
-仓库启动使用 `tools/start-accounting.ps1`；受控 Python 及源码调用由 `tools/kernel-runtime.ps1` 定位。普通启动只准备已有环境，不自动建立身份、搬移资料、替换数据库或重放。本节安装路径和公司资料均为合成示例。
+仓库启动使用 `tools/start-accounting.ps1`，受控开发环境由 `tools/kernel-runtime.ps1` 准备。已明确绑定安装程序的目录，由 CLI 在执行命令前选择该安装包，正常启动和 MCP 使用同一套程序与事实合同。普通启动只准备已有环境，不自动建立身份、搬移资料、替换数据库或重放。本节安装路径和公司资料均为合成示例。
 
 ## 安装与启动
 
@@ -29,6 +29,19 @@ $catalog = 'D:\合成会计资料\catalog.sqlite3'
 ```
 
 `init` 只在明确的新位置建立目录和负责人，密码及恢复码在本机原生窗口处理，不放入聊天、JSON 或命令行。`serve` 启动指定目录的后台并打开同源看板；已有后台时复用它。`daemon` 在前台运行，`service-info` 和 `stop` 只访问指定后台，不另起服务。全局 `--catalog` 必须放在子命令之前，并使用绝对路径。源码运行时可将 `$program` 调用替换为仓库虚拟环境的 `python -m ai_accounting_modular.host.runtime.cli`。
+
+安装接续需要固定运行包时，在目录库旁保存 `<目录库文件名>.runtime.json`。该本机文件包含以下四个字段，使用真实目录身份和绝对位置，大小最多 8 KiB。
+
+```json
+{
+  "format": "ai-accounting-installed-runtime/1",
+  "catalog_path": "D:\\合成会计资料\\catalog.sqlite3",
+  "catalog_id": "00000000-0000-4000-8000-000000000001",
+  "python_path": "D:\\合成会计程序\\.venv\\Scripts\\python.exe"
+}
+```
+
+CLI 在读取命令正文、创建客户端或启动后台之前核对绑定的目录位置、当前目录身份和解释器位置。需要切换解释器时，原参数、标准输入输出及退出状态传给绑定程序，绑定程序直接继续执行。因此 `tools/start-accounting.ps1`、MCP、普通 CLI 和后台子进程都采用该安装包，静态指南也随同切换。绑定损坏或安装程序缺失时明确拒绝，保留现场供核对。没有绑定时沿用当前 Python 环境。无目录的 UUID 生成、`init` 及显式离线恢复和重建按各自原入口处理。
 
 原生窗口打开后自动聚焦输入，支持回车提交、取消按钮及 Esc 关闭。处理时显示等待提示并防止重复提交；输入有误可以重试，办理结果不明时先核对，避免重复更换密码或恢复码。恢复码可一键复制，但只有明确选择“我已保存恢复码”才完成保存确认；密码或恢复码已更换后，关闭窗口不会撤回更换。请求取消或过期后窗口同步关闭，临时断线则保留窗口中的恢复码，便于保存和重试确认。
 
@@ -201,6 +214,31 @@ $company.database_id
 
 ## 当前结构基线
 
-目录结构为1，公司结构为6；结构、模块归属和指纹来自随包的当前完整合同。普通打开及备份恢复均核对这一基线，不携带历史结构、父合同、增量DDL或结构升级命令。结构不匹配明确拒绝，不靠改版本号、重建库或忽略指纹继续运行。
+目录结构为1，公司结构为7；结构、模块归属和指纹来自随包的当前完整合同。普通打开及备份恢复均核对这一基线。运行包只包含当前完整合同；显式离线结构交接使用已核验旧运行包和独立输入，流程见下节。结构不匹配明确拒绝，不靠改版本号、重建库或忽略指纹继续运行。
 
 标准业务文档具有独立的事实格式；文档重建使用当前内核重新核算，不能替代数据库结构核验。备份恢复只接受当前完整结构及格式，保持正式账务、必要冻结和原件的一致状态。
+
+## 业务说明结构交接
+
+结构6的公司通过显式开发交接工具转为结构7。先固定能完整核验原公司事实及ZIP的独立旧源码包或安装包，旧程序须绑定自己的源码、生成合同和静态资源。旧ZIP及匹配旧程序单独保全，放在正常滚动备份之外。SQL版本相同的公司也须核对实际事实合同，投资合同转换按其对应授权和验收接续。
+
+`tools/upgrade_business_descriptions.py` 接收一个已选定的旧ZIP、匹配旧程序的src目录和一个全新目标。旧程序在独立进程中核验整包，新程序在隔离副本中重建company_note及system_meta的实际DDL，初始化空purpose，核对受影响模块和完整指纹。转换前后比较全部正式事实、来源、说明、凭证及冻结内容，退出绑定旧位置或合同的文件计划并清空可重建模型，最后核验标准文档及新版ZIP。成功目标中的handoff.json记录输入包和旧程序摘要，verified-backup中保存独立的新ZIP。
+
+```powershell
+& '.tmp-kernel-venv/Scripts/python.exe' -I -B -X utf8 tools/upgrade_business_descriptions.py --source-backup 'D:\交接\旧公司.finance-company.zip' --source-runtime 'D:\交接\旧程序\src' --target 'D:\交接\结构7候选公司'
+```
+
+准备期可预演。正式维护窗口停止服务和业务写入后，重新捕获公司集合、库身份、保存版本、标准文档及来源的最终一致点，并用匹配旧程序验证各公司最终ZIP。一致副本须包含WAL中已提交内容，发生变化的候选重新生成和验证。
+
+多公司交接通过停服窗口逐一完成，核验全部目标后恢复同版服务。交接清单明确记录每家公司原库、候选库、原包、新包及当前切换位置；中断或失败时，在恢复正式写入前依清单整批恢复匹配旧程序和原库，再重新捕获最终快照。已经恢复正式业务写入后的修复采用最新已验证数据。数据库、文件系统和目录登记各自完成准确核验，交付记录如实表达逐公司切换结果。
+
+`tools/publish_business_description_upgrade.py` 持有所选目录服务的生命周期锁，并核对当前有效公司集合及原位置。计划使用 `format=ai-accounting-description-publication/1`、`batch_id`、`catalog_path` 和完整 `companies`；每家公司明确 `company_id`、`company_root`、`database_id`、`database_head`、`source_structure_fingerprint`、`source_sha256`、`candidate_root`。原包摘要须与候选handoff回执相同，候选包含已验证的独立ZIP且短事项均为空。程序将候选复制到原runtime内的全新临时文件，校验实际原根的资料及正式内容，再逐公司替换数据库文件。
+
+```powershell
+& 'D:\合成会计程序\.venv\Scripts\python.exe' -I -B -X utf8 tools/publish_business_description_upgrade.py --plan 'D:\交接\最终计划.json' --journal 'D:\交接\切换清单.json'
+& 'D:\合成会计程序\.venv\Scripts\python.exe' -I -B -X utf8 tools/publish_business_description_upgrade.py --plan 'D:\交接\最终计划.json' --journal 'D:\交接\切换清单.json' --activate
+```
+
+第一步成功返回installed，第二步复核后返回active并封闭结构回退窗口。已建立清单的普通重试执行整批恢复并要求重新捕获；active之后使用最新数据办理。恢复过程先检查全体公司，发现新的正式写入时保全现状。随后通过正常notes入口办理短事项，并生成各公司新ZIP，再启动与所选事实合同匹配的同版程序。
+
+通过正常notes入口补写真实短事项时，携带原完整正文、最终来源集合及当前expected_seq。接续后的每家公司在其配置备份目录独立生成ZIP，等待持久任务成功并确认包已验证后交付。原公司身份、原件位置和正式结果通过前后核对验证。

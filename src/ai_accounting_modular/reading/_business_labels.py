@@ -227,18 +227,30 @@ _REMUNERATION = {
 def business_label(
     content: AdoptedContent | AdoptedOriginProjection,
     resource: ResourceDefinition | ObligationDirectoryItem | ObligationFields | None = None,
+    *,
+    slot: str | None = None,
 ) -> BusinessLabel:
     """A resource may refine a multi-purpose source, such as wages containing social dues."""
     target, basis = origin_fields(content)
     kind, data = target["kind"], basis.get("input", {})
     light = isinstance(resource, ObligationFields | ObligationDirectoryItem)
     category = (resource.category if light else resource.value["category"]) if resource else None
-    if resource is not None and kind in {"investment.acquire", "investment.dispose"}:
-        slot = resource.reference["slot"]
+    slot = resource.reference["slot"] if resource is not None else slot
+    if slot is not None and kind == "operations.pass_through":
+        return (
+            BusinessLabel("pass_through_collection", "代收款")
+            if slot == "collection"
+            else BusinessLabel("pass_through_remittance", "代付款转付")
+        )
+    if slot is not None and kind in {"investment.acquire", "investment.dispose"}:
         if kind == "investment.acquire" and slot == "declared_income":
             return BusinessLabel("acquired_declared_income", "取得前已宣告投资收益")
         if kind == "investment.dispose" and slot == "income":
             return BusinessLabel("investment_maturity_income", "到期独立投资收益")
+    if kind in {"financing.owner_funding", "financing.loan_drawdown"} and slot == "principal":
+        return BusinessLabel("loan_principal", "借款本金")
+    if kind in {"taxes.assessment", "taxes.actual_declaration"} and slot == "surtax":
+        return BusinessLabel("surtax", "增值税附加税费")
     if category in _RESOURCE:
         return BusinessLabel(*_RESOURCE[category])
     if (
@@ -298,8 +310,6 @@ def business_label(
             }.get(data.get("income_kind"), ("other_income", "其他收入"))
         )
     if kind in {"taxes.assessment", "taxes.actual_declaration"}:
-        if category == "tax" and resource.reference["slot"] == "surtax":
-            return BusinessLabel("surtax", "增值税附加税费")
         return BusinessLabel(
             *{
                 "vat": ("vat", "增值税"),

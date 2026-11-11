@@ -245,7 +245,7 @@ def capture(reader, scope, read, *, business_ids=()):
                 prepared[body.reference["result_id"], body.reference["generation"]],
                 event.journal_key,
             )
-            for ref in descriptions.part_references(body, part, cache)
+            for ref in descriptions.part_references(body, part)
         ),
         read,
     )
@@ -278,9 +278,13 @@ def capture(reader, scope, read, *, business_ids=()):
             ),
         )
         for member, part in zip(actual, event_parts, strict=True):
-            text, scopes = descriptions.part_display(body, part, cache, prose, event.role)
-            member["row"]["description"] = text
-            note_scopes[body.reference["business_id"]].update(scopes)
+            display = descriptions.part_display(body, part, prose, event.role)
+            member["purpose"] = display.purpose
+            member["description_digest"] = display.notes_digest
+            member["row"]["description"] = display.description
+            if display.has_hidden_note:
+                member["row"]["detail_scope_key"] = member["row"]["key"]
+            note_scopes[body.reference["business_id"]].update(display.scopes)
         members.extend(actual)
         if event.voucher_token:
             by_voucher[event.voucher_token] = actual

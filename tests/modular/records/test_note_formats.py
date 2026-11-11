@@ -260,6 +260,7 @@ def test_stored_unknown_format_is_corruption_even_when_text_is_valid():
         "seq": 1,
         "state": "current",
         "note_text": TEXT,
+        "purpose": None,
         "basis_head": None,
         "note_format": "html",
         "content_digest": "irrelevant",

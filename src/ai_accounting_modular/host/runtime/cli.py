@@ -63,6 +63,12 @@ def main():
     args = parser.parse_args()
     runtime = None
     try:
+        if args.catalog is not None and args.mode not in {"ids", "init", "restore", "rebuild"}:
+            from ._installation import forward_bound_runtime
+
+            exit_code = forward_bound_runtime(args.catalog)
+            if exit_code is not None:
+                raise SystemExit(exit_code)
         if args.mode == "ids":
             from ai_accounting_modular.agent.public import generate_ids
 

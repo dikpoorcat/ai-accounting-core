@@ -68,6 +68,7 @@ def prepare(reader, scope, read):
     model = prepare_model(
         {
             "data": summary,
+            "_description_digest": sources.description_digest,
             "first_account": None
             if first is None
             else {"type": first["type"], "account_id": first["account_id"]},

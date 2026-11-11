@@ -5,7 +5,7 @@ from ._brief_activity_amounts import amount
 from ._brief_activity_parts import business_parties
 from ._brief_activity_sources import identities
 from ._brief_vouchers import assets
-from ._business_descriptions import description_reference, merged, role_prefix
+from ._business_descriptions import DescriptionSubject, merged, note_reference, role_prefix
 from ._business_labels import (
     business_fund_accounts,
     business_label,
@@ -64,32 +64,23 @@ def description_subjects(selected, settlements):
         return (
             ()
             if selected.content is None
-            else ((selected.content, business_label(selected.content), None),)
+            else (DescriptionSubject(selected.content, business_label(selected.content)),)
         )
     values = []
     for entry in entries:
         source = entry["producer"]
         key = source["result_id"], (entry["source"]["business_id"], entry["source"]["slot"])
         body, meaning = settlements.meanings[key]
-        values.append((body, meaning.label, meaning.component))
+        values.append(
+            DescriptionSubject(body, meaning.label, meaning.component, entry["source"]["slot"])
+        )
     return tuple(values)
 
 
 def whole_note_reference(selected):
-    """A payment's own prose belongs to its whole business, independently of its sources."""
+    """The business's own note remains independent of its allocation sources."""
     content = selected.content
-    if content is None:
-        return None
-    entries = (*selected.range.get("allocations", ()), *selected.range.get("obligations", ()))
-    is_part = selected.range.get("purpose") not in {
-        None,
-        business_label(content).code,
-    } or _payroll_journals.phase_from_scope(selected.range) not in {None, "main"}
-    if is_part and content.target["kind"] == "people.remuneration":
-        return content.reference
-    if is_part or any(entry["producer"] != content.source for entry in entries):
-        return description_reference(content)
-    return None
+    return note_reference(content) if content is not None else None
 
 
 def description_references(selected, settlements):
@@ -97,19 +88,14 @@ def description_references(selected, settlements):
     if selected.range.get("voucher_role") == "reversal":
         return ()
     subjects = description_subjects(selected, settlements)
-    refs = [
-        ref
-        for body, label, component in subjects
-        if (ref := description_reference(body, label, component=component)) is not None
-    ]
+    refs = [ref for subject in subjects if (ref := note_reference(subject.content)) is not None]
     own = whole_note_reference(selected)
     if own:
         refs.append(own)
     refs.extend(
         ref
         for body, meaning in settlements.meanings.values()
-        if (ref := description_reference(body, meaning.label, component=meaning.component))
-        is not None
+        if (ref := note_reference(body)) is not None
     )
     return tuple(refs)
 
@@ -169,11 +155,6 @@ def profiles(reader, selected, settlements, events, read, *, descriptions=None):
 
     title, note, note_scope = "业务详情", None, None
     subjects = description_subjects(selected, settlements)
-    references = [
-        ref
-        for body, label, component in subjects
-        if (ref := description_reference(body, label, component=component)) is not None
-    ]
     if content is not None:
         title = (
             "已撤去业务"
@@ -191,20 +172,34 @@ def profiles(reader, selected, settlements, events, read, *, descriptions=None):
             )
         own = whole_note_reference(selected)
         if descriptions is not None and own:
-            note = descriptions.text(own)
+            represented = any(body.reference == own for body, _ in settlements.meanings.values())
+            if not represented:
+                note = descriptions.text(own)
         if note:
+            external_sources = any(
+                entry["producer"] != content.source
+                for entry in selected.range.get("allocations", ())
+            )
             whole = selected.detail is None or (
                 selected.detail["key"].startswith("voucher:")
                 and _payroll_journals.phase_from_scope(selected.range) in {None, "main"}
             )
-            note_scope = "selected" if whole else "whole_business"
+            note_scope = "selected" if whole and not external_sources else "whole_business"
     purpose = None
     if (
         descriptions is not None
         and content is not None
         and selected.range.get("voucher_role") != "reversal"
     ):
-        purpose = merged(descriptions.text(reference) for reference in references) or None
+        purposes = [descriptions.purpose(subject) for subject in subjects]
+        purpose = (
+            merged(
+                value or subject.label.title
+                for value, subject in zip(purposes, subjects, strict=True)
+            )
+            if any(purposes)
+            else None
+        )
         if purpose:
             data = content.basis.get("input", {})
             direction = selected.range.get("direction")
@@ -213,7 +208,7 @@ def profiles(reader, selected, settlements, events, read, *, descriptions=None):
             elif content.target["kind"] == "money.transfer" and data["type"] == "offset":
                 direction = "offset"
             if direction in {"inflow", "outflow", "offset"}:
-                codes = {label.code for _, label, _ in subjects}
+                codes = {subject.label.code for subject in subjects}
                 code = next(iter(codes)) if len(codes) == 1 else "mixed_settlement"
                 purpose = settlement_title(purpose, code, direction)
             purpose = role_prefix(selected.range.get("voucher_role")) + purpose

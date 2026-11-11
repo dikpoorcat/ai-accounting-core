@@ -1,6 +1,6 @@
 """Use ledger positions and the same economic identities as the open-items projection."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ai_accounting_modular.contracts.public import ContractError, QuerySelection, format_fen
 from ai_accounting_modular.ledger.opening.public import (
@@ -9,6 +9,7 @@ from ai_accounting_modular.ledger.opening.public import (
 )
 
 from . import _brief_open_positions, _brief_open_rows, _brief_open_sources, _payroll_journals
+from ._business_descriptions import note_scope, obligation_subject
 from ._context import last_period
 
 
@@ -318,4 +319,46 @@ def capture(reader, scope, selected, read):
         meanings,
         position_rows,
         strict,
+    )
+
+
+def describe(settlements, selected, descriptions):
+    """Each exact obligation carries its own prose, with whole-note copies deduplicated."""
+
+    def summary(value, positions):
+        definitions = {
+            item.definition.reference["business_id"]
+            + ":"
+            + item.definition.reference["slot"]: item.definition
+            for item in positions
+        }
+        shown = set()
+        rows = []
+        for item in value["obligations"]:
+            purpose, text, scope = None, None, None
+            definition = definitions.get(item["key"])
+            if definition is not None and item["source_amount_fen"] is not None:
+                body, meaning = settlements.meanings[
+                    definition.source["result_id"], key(definition.reference)
+                ]
+                subject = obligation_subject(
+                    body, definition, label=meaning.label, component=meaning.component
+                )
+                purpose = meaning.description
+                if selected.range.get("voucher_role") != "reversal":
+                    purpose = descriptions.purpose(subject) or purpose
+                    text = descriptions.text(body.reference)
+                    scope = note_scope(subject) if text else None
+                    identity = body.reference["result_id"], body.reference["generation"]
+                    if scope == "whole_business" and identity in shown:
+                        text, scope = None, None
+                    elif scope == "whole_business":
+                        shown.add(identity)
+            rows.append(item | {"purpose": purpose, "description": text, "note_scope": scope})
+        return dict(value) | {"obligations": rows}
+
+    return replace(
+        settlements,
+        historical=summary(settlements.historical, settlements.positions),
+        current=summary(settlements.current, settlements.current_positions),
     )

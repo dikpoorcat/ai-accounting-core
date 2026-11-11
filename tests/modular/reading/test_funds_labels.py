@@ -71,7 +71,9 @@ def test_excess_receipts_and_payments_use_the_formal_obligation_direction():
     content = formal("operations.overpayment", {})
     assert business_label(content).title == "超额收付款处理"
     for direction, expected in (("receivable", "多付款追收"), ("payable", "多收款退回")):
-        resource = SimpleNamespace(value={"category": "other", "direction": direction})
+        resource = SimpleNamespace(
+            value={"category": "other", "direction": direction}, reference={"slot": "primary"}
+        )
         assert business_label(content, resource).title == expected
 
 
@@ -135,7 +137,7 @@ def test_loan_capital_and_frozen_old_type_keep_their_exact_formal_meaning(case):
     )
 
 
-def test_mixed_payment_keeps_both_actual_purposes_in_its_display_summary(case):
+def test_mixed_payment_keeps_both_actual_purposes_in_its_short_summary(case):
     initialize(case)
     *_, purchase, _ = six()
     purchase["data"]["purchase_price_fen"] = "300"

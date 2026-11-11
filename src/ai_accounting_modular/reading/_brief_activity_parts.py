@@ -13,9 +13,9 @@ from ai_accounting_modular.money.public import counterparty_meaning
 
 from . import _payroll_journals
 from ._brief_activity_amounts import amount, recognition, signed
+from ._business_descriptions import DescriptionSubject
 from ._business_labels import (
     BusinessLabel,
-    ObligationFields,
     business_label,
     business_matter,
     origin_fields,
@@ -38,6 +38,7 @@ class Part:
     batch: bool
     scope: dict
     amount_components: tuple[dict, ...] = ()
+    subjects: tuple[DescriptionSubject, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -201,7 +202,7 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
     source = allocation["source"]
     producer = cache.source(content, source["business_id"])
     kind, slot = producer.target["kind"], source["slot"]
-    label = business_label(producer)
+    label = business_label(producer, slot=slot)
     adopted = [
         item
         for item in content.basis["adopted_quantities"]
@@ -209,17 +210,6 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
     ]
     if len(adopted) != 1:
         raise ContractError("storage_corrupt", "实际分配缺少唯一的正式采用义务。")
-    if kind.startswith("investment.") and slot in {"declared_income", "income"}:
-        label = business_label(
-            producer,
-            ObligationFields(
-                source,
-                adopted[0]["direction"],
-                "investment",
-                producer.basis["period"],
-                adopted[0].get("party_id"),
-            ),
-        )
     person, recipient, payroll, component = None, adopted[0].get("party_id"), None, None
     data = content.basis.get("input", {})
     if (
@@ -252,17 +242,7 @@ def allocation_source(content, allocation, cache, *, payment_party=None):
             label = opening_investment_label(reference) or BusinessLabel(
                 "opening_obligation", "期初往来款"
             )
-    elif kind == "operations.pass_through":
-        label = (
-            BusinessLabel("pass_through_collection", "代收款")
-            if slot == "collection"
-            else BusinessLabel("pass_through_remittance", "代付款转付")
-        )
-    elif kind in {"financing.owner_funding", "financing.loan_drawdown"} and slot == "principal":
-        label = BusinessLabel("loan_principal", "借款本金")
-    elif kind in {"taxes.assessment", "taxes.actual_declaration"} and slot == "surtax":
-        label = BusinessLabel("surtax", "增值税附加税费")
-    return label, {
+    return DescriptionSubject(producer, label, component, slot), {
         "source": source,
         "producer": producer.source,
         "amount_fen": allocation["amount_fen"],
@@ -315,15 +295,18 @@ def parts(content, cache):
         direction = data.get("direction", "outflow")
         batch = data.get("payment_method") == "bank_batch" or data["type"] == "payroll_reserve"
         grouped = defaultdict(list)
+        subjects = defaultdict(list)
         labels = {}
         payment_party = _individual_party(content, cache)
         for allocation in data["allocations"]:
-            label, actual = allocation_source(
+            subject, actual = allocation_source(
                 content, allocation, cache, payment_party=payment_party
             )
+            label = subject.label
             parties = () if batch else tuple(x for x in (actual["recipient_id"],) if x)
             group = label.code, parties, tuple(sorted(actual["matter"].items()))
             grouped[group].append(actual)
+            subjects[group].append(subject)
             labels[group] = label
         result = []
         for group, actual in grouped.items():
@@ -339,6 +322,7 @@ def parts(content, cache):
                     batch,
                     base_scope(content, direction=direction, allocations=actual)
                     | {"matter": actual[0]["matter"]},
+                    subjects=tuple(subjects[group]),
                 )
             )
         if data["type"] == "payroll_reserve":
@@ -356,9 +340,8 @@ def parts(content, cache):
         return result
     if kind == "money.transfer" and data["type"] == "offset":
         # The two obligations describe one offset, rather than two new cash movements.
-        allocations = [
-            allocation_source(content, data[key], cache)[1] for key in ("first", "second")
-        ]
+        sources = [allocation_source(content, data[key], cache) for key in ("first", "second")]
+        allocations = [actual for _, actual in sources]
         value = amount(content)
         return [
             Part(
@@ -375,6 +358,7 @@ def parts(content, cache):
                 "offset",
                 False,
                 base_scope(content, allocations=allocations),
+                subjects=tuple(subject for subject, _ in sources),
             )
         ]
     value, parties, label = (

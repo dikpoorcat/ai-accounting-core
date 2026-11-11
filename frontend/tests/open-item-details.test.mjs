@@ -9,7 +9,7 @@ import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
 const samples = JSON.parse(readFileSync(new URL("./fixtures/dashboard-contracts.json", import.meta.url), "utf8"));
-const obligation = (changes = {}) => ({ key: "selected-pay", name: "net", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", ...changes });
+const obligation = (changes = {}) => ({ key: "selected-pay", name: "net", source_period: "2026-09", source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null, ...changes });
 function scenario(changes = {}, currentChanges = {}) {
   const data = structuredClone(samples.business_status.response.data);
   data.identity.kind = "payroll";
@@ -117,6 +117,18 @@ test("open item details explain the selected obligation and distinguish historic
       assert.match(html, /相关资产：设备/); assert.match(html, /相关账户：工资账户/);
       assert.match(html, /业务所属月份：2026年8月/);
       assert.doesNotMatch(html, /完整总计|筛选总计|本次筛选已全部加载/);
+    });
+    await t.test("selected obligation descriptions and later note-only changes remain visible", async () => {
+      const data = scenario(
+        { purpose: "服务费", description: "本期服务已完成，当前按原安排结算。", note_scope: "selected" },
+        { paid_fen: "600000", remaining_fen: "200000", settlement_status: "partial", purpose: "服务费", description: "后来补充的结算安排已明确。", note_scope: "selected" },
+      );
+      data.display_profiles.business.values = { purpose: null, note: null, note_scope: null };
+      const html = await render(data), [historical, later] = html.split("后续进展 ·");
+      assert.match(historical, /本期服务已完成，当前按原安排结算。/);
+      assert.match(later, /后来补充的结算安排已明确。/);
+      const duplicate = await render(data, context({ description: "本期服务已完成，当前按原安排结算。" }));
+      assert.doesNotMatch(duplicate, /本期服务已完成，当前按原安排结算。/);
     });
     await t.test("a settled obligation with an unknown balance is not described as settled", async () => {
       const html = await render(scenario({}, { remaining_fen: null, settlement_status: "settled" }));

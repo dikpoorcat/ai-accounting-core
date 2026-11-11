@@ -25,6 +25,54 @@ def test_business_note_accepts_existing_text_boundary_and_explicit_empty_clear()
             validate_contract("core.schema.json", "NoteChange", old)
 
 
+@pytest.mark.parametrize("purpose", [None, "仓库租金", "具体用途" * 100 + "\n完整名称"])
+def test_purpose_is_optional_nullable_and_can_be_saved_without_detailed_text(purpose):
+    detailed = change() | {"purpose": purpose}
+    validate_contract("core.schema.json", "NoteChange", detailed)
+    if purpose is not None:
+        validate_contract("core.schema.json", "NoteChange", detailed | {"text": ""})
+        validate_contract(
+            "core.schema.json",
+            "DocumentNote",
+            {key: value for key, value in detailed.items() if key != "expected_seq"} | {"text": ""},
+        )
+    validate_contract(
+        "core.schema.json",
+        "NoteChange",
+        change() | {"purpose": None, "text": "", "evidence_ids": []},
+    )
+
+
+@pytest.mark.parametrize("purpose", ["", " \t\r\n　", 123, []])
+def test_business_purpose_requires_actual_text_or_null(purpose):
+    for name, value in (
+        ("NoteChange", change()),
+        ("DocumentNote", {key: value for key, value in change().items() if key != "expected_seq"}),
+    ):
+        with pytest.raises(ContractError):
+            validate_contract("core.schema.json", name, value | {"purpose": purpose})
+
+
+@pytest.mark.parametrize("scope", ["company", "work:2026-01", "period:2026-01"])
+@pytest.mark.parametrize("purpose", [None, "业务事项"])
+def test_non_business_notes_do_not_accept_purpose(scope, purpose):
+    value = change() | {"scope": scope, "purpose": purpose}
+    if scope.startswith("period:"):
+        value["expected_basis_head"] = "month-basis"
+    with pytest.raises(ContractError):
+        validate_contract("core.schema.json", "NoteChange", value)
+    with pytest.raises(ContractError):
+        validate_contract(
+            "core.schema.json",
+            "DocumentNote",
+            {
+                key: field
+                for key, field in value.items()
+                if key not in {"expected_seq", "expected_basis_head"}
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -55,6 +103,9 @@ def test_current_business_note_has_null_basis_and_checked_empty_state():
         "evidence_ids": [SOURCE],
     }
     validate_contract("core.schema.json", "CurrentNote", current)
+    validate_contract(
+        "core.schema.json", "CurrentNote", current | {"purpose": "仓库租金", "text": ""}
+    )
     cleared = current | {"state": "needs_refresh", "text": None, "evidence_ids": []}
     validate_contract("core.schema.json", "CurrentNote", cleared)
     for bad in (
@@ -64,6 +115,10 @@ def test_current_business_note_has_null_basis_and_checked_empty_state():
         cleared | {"basis_head": "old-fact-digest"},
         cleared | {"evidence_ids": [SOURCE]},
         cleared | {"text": "留下的旧正文"},
+        current | {"text": "", "purpose": None},
+        current | {"text": None, "purpose": "仓库租金"},
+        current | {"purpose": "仓库租金", "evidence_ids": []},
+        cleared | {"purpose": "仓库租金"},
     ):
         with pytest.raises(ContractError):
             validate_contract("core.schema.json", "CurrentNote", bad)

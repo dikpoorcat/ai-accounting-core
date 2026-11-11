@@ -1197,7 +1197,7 @@ onBeforeUnmount(() => {
               <ol class="book-activity-list">
                 <li v-for="item in visibleMovements" :key="item.id"
                   v-memo="[item, item.id, item.subject_id, item.has_business_progress, item.date, item.account_id, item.account_code, item.account_name, item.account_type,
-                    item.direction, item.correction, item.amount_fen, item.signed_amount_fen, item.type, item.display_summary, item.list_summary, item.party, item.internal_transfer,
+                    item.direction, item.correction, item.amount_fen, item.signed_amount_fen, item.type, item.list_summary, item.party, item.internal_transfer,
                     expandedMovementId === item.id, openedMovementIds.has(item.id), route.query.company_id, selectedPeriod, snapshotVersion]"
                   class="book-activity-row business-list-row"
                   :class="{ expandable: item.subject_id && item.has_business_progress, expanded: item.has_business_progress && expandedMovementId === item.id }"

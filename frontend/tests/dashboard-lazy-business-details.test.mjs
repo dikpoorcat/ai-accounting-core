@@ -99,7 +99,7 @@ async function mount(server, name, { eager = false, section = "activity", withou
   }
   return { ...env, get unmounted() { return env.unmounted; }, props, state, initial, root, nodes, close: () => app.unmount() };
 }
-const movement = index => ({ id: `movement-${index}`, subject_id: `business-${index}`, has_business_progress: true, account_id: "bank-a", account_type: "bank", list_summary: `记录 ${index}`, display_summary: `记录 ${index}`, type: "付款", party: "对象", date: "2026-01-02", direction: "outflow", amount_fen: "100", signed_amount_fen: "-100", correction: false, internal_transfer: false });
+const movement = index => ({ id: `movement-${index}`, subject_id: `business-${index}`, has_business_progress: true, account_id: "bank-a", account_type: "bank", list_summary: `记录 ${index}`, type: "付款", party: "对象", date: "2026-01-02", direction: "outflow", amount_fen: "100", signed_amount_fen: "-100", correction: false, internal_transfer: false });
 function voucherContinuation(start, count, cursor) {
   const response = structuredClone(samples.brief_vouchers.response), collection = response.data.collections.vouchers;
   const original = collection.items[0];

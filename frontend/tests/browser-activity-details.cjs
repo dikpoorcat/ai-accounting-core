@@ -59,7 +59,7 @@ async function run(config) {
     synthetic.data.collections.vouchers = { items: synthetic.data.collections.activity.items.map((item, n) => ({ ...voucher, voucher_version_id: item.voucher_version_id, subject_id: subject, number: String(n + 1), business_amount_fen: item.amount_fen, state: n ? "冲正" : "已入账", reverses_version_id: n ? "synthetic-wage" : null })), page: { ...synthetic.data.collections.activity.page } };
     synthetic.data.voucher_count = 2;
     synthetic.data.activity_groups = [{ ...brief.data.activity_groups[index], event_count: 2 }];
-    const source = { key: "synthetic-net", name: "net", direction: "payable", category_key: "payroll_payables", source_period: config.period, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial" };
+    const source = { key: "synthetic-net", name: "net", direction: "payable", category_key: "payroll_payables", source_period: config.period, source_amount_fen: "800000", paid_fen: "600000", other_settled_fen: "0", remaining_fen: "200000", settlement_status: "partial", purpose: null, description: null, note_scope: null };
     detail.data.identity.subject_id = subject; detail.data.identity.kind = "payroll"; detail.data.latest_source.deleted = false;
     const tax = { ...source, key: "synthetic-tax", name: "tax", source_amount_fen: "12345", paid_fen: "0", remaining_fen: "12345", settlement_status: "open" };
     detail.data.settlements = { cutoff_period: config.period, status: "established", checking: false, obligations: [source, tax] };

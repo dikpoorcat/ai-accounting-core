@@ -51,7 +51,7 @@ def adjust(fold, member, sign):
 
 
 def text(member):
-    return member.get("_description") or member["_matter_title"]
+    return member.get("_purpose") or member["_matter_title"]
 
 
 def amount(total):
