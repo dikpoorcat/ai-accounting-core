@@ -18,7 +18,7 @@ dependencies = [
   "openpyxl>=3.1,<4",
   "pydantic>=2.11,<2.13",
   "xlrd>=2.0.2,<3",
-  "pypdf>=6,<7",
+  "pypdf>=6,<8",
   "pypinyin==0.55.0",
 ]
 
